@@ -1,0 +1,14 @@
+[package]
+name = "peridot-git"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[features]
+e2e = []
+
+[dependencies]
+peridot-common = { path = "../peridot-common" }
+serde.workspace = true

@@ -1,0 +1,17 @@
+[package]
+name = "peridot-tui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[features]
+e2e = []
+
+[dependencies]
+crossterm = "0.29.0"
+peridot-common = { path = "../peridot-common" }
+peridot-core = { path = "../peridot-core" }
+ratatui = "0.30.0"
+serde.workspace = true

@@ -1,0 +1,20 @@
+[package]
+name = "peridot-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[features]
+e2e = []
+
+[dependencies]
+async-trait.workspace = true
+peridot-common = { path = "../peridot-common" }
+peridot-context = { path = "../peridot-context" }
+peridot-llm = { path = "../peridot-llm" }
+peridot-tools = { path = "../peridot-tools" }
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true

@@ -1,0 +1,19 @@
+[package]
+name = "peridot-agents"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[features]
+e2e = []
+
+[dependencies]
+async-trait.workspace = true
+peridot-common = { path = "../peridot-common" }
+peridot-git = { path = "../peridot-git" }
+serde.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
