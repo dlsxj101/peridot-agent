@@ -244,6 +244,17 @@ fn ask_user_choices_with_controls(mut options: Vec<String>) -> Vec<String> {
     options
 }
 
+/// Lifecycle transition captured during an interactive TUI session.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct TuiLifecycleEvent {
+    /// Hook event name.
+    pub event: String,
+    /// Previous value.
+    pub from: String,
+    /// New value.
+    pub to: String,
+}
+
 /// Main TUI state independent from the terminal backend.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TuiState {
@@ -263,6 +274,8 @@ pub struct TuiState {
     pub ask_user: Option<AskUserPanel>,
     /// Active Esc menu.
     pub menu: Option<MenuState>,
+    /// Lifecycle events recorded from local TUI commands.
+    pub lifecycle_events: Vec<TuiLifecycleEvent>,
 }
 
 /// Result produced when an interactive TUI session exits.
@@ -297,6 +310,7 @@ impl TuiState {
             input: String::new(),
             ask_user: None,
             menu: None,
+            lifecycle_events: Vec::new(),
         }
     }
 
@@ -483,14 +497,17 @@ fn submit_input(state: &mut TuiState) -> TuiEventOutcome {
 fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
     match command {
         SlashCommand::Plan => {
+            record_mode_switch(state, ExecutionMode::Plan);
             state.header.mode = ExecutionMode::Plan;
             state.push_transcript("mode: plan");
         }
         SlashCommand::Execute => {
+            record_mode_switch(state, ExecutionMode::Execute);
             state.header.mode = ExecutionMode::Execute;
             state.push_transcript("mode: execute");
         }
         SlashCommand::GoalStart(goal) => {
+            record_mode_switch(state, ExecutionMode::Goal);
             state.header.mode = ExecutionMode::Goal;
             state.side_panel.plan.push(PlanStep {
                 label: goal.clone(),
@@ -517,18 +534,43 @@ fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
             ));
         }
         SlashCommand::Safe => {
+            record_permission_switch(state, PermissionMode::Safe);
             state.header.permission = PermissionMode::Safe;
             state.push_transcript("permission: safe");
         }
         SlashCommand::Auto => {
+            record_permission_switch(state, PermissionMode::Auto);
             state.header.permission = PermissionMode::Auto;
             state.push_transcript("permission: auto");
         }
         SlashCommand::Yolo => {
+            record_permission_switch(state, PermissionMode::Yolo);
             state.header.permission = PermissionMode::Yolo;
             state.push_transcript("permission: yolo");
         }
     }
+}
+
+fn record_mode_switch(state: &mut TuiState, to: ExecutionMode) {
+    if state.header.mode == to {
+        return;
+    }
+    state.lifecycle_events.push(TuiLifecycleEvent {
+        event: "mode_switch".to_string(),
+        from: state.header.mode.to_string(),
+        to: to.to_string(),
+    });
+}
+
+fn record_permission_switch(state: &mut TuiState, to: PermissionMode) {
+    if state.header.permission == to {
+        return;
+    }
+    state.lifecycle_events.push(TuiLifecycleEvent {
+        event: "permission_switch".to_string(),
+        from: state.header.permission.to_string(),
+        to: to.to_string(),
+    });
 }
 
 struct TerminalGuard {
@@ -949,6 +991,9 @@ mod tests {
         assert_eq!(outcome, TuiEventOutcome::Continue);
         assert_eq!(state.header.mode, ExecutionMode::Goal);
         assert_eq!(state.side_panel.plan[0].label, "ship release");
+        assert_eq!(state.lifecycle_events[0].event, "mode_switch");
+        assert_eq!(state.lifecycle_events[0].from, "execute");
+        assert_eq!(state.lifecycle_events[0].to, "goal");
     }
 
     #[test]

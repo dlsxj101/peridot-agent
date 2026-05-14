@@ -29,7 +29,7 @@ use peridot_llm::{
 use peridot_mcp::McpClient;
 use peridot_memory::{MemoryStore, SessionSummary, StoredSkill};
 use peridot_project::ProjectScanner;
-use peridot_tools::hooks::{HookRunner, lifecycle_hook_variables};
+use peridot_tools::hooks::{HookRunner, HookVariables, lifecycle_hook_variables};
 use peridot_tools::{ToolRegistry, register_builtin_tools, register_mcp_tools};
 use peridot_tui::{HeaderState, TuiState, run_interactive};
 
@@ -359,7 +359,9 @@ async fn main() -> Result<()> {
                         TuiState::new(HeaderState::new(mode, permission, model.clone()))
                             .with_config(config.tui.clone());
                     state.push_transcript("Peridot ready. Type a task, /plan, /execute, /goal <objective>, /safe, /auto, /yolo, or Esc.");
-                    if let Some(task) = run_interactive(state)?.submitted {
+                    let exit = run_interactive(state)?;
+                    run_tui_lifecycle_hooks(&exit.state, &config, &project_root)?;
+                    if let Some(task) = exit.submitted {
                         run_task(task, mode, &cli, &config, &project_root).await?;
                     }
                 }
@@ -1109,6 +1111,37 @@ fn task_to_tool_call(task: &str) -> Option<ToolCall> {
     None
 }
 
+fn run_tui_lifecycle_hooks(
+    state: &TuiState,
+    config: &PeridotConfig,
+    project_root: &Path,
+) -> Result<()> {
+    let runner = HookRunner::new(project_root, config.hooks.clone());
+    for event in &state.lifecycle_events {
+        let mut variables = HookVariables::new();
+        variables.insert(
+            "project_root".to_string(),
+            project_root.display().to_string(),
+        );
+        variables.insert("workspace".to_string(), project_root.display().to_string());
+        match event.event.as_str() {
+            "mode_switch" => {
+                variables.insert("from_mode".to_string(), event.from.clone());
+                variables.insert("to_mode".to_string(), event.to.clone());
+            }
+            "permission_switch" => {
+                variables.insert("from_permission".to_string(), event.from.clone());
+                variables.insert("to_permission".to_string(), event.to.clone());
+            }
+            _ => {}
+        }
+        variables.insert("from".to_string(), event.from.clone());
+        variables.insert("to".to_string(), event.to.clone());
+        runner.run_lifecycle_hooks(&event.event, &variables)?;
+    }
+    Ok(())
+}
+
 fn read_piped_task() -> Result<Option<String>> {
     let stdin = std::io::stdin();
     if stdin.is_terminal() {
@@ -1146,6 +1179,67 @@ mod tests {
             text,
             "Resume session demo from this summary: created parser"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn tui_lifecycle_hooks_run_for_switches() {
+        use peridot_common::{HookConfig, HookFailureMode, HooksConfig};
+        use std::os::unix::fs::PermissionsExt;
+
+        let root =
+            std::env::temp_dir().join(format!("peridot-cli-tui-hooks-{}", std::process::id()));
+        let hooks_dir = root.join(".peridot/hooks");
+        std::fs::create_dir_all(&hooks_dir).unwrap();
+        let script = hooks_dir.join("switch.sh");
+        std::fs::write(&script, "#!/bin/sh\necho \"$1:$2:$3\" >> switches.log\n").unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let mut state = TuiState::new(HeaderState::new(
+            ExecutionMode::Execute,
+            PermissionMode::Auto,
+            "mock",
+        ));
+        state.lifecycle_events.push(peridot_tui::TuiLifecycleEvent {
+            event: "mode_switch".to_string(),
+            from: "execute".to_string(),
+            to: "goal".to_string(),
+        });
+        state.lifecycle_events.push(peridot_tui::TuiLifecycleEvent {
+            event: "permission_switch".to_string(),
+            from: "auto".to_string(),
+            to: "safe".to_string(),
+        });
+        let config = PeridotConfig {
+            hooks: HooksConfig {
+                lifecycle: vec![
+                    HookConfig {
+                        event: "mode_switch".to_string(),
+                        run: ".peridot/hooks/switch.sh mode {from_mode} {to_mode}".to_string(),
+                        description: None,
+                        on_failure: HookFailureMode::Block,
+                        only_paths: Vec::new(),
+                    },
+                    HookConfig {
+                        event: "permission_switch".to_string(),
+                        run:
+                            ".peridot/hooks/switch.sh permission {from_permission} {to_permission}"
+                                .to_string(),
+                        description: None,
+                        on_failure: HookFailureMode::Block,
+                        only_paths: Vec::new(),
+                    },
+                ],
+                ..HooksConfig::default()
+            },
+            ..PeridotConfig::default()
+        };
+
+        run_tui_lifecycle_hooks(&state, &config, &root).unwrap();
+
+        let log = std::fs::read_to_string(root.join("switches.log")).unwrap();
+        assert!(log.contains("mode:execute:goal"));
+        assert!(log.contains("permission:auto:safe"));
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
