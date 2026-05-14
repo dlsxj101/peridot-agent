@@ -27,6 +27,17 @@ pub struct McpTool {
     pub input_schema: Value,
 }
 
+/// Result returned by `tools/call`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct McpCallResult {
+    /// Tool content payload.
+    #[serde(default)]
+    pub content: Vec<Value>,
+    /// Whether the tool reported an application-level error.
+    #[serde(default, rename = "isError")]
+    pub is_error: bool,
+}
+
 /// MCP client.
 #[derive(Clone, Debug)]
 pub struct McpClient {
@@ -56,14 +67,44 @@ impl McpClient {
     /// Initializes the server and lists exposed tools.
     pub async fn list_tools(&self) -> PeriResult<Vec<McpTool>> {
         match self.config.transport {
-            McpTransport::Stdio => self.list_stdio_tools().await,
+            McpTransport::Stdio => {
+                let result = self.stdio_request("tools/list", json!({}), 2).await?;
+                let parsed = result.get("tools").cloned().unwrap_or_else(|| json!([]));
+                serde_json::from_value(parsed).map_err(|err| {
+                    PeriError::Parse(format!("invalid MCP tools/list response: {err}"))
+                })
+            }
             McpTransport::Http => Err(PeriError::Config(
                 "streamable HTTP MCP transport is not implemented yet".to_string(),
             )),
         }
     }
 
-    async fn list_stdio_tools(&self) -> PeriResult<Vec<McpTool>> {
+    /// Calls one MCP tool.
+    pub async fn call_tool(&self, name: &str, arguments: Value) -> PeriResult<McpCallResult> {
+        match self.config.transport {
+            McpTransport::Stdio => {
+                let result = self
+                    .stdio_request(
+                        "tools/call",
+                        json!({
+                            "name": name,
+                            "arguments": arguments
+                        }),
+                        2,
+                    )
+                    .await?;
+                serde_json::from_value(result).map_err(|err| {
+                    PeriError::Parse(format!("invalid MCP tools/call response: {err}"))
+                })
+            }
+            McpTransport::Http => Err(PeriError::Config(
+                "streamable HTTP MCP transport is not implemented yet".to_string(),
+            )),
+        }
+    }
+
+    async fn stdio_request(&self, method: &str, params: Value, id: u64) -> PeriResult<Value> {
         let command = self.config.command.as_deref().ok_or_else(|| {
             PeriError::Config(format!(
                 "stdio MCP server {} is missing command",
@@ -101,13 +142,11 @@ impl McpClient {
         let initialize = read_response(&mut reader, 1, self.timeout).await?;
         ensure_success(&initialize)?;
         write_message(&mut stdin, initialized_notification()).await?;
-        write_message(&mut stdin, jsonrpc_request(2, "tools/list", json!({}))).await?;
-        let tools = read_response(&mut reader, 2, self.timeout).await?;
-        let result = ensure_success(&tools)?;
-        let parsed = result.get("tools").cloned().unwrap_or_else(|| json!([]));
+        write_message(&mut stdin, jsonrpc_request(id, method, params)).await?;
+        let response = read_response(&mut reader, id, self.timeout).await?;
+        let result = ensure_success(&response)?.clone();
         let _ = child.kill().await;
-        serde_json::from_value(parsed)
-            .map_err(|err| PeriError::Parse(format!("invalid MCP tools/list response: {err}")))
+        Ok(result)
     }
 }
 
@@ -240,6 +279,50 @@ done
 
         assert_eq!(tools.len(), 1);
         assert_eq!(tools[0].name, "demo");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn calls_stdio_tool() {
+        let root = std::env::temp_dir().join(format!("peridot-mcp-call-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let server = root.join("server.sh");
+        fs::write(
+            &server,
+            r#"#!/bin/sh
+while IFS= read -r line; do
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-11-25","capabilities":{"tools":{}},"serverInfo":{"name":"test","version":"0"}}}\n'
+      ;;
+    *'"method":"notifications/initialized"'*)
+      ;;
+    *'"method":"tools/call"'*)
+      printf '{"jsonrpc":"2.0","id":2,"result":{"content":[{"type":"text","text":"called"}],"isError":false}}\n'
+      ;;
+  esac
+done
+"#,
+        )
+        .unwrap();
+        fs::set_permissions(&server, fs::Permissions::from_mode(0o755)).unwrap();
+        let client = McpClient::with_timeout(
+            McpServerConfig {
+                name: "test".to_string(),
+                transport: McpTransport::Stdio,
+                command: Some(server.display().to_string()),
+                args: Vec::new(),
+                env: Default::default(),
+                url: None,
+                auth: None,
+            },
+            Duration::from_secs(2),
+        );
+
+        let result = client.call_tool("demo", json!({"ok": true})).await.unwrap();
+
+        assert!(!result.is_error);
+        assert_eq!(result.content[0]["text"], "called");
         fs::remove_dir_all(root).unwrap();
     }
 }

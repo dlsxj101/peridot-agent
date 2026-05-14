@@ -21,8 +21,9 @@ use peridot_llm::{
     AuthMethod, ClaudeProvider, CompletionRequest, CompletionResponse, LlmProvider, OpenAiProvider,
     PricingTable, Usage, parse_action,
 };
+use peridot_mcp::McpClient;
 use peridot_project::ProjectScanner;
-use peridot_tools::{ToolRegistry, register_builtin_tools};
+use peridot_tools::{ToolRegistry, register_builtin_tools, register_mcp_tools};
 
 mod commands;
 
@@ -289,6 +290,7 @@ async fn run_task(
     };
     let mut registry = ToolRegistry::new();
     register_builtin_tools(&mut registry)?;
+    register_configured_mcp_tools(&mut registry, config).await?;
     let context = ContextManager::with_limits(project_context_limits(project_root));
     let mut agent = HarnessAgent::new(state, context, registry);
     let call = task_to_tool_call(&task);
@@ -389,6 +391,17 @@ async fn run_task(
                 );
             }
         }
+    }
+    Ok(())
+}
+
+async fn register_configured_mcp_tools(
+    registry: &mut ToolRegistry,
+    config: &PeridotConfig,
+) -> Result<()> {
+    for server in &config.mcp {
+        let tools = McpClient::new(server.clone()).list_tools().await?;
+        register_mcp_tools(registry, server.clone(), tools)?;
     }
     Ok(())
 }
