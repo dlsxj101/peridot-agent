@@ -18,7 +18,7 @@ use peridot_common::{
     ExecutionMode, PeriError, PeriResult, PeridotConfig, PermissionMode, ToolCall,
 };
 use peridot_context::{ContextManager, project_context_limits};
-use peridot_core::{AgentRunRequest, AgentState, HarnessAgent};
+use peridot_core::{AgentRunRequest, AgentRunSummary, AgentState, HarnessAgent, StopReason};
 use peridot_llm::{
     AuthMethod, ClaudeProvider, CompletionRequest, CompletionResponse, LlmProvider, OpenAiProvider,
     PricingTable, Usage, parse_action,
@@ -65,6 +65,14 @@ struct Cli {
     /// Use the configured live provider instead of deterministic JSON/tool-only behavior.
     #[arg(long, global = true)]
     live: bool,
+
+    /// Maximum number of model/tool turns before stopping.
+    #[arg(long, global = true)]
+    max_turns: Option<u32>,
+
+    /// Maximum estimated run cost in USD.
+    #[arg(long, global = true)]
+    budget: Option<f64>,
 
     /// Optional task to start immediately.
     task: Option<String>,
@@ -353,6 +361,8 @@ async fn run_task(
     } else {
         AgentState::new(mode, permission)
     };
+    let max_turns = cli.max_turns.unwrap_or(config.defaults.max_turns);
+    let budget_usd = cli.budget.unwrap_or(config.defaults.budget_usd);
     let mut registry = ToolRegistry::new();
     register_builtin_tools(&mut registry)?;
     register_configured_mcp_tools(&mut registry, config).await?;
@@ -367,15 +377,20 @@ async fn run_task(
         let summary = run_agent_loop(
             &mut agent,
             &provider,
-            task,
-            model,
-            config,
-            project_root,
-            denied_paths,
+            RunLoopOptions {
+                task,
+                model,
+                max_turns,
+                budget_usd,
+                config,
+                project_root,
+                denied_paths,
+            },
         )
         .await?;
         if cli.output == OutputFormat::Json || cli.headless {
             println!("{}", serde_json::to_string_pretty(&summary)?);
+            exit_for_summary(&summary, cli.headless);
         } else {
             println!(
                 "stopped={:?} turns={}",
@@ -393,15 +408,20 @@ async fn run_task(
         let summary = run_agent_loop(
             &mut agent,
             provider.as_ref(),
-            task,
-            model,
-            config,
-            project_root,
-            denied_paths,
+            RunLoopOptions {
+                task,
+                model,
+                max_turns,
+                budget_usd,
+                config,
+                project_root,
+                denied_paths,
+            },
         )
         .await?;
         if cli.output == OutputFormat::Json || cli.headless {
             println!("{}", serde_json::to_string_pretty(&summary)?);
+            exit_for_summary(&summary, cli.headless);
         } else {
             println!(
                 "stopped={:?} turns={} cost=${:.6}",
@@ -471,14 +491,20 @@ async fn register_configured_mcp_tools(
     Ok(())
 }
 
+struct RunLoopOptions<'a> {
+    task: String,
+    model: String,
+    max_turns: u32,
+    budget_usd: f64,
+    config: &'a PeridotConfig,
+    project_root: &'a Path,
+    denied_paths: Vec<PathBuf>,
+}
+
 async fn run_agent_loop<P>(
     agent: &mut HarnessAgent,
     provider: &P,
-    task: String,
-    model: String,
-    config: &PeridotConfig,
-    project_root: &Path,
-    denied_paths: Vec<PathBuf>,
+    options: RunLoopOptions<'_>,
 ) -> Result<peridot_core::AgentRunSummary>
 where
     P: LlmProvider + ?Sized,
@@ -487,16 +513,28 @@ where
         .run_until_done(
             provider,
             AgentRunRequest {
-                task,
-                model,
-                max_turns: config.defaults.max_turns,
+                task: options.task,
+                model: options.model,
+                max_turns: options.max_turns,
                 max_tokens: 4096,
-                project_root: project_root.to_path_buf(),
-                denied_paths,
-                hooks: config.hooks.clone(),
+                budget_usd: options.budget_usd,
+                project_root: options.project_root.to_path_buf(),
+                denied_paths: options.denied_paths,
+                hooks: options.config.hooks.clone(),
             },
         )
         .await?)
+}
+
+fn exit_for_summary(summary: &AgentRunSummary, headless: bool) {
+    if !headless {
+        return;
+    }
+    match summary.stopped_reason {
+        StopReason::Done => {}
+        StopReason::Budget => std::process::exit(2),
+        StopReason::MaxTurns => std::process::exit(3),
+    }
 }
 
 fn live_provider(config: &PeridotConfig, model: &str) -> Result<Box<dyn LlmProvider>> {

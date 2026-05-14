@@ -281,6 +281,13 @@ impl HarnessAgent {
                     stopped_reason: StopReason::Done,
                 });
             }
+            if request.budget_usd > 0.0 && total_usage.estimated_cost_usd >= request.budget_usd {
+                return Ok(AgentRunSummary {
+                    turns: outcomes,
+                    usage: total_usage,
+                    stopped_reason: StopReason::Budget,
+                });
+            }
         }
 
         Ok(AgentRunSummary {
@@ -392,7 +399,7 @@ pub struct AgentTurnOutcome {
 }
 
 /// Request for a bounded agent run.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct AgentRunRequest {
     /// Initial task.
     pub task: String,
@@ -402,6 +409,8 @@ pub struct AgentRunRequest {
     pub max_turns: u32,
     /// Maximum output tokens per turn.
     pub max_tokens: u32,
+    /// Maximum estimated cost for the run. Values <= 0 disable budget stopping.
+    pub budget_usd: f64,
     /// Project root.
     pub project_root: PathBuf,
     /// Denied path prefixes.
@@ -417,6 +426,8 @@ pub enum StopReason {
     Done,
     /// The run hit max turns.
     MaxTurns,
+    /// The run hit its configured cost budget.
+    Budget,
 }
 
 /// Summary of a bounded agent run.
@@ -595,12 +606,21 @@ mod tests {
 
     struct StaticProvider {
         responses: Mutex<Vec<String>>,
+        cost_usd: f64,
     }
 
     impl StaticProvider {
         fn new(responses: Vec<String>) -> Self {
             Self {
                 responses: Mutex::new(responses.into_iter().rev().collect()),
+                cost_usd: 0.0,
+            }
+        }
+
+        fn with_cost(responses: Vec<String>, cost_usd: f64) -> Self {
+            Self {
+                responses: Mutex::new(responses.into_iter().rev().collect()),
+                cost_usd,
             }
         }
     }
@@ -621,7 +641,7 @@ mod tests {
                     output_tokens: 1,
                     cache_read_tokens: 0,
                     cache_creation_tokens: 0,
-                    estimated_cost_usd: 0.0,
+                    estimated_cost_usd: self.cost_usd,
                 },
             })
         }
@@ -679,6 +699,7 @@ mod tests {
                     model: "mock".to_string(),
                     max_turns: 4,
                     max_tokens: 512,
+                    budget_usd: 5.0,
                     project_root: root.clone(),
                     denied_paths: Vec::new(),
                     hooks: HooksConfig::default(),
@@ -763,6 +784,44 @@ mod tests {
             std::fs::read_to_string(root.join("hooked.txt")).unwrap(),
             "ok"
         );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn run_until_done_stops_on_budget() {
+        let root = std::env::temp_dir().join(format!("peridot-core-budget-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let mut registry = ToolRegistry::new();
+        register_builtin_tools(&mut registry).unwrap();
+        let mut agent = HarnessAgent::new(
+            AgentState::new(ExecutionMode::Execute, PermissionMode::Auto),
+            ContextManager::new(),
+            registry,
+        );
+        let provider = StaticProvider::with_cost(
+            vec![json!({"action":"plan_update","parameters":{"update":"one"}}).to_string()],
+            0.25,
+        );
+
+        let summary = agent
+            .run_until_done(
+                &provider,
+                AgentRunRequest {
+                    task: "spend budget".to_string(),
+                    model: "mock".to_string(),
+                    max_turns: 4,
+                    max_tokens: 512,
+                    budget_usd: 0.1,
+                    project_root: root.clone(),
+                    denied_paths: Vec::new(),
+                    hooks: HooksConfig::default(),
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(summary.stopped_reason, StopReason::Budget);
+        assert_eq!(summary.turns.len(), 1);
         std::fs::remove_dir_all(root).unwrap();
     }
 }
