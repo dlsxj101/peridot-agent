@@ -573,6 +573,7 @@ where
                 max_turns: options.max_turns,
                 max_tokens: 4096,
                 budget_usd: options.budget_usd,
+                budget_warning_pct: options.config.defaults.budget_warning_pct,
                 project_root: options.project_root.to_path_buf(),
                 denied_paths: options.denied_paths.clone(),
                 hooks: options.config.hooks.clone(),

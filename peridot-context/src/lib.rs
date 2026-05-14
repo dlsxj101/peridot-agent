@@ -153,6 +153,11 @@ impl ContextManager {
             .sum()
     }
 
+    /// Returns the token threshold that triggers compaction.
+    pub fn compaction_threshold_tokens(&self) -> usize {
+        self.limits.compaction_threshold_tokens
+    }
+
     /// Compacts old entries into a structured reminder when the soft limit is exceeded.
     pub fn compact_if_needed(&mut self) -> bool {
         if self.estimated_tokens() <= self.limits.compaction_threshold_tokens

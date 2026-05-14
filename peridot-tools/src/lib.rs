@@ -1349,7 +1349,7 @@ impl Tool for AgentAskUserTool {
         "Ask the user a question, returning a default answer in headless execution"
     }
 
-    async fn execute(&self, params: Value, _ctx: &ToolContext) -> PeriResult<ToolResult> {
+    async fn execute(&self, params: Value, ctx: &ToolContext) -> PeriResult<ToolResult> {
         let question = required_str(&params, "question")?;
         let kind = ask_user_kind(&params);
         let choices = ask_user_choices(&params);
@@ -1364,6 +1364,7 @@ impl Tool for AgentAskUserTool {
             .and_then(Value::as_str)
             .unwrap_or("Peridot needs this answer to continue without guessing.")
             .to_string();
+        run_ask_user_triggered_hook(ctx, question, &kind)?;
         Ok(ToolResult::success(
             if answer.is_empty() {
                 format!("asked user: {question}")
@@ -1391,6 +1392,23 @@ impl Tool for AgentAskUserTool {
     fn permission_level(&self) -> PermissionLevel {
         PermissionLevel::Read
     }
+}
+
+fn run_ask_user_triggered_hook(ctx: &ToolContext, question: &str, kind: &str) -> PeriResult<()> {
+    let mut variables = HookVariables::new();
+    variables.insert(
+        "project_root".to_string(),
+        ctx.project_root.display().to_string(),
+    );
+    variables.insert(
+        "workspace".to_string(),
+        ctx.project_root.display().to_string(),
+    );
+    variables.insert("question".to_string(), question.to_string());
+    variables.insert("kind".to_string(), kind.to_string());
+    HookRunner::new(&ctx.project_root, ctx.hooks.clone())
+        .run_event_hooks("ask_user_triggered", &variables)?;
+    Ok(())
 }
 
 fn first_choice(params: &Value) -> Option<&str> {
@@ -2041,6 +2059,45 @@ mod tests {
             result.output["explanation"],
             "Goal keeps running until done."
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn ask_user_runs_triggered_hook() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root =
+            std::env::temp_dir().join(format!("peridot-tools-ask-hook-{}", std::process::id()));
+        let hooks_dir = root.join(".peridot/hooks");
+        fs::create_dir_all(&hooks_dir).unwrap();
+        let script = hooks_dir.join("ask.sh");
+        fs::write(&script, "#!/bin/sh\necho \"$1:$2\" >> ask.log\n").unwrap();
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+        let ctx = ToolContext::new(&root, PermissionMode::Auto).with_hooks(HooksConfig {
+            event: vec![peridot_common::HookConfig {
+                event: "ask_user_triggered".to_string(),
+                run: ".peridot/hooks/ask.sh {kind} \"{question}\"".to_string(),
+                description: None,
+                on_failure: peridot_common::HookFailureMode::Block,
+                only_paths: Vec::new(),
+            }],
+            ..HooksConfig::default()
+        });
+
+        AgentAskUserTool
+            .execute(
+                serde_json::json!({
+                    "question": "Choose mode",
+                    "choices": ["execute", "goal"]
+                }),
+                &ctx,
+            )
+            .await
+            .unwrap();
+
+        let log = fs::read_to_string(root.join("ask.log")).unwrap();
+        assert!(log.contains("single_select:Choose mode"));
         fs::remove_dir_all(root).unwrap();
     }
 

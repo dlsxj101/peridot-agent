@@ -209,7 +209,15 @@ impl HarnessAgent {
             self.context
                 .append(ContextEntry::trusted(ContextSource::PlanReminder, plan));
         }
-        self.context.compact_if_needed();
+        let estimated_tokens = self.context.estimated_tokens();
+        if self.context.compact_if_needed() {
+            run_context_compacted_hook(
+                &request.project_root,
+                &request.hooks,
+                estimated_tokens,
+                self.context.compaction_threshold_tokens(),
+            )?;
+        }
 
         let completion = provider
             .complete(CompletionRequest {
@@ -268,6 +276,7 @@ impl HarnessAgent {
         let mut outcomes = Vec::new();
         let mut total_usage = Usage::default();
         let mut stuck_detector = StuckDetector::new(3);
+        let mut budget_warning_sent = false;
         for turn_index in 0..request.max_turns {
             let outcome = match self
                 .run_turn(
@@ -296,6 +305,20 @@ impl HarnessAgent {
                 }
             };
             accumulate_usage(&mut total_usage, outcome.usage);
+            if should_emit_budget_warning(
+                request.budget_usd,
+                request.budget_warning_pct,
+                total_usage.estimated_cost_usd,
+                budget_warning_sent,
+            ) {
+                run_budget_warning_hook(
+                    &request.project_root,
+                    &request.hooks,
+                    total_usage.estimated_cost_usd,
+                    request.budget_usd,
+                )?;
+                budget_warning_sent = true;
+            }
             let done = outcome.done;
             let recovery = stuck_detector.record(&outcome);
             outcomes.push(outcome);
@@ -357,6 +380,61 @@ impl HarnessAgent {
             stopped_reason: StopReason::MaxTurns,
         })
     }
+}
+
+fn should_emit_budget_warning(
+    budget_usd: f64,
+    warning_pct: u8,
+    current_usd: f64,
+    already_sent: bool,
+) -> bool {
+    if already_sent || budget_usd <= 0.0 || warning_pct == 0 {
+        return false;
+    }
+    let threshold = budget_usd * (warning_pct.min(100) as f64 / 100.0);
+    current_usd >= threshold
+}
+
+fn run_budget_warning_hook(
+    root: &Path,
+    hooks: &HooksConfig,
+    current_usd: f64,
+    limit_usd: f64,
+) -> PeriResult<()> {
+    let percentage = if limit_usd > 0.0 {
+        (current_usd / limit_usd) * 100.0
+    } else {
+        0.0
+    };
+    let mut variables = HookVariables::new();
+    variables.insert("project_root".to_string(), root.display().to_string());
+    variables.insert("workspace".to_string(), root.display().to_string());
+    variables.insert("current".to_string(), format!("{current_usd:.6}"));
+    variables.insert("limit".to_string(), format!("{limit_usd:.6}"));
+    variables.insert("percentage".to_string(), format!("{percentage:.0}"));
+    HookRunner::new(root, hooks.clone()).run_event_hooks("budget_warning", &variables)?;
+    Ok(())
+}
+
+fn run_context_compacted_hook(
+    root: &Path,
+    hooks: &HooksConfig,
+    current_tokens: usize,
+    limit_tokens: usize,
+) -> PeriResult<()> {
+    let percentage = if limit_tokens > 0 {
+        (current_tokens as f64 / limit_tokens as f64) * 100.0
+    } else {
+        0.0
+    };
+    let mut variables = HookVariables::new();
+    variables.insert("project_root".to_string(), root.display().to_string());
+    variables.insert("workspace".to_string(), root.display().to_string());
+    variables.insert("current".to_string(), current_tokens.to_string());
+    variables.insert("limit".to_string(), limit_tokens.to_string());
+    variables.insert("percentage".to_string(), format!("{percentage:.0}"));
+    HookRunner::new(root, hooks.clone()).run_event_hooks("context_compacted", &variables)?;
+    Ok(())
 }
 
 fn run_error_event_hooks(root: &Path, hooks: &HooksConfig, error: &PeriError) -> PeriResult<()> {
@@ -621,6 +699,8 @@ pub struct AgentRunRequest {
     pub max_tokens: u32,
     /// Maximum estimated cost for the run. Values <= 0 disable budget stopping.
     pub budget_usd: f64,
+    /// Budget warning threshold percentage.
+    pub budget_warning_pct: u8,
     /// Project root.
     pub project_root: PathBuf,
     /// Denied path prefixes.
@@ -1022,6 +1102,7 @@ mod tests {
                     max_turns: 4,
                     max_tokens: 512,
                     budget_usd: 5.0,
+                    budget_warning_pct: 50,
                     project_root: root.clone(),
                     denied_paths: Vec::new(),
                     hooks: HooksConfig::default(),
@@ -1205,6 +1286,7 @@ mod tests {
                     max_turns: 4,
                     max_tokens: 512,
                     budget_usd: 0.1,
+                    budget_warning_pct: 50,
                     project_root: root.clone(),
                     denied_paths: Vec::new(),
                     hooks: HooksConfig::default(),
@@ -1216,6 +1298,121 @@ mod tests {
 
         assert_eq!(summary.stopped_reason, StopReason::Budget);
         assert_eq!(summary.turns.len(), 1);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn run_until_done_emits_budget_warning_hook() {
+        let root =
+            std::env::temp_dir().join(format!("peridot-core-budget-hook-{}", std::process::id()));
+        let hooks_dir = root.join(".peridot/hooks");
+        std::fs::create_dir_all(&hooks_dir).unwrap();
+        let script = hooks_dir.join("budget.sh");
+        std::fs::write(&script, "#!/bin/sh\necho \"$1\" >> budget.log\n").unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let mut registry = ToolRegistry::new();
+        register_builtin_tools(&mut registry).unwrap();
+        let mut agent = HarnessAgent::new(
+            AgentState::new(ExecutionMode::Execute, PermissionMode::Auto),
+            ContextManager::new(),
+            registry,
+        );
+        let provider = StaticProvider::with_cost(
+            vec![json!({"action":"agent_done","parameters":{"summary":"done"}}).to_string()],
+            0.06,
+        );
+
+        agent
+            .run_until_done(
+                &provider,
+                AgentRunRequest {
+                    task: "spend half".to_string(),
+                    model: "mock".to_string(),
+                    goal_checker_model: None,
+                    max_turns: 1,
+                    max_tokens: 512,
+                    budget_usd: 0.1,
+                    budget_warning_pct: 50,
+                    project_root: root.clone(),
+                    denied_paths: Vec::new(),
+                    hooks: HooksConfig {
+                        event: vec![HookConfig {
+                            event: "budget_warning".to_string(),
+                            run: ".peridot/hooks/budget.sh {percentage}".to_string(),
+                            description: None,
+                            on_failure: HookFailureMode::Block,
+                            only_paths: Vec::new(),
+                        }],
+                        ..HooksConfig::default()
+                    },
+                    security: SecurityConfig::default(),
+                },
+            )
+            .await
+            .unwrap();
+
+        let log = std::fs::read_to_string(root.join("budget.log")).unwrap();
+        assert!(log.contains("60"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn run_turn_emits_context_compacted_hook() {
+        let root =
+            std::env::temp_dir().join(format!("peridot-core-compact-hook-{}", std::process::id()));
+        let hooks_dir = root.join(".peridot/hooks");
+        std::fs::create_dir_all(&hooks_dir).unwrap();
+        let script = hooks_dir.join("compact.sh");
+        std::fs::write(&script, "#!/bin/sh\necho \"$1:$2\" >> compact.log\n").unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let mut registry = ToolRegistry::new();
+        register_builtin_tools(&mut registry).unwrap();
+        let mut context = ContextManager::with_limits(peridot_context::ContextLimits {
+            compaction_threshold_tokens: 1,
+            ..peridot_context::ContextLimits::default()
+        });
+        for index in 0..5 {
+            context.append(ContextEntry::trusted(
+                ContextSource::User,
+                format!("large prior message {index}"),
+            ));
+        }
+        let mut agent = HarnessAgent::new(
+            AgentState::new(ExecutionMode::Execute, PermissionMode::Auto),
+            context,
+            registry,
+        );
+        let provider = StaticProvider::new(vec![
+            json!({"action":"agent_done","parameters":{"summary":"done"}}).to_string(),
+        ]);
+
+        agent
+            .run_turn(
+                &provider,
+                AgentTurnRequest {
+                    user_input: Some("finish".to_string()),
+                    model: "mock".to_string(),
+                    max_tokens: 512,
+                    project_root: root.clone(),
+                    denied_paths: Vec::new(),
+                    hooks: HooksConfig {
+                        event: vec![HookConfig {
+                            event: "context_compacted".to_string(),
+                            run: ".peridot/hooks/compact.sh {current} {limit}".to_string(),
+                            description: None,
+                            on_failure: HookFailureMode::Block,
+                            only_paths: Vec::new(),
+                        }],
+                        ..HooksConfig::default()
+                    },
+                    security: SecurityConfig::default(),
+                },
+            )
+            .await
+            .unwrap();
+
+        let log = std::fs::read_to_string(root.join("compact.log")).unwrap();
+        assert!(log.contains(":1"));
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -1249,6 +1446,7 @@ mod tests {
                     max_turns: 4,
                     max_tokens: 512,
                     budget_usd: 5.0,
+                    budget_warning_pct: 50,
                     project_root: root.clone(),
                     denied_paths: Vec::new(),
                     hooks: HooksConfig::default(),
@@ -1294,6 +1492,7 @@ mod tests {
                     max_turns: 2,
                     max_tokens: 512,
                     budget_usd: 5.0,
+                    budget_warning_pct: 50,
                     project_root: root.clone(),
                     denied_paths: Vec::new(),
                     hooks: HooksConfig::default(),
@@ -1346,6 +1545,7 @@ mod tests {
                     max_turns: 2,
                     max_tokens: 512,
                     budget_usd: 5.0,
+                    budget_warning_pct: 50,
                     project_root: root.clone(),
                     denied_paths: Vec::new(),
                     hooks: HooksConfig {
@@ -1425,6 +1625,7 @@ mod tests {
                     max_turns: 5,
                     max_tokens: 512,
                     budget_usd: 5.0,
+                    budget_warning_pct: 50,
                     project_root: root.clone(),
                     denied_paths: Vec::new(),
                     hooks: HooksConfig::default(),
