@@ -637,6 +637,7 @@ impl Tool for FileWriteTool {
         }
         fs::write(&path, content)
             .map_err(|err| PeriError::Tool(format!("failed to write {}: {err}", path.display())))?;
+        run_file_changed_hook(ctx, &path)?;
         Ok(ToolResult::success(
             format!("wrote {}", path.display()),
             serde_json::json!({ "path": path }),
@@ -685,6 +686,7 @@ impl Tool for FilePatchTool {
         let patched = content.replacen(old_text, new_text, 1);
         fs::write(&path, patched)
             .map_err(|err| PeriError::Tool(format!("failed to write {}: {err}", path.display())))?;
+        run_file_changed_hook(ctx, &path)?;
         Ok(ToolResult::success(
             format!("patched {}", path.display()),
             serde_json::json!({ "path": path }),
@@ -698,6 +700,30 @@ impl Tool for FilePatchTool {
     fn can_run_concurrent(&self) -> bool {
         false
     }
+}
+
+fn run_file_changed_hook(ctx: &ToolContext, path: &Path) -> PeriResult<()> {
+    let mut variables = HookVariables::new();
+    variables.insert(
+        "project_root".to_string(),
+        ctx.project_root.display().to_string(),
+    );
+    variables.insert(
+        "workspace".to_string(),
+        ctx.project_root.display().to_string(),
+    );
+    variables.insert("path".to_string(), hook_relative_path(ctx, path));
+    variables.insert("absolute_path".to_string(), path.display().to_string());
+    HookRunner::new(&ctx.project_root, ctx.hooks.clone())
+        .run_event_hooks("file_changed", &variables)?;
+    Ok(())
+}
+
+fn hook_relative_path(ctx: &ToolContext, path: &Path) -> String {
+    path.strip_prefix(&ctx.project_root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/")
 }
 
 /// Built-in substring file search tool.
@@ -1729,6 +1755,43 @@ mod tests {
             .unwrap();
 
         assert_eq!(result.output, Value::String("hello".to_string()));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn file_write_runs_file_changed_hook() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root =
+            std::env::temp_dir().join(format!("peridot-tools-file-hook-{}", std::process::id()));
+        let hooks_dir = root.join(".peridot/hooks");
+        fs::create_dir_all(&hooks_dir).unwrap();
+        fs::create_dir_all(root.join("src")).unwrap();
+        let script = hooks_dir.join("file-changed.sh");
+        fs::write(&script, "#!/bin/sh\necho \"$1\" >> changed.log\n").unwrap();
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+        let ctx = ToolContext::new(&root, PermissionMode::Auto).with_hooks(HooksConfig {
+            event: vec![peridot_common::HookConfig {
+                event: "file_changed".to_string(),
+                run: ".peridot/hooks/file-changed.sh {path}".to_string(),
+                description: None,
+                on_failure: peridot_common::HookFailureMode::Block,
+                only_paths: vec!["src/**".to_string()],
+            }],
+            ..HooksConfig::default()
+        });
+
+        FileWriteTool
+            .execute(
+                serde_json::json!({"path":"src/sample.txt","content":"hello"}),
+                &ctx,
+            )
+            .await
+            .unwrap();
+
+        let log = fs::read_to_string(root.join("changed.log")).unwrap();
+        assert!(log.contains("src/sample.txt"));
         fs::remove_dir_all(root).unwrap();
     }
 
