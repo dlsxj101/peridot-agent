@@ -7,11 +7,11 @@ Peridot Agent is a Rust CLI/TUI autonomous coding agent. The current implementat
 Implemented:
 
 - Cargo workspace with the 13 spec crates.
-- Provider-neutral LLM contracts with Claude Messages and OpenAI Responses providers.
+- Provider-neutral LLM contracts with Claude Messages and OpenAI Responses providers, including provider-native streaming response parsing.
 - Append-only context manager with large-observation offload.
 - Built-in file, shell, plan, git, verify, and agent tools.
 - AGENTS.md path boundary enforcement.
-- Bounded agent loop with deterministic mock provider support.
+- Bounded agent loop with deterministic mock provider support, Goal Checker, budget guardrails, and parse-failure recovery reminders.
 - Project scanner for Rust, Node, Python, Go, Make, AGENTS metadata, and git state.
 - SQLite-backed session summary store.
 - AGENTS, skill, MCP, verify, setup, login/logout, and session resume CLI surfaces.
@@ -20,7 +20,7 @@ Implemented:
 - Configured tool hooks with warn/block behavior and audit JSONL logging.
 - OpenAI API-key and OAuth PKCE login storage.
 - Headless CLI commands and Ratatui-backed interactive TUI shell.
-- GitHub Actions CI, six-target release packaging, and `install.sh`.
+- GitHub Actions CI, six-target release packaging, `install.sh`, checksum-verified self-update, and startup update notices.
 
 ## Common Commands
 
@@ -75,6 +75,15 @@ Live model responses must currently follow Peridot's JSON action protocol:
 {"action":"file_read","parameters":{"path":"README.md"}}
 ```
 
+## Updates
+
+```bash
+cargo run -p peridot-cli -- update --check
+cargo run -p peridot-cli -- update --force
+```
+
+Interactive sessions honor `[updates]` config, check at most once per interval, and print a one-line notice. `peridot update` verifies `SHA256SUMS` before replacing the current binary and keeps the `peri` alias in place.
+
 ## Project Initialization
 
 ```bash
@@ -103,7 +112,7 @@ Tool calls append audit entries to `.peridot/logs/audit.jsonl`.
 ## Release
 
 CI runs formatting, Clippy, and the workspace test suite on pushes and pull requests. Tags matching `v*` build release archives for Linux, macOS, and Windows on x86_64 and aarch64. Unix targets publish `.tar.gz`; Windows publishes both `.tar.gz` and `.zip`.
-Release publishing also attaches `SHA256SUMS` and a generated `peridot.rb` Homebrew formula with `peridot` plus the `peri` alias.
+Release publishing also attaches `SHA256SUMS`, `install.sh`, and a generated `peridot.rb` Homebrew formula with `peridot` plus the `peri` alias.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/peridot-ai/peridot/main/install.sh | sh
