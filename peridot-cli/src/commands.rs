@@ -147,22 +147,62 @@ struct SkillEntry {
     path: PathBuf,
 }
 
-pub(crate) fn load_project_config(project_root: &Path) -> Result<PeridotConfig> {
+pub(crate) fn load_effective_config(
+    project_root: &Path,
+    explicit_config: Option<&Path>,
+) -> Result<PeridotConfig> {
+    load_effective_config_inner(project_root, explicit_config, true, true)
+}
+
+fn load_effective_config_inner(
+    project_root: &Path,
+    explicit_config: Option<&Path>,
+    include_global: bool,
+    include_env: bool,
+) -> Result<PeridotConfig> {
     let mut config = PeridotConfig::default();
+    if include_global && let Some(global_config) = global_config_path() {
+        merge_config_file(&global_config, false, &mut config)?;
+    }
     apply_agents_preferences(project_root, &mut config)?;
 
-    let path = project_root.join(".peridot/config.toml");
+    let project_config;
+    let (path, required) = match explicit_config {
+        Some(path) => (path, true),
+        None => {
+            project_config = project_root.join(".peridot/config.toml");
+            (project_config.as_path(), false)
+        }
+    };
+    merge_config_file(path, required, &mut config)?;
+    if include_env {
+        apply_env_config(&mut config)?;
+    }
+    Ok(config)
+}
+
+fn merge_config_file(path: &Path, required: bool, config: &mut PeridotConfig) -> Result<()> {
     if !path.exists() {
-        return Ok(config);
+        if required {
+            anyhow::bail!("config file not found: {}", path.display());
+        }
+        return Ok(());
     }
     let content =
-        fs::read_to_string(&path).with_context(|| format!("failed to read {}", path.display()))?;
+        fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?;
     let project_config = toml::from_str::<PeridotConfig>(&content)
         .with_context(|| format!("failed to parse {}", path.display()))?;
     let raw_config = toml::from_str::<toml::Value>(&content)
         .with_context(|| format!("failed to parse {}", path.display()))?;
-    merge_project_config(&raw_config, project_config, &mut config);
-    Ok(config)
+    merge_project_config(&raw_config, project_config, config);
+    Ok(())
+}
+
+fn global_config_path() -> Option<PathBuf> {
+    if let Some(home) = std::env::var_os("PERIDOT_HOME") {
+        return Some(PathBuf::from(home).join("config.toml"));
+    }
+    std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".peridot/config.toml"))
 }
 
 fn apply_agents_preferences(project_root: &Path, config: &mut PeridotConfig) -> Result<()> {
@@ -181,6 +221,49 @@ fn apply_agents_preferences(project_root: &Path, config: &mut PeridotConfig) -> 
         config.security.ask_before_delete = ask_before_delete;
     }
     Ok(())
+}
+
+fn apply_env_config(config: &mut PeridotConfig) -> Result<()> {
+    if let Ok(model) = std::env::var("PERIDOT_MODEL")
+        && !model.trim().is_empty()
+    {
+        config.models.main = model;
+    }
+    if let Ok(mode) = std::env::var("PERIDOT_MODE") {
+        config.defaults.mode = parse_env_mode("PERIDOT_MODE", &mode)?;
+    }
+    if let Ok(permission) = std::env::var("PERIDOT_PERMISSION") {
+        config.defaults.permission = parse_env_permission("PERIDOT_PERMISSION", &permission)?;
+    }
+    if let Ok(budget) = std::env::var("PERIDOT_BUDGET") {
+        config.defaults.budget_usd = budget.parse().with_context(|| {
+            format!("failed to parse PERIDOT_BUDGET as a decimal number: {budget}")
+        })?;
+    }
+    if let Ok(max_turns) = std::env::var("PERIDOT_MAX_TURNS") {
+        config.defaults.max_turns = max_turns.parse().with_context(|| {
+            format!("failed to parse PERIDOT_MAX_TURNS as an integer: {max_turns}")
+        })?;
+    }
+    Ok(())
+}
+
+fn parse_env_mode(name: &str, value: &str) -> Result<peridot_common::ExecutionMode> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "plan" => Ok(peridot_common::ExecutionMode::Plan),
+        "execute" => Ok(peridot_common::ExecutionMode::Execute),
+        "goal" => Ok(peridot_common::ExecutionMode::Goal),
+        _ => anyhow::bail!("{name} must be one of plan, execute, or goal"),
+    }
+}
+
+fn parse_env_permission(name: &str, value: &str) -> Result<peridot_common::PermissionMode> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "safe" => Ok(peridot_common::PermissionMode::Safe),
+        "auto" => Ok(peridot_common::PermissionMode::Auto),
+        "yolo" => Ok(peridot_common::PermissionMode::Yolo),
+        _ => anyhow::bail!("{name} must be one of safe, auto, or yolo"),
+    }
 }
 
 fn merge_project_config(
@@ -1463,7 +1546,7 @@ mod tests {
         )
         .unwrap();
 
-        let config = load_project_config(&root).unwrap();
+        let config = load_effective_config_inner(&root, None, false, false).unwrap();
 
         assert_eq!(config.defaults.mode, peridot_common::ExecutionMode::Goal);
         assert_eq!(
@@ -1495,7 +1578,7 @@ mod tests {
         )
         .unwrap();
 
-        let config = load_project_config(&root).unwrap();
+        let config = load_effective_config_inner(&root, None, false, false).unwrap();
 
         assert_eq!(config.defaults.mode, peridot_common::ExecutionMode::Goal);
         assert_eq!(
@@ -1505,6 +1588,40 @@ mod tests {
         assert!(!config.security.ask_before_install);
         assert!(config.security.ask_before_delete);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn explicit_config_path_overrides_project_config_path() {
+        let root = std::env::temp_dir().join(format!(
+            "peridot-cli-explicit-config-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(root.join(".peridot")).unwrap();
+        let custom = root.join("custom-config.toml");
+        fs::write(
+            root.join(".peridot/config.toml"),
+            "[defaults]\nmode = \"plan\"\n",
+        )
+        .unwrap();
+        fs::write(&custom, "[defaults]\nmode = \"goal\"\n").unwrap();
+
+        let config = load_effective_config_inner(&root, Some(&custom), false, false).unwrap();
+
+        assert_eq!(config.defaults.mode, peridot_common::ExecutionMode::Goal);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn parses_env_override_values() {
+        assert_eq!(
+            parse_env_mode("PERIDOT_MODE", "goal").unwrap(),
+            peridot_common::ExecutionMode::Goal
+        );
+        assert_eq!(
+            parse_env_permission("PERIDOT_PERMISSION", "yolo").unwrap(),
+            peridot_common::PermissionMode::Yolo
+        );
+        assert!(parse_env_mode("PERIDOT_MODE", "wander").is_err());
     }
 
     #[tokio::test]

@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use clap::{Parser, Subcommand, ValueEnum};
 use commands::{
     AgentsCommand, AuthProvider, ConfigCommand, McpCommand, OutputFormat, SessionCommand,
-    SkillCommand, load_project_config, print_scan, read_stored_api_key,
+    SkillCommand, load_effective_config, print_scan, read_stored_api_key,
     read_stored_openai_oauth_access_token, run_agents_command, run_config_command,
     run_login_command, run_logout_command, run_mcp_command, run_session_command, run_setup_command,
     run_skill_command, run_update_command, run_verify_command,
@@ -52,6 +52,10 @@ struct Cli {
     #[arg(long, global = true)]
     project: Option<PathBuf>,
 
+    /// Override config.toml path.
+    #[arg(long, global = true)]
+    config: Option<PathBuf>,
+
     /// TUI-less, script-friendly output.
     #[arg(long, global = true)]
     headless: bool,
@@ -86,6 +90,12 @@ struct Cli {
     /// Subcommand to run.
     #[command(subcommand)]
     command: Option<Command>,
+}
+
+impl Cli {
+    fn effective_headless(&self) -> bool {
+        self.headless || env_truthy("PERIDOT_HEADLESS")
+    }
 }
 
 /// Top-level subcommands.
@@ -210,7 +220,7 @@ impl From<CliPermission> for PermissionMode {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     let project_root = cli.project.clone().unwrap_or(std::env::current_dir()?);
-    let config = load_project_config(&project_root)?;
+    let config = load_effective_config(&project_root, cli.config.as_deref())?;
 
     match &cli.command {
         Some(Command::Version) => {
@@ -325,7 +335,7 @@ async fn main() -> Result<()> {
                     .model
                     .clone()
                     .unwrap_or_else(|| config.models.main.clone());
-                if cli.headless || cli.output == OutputFormat::Json {
+                if cli.effective_headless() || cli.output == OutputFormat::Json {
                     match cli.output {
                         OutputFormat::Json => println!(
                             "{}",
@@ -404,9 +414,9 @@ async fn run_task(
             },
         )
         .await?;
-        if cli.output == OutputFormat::Json || cli.headless {
+        if cli.output == OutputFormat::Json || cli.effective_headless() {
             println!("{}", serde_json::to_string_pretty(&summary)?);
-            exit_for_summary(&summary, cli.headless);
+            exit_for_summary(&summary, cli.effective_headless());
         } else {
             println!(
                 "stopped={:?} turns={}",
@@ -435,9 +445,9 @@ async fn run_task(
             },
         )
         .await?;
-        if cli.output == OutputFormat::Json || cli.headless {
+        if cli.output == OutputFormat::Json || cli.effective_headless() {
             println!("{}", serde_json::to_string_pretty(&summary)?);
-            exit_for_summary(&summary, cli.headless);
+            exit_for_summary(&summary, cli.effective_headless());
         } else {
             println!(
                 "stopped={:?} turns={} cost=${:.6}",
@@ -462,14 +472,14 @@ async fn run_task(
                     config.security.clone(),
                 )
                 .await?;
-            if cli.output == OutputFormat::Json || cli.headless {
+            if cli.output == OutputFormat::Json || cli.effective_headless() {
                 println!("{}", serde_json::to_string_pretty(&result)?);
             } else {
                 println!("{}", result.summary);
             }
         }
         None => {
-            if cli.output == OutputFormat::Json || cli.headless {
+            if cli.output == OutputFormat::Json || cli.effective_headless() {
                 println!(
                     "{}",
                     serde_json::to_string_pretty(&serde_json::json!({
@@ -605,6 +615,18 @@ fn exit_for_summary(summary: &AgentRunSummary, headless: bool) {
         StopReason::Budget => std::process::exit(2),
         StopReason::MaxTurns => std::process::exit(3),
     }
+}
+
+fn env_truthy(name: &str) -> bool {
+    std::env::var(name)
+        .ok()
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
 }
 
 fn live_provider(config: &PeridotConfig, model: &str) -> Result<Box<dyn LlmProvider>> {
