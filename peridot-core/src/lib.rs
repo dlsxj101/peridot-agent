@@ -204,6 +204,7 @@ impl HarnessAgent {
             self.context
                 .append(ContextEntry::trusted(ContextSource::User, user_input));
         }
+        self.context.compact_if_needed();
 
         let completion = provider
             .complete(CompletionRequest {

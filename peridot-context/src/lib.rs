@@ -59,6 +59,8 @@ impl ContextEntry {
 pub struct ContextLimits {
     /// Hard token limit for message construction.
     pub hard_limit_tokens: usize,
+    /// Estimated token threshold that triggers deterministic compaction.
+    pub compaction_threshold_tokens: usize,
     /// Character threshold above which observations are offloaded.
     pub offload_threshold_chars: usize,
     /// Directory where offloaded observations are written.
@@ -69,6 +71,7 @@ impl Default for ContextLimits {
     fn default() -> Self {
         Self {
             hard_limit_tokens: 160_000,
+            compaction_threshold_tokens: 100_000,
             offload_threshold_chars: 3_000,
             offload_dir: None,
         }
@@ -150,6 +153,21 @@ impl ContextManager {
             .sum()
     }
 
+    /// Compacts old entries into a structured reminder when the soft limit is exceeded.
+    pub fn compact_if_needed(&mut self) -> bool {
+        if self.estimated_tokens() <= self.limits.compaction_threshold_tokens
+            || self.entries.len() <= 4
+        {
+            return false;
+        }
+        let keep_from = self.entries.len().saturating_sub(4);
+        let summary = summarize_entries(&self.entries[..keep_from]);
+        let mut compacted = vec![ContextEntry::trusted(ContextSource::PlanReminder, summary)];
+        compacted.extend_from_slice(&self.entries[keep_from..]);
+        self.entries = compacted;
+        true
+    }
+
     /// Builds provider-neutral messages from the current entries.
     pub fn to_messages(&self) -> Vec<LlmMessage> {
         let mut messages = self
@@ -175,6 +193,54 @@ impl ContextManager {
         trim_to_hard_limit(&mut messages, self.limits.hard_limit_tokens);
         messages
     }
+}
+
+fn summarize_entries(entries: &[ContextEntry]) -> String {
+    let mut user = 0;
+    let mut assistant = 0;
+    let mut tool = 0;
+    let mut plan = 0;
+    let mut external = 0;
+    let mut fragments = Vec::new();
+    for entry in entries {
+        match entry.source {
+            ContextSource::User => user += 1,
+            ContextSource::Assistant => assistant += 1,
+            ContextSource::Tool => tool += 1,
+            ContextSource::PlanReminder => plan += 1,
+            ContextSource::External => external += 1,
+        }
+        if fragments.len() < 6 {
+            fragments.push(format!(
+                "- {}: {}",
+                source_name(&entry.source),
+                compact_fragment(&entry.content, 120)
+            ));
+        }
+    }
+    format!(
+        "Compacted prior context: entries={} user={} assistant={} tool={} plan={} external={}.\nKey retained fragments:\n{}",
+        entries.len(),
+        user,
+        assistant,
+        tool,
+        plan,
+        external,
+        fragments.join("\n")
+    )
+}
+
+fn compact_fragment(content: &str, max_chars: usize) -> String {
+    let content = content.split_whitespace().collect::<Vec<_>>().join(" ");
+    if content.chars().count() <= max_chars {
+        return content;
+    }
+    let mut fragment = content
+        .chars()
+        .take(max_chars.saturating_sub(3))
+        .collect::<String>();
+    fragment.push_str("...");
+    fragment
 }
 
 fn render_untrusted_content(source: &ContextSource, content: &str) -> String {
@@ -269,6 +335,7 @@ mod tests {
             std::env::temp_dir().join(format!("peridot-context-offload-{}", std::process::id()));
         let mut manager = ContextManager::with_limits(ContextLimits {
             hard_limit_tokens: 160_000,
+            compaction_threshold_tokens: 100_000,
             offload_threshold_chars: 4,
             offload_dir: Some(root.clone()),
         });
@@ -279,6 +346,31 @@ mod tests {
         assert!(manager.entries()[0].content.contains("offloaded"));
         assert!(root.join("observation-1.txt").exists());
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn compacts_old_entries_when_threshold_is_exceeded() {
+        let mut manager = ContextManager::with_limits(ContextLimits {
+            compaction_threshold_tokens: 4,
+            ..ContextLimits::default()
+        });
+        for index in 0..6 {
+            manager.append(ContextEntry::trusted(
+                ContextSource::User,
+                format!("entry {index} with enough text"),
+            ));
+        }
+
+        assert!(manager.compact_if_needed());
+
+        assert_eq!(manager.entries().len(), 5);
+        assert!(
+            manager.entries()[0]
+                .content
+                .contains("Compacted prior context")
+        );
+        assert!(manager.entries()[0].content.contains("entries=2"));
+        assert_eq!(manager.entries()[1].content, "entry 2 with enough text");
     }
 
     #[test]

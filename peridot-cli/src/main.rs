@@ -16,9 +16,9 @@ use commands::{
     run_skill_command, run_update_command, run_verify_command,
 };
 use peridot_common::{
-    ExecutionMode, PeriError, PeriResult, PeridotConfig, PermissionMode, ToolCall,
+    ContextConfig, ExecutionMode, PeriError, PeriResult, PeridotConfig, PermissionMode, ToolCall,
 };
-use peridot_context::{ContextManager, project_context_limits};
+use peridot_context::{ContextLimits, ContextManager, project_context_limits};
 use peridot_core::{AgentRunRequest, AgentRunSummary, AgentState, HarnessAgent, StopReason};
 use peridot_llm::{
     AuthMethod, ClaudeProvider, CompletionRequest, CompletionResponse, LlmProvider, OpenAiProvider,
@@ -393,7 +393,10 @@ async fn run_task(
     let mut registry = ToolRegistry::new();
     register_builtin_tools(&mut registry)?;
     register_configured_mcp_tools(&mut registry, config).await?;
-    let context = ContextManager::with_limits(project_context_limits(project_root));
+    let context = ContextManager::with_limits(project_context_limits_from_config(
+        project_root,
+        &config.context,
+    ));
     let mut agent = HarnessAgent::new(state, context, registry);
     let call = task_to_tool_call(&task);
 
@@ -672,6 +675,17 @@ fn env_truthy(name: &str) -> bool {
             )
         })
         .unwrap_or(false)
+}
+
+fn project_context_limits_from_config(
+    project_root: &Path,
+    config: &ContextConfig,
+) -> ContextLimits {
+    let mut limits = project_context_limits(project_root);
+    limits.hard_limit_tokens = config.hard_limit;
+    limits.compaction_threshold_tokens = config.compaction_threshold;
+    limits.offload_threshold_chars = config.offload_threshold_chars;
+    limits
 }
 
 fn live_provider(config: &PeridotConfig, model: &str) -> Result<Box<dyn LlmProvider>> {
