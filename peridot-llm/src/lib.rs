@@ -1,4 +1,4 @@
-//! LLM provider contracts and provider skeletons.
+//! LLM provider contracts and live provider implementations.
 
 use std::time::Duration;
 
@@ -267,7 +267,7 @@ pub struct ClaudeProvider {
 }
 
 impl ClaudeProvider {
-    /// Creates a Claude provider skeleton.
+    /// Creates a Claude provider without credentials.
     pub fn new(model: impl Into<String>, api_key_present: bool) -> Self {
         let api_key = api_key_present.then(|| "configured".to_string());
         Self::with_options(model, api_key, "https://api.anthropic.com")
@@ -675,7 +675,7 @@ pub struct OpenAiProvider {
 }
 
 impl OpenAiProvider {
-    /// Creates an OpenAI provider skeleton without credentials.
+    /// Creates an OpenAI provider without credentials.
     pub fn new(auth_method: AuthMethod) -> Self {
         Self::with_options("gpt-5.2", None, "https://api.openai.com", auth_method)
     }

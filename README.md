@@ -1,6 +1,6 @@
 # Peridot Agent
 
-Peridot Agent is a Rust CLI/TUI autonomous coding agent. The current implementation is an early, buildable foundation that follows `PERIDOT_SPEC_v1.md`.
+Peridot Agent is a Rust CLI/TUI autonomous coding agent. The current implementation is a buildable v0.1-ready foundation that follows `PERIDOT_SPEC_v1.md`.
 
 ## Status
 

@@ -178,7 +178,7 @@ impl ProjectProfile {
     }
 }
 
-/// Project scanner skeleton.
+/// Project scanner for language, build-system, AGENTS, and git signals.
 #[derive(Clone, Debug, Default)]
 pub struct ProjectScanner;
 

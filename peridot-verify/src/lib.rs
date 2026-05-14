@@ -1,4 +1,4 @@
-//! Deterministic verification pipeline skeleton.
+//! Deterministic verification pipeline.
 
 use peridot_common::PeriError;
 use peridot_common::PeriResult;

@@ -15,7 +15,7 @@ pub struct GitStatus {
     pub changed_files: Vec<PathBuf>,
 }
 
-/// Git manager skeleton.
+/// Git manager for repository status, commits, branches, and worktrees.
 #[derive(Clone, Debug)]
 pub struct GitManager {
     root: PathBuf,

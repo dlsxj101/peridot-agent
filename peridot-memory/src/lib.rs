@@ -34,7 +34,7 @@ pub struct ErrorResolution {
     pub resolution: String,
 }
 
-/// Memory store skeleton.
+/// SQLite-backed memory store.
 #[derive(Clone, Debug)]
 pub struct MemoryStore {
     path: PathBuf,
