@@ -13,8 +13,8 @@ use peridot_common::{
 use peridot_context::{ContextManager, project_context_limits};
 use peridot_core::{AgentRunRequest, AgentState, HarnessAgent};
 use peridot_llm::{
-    AuthMethod, CompletionRequest, CompletionResponse, LlmProvider, PricingTable, Usage,
-    parse_action,
+    AuthMethod, ClaudeProvider, CompletionRequest, CompletionResponse, LlmProvider, PricingTable,
+    Usage, parse_action,
 };
 use peridot_memory::{MemoryStore, SessionSummary};
 use peridot_project::{ProjectProfile, ProjectScanner};
@@ -51,6 +51,10 @@ struct Cli {
     /// Read deterministic assistant JSON responses from a file, one response per line.
     #[arg(long, global = true)]
     mock_response_file: Option<PathBuf>,
+
+    /// Use the configured live provider instead of deterministic JSON/tool-only behavior.
+    #[arg(long, global = true)]
+    live: bool,
 
     /// Optional task to start immediately.
     task: Option<String>,
@@ -299,19 +303,16 @@ async fn run_task(
         let profile = ProjectScanner::new().scan(project_root)?;
         let denied_paths = profile.boundaries.into_iter().map(PathBuf::from).collect();
         let provider = FileMockProvider::from_file(mock_response_file)?;
-        let summary = agent
-            .run_until_done(
-                &provider,
-                AgentRunRequest {
-                    task,
-                    model,
-                    max_turns: config.defaults.max_turns,
-                    max_tokens: 4096,
-                    project_root: project_root.to_path_buf(),
-                    denied_paths,
-                },
-            )
-            .await?;
+        let summary = run_agent_loop(
+            &mut agent,
+            &provider,
+            task,
+            model,
+            config.defaults.max_turns,
+            project_root,
+            denied_paths,
+        )
+        .await?;
         if cli.output == OutputFormat::Json || cli.headless {
             println!("{}", serde_json::to_string_pretty(&summary)?);
         } else {
@@ -319,6 +320,33 @@ async fn run_task(
                 "stopped={:?} turns={}",
                 summary.stopped_reason,
                 summary.turns.len()
+            );
+        }
+        return Ok(());
+    }
+
+    if cli.live {
+        let profile = ProjectScanner::new().scan(project_root)?;
+        let denied_paths = profile.boundaries.into_iter().map(PathBuf::from).collect();
+        let provider = live_provider(config, &model)?;
+        let summary = run_agent_loop(
+            &mut agent,
+            &provider,
+            task,
+            model,
+            config.defaults.max_turns,
+            project_root,
+            denied_paths,
+        )
+        .await?;
+        if cli.output == OutputFormat::Json || cli.headless {
+            println!("{}", serde_json::to_string_pretty(&summary)?);
+        } else {
+            println!(
+                "stopped={:?} turns={} cost=${:.6}",
+                summary.stopped_reason,
+                summary.turns.len(),
+                summary.usage.estimated_cost_usd
             );
         }
         return Ok(());
@@ -364,6 +392,49 @@ async fn run_task(
         }
     }
     Ok(())
+}
+
+async fn run_agent_loop<P>(
+    agent: &mut HarnessAgent,
+    provider: &P,
+    task: String,
+    model: String,
+    max_turns: u32,
+    project_root: &Path,
+    denied_paths: Vec<PathBuf>,
+) -> Result<peridot_core::AgentRunSummary>
+where
+    P: LlmProvider,
+{
+    Ok(agent
+        .run_until_done(
+            provider,
+            AgentRunRequest {
+                task,
+                model,
+                max_turns,
+                max_tokens: 4096,
+                project_root: project_root.to_path_buf(),
+                denied_paths,
+            },
+        )
+        .await?)
+}
+
+fn live_provider(config: &PeridotConfig, model: &str) -> Result<ClaudeProvider> {
+    if config.auth.primary != "claude-api" {
+        anyhow::bail!(
+            "live provider {} is not implemented yet; use claude-api or --mock-response-file",
+            config.auth.primary
+        );
+    }
+    let api_key = std::env::var("ANTHROPIC_API_KEY")
+        .with_context(|| "ANTHROPIC_API_KEY is required for --live")?;
+    Ok(ClaudeProvider::with_options(
+        model.to_string(),
+        Some(api_key),
+        config.api.base_url.clone(),
+    ))
 }
 
 struct FileMockProvider {
