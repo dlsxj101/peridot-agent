@@ -637,6 +637,7 @@ dependencies = [
  "peridot-context",
  "peridot-core",
  "peridot-llm",
+ "peridot-memory",
  "peridot-project",
  "peridot-tools",
  "serde_json",

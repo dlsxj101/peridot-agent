@@ -106,6 +106,36 @@ impl MemoryStore {
         Ok(sessions)
     }
 
+    /// Fetches one saved session summary by id.
+    pub fn get_session(&self, id: &str) -> PeriResult<Option<SessionSummary>> {
+        self.initialize()?;
+        let connection = self.connection()?;
+        let mut statement = connection
+            .prepare("SELECT id, summary FROM sessions WHERE id = ?1")
+            .map_err(sql_error)?;
+        let result = statement.query_row([id], |row| {
+            Ok(SessionSummary {
+                id: row.get(0)?,
+                summary: row.get(1)?,
+            })
+        });
+        match result {
+            Ok(session) => Ok(Some(session)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(err) => Err(sql_error(err)),
+        }
+    }
+
+    /// Deletes a saved session summary.
+    pub fn delete_session(&self, id: &str) -> PeriResult<bool> {
+        self.initialize()?;
+        let connection = self.connection()?;
+        let changed = connection
+            .execute("DELETE FROM sessions WHERE id = ?1", [id])
+            .map_err(sql_error)?;
+        Ok(changed > 0)
+    }
+
     fn connection(&self) -> PeriResult<Connection> {
         Connection::open(&self.path).map_err(sql_error)
     }
@@ -134,6 +164,12 @@ mod tests {
 
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].id, "session-1");
+        assert_eq!(
+            store.get_session("session-1").unwrap().unwrap().summary,
+            "built things"
+        );
+        assert!(store.delete_session("session-1").unwrap());
+        assert!(store.list_sessions().unwrap().is_empty());
         fs::remove_dir_all(root).unwrap();
     }
 }

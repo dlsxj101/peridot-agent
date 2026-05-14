@@ -9,6 +9,7 @@ use peridot_common::{ExecutionMode, PeridotConfig, PermissionMode, ToolCall};
 use peridot_context::ContextManager;
 use peridot_core::{AgentState, HarnessAgent};
 use peridot_llm::parse_action;
+use peridot_memory::{MemoryStore, SessionSummary};
 use peridot_project::{ProjectProfile, ProjectScanner};
 use peridot_tools::{ToolRegistry, register_builtin_tools};
 
@@ -74,6 +75,12 @@ enum Command {
         #[command(subcommand)]
         command: ConfigCommand,
     },
+    /// Session persistence commands.
+    Session {
+        /// Session subcommand.
+        #[command(subcommand)]
+        command: SessionCommand,
+    },
     /// Print version information.
     Version,
 }
@@ -83,6 +90,30 @@ enum Command {
 enum ConfigCommand {
     /// Print the effective config.
     Show,
+}
+
+/// Session subcommands.
+#[derive(Debug, Subcommand)]
+enum SessionCommand {
+    /// List saved sessions.
+    List,
+    /// Save a session summary.
+    Save {
+        /// Session id.
+        id: String,
+        /// Summary text.
+        summary: Vec<String>,
+    },
+    /// Show one session summary.
+    Show {
+        /// Session id.
+        id: String,
+    },
+    /// Delete one session summary.
+    Delete {
+        /// Session id.
+        id: String,
+    },
 }
 
 /// Clap representation of execution modes.
@@ -156,6 +187,10 @@ async fn main() -> Result<()> {
             command: ConfigCommand::Show,
         }) => {
             print_json_or_text(&config, cli.output)?;
+            return Ok(());
+        }
+        Some(Command::Session { command }) => {
+            run_session_command(command, &project_root, cli.output)?;
             return Ok(());
         }
         Some(Command::Run { task }) => {
@@ -317,6 +352,62 @@ fn load_project_config(project_root: &Path) -> Result<PeridotConfig> {
     Ok(config)
 }
 
+fn memory_store(project_root: &Path) -> MemoryStore {
+    MemoryStore::new(project_root.join(".peridot/memory.db"))
+}
+
+fn run_session_command(
+    command: &SessionCommand,
+    project_root: &Path,
+    output: OutputFormat,
+) -> Result<()> {
+    let store = memory_store(project_root);
+    match command {
+        SessionCommand::List => {
+            let sessions = store.list_sessions()?;
+            match output {
+                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&sessions)?),
+                OutputFormat::Text => {
+                    for session in sessions {
+                        println!("{}\t{}", session.id, session.summary);
+                    }
+                }
+            }
+        }
+        SessionCommand::Save { id, summary } => {
+            let session = SessionSummary {
+                id: id.clone(),
+                summary: summary.join(" "),
+            };
+            store.save_session(&session)?;
+            print_json_or_text_result(
+                serde_json::json!({"saved": true, "id": id}),
+                format!("saved session {id}"),
+                output,
+            )?;
+        }
+        SessionCommand::Show { id } => {
+            let session = store.get_session(id)?;
+            match output {
+                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&session)?),
+                OutputFormat::Text => match session {
+                    Some(session) => println!("{}\t{}", session.id, session.summary),
+                    None => println!("session not found: {id}"),
+                },
+            }
+        }
+        SessionCommand::Delete { id } => {
+            let deleted = store.delete_session(id)?;
+            print_json_or_text_result(
+                serde_json::json!({"deleted": deleted, "id": id}),
+                format!("deleted session {id}: {deleted}"),
+                output,
+            )?;
+        }
+    }
+    Ok(())
+}
+
 fn print_scan(profile: &ProjectProfile, output: OutputFormat) -> Result<()> {
     match output {
         OutputFormat::Json => println!("{}", serde_json::to_string_pretty(profile)?),
@@ -356,6 +447,18 @@ fn print_json_or_text(config: &PeridotConfig, output: OutputFormat) -> Result<()
             println!("defaults.max_turns = {}", config.defaults.max_turns);
             println!("defaults.budget_usd = {}", config.defaults.budget_usd);
         }
+    }
+    Ok(())
+}
+
+fn print_json_or_text_result(
+    value: serde_json::Value,
+    text: String,
+    output: OutputFormat,
+) -> Result<()> {
+    match output {
+        OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&value)?),
+        OutputFormat::Text => println!("{text}"),
     }
     Ok(())
 }
