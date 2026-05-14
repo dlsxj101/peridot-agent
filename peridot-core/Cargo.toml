@@ -1,0 +1,14 @@
+[package]
+name = "peridot-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+peridot-common = { path = "../peridot-common" }
+peridot-context = { path = "../peridot-context" }
+peridot-llm = { path = "../peridot-llm" }
+peridot-tools = { path = "../peridot-tools" }
+serde.workspace = true

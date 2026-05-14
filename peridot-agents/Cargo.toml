@@ -1,0 +1,12 @@
+[package]
+name = "peridot-agents"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+peridot-common = { path = "../peridot-common" }
+serde.workspace = true

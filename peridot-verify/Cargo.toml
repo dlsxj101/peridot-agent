@@ -1,0 +1,12 @@
+[package]
+name = "peridot-verify"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+peridot-common = { path = "../peridot-common" }
+peridot-project = { path = "../peridot-project" }
+serde.workspace = true
