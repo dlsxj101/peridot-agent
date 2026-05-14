@@ -14,7 +14,9 @@ Implemented:
 - Bounded agent loop with deterministic mock provider support.
 - Project scanner for Rust, Node, Python, Go, Make, AGENTS metadata, and git state.
 - SQLite-backed session summary store.
-- Headless CLI commands and initial TUI state model.
+- AGENTS, skill, MCP, and session resume CLI surfaces.
+- Configured tool hooks with warn/block behavior and audit JSONL logging.
+- Headless CLI commands and a deterministic TUI snapshot model.
 
 ## Common Commands
 
@@ -30,6 +32,10 @@ cargo run -p peridot-cli -- scan --output json
 cargo run -p peridot-cli -- config init
 cargo run -p peridot-cli -- session save demo "initial work"
 cargo run -p peridot-cli -- session list
+cargo run -p peridot-cli -- session resume demo
+cargo run -p peridot-cli -- agents show
+cargo run -p peridot-cli -- skill list
+cargo run -p peridot-cli -- mcp list
 ```
 
 ## Deterministic Agent Loop
@@ -68,3 +74,20 @@ peridot config init
 ```
 
 This creates `.peridot/config.toml`, `.peridot/hooks/`, `.peridot/skills/`, and gitignore entries for local memory, sessions, logs, and generated skills.
+
+## Hooks And Audit
+
+Tool hooks are configured in `.peridot/config.toml` and must execute scripts under `.peridot/hooks/`:
+
+```toml
+[hooks]
+timeout_seconds = 30
+
+[[hooks.tool]]
+event = "pre:file_write"
+run = ".peridot/hooks/check-write.sh {path}"
+on_failure = "block"
+only_paths = ["src/**"]
+```
+
+Tool calls append audit entries to `.peridot/logs/audit.jsonl`.
