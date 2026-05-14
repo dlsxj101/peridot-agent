@@ -242,7 +242,7 @@ async fn main() -> Result<()> {
             return Ok(());
         }
         Some(Command::Skill { command }) => {
-            run_skill_command(command, &project_root, cli.output)?;
+            run_skill_command(command, &project_root, cli.output).await?;
             return Ok(());
         }
         Some(Command::Mcp { command }) => {

@@ -111,6 +111,11 @@ pub(crate) enum AgentsCommand {
 pub(crate) enum SkillCommand {
     /// List local and global skills.
     List,
+    /// Install a project-local community skill from a URL or file path.
+    Install {
+        /// HTTP(S) URL or local Markdown file path.
+        source: String,
+    },
     /// Print a skill by name.
     Show {
         /// Skill name or file stem.
@@ -279,7 +284,7 @@ pub(crate) fn run_agents_command(
     }
 }
 
-pub(crate) fn run_skill_command(
+pub(crate) async fn run_skill_command(
     command: &SkillCommand,
     project_root: &Path,
     output: OutputFormat,
@@ -303,6 +308,22 @@ pub(crate) fn run_skill_command(
                     }
                 }
             }
+        }
+        SkillCommand::Install { source } => {
+            let installed = install_skill(project_root, source).await?;
+            print_json_or_text_result(
+                serde_json::json!({
+                    "installed": true,
+                    "name": installed.name,
+                    "path": installed.path
+                }),
+                format!(
+                    "installed skill {} to {}",
+                    installed.name,
+                    installed.path.display()
+                ),
+                output,
+            )?;
         }
         SkillCommand::Show { name } => {
             let skill = find_skill(project_root, name)?
@@ -347,6 +368,72 @@ pub(crate) fn run_skill_command(
         }
     }
     Ok(())
+}
+
+async fn install_skill(project_root: &Path, source: &str) -> Result<SkillEntry> {
+    let content = read_skill_source(source).await?;
+    if content.trim().is_empty() {
+        anyhow::bail!("skill source is empty: {source}");
+    }
+    let name = skill_name_from_source(source);
+    let target_dir = project_root.join(".peridot/skills/community");
+    fs::create_dir_all(&target_dir)?;
+    let path = target_dir.join(format!("{name}.md"));
+    fs::write(&path, content)?;
+    Ok(SkillEntry {
+        name,
+        scope: "project-community",
+        path,
+    })
+}
+
+async fn read_skill_source(source: &str) -> Result<String> {
+    if source.starts_with("https://") || source.starts_with("http://") {
+        let response = reqwest::Client::new()
+            .get(source)
+            .header("user-agent", "peridot-agent")
+            .send()
+            .await
+            .with_context(|| format!("failed to download skill {source}"))?;
+        let status = response.status();
+        let content = response.text().await?;
+        if !status.is_success() {
+            anyhow::bail!("skill download returned {status}: {content}");
+        }
+        Ok(content)
+    } else {
+        fs::read_to_string(source).with_context(|| format!("failed to read skill {source}"))
+    }
+}
+
+fn skill_name_from_source(source: &str) -> String {
+    let source = source.trim_end_matches('/');
+    let last = source.rsplit('/').next().unwrap_or(source);
+    let stem = last
+        .strip_suffix(".md")
+        .or_else(|| last.strip_suffix(".markdown"))
+        .unwrap_or(last);
+    sanitize_skill_name(stem)
+}
+
+fn sanitize_skill_name(name: &str) -> String {
+    let sanitized = name
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || character == '-' || character == '_' {
+                character.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>()
+        .trim_matches('-')
+        .to_string();
+    if sanitized.is_empty() {
+        "skill".to_string()
+    } else {
+        sanitized
+    }
 }
 
 pub(crate) async fn run_mcp_command(
@@ -1062,6 +1149,12 @@ fn collect_skills(project_root: &Path) -> Result<Vec<SkillEntry>> {
         &mut skills,
     )?;
     collect_skill_dir(
+        &project_root.join(".peridot/skills/community"),
+        "project-community",
+        true,
+        &mut skills,
+    )?;
+    collect_skill_dir(
         &project_root.join(".peridot/skills/auto"),
         "project-auto",
         true,
@@ -1254,6 +1347,42 @@ mod tests {
 
         assert!(skills.iter().any(|skill| skill.name == "rust"));
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn installs_local_skill_into_project_community_dir() {
+        let root =
+            std::env::temp_dir().join(format!("peridot-cli-install-skill-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let source = root.join("My Skill.md");
+        fs::write(&source, "Prefer focused tests.").unwrap();
+
+        let installed = install_skill(&root, source.to_str().unwrap())
+            .await
+            .unwrap();
+        let skills = collect_skills(&root).unwrap();
+
+        assert_eq!(installed.name, "my-skill");
+        assert!(
+            installed
+                .path
+                .ends_with(".peridot/skills/community/my-skill.md")
+        );
+        assert!(
+            skills
+                .iter()
+                .any(|skill| skill.name == "my-skill" && skill.scope == "project-community")
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn sanitizes_skill_names() {
+        assert_eq!(
+            skill_name_from_source("https://example.test/Rust Tips.md"),
+            "rust-tips"
+        );
+        assert_eq!(sanitize_skill_name("..."), "skill");
     }
 
     #[test]
