@@ -15,7 +15,7 @@ use peridot_common::{
     SandboxMode, SecurityConfig, ToolGroup, ToolResult,
 };
 use peridot_mcp::{McpClient, McpTool};
-use peridot_memory::MemoryStore;
+use peridot_memory::{ErrorResolution, MemoryStore, StoredSkill};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -1282,6 +1282,13 @@ fn first_choice(params: &Value) -> Option<&str> {
 #[derive(Clone, Debug)]
 pub struct AgentMemorySearchTool;
 
+#[derive(Clone, Debug, Serialize)]
+struct MemoryLayerSearchResult {
+    scope: String,
+    skills: Vec<StoredSkill>,
+    error_resolution: Option<ErrorResolution>,
+}
+
 #[async_trait]
 impl Tool for AgentMemorySearchTool {
     fn name(&self) -> &str {
@@ -1293,24 +1300,32 @@ impl Tool for AgentMemorySearchTool {
     }
 
     fn description(&self) -> &str {
-        "Search project-local learned skills and known error resolutions"
+        "Search project and global learned skills and known error resolutions"
     }
 
     async fn execute(&self, params: Value, ctx: &ToolContext) -> PeriResult<ToolResult> {
         let query = required_str(&params, "query")?;
-        let store = MemoryStore::new(ctx.project_root.join(".peridot/memory.db"));
-        let skills = store.search_skills(query)?;
-        let error = store.get_error_resolution(query)?;
+        let layers = search_memory_layers(&ctx.project_root, query)?;
+        let skills = layers
+            .iter()
+            .flat_map(|layer| layer.skills.clone())
+            .collect::<Vec<_>>();
+        let error_resolutions = layers
+            .iter()
+            .filter_map(|layer| layer.error_resolution.clone())
+            .collect::<Vec<_>>();
         Ok(ToolResult::success(
             format!(
-                "memory search returned {} skills and {} error resolutions",
+                "memory search returned {} skills and {} error resolutions across {} layers",
                 skills.len(),
-                usize::from(error.is_some())
+                error_resolutions.len(),
+                layers.len()
             ),
             serde_json::json!({
                 "query": query,
                 "skills": skills,
-                "error_resolution": error
+                "error_resolutions": error_resolutions,
+                "layers": layers
             }),
         ))
     }
@@ -1323,6 +1338,42 @@ impl Tool for AgentMemorySearchTool {
     fn permission_level(&self) -> PermissionLevel {
         PermissionLevel::Read
     }
+}
+
+fn search_memory_layers(
+    project_root: &Path,
+    query: &str,
+) -> PeriResult<Vec<MemoryLayerSearchResult>> {
+    let mut layers = Vec::new();
+    let project_path = project_root.join(".peridot/memory.db");
+    layers.push(search_memory_layer("project", project_path, query)?);
+    if let Some(global_path) = global_memory_path()
+        && global_path != project_root.join(".peridot/memory.db")
+        && global_path.exists()
+    {
+        layers.push(search_memory_layer("global", global_path, query)?);
+    }
+    Ok(layers)
+}
+
+fn search_memory_layer(
+    scope: &str,
+    path: PathBuf,
+    query: &str,
+) -> PeriResult<MemoryLayerSearchResult> {
+    let store = MemoryStore::new(path);
+    Ok(MemoryLayerSearchResult {
+        scope: scope.to_string(),
+        skills: store.search_skills(query)?,
+        error_resolution: store.get_error_resolution(query)?,
+    })
+}
+
+fn global_memory_path() -> Option<PathBuf> {
+    if let Some(home) = std::env::var_os("PERIDOT_HOME") {
+        return Some(PathBuf::from(home).join("memory.db"));
+    }
+    std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".peridot/memory.db"))
 }
 
 /// Built-in completion declaration tool.
@@ -1633,6 +1684,37 @@ mod tests {
             .unwrap();
 
         assert_eq!(result.output["skills"][0]["name"], "rust-fmt");
+        assert_eq!(result.output["layers"][0]["scope"], "project");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn memory_layer_search_returns_skills_and_errors() {
+        let root =
+            std::env::temp_dir().join(format!("peridot-tools-memory-layer-{}", std::process::id()));
+        let path = root.join("memory.db");
+        let store = MemoryStore::new(&path);
+        store
+            .save_skill(&StoredSkill {
+                name: "fmt-error-skill".to_string(),
+                body: "Run cargo fmt.".to_string(),
+            })
+            .unwrap();
+        store
+            .save_error_resolution(&ErrorResolution {
+                signature: "fmt-error".to_string(),
+                resolution: "Run cargo fmt.".to_string(),
+            })
+            .unwrap();
+
+        let result = search_memory_layer("global", path, "fmt-error").unwrap();
+
+        assert_eq!(result.scope, "global");
+        assert_eq!(result.skills[0].name, "fmt-error-skill");
+        assert_eq!(
+            result.error_resolution.unwrap().resolution,
+            "Run cargo fmt."
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
