@@ -518,9 +518,17 @@ fn shell_command(command: &str, ctx: &ToolContext) -> PeriResult<Command> {
             ));
             Ok(process)
         }
-        SandboxMode::Firejail => Err(PeriError::Config(
-            "firejail sandbox is not implemented yet".to_string(),
-        )),
+        SandboxMode::Firejail => {
+            let mut process = Command::new("firejail");
+            process
+                .args(firejail_shell_args(
+                    &ctx.project_root,
+                    command,
+                    ctx.security.docker_network,
+                ))
+                .current_dir(&ctx.project_root);
+            Ok(process)
+        }
     }
 }
 
@@ -547,6 +555,22 @@ fn docker_shell_args(
         "-lc".to_string(),
         command.to_string(),
     ]);
+    args
+}
+
+fn firejail_shell_args(project_root: &Path, command: &str, network: bool) -> Vec<String> {
+    let mut args = vec![
+        "--quiet".to_string(),
+        "--noprofile".to_string(),
+        "--private-dev".to_string(),
+        "--private-tmp".to_string(),
+        format!("--whitelist={}", project_root.display()),
+        format!("--read-write={}", project_root.display()),
+    ];
+    if !network {
+        args.push("--net=none".to_string());
+    }
+    args.extend(["sh".to_string(), "-lc".to_string(), command.to_string()]);
     args
 }
 
@@ -1943,6 +1967,18 @@ mod tests {
         assert!(args.contains(&"/tmp/project:/workspace".to_string()));
         assert!(args.contains(&"--network".to_string()));
         assert!(args.contains(&"none".to_string()));
+        assert_eq!(args.last().map(String::as_str), Some("cargo test"));
+    }
+
+    #[test]
+    fn firejail_shell_args_whitelist_workspace_without_network_by_default() {
+        let root = PathBuf::from("/tmp/project");
+        let args = firejail_shell_args(&root, "cargo test", false);
+
+        assert!(args.contains(&"--quiet".to_string()));
+        assert!(args.contains(&"--net=none".to_string()));
+        assert!(args.contains(&"--whitelist=/tmp/project".to_string()));
+        assert!(args.contains(&"--read-write=/tmp/project".to_string()));
         assert_eq!(args.last().map(String::as_str), Some("cargo test"));
     }
 
