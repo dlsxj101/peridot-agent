@@ -171,6 +171,12 @@ pub fn register_builtin_tools(registry: &mut ToolRegistry) -> PeriResult<()> {
     registry.register(FileListTool)?;
     registry.register(PlanCreateTool)?;
     registry.register(PlanUpdateTool)?;
+    registry.register(GitStatusTool)?;
+    registry.register(GitDiffTool)?;
+    registry.register(GitLogTool)?;
+    registry.register(VerifyBuildTool)?;
+    registry.register(VerifyTestTool)?;
+    registry.register(VerifyLintTool)?;
     registry.register(AgentScratchpadTool)?;
     registry.register(AgentDoneTool)?;
     Ok(())
@@ -636,6 +642,201 @@ impl Tool for PlanUpdateTool {
     }
 }
 
+/// Built-in git status tool.
+#[derive(Clone, Debug)]
+pub struct GitStatusTool;
+
+#[async_trait]
+impl Tool for GitStatusTool {
+    fn name(&self) -> &str {
+        "git_status"
+    }
+
+    fn group(&self) -> ToolGroup {
+        ToolGroup::Git
+    }
+
+    fn description(&self) -> &str {
+        "Return git status --short --branch"
+    }
+
+    async fn execute(&self, _params: Value, ctx: &ToolContext) -> PeriResult<ToolResult> {
+        run_read_only_command("git status --short --branch", ctx, "git status")
+    }
+
+    fn permission_level(&self) -> PermissionLevel {
+        PermissionLevel::Read
+    }
+}
+
+/// Built-in git diff tool.
+#[derive(Clone, Debug)]
+pub struct GitDiffTool;
+
+#[async_trait]
+impl Tool for GitDiffTool {
+    fn name(&self) -> &str {
+        "git_diff"
+    }
+
+    fn group(&self) -> ToolGroup {
+        ToolGroup::Git
+    }
+
+    fn description(&self) -> &str {
+        "Return git diff"
+    }
+
+    async fn execute(&self, _params: Value, ctx: &ToolContext) -> PeriResult<ToolResult> {
+        run_read_only_command("git diff", ctx, "git diff")
+    }
+
+    fn permission_level(&self) -> PermissionLevel {
+        PermissionLevel::Read
+    }
+}
+
+/// Built-in git log tool.
+#[derive(Clone, Debug)]
+pub struct GitLogTool;
+
+#[async_trait]
+impl Tool for GitLogTool {
+    fn name(&self) -> &str {
+        "git_log"
+    }
+
+    fn group(&self) -> ToolGroup {
+        ToolGroup::Git
+    }
+
+    fn description(&self) -> &str {
+        "Return compact git log output"
+    }
+
+    async fn execute(&self, params: Value, ctx: &ToolContext) -> PeriResult<ToolResult> {
+        let limit = params.get("limit").and_then(Value::as_u64).unwrap_or(10);
+        run_read_only_command(&format!("git log --oneline -{limit}"), ctx, "git log")
+    }
+
+    fn permission_level(&self) -> PermissionLevel {
+        PermissionLevel::Read
+    }
+}
+
+/// Built-in verify build tool.
+#[derive(Clone, Debug)]
+pub struct VerifyBuildTool;
+
+#[async_trait]
+impl Tool for VerifyBuildTool {
+    fn name(&self) -> &str {
+        "verify_build"
+    }
+
+    fn group(&self) -> ToolGroup {
+        ToolGroup::Verify
+    }
+
+    fn description(&self) -> &str {
+        "Run a build verification command"
+    }
+
+    async fn execute(&self, params: Value, ctx: &ToolContext) -> PeriResult<ToolResult> {
+        let command = params
+            .get("command")
+            .and_then(Value::as_str)
+            .unwrap_or("cargo build --workspace");
+        run_read_only_command(command, ctx, "verify build")
+    }
+
+    fn permission_level(&self) -> PermissionLevel {
+        PermissionLevel::Read
+    }
+}
+
+/// Built-in verify test tool.
+#[derive(Clone, Debug)]
+pub struct VerifyTestTool;
+
+#[async_trait]
+impl Tool for VerifyTestTool {
+    fn name(&self) -> &str {
+        "verify_test"
+    }
+
+    fn group(&self) -> ToolGroup {
+        ToolGroup::Verify
+    }
+
+    fn description(&self) -> &str {
+        "Run a test verification command"
+    }
+
+    async fn execute(&self, params: Value, ctx: &ToolContext) -> PeriResult<ToolResult> {
+        let command = params
+            .get("command")
+            .and_then(Value::as_str)
+            .unwrap_or("cargo test --workspace");
+        run_read_only_command(command, ctx, "verify test")
+    }
+
+    fn permission_level(&self) -> PermissionLevel {
+        PermissionLevel::Read
+    }
+}
+
+/// Built-in verify lint tool.
+#[derive(Clone, Debug)]
+pub struct VerifyLintTool;
+
+#[async_trait]
+impl Tool for VerifyLintTool {
+    fn name(&self) -> &str {
+        "verify_lint"
+    }
+
+    fn group(&self) -> ToolGroup {
+        ToolGroup::Verify
+    }
+
+    fn description(&self) -> &str {
+        "Run a lint verification command"
+    }
+
+    async fn execute(&self, params: Value, ctx: &ToolContext) -> PeriResult<ToolResult> {
+        let command = params
+            .get("command")
+            .and_then(Value::as_str)
+            .unwrap_or("cargo clippy --workspace -- -D warnings");
+        run_read_only_command(command, ctx, "verify lint")
+    }
+
+    fn permission_level(&self) -> PermissionLevel {
+        PermissionLevel::Read
+    }
+}
+
+fn run_read_only_command(command: &str, ctx: &ToolContext, label: &str) -> PeriResult<ToolResult> {
+    let output = Command::new("sh")
+        .arg("-c")
+        .arg(command)
+        .current_dir(&ctx.project_root)
+        .output()
+        .map_err(|err| PeriError::Tool(format!("failed to run {label}: {err}")))?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    Ok(ToolResult::success(
+        format!("{label} exited {}", output.status.code().unwrap_or(-1)),
+        serde_json::json!({
+            "status": output.status.code(),
+            "success": output.status.success(),
+            "stdout": stdout,
+            "stderr": stderr
+        }),
+    ))
+}
+
 /// Built-in scratchpad tool.
 #[derive(Clone, Debug)]
 pub struct AgentScratchpadTool;
@@ -827,6 +1028,31 @@ mod tests {
             .await;
 
         assert!(matches!(result, Err(PeriError::PermissionDenied(_))));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn builtin_registry_contains_git_and_verify_tools() {
+        let mut registry = ToolRegistry::new();
+        register_builtin_tools(&mut registry).unwrap();
+
+        assert!(registry.get("git_status").is_some());
+        assert!(registry.get("verify_build").is_some());
+    }
+
+    #[tokio::test]
+    async fn verify_tool_reports_command_status() {
+        let root =
+            std::env::temp_dir().join(format!("peridot-tools-verify-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let ctx = ToolContext::new(&root, PermissionMode::Auto);
+        let result = VerifyBuildTool
+            .execute(serde_json::json!({"command":"printf ok"}), &ctx)
+            .await
+            .unwrap();
+
+        assert_eq!(result.output["success"], true);
+        assert_eq!(result.output["stdout"], "ok");
         fs::remove_dir_all(root).unwrap();
     }
 }
