@@ -1366,6 +1366,7 @@ name = "peridot-mcp"
 version = "0.1.0"
 dependencies = [
  "peridot-common",
+ "reqwest",
  "serde",
  "serde_json",
  "tokio",
