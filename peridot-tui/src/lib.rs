@@ -12,7 +12,7 @@ use crossterm::{
         size as terminal_size,
     },
 };
-use peridot_common::{ExecutionMode, PermissionMode};
+use peridot_common::{AskUserRequest, ExecutionMode, PermissionMode};
 use peridot_core::{SlashCommand, parse_slash_command};
 use ratatui::{
     Frame, Terminal,
@@ -90,6 +90,60 @@ pub struct SidePanelState {
     pub stats: SessionStats,
 }
 
+/// Interactive ask-user prompt shown as a special TUI screen.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct AskUserPanel {
+    /// Question text.
+    pub question: String,
+    /// Selectable choices.
+    pub choices: Vec<String>,
+    /// Currently highlighted choice.
+    pub selected_index: usize,
+    /// Free-form fallback text.
+    pub freeform: String,
+}
+
+impl AskUserPanel {
+    /// Builds a panel from an ask-user request.
+    pub fn from_request(request: AskUserRequest) -> Self {
+        match request {
+            AskUserRequest::SingleSelect {
+                question,
+                options,
+                default_index,
+            } => Self {
+                question,
+                choices: options,
+                selected_index: default_index.unwrap_or(0),
+                freeform: String::new(),
+            },
+            AskUserRequest::MultiSelect {
+                question, options, ..
+            } => Self {
+                question,
+                choices: options,
+                selected_index: 0,
+                freeform: String::new(),
+            },
+            AskUserRequest::FreeForm {
+                question, default, ..
+            } => Self {
+                question,
+                choices: Vec::new(),
+                selected_index: 0,
+                freeform: default.unwrap_or_default(),
+            },
+        }
+    }
+
+    fn selected_answer(&self) -> String {
+        self.choices
+            .get(self.selected_index)
+            .cloned()
+            .unwrap_or_else(|| self.freeform.clone())
+    }
+}
+
 /// Main TUI state independent from the terminal backend.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TuiState {
@@ -103,6 +157,8 @@ pub struct TuiState {
     pub side_panel: SidePanelState,
     /// Current input buffer.
     pub input: String,
+    /// Active ask-user panel, when the agent is waiting for user guidance.
+    pub ask_user: Option<AskUserPanel>,
 }
 
 /// Result produced when an interactive TUI session exits.
@@ -134,6 +190,7 @@ impl TuiState {
             transcript: Vec::new(),
             side_panel: SidePanelState::default(),
             input: String::new(),
+            ask_user: None,
         }
     }
 
@@ -150,6 +207,11 @@ impl TuiState {
     /// Parses the current input as a slash command when possible.
     pub fn current_slash_command(&self) -> Option<SlashCommand> {
         parse_slash_command(&self.input)
+    }
+
+    /// Opens an ask-user panel.
+    pub fn open_ask_user(&mut self, request: AskUserRequest) {
+        self.ask_user = Some(AskUserPanel::from_request(request));
     }
 }
 
@@ -177,6 +239,9 @@ pub fn run_interactive(mut state: TuiState) -> io::Result<TuiExit> {
 
 /// Applies a keyboard event to the TUI state.
 pub fn handle_key_event(state: &mut TuiState, key: KeyEvent) -> TuiEventOutcome {
+    if state.ask_user.is_some() {
+        return handle_ask_user_key_event(state, key);
+    }
     match key.code {
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             TuiEventOutcome::Quit
@@ -189,6 +254,44 @@ pub fn handle_key_event(state: &mut TuiState, key: KeyEvent) -> TuiEventOutcome 
         KeyCode::Enter => submit_input(state),
         KeyCode::Char(character) => {
             state.input.push(character);
+            TuiEventOutcome::Continue
+        }
+        _ => TuiEventOutcome::Continue,
+    }
+}
+
+fn handle_ask_user_key_event(state: &mut TuiState, key: KeyEvent) -> TuiEventOutcome {
+    let Some(panel) = state.ask_user.as_mut() else {
+        return TuiEventOutcome::Continue;
+    };
+    match key.code {
+        KeyCode::Esc => {
+            state.ask_user = None;
+            TuiEventOutcome::Continue
+        }
+        KeyCode::Up => {
+            panel.selected_index = panel.selected_index.saturating_sub(1);
+            TuiEventOutcome::Continue
+        }
+        KeyCode::Down => {
+            if !panel.choices.is_empty() {
+                panel.selected_index = (panel.selected_index + 1).min(panel.choices.len() - 1);
+            }
+            TuiEventOutcome::Continue
+        }
+        KeyCode::Backspace if panel.choices.is_empty() => {
+            panel.freeform.pop();
+            TuiEventOutcome::Continue
+        }
+        KeyCode::Char(character) if panel.choices.is_empty() => {
+            panel.freeform.push(character);
+            TuiEventOutcome::Continue
+        }
+        KeyCode::Enter => {
+            let question = panel.question.clone();
+            let answer = panel.selected_answer();
+            state.ask_user = None;
+            state.push_transcript(format!("ask_user: {question} -> {answer}"));
             TuiEventOutcome::Continue
         }
         _ => TuiEventOutcome::Continue,
@@ -357,18 +460,25 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
             .constraints([Constraint::Percentage(100)])
             .split(chunks[1])
     };
-    let transcript = state
-        .transcript
-        .iter()
-        .rev()
-        .take(body_chunks[0].height.saturating_sub(2) as usize)
-        .rev()
-        .cloned()
-        .collect::<Vec<_>>()
-        .join("\n");
+    let transcript = if let Some(panel) = &state.ask_user {
+        render_ask_user_panel(panel)
+    } else {
+        state
+            .transcript
+            .iter()
+            .rev()
+            .take(body_chunks[0].height.saturating_sub(2) as usize)
+            .rev()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
     frame.render_widget(
-        Paragraph::new(transcript)
-            .block(Block::default().title("Transcript").borders(Borders::ALL)),
+        Paragraph::new(transcript).block(
+            Block::default()
+                .title(body_title(state))
+                .borders(Borders::ALL),
+        ),
         body_chunks[0],
     );
 
@@ -408,6 +518,35 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
             .block(Block::default().title("Input").borders(Borders::ALL)),
         chunks[2],
     );
+}
+
+fn body_title(state: &TuiState) -> &'static str {
+    if state.ask_user.is_some() {
+        "Ask User"
+    } else {
+        "Transcript"
+    }
+}
+
+fn render_ask_user_panel(panel: &AskUserPanel) -> String {
+    if panel.choices.is_empty() {
+        return format!("{}\n\n> {}", panel.question, panel.freeform);
+    }
+    let choices = panel
+        .choices
+        .iter()
+        .enumerate()
+        .map(|(index, choice)| {
+            let marker = if index == panel.selected_index {
+                ">"
+            } else {
+                " "
+            };
+            format!("{marker} {choice}")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!("{}\n\n{}", panel.question, choices)
 }
 
 /// Selects a layout mode from terminal dimensions.
@@ -556,5 +695,37 @@ mod tests {
         assert_eq!(outcome, TuiEventOutcome::Continue);
         assert_eq!(state.header.mode, ExecutionMode::Goal);
         assert_eq!(state.side_panel.plan[0].label, "ship release");
+    }
+
+    #[test]
+    fn ask_user_panel_renders_and_accepts_choice() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let mut state = TuiState::new(HeaderState::new(
+            ExecutionMode::Execute,
+            PermissionMode::Auto,
+            "mock",
+        ));
+        state.open_ask_user(AskUserRequest::SingleSelect {
+            question: "Proceed?".to_string(),
+            options: vec!["yes".to_string(), "no".to_string()],
+            default_index: Some(0),
+        });
+
+        assert!(render_ask_user_panel(state.ask_user.as_ref().unwrap()).contains("> yes"));
+        assert_eq!(
+            handle_key_event(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)),
+            TuiEventOutcome::Continue
+        );
+        assert_eq!(
+            handle_key_event(
+                &mut state,
+                KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)
+            ),
+            TuiEventOutcome::Continue
+        );
+
+        assert!(state.ask_user.is_none());
+        assert!(state.transcript[0].contains("Proceed? -> no"));
     }
 }
