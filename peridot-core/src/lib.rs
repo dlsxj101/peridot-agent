@@ -8,7 +8,7 @@ use peridot_common::{
     ToolCall, ToolGroup, ToolResult,
 };
 use peridot_context::{ContextEntry, ContextManager, ContextSource};
-use peridot_llm::{CompletionRequest, LlmProvider, Usage, parse_action};
+use peridot_llm::{CompletionRequest, LlmMessage, LlmProvider, MessageRole, Usage, parse_action};
 use peridot_tools::audit::{AuditEvent, append_audit_event};
 use peridot_tools::hooks::{HookRunner, tool_hook_variables};
 use peridot_tools::{ToolContext, ToolRegistry};
@@ -304,6 +304,30 @@ impl HarnessAgent {
                     .append(ContextEntry::trusted(ContextSource::PlanReminder, message));
             }
             if done {
+                if let Some(goal_checker_model) = request.goal_checker_model.as_deref()
+                    && self.state.mode == ExecutionMode::Goal
+                {
+                    let verdict = check_goal_satisfied(
+                        provider,
+                        goal_checker_model,
+                        &request.task,
+                        &outcomes,
+                    )
+                    .await?;
+                    accumulate_usage(&mut total_usage, verdict.usage);
+                    self.context.append(ContextEntry::trusted(
+                        ContextSource::PlanReminder,
+                        format!("Goal checker verdict: {}", verdict.reason),
+                    ));
+                    if !verdict.satisfied {
+                        self.state.phase = AgentPhase::Recovering;
+                        self.context.append(ContextEntry::trusted(
+                            ContextSource::PlanReminder,
+                            "Goal checker says the objective is not satisfied yet. Continue with a concrete next action.".to_string(),
+                        ));
+                        continue;
+                    }
+                }
                 return Ok(AgentRunSummary {
                     turns: outcomes,
                     usage: total_usage,
@@ -548,6 +572,8 @@ pub struct AgentRunRequest {
     pub task: String,
     /// Model name.
     pub model: String,
+    /// Optional independent model used to verify goal completion.
+    pub goal_checker_model: Option<String>,
     /// Maximum number of turns.
     pub max_turns: u32,
     /// Maximum output tokens per turn.
@@ -584,6 +610,83 @@ pub struct AgentRunSummary {
     pub usage: Usage,
     /// Stop reason.
     pub stopped_reason: StopReason,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct GoalCheckVerdict {
+    satisfied: bool,
+    reason: String,
+    usage: Usage,
+}
+
+async fn check_goal_satisfied<P>(
+    provider: &P,
+    model: &str,
+    objective: &str,
+    outcomes: &[AgentTurnOutcome],
+) -> PeriResult<GoalCheckVerdict>
+where
+    P: LlmProvider + ?Sized,
+{
+    let response = provider
+        .complete(CompletionRequest {
+            model: model.to_string(),
+            system: Some(
+                "You are Peridot's independent goal checker. Decide whether the objective is fully satisfied. Respond as JSON: {\"satisfied\":true|false,\"reason\":\"short reason\"}."
+                    .to_string(),
+            ),
+            messages: vec![LlmMessage::new(
+                MessageRole::User,
+                goal_checker_prompt(objective, outcomes),
+            )],
+            max_tokens: Some(512),
+            thinking: false,
+        })
+        .await?;
+    let (satisfied, reason) = parse_goal_checker_response(&response.text);
+    Ok(GoalCheckVerdict {
+        satisfied,
+        reason,
+        usage: response.usage,
+    })
+}
+
+fn goal_checker_prompt(objective: &str, outcomes: &[AgentTurnOutcome]) -> String {
+    let recent = outcomes
+        .iter()
+        .rev()
+        .take(5)
+        .rev()
+        .map(|outcome| {
+            format!(
+                "- tool={} success={} summary={}",
+                outcome.tool_name, outcome.tool_result.success, outcome.tool_result.summary
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!("Objective:\n{objective}\n\nRecent tool outcomes:\n{recent}")
+}
+
+fn parse_goal_checker_response(text: &str) -> (bool, String) {
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(text) {
+        let satisfied = value
+            .get("satisfied")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        let reason = value
+            .get("reason")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or(if satisfied {
+                "satisfied"
+            } else {
+                "not satisfied"
+            });
+        return (satisfied, reason.to_string());
+    }
+    let normalized = text.trim().to_ascii_lowercase();
+    let satisfied = matches!(normalized.as_str(), "true" | "yes" | "satisfied");
+    (satisfied, text.trim().to_string())
 }
 
 /// Slash commands supported by Peridot's interactive surfaces.
@@ -874,6 +977,7 @@ mod tests {
                 AgentRunRequest {
                     task: "write loop.txt".to_string(),
                     model: "mock".to_string(),
+                    goal_checker_model: None,
                     max_turns: 4,
                     max_tokens: 512,
                     budget_usd: 5.0,
@@ -1029,6 +1133,7 @@ mod tests {
                 AgentRunRequest {
                     task: "spend budget".to_string(),
                     model: "mock".to_string(),
+                    goal_checker_model: None,
                     max_turns: 4,
                     max_tokens: 512,
                     budget_usd: 0.1,
@@ -1072,6 +1177,7 @@ mod tests {
                 AgentRunRequest {
                     task: "avoid loops".to_string(),
                     model: "mock".to_string(),
+                    goal_checker_model: None,
                     max_turns: 4,
                     max_tokens: 512,
                     budget_usd: 5.0,
@@ -1116,6 +1222,7 @@ mod tests {
                 AgentRunRequest {
                     task: "recover from missing file".to_string(),
                     model: "mock".to_string(),
+                    goal_checker_model: None,
                     max_turns: 2,
                     max_tokens: 512,
                     budget_usd: 5.0,
@@ -1152,5 +1259,54 @@ mod tests {
             classify_error(&PeriError::PermissionDenied("blocked".to_string())),
             "permission"
         );
+    }
+
+    #[tokio::test]
+    async fn goal_checker_can_reject_premature_done() {
+        let root =
+            std::env::temp_dir().join(format!("peridot-core-goal-check-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let mut registry = ToolRegistry::new();
+        register_builtin_tools(&mut registry).unwrap();
+        let mut agent = HarnessAgent::new(
+            AgentState::new(ExecutionMode::Goal, PermissionMode::Auto),
+            ContextManager::new(),
+            registry,
+        );
+        let provider = StaticProvider::new(vec![
+            json!({"action":"agent_done","parameters":{"summary":"done"}}).to_string(),
+            json!({"satisfied":false,"reason":"tests not run"}).to_string(),
+            json!({"action":"plan_update","parameters":{"update":"ran tests"}}).to_string(),
+            json!({"action":"agent_done","parameters":{"summary":"verified"}}).to_string(),
+            json!({"satisfied":true,"reason":"objective verified"}).to_string(),
+        ]);
+
+        let summary = agent
+            .run_until_done(
+                &provider,
+                AgentRunRequest {
+                    task: "finish only when verified".to_string(),
+                    model: "mock-main".to_string(),
+                    goal_checker_model: Some("mock-checker".to_string()),
+                    max_turns: 5,
+                    max_tokens: 512,
+                    budget_usd: 5.0,
+                    project_root: root.clone(),
+                    denied_paths: Vec::new(),
+                    hooks: HooksConfig::default(),
+                    security: SecurityConfig::default(),
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(summary.stopped_reason, StopReason::Done);
+        assert_eq!(summary.turns.len(), 3);
+        assert!(agent.context().entries().iter().any(|entry| {
+            entry
+                .content
+                .contains("Goal checker says the objective is not satisfied")
+        }));
+        std::fs::remove_dir_all(root).unwrap();
     }
 }
