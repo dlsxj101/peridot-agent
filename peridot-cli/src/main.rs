@@ -24,6 +24,7 @@ use peridot_llm::{
     PricingTable, Usage, parse_action,
 };
 use peridot_mcp::McpClient;
+use peridot_memory::MemoryStore;
 use peridot_project::ProjectScanner;
 use peridot_tools::{ToolRegistry, register_builtin_tools, register_mcp_tools};
 use peridot_tui::{HeaderState, TuiState, run_interactive};
@@ -73,6 +74,10 @@ struct Cli {
     /// Maximum estimated run cost in USD.
     #[arg(long, global = true)]
     budget: Option<f64>,
+
+    /// Resume a saved session summary before running the task.
+    #[arg(long, global = true)]
+    resume: Option<String>,
 
     /// Optional task to start immediately.
     task: Option<String>,
@@ -305,6 +310,15 @@ async fn main() -> Result<()> {
         None => {
             if let Some(task) = read_piped_task()? {
                 run_task(task, mode, &cli, &config, &project_root).await?;
+            } else if cli.resume.is_some() {
+                run_task(
+                    "Continue the resumed session.".to_string(),
+                    mode,
+                    &cli,
+                    &config,
+                    &project_root,
+                )
+                .await?;
             } else {
                 let model = cli
                     .model
@@ -348,6 +362,7 @@ async fn run_task(
     config: &PeridotConfig,
     project_root: &Path,
 ) -> Result<()> {
+    let task = apply_resume(task, cli.resume.as_deref(), project_root)?;
     let permission = cli
         .permission
         .map(PermissionMode::from)
@@ -478,6 +493,26 @@ async fn run_task(
         }
     }
     Ok(())
+}
+
+fn apply_resume(task: String, resume_id: Option<&str>, project_root: &Path) -> Result<String> {
+    let Some(resume_id) = resume_id else {
+        return Ok(task);
+    };
+    let store = MemoryStore::new(project_root.join(".peridot/memory.db"));
+    let session = store
+        .get_session(resume_id)?
+        .with_context(|| format!("session not found: {resume_id}"))?;
+    Ok(resume_task_text(&session.id, &session.summary, &task))
+}
+
+fn resume_task_text(id: &str, summary: &str, task: &str) -> String {
+    let task = task.trim();
+    if task.is_empty() {
+        format!("Resume session {id} from this summary: {summary}")
+    } else {
+        format!("Resume session {id} from this summary: {summary}\n\nCurrent task: {task}")
+    }
 }
 
 async fn register_configured_mcp_tools(
@@ -684,5 +719,29 @@ fn read_piped_task() -> Result<Option<String>> {
         Ok(None)
     } else {
         Ok(Some(task))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resume_text_wraps_current_task() {
+        let text = resume_task_text("demo", "created parser", "finish tests");
+
+        assert!(text.contains("Resume session demo"));
+        assert!(text.contains("created parser"));
+        assert!(text.contains("Current task: finish tests"));
+    }
+
+    #[test]
+    fn resume_text_handles_empty_task() {
+        let text = resume_task_text("demo", "created parser", "");
+
+        assert_eq!(
+            text,
+            "Resume session demo from this summary: created parser"
+        );
     }
 }
