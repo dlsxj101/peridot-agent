@@ -5,7 +5,8 @@ use std::path::PathBuf;
 use peridot_common::{
     AgentPhase, ExecutionMode, PeriError, PeriResult, PermissionMode, ToolCall, ToolResult,
 };
-use peridot_context::ContextManager;
+use peridot_context::{ContextEntry, ContextManager, ContextSource};
+use peridot_llm::{CompletionRequest, LlmProvider, Usage, parse_action};
 use peridot_tools::{ToolContext, ToolRegistry};
 use serde::{Deserialize, Serialize};
 
@@ -93,6 +94,11 @@ impl HarnessAgent {
         &self.context
     }
 
+    /// Returns a mutable context manager.
+    pub fn context_mut(&mut self) -> &mut ContextManager {
+        &mut self.context
+    }
+
     /// Returns the tool registry.
     pub fn tools(&self) -> &ToolRegistry {
         &self.tools
@@ -124,6 +130,185 @@ impl HarnessAgent {
         tool.validate_params(&call.parameters)?;
         tool.execute(call.parameters, &ctx).await
     }
+
+    /// Runs one model/tool turn and records the observation in context.
+    pub async fn run_turn<P>(
+        &mut self,
+        provider: &P,
+        request: AgentTurnRequest,
+    ) -> PeriResult<AgentTurnOutcome>
+    where
+        P: LlmProvider,
+    {
+        if let Some(user_input) = request.user_input {
+            self.context
+                .append(ContextEntry::trusted(ContextSource::User, user_input));
+        }
+
+        let completion = provider
+            .complete(CompletionRequest {
+                model: request.model,
+                system: Some(system_prompt_for_mode(self.state.mode)),
+                messages: self.context.to_messages(),
+                max_tokens: Some(request.max_tokens),
+                thinking: self.state.mode == ExecutionMode::Goal,
+            })
+            .await?;
+        self.context.append(ContextEntry::trusted(
+            ContextSource::Assistant,
+            completion.text.clone(),
+        ));
+
+        let parsed = parse_action(&completion.text)?;
+        let tool_name = parsed.tool_call.name.clone();
+        self.state.phase = AgentPhase::Executing;
+        let tool_result = self
+            .execute_tool_call_with_denied_paths(
+                parsed.tool_call,
+                request.project_root,
+                request.denied_paths,
+            )
+            .await?;
+        self.context
+            .append_observation(serde_json::to_string(&tool_result).map_err(|err| {
+                PeriError::Parse(format!("failed to serialize tool result: {err}"))
+            })?)?;
+
+        if tool_name == "agent_done" && tool_result.success {
+            self.state.phase = AgentPhase::Done;
+        } else {
+            self.state.phase = AgentPhase::Verifying;
+        }
+
+        Ok(AgentTurnOutcome {
+            tool_name,
+            tool_result,
+            usage: completion.usage,
+            done: self.state.phase == AgentPhase::Done,
+        })
+    }
+
+    /// Runs model/tool turns until done or guardrail exhaustion.
+    pub async fn run_until_done<P>(
+        &mut self,
+        provider: &P,
+        request: AgentRunRequest,
+    ) -> PeriResult<AgentRunSummary>
+    where
+        P: LlmProvider,
+    {
+        let mut outcomes = Vec::new();
+        let mut total_usage = Usage::default();
+        for turn_index in 0..request.max_turns {
+            let outcome = self
+                .run_turn(
+                    provider,
+                    AgentTurnRequest {
+                        user_input: (turn_index == 0).then(|| request.task.clone()),
+                        model: request.model.clone(),
+                        max_tokens: request.max_tokens,
+                        project_root: request.project_root.clone(),
+                        denied_paths: request.denied_paths.clone(),
+                    },
+                )
+                .await?;
+            accumulate_usage(&mut total_usage, outcome.usage);
+            let done = outcome.done;
+            outcomes.push(outcome);
+            if done {
+                return Ok(AgentRunSummary {
+                    turns: outcomes,
+                    usage: total_usage,
+                    stopped_reason: StopReason::Done,
+                });
+            }
+        }
+
+        Ok(AgentRunSummary {
+            turns: outcomes,
+            usage: total_usage,
+            stopped_reason: StopReason::MaxTurns,
+        })
+    }
+}
+
+fn system_prompt_for_mode(mode: ExecutionMode) -> String {
+    format!(
+        "You are Peridot Agent running in {mode} mode. Respond with JSON containing action and parameters."
+    )
+}
+
+fn accumulate_usage(total: &mut Usage, usage: Usage) {
+    total.input_tokens += usage.input_tokens;
+    total.output_tokens += usage.output_tokens;
+    total.cache_read_tokens += usage.cache_read_tokens;
+    total.cache_creation_tokens += usage.cache_creation_tokens;
+    total.estimated_cost_usd += usage.estimated_cost_usd;
+}
+
+/// Request for one agent turn.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AgentTurnRequest {
+    /// Optional user input to append before the turn.
+    pub user_input: Option<String>,
+    /// Model name.
+    pub model: String,
+    /// Maximum output tokens.
+    pub max_tokens: u32,
+    /// Project root.
+    pub project_root: PathBuf,
+    /// Denied path prefixes.
+    pub denied_paths: Vec<PathBuf>,
+}
+
+/// Outcome of one agent turn.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AgentTurnOutcome {
+    /// Tool name that was invoked.
+    pub tool_name: String,
+    /// Tool result.
+    pub tool_result: ToolResult,
+    /// Provider usage for the turn.
+    pub usage: Usage,
+    /// Whether the task is complete.
+    pub done: bool,
+}
+
+/// Request for a bounded agent run.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AgentRunRequest {
+    /// Initial task.
+    pub task: String,
+    /// Model name.
+    pub model: String,
+    /// Maximum number of turns.
+    pub max_turns: u32,
+    /// Maximum output tokens per turn.
+    pub max_tokens: u32,
+    /// Project root.
+    pub project_root: PathBuf,
+    /// Denied path prefixes.
+    pub denied_paths: Vec<PathBuf>,
+}
+
+/// Reason a bounded run stopped.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum StopReason {
+    /// The agent called agent_done.
+    Done,
+    /// The run hit max turns.
+    MaxTurns,
+}
+
+/// Summary of a bounded agent run.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AgentRunSummary {
+    /// Turn outcomes.
+    pub turns: Vec<AgentTurnOutcome>,
+    /// Aggregated usage.
+    pub usage: Usage,
+    /// Stop reason.
+    pub stopped_reason: StopReason,
 }
 
 /// Slash commands supported by Peridot's interactive surfaces.
@@ -249,6 +434,11 @@ impl GoalController {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use async_trait::async_trait;
+    use peridot_llm::{AuthMethod, CompletionResponse, PricingTable};
+    use peridot_tools::register_builtin_tools;
+    use serde_json::json;
+    use std::sync::Mutex;
 
     #[test]
     fn parses_goal_slash_commands() {
@@ -280,5 +470,107 @@ mod tests {
 
         assert_eq!(state.mode, ExecutionMode::Goal);
         assert_eq!(state.goal.as_deref(), Some("ship"));
+    }
+
+    struct StaticProvider {
+        responses: Mutex<Vec<String>>,
+    }
+
+    impl StaticProvider {
+        fn new(responses: Vec<String>) -> Self {
+            Self {
+                responses: Mutex::new(responses.into_iter().rev().collect()),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl LlmProvider for StaticProvider {
+        async fn complete(&self, _request: CompletionRequest) -> PeriResult<CompletionResponse> {
+            let text = self
+                .responses
+                .lock()
+                .unwrap()
+                .pop()
+                .ok_or_else(|| PeriError::Provider("no response".to_string()))?;
+            Ok(CompletionResponse {
+                text,
+                usage: Usage {
+                    input_tokens: 1,
+                    output_tokens: 1,
+                    cache_read_tokens: 0,
+                    cache_creation_tokens: 0,
+                    estimated_cost_usd: 0.0,
+                },
+            })
+        }
+
+        fn supports_cache(&self) -> bool {
+            false
+        }
+
+        fn supports_prefill(&self) -> bool {
+            false
+        }
+
+        fn supports_thinking(&self) -> bool {
+            false
+        }
+
+        fn pricing(&self) -> PricingTable {
+            PricingTable::default()
+        }
+
+        fn auth_method(&self) -> AuthMethod {
+            AuthMethod::NotConfigured
+        }
+    }
+
+    #[tokio::test]
+    async fn run_until_done_executes_tools_and_stops() {
+        let root = std::env::temp_dir().join(format!("peridot-core-loop-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let mut registry = ToolRegistry::new();
+        register_builtin_tools(&mut registry).unwrap();
+        let mut agent = HarnessAgent::new(
+            AgentState::new(ExecutionMode::Execute, PermissionMode::Auto),
+            ContextManager::new(),
+            registry,
+        );
+        let provider = StaticProvider::new(vec![
+            json!({
+                "action": "file_write",
+                "parameters": {"path": "loop.txt", "content": "ok\n"}
+            })
+            .to_string(),
+            json!({
+                "action": "agent_done",
+                "parameters": {"summary": "finished"}
+            })
+            .to_string(),
+        ]);
+
+        let summary = agent
+            .run_until_done(
+                &provider,
+                AgentRunRequest {
+                    task: "write loop.txt".to_string(),
+                    model: "mock".to_string(),
+                    max_turns: 4,
+                    max_tokens: 512,
+                    project_root: root.clone(),
+                    denied_paths: Vec::new(),
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(summary.stopped_reason, StopReason::Done);
+        assert_eq!(summary.turns.len(), 2);
+        assert_eq!(
+            std::fs::read_to_string(root.join("loop.txt")).unwrap(),
+            "ok\n"
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

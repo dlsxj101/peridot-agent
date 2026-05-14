@@ -667,11 +667,14 @@ dependencies = [
 name = "peridot-core"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "peridot-common",
  "peridot-context",
  "peridot-llm",
  "peridot-tools",
  "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
