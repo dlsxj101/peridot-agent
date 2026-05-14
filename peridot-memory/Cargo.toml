@@ -7,4 +7,6 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+peridot-common = { path = "../peridot-common" }
+rusqlite.workspace = true
 serde.workspace = true
