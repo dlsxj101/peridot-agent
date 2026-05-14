@@ -13,7 +13,7 @@ use crossterm::{
     },
 };
 use peridot_common::{AskUserRequest, ExecutionMode, PermissionMode, TuiConfig};
-use peridot_core::{SlashCommand, parse_slash_command};
+use peridot_core::{GoalStatus, SlashCommand, parse_slash_command};
 use ratatui::{
     Frame, Terminal,
     backend::CrosstermBackend,
@@ -268,6 +268,8 @@ pub struct TuiState {
     pub transcript: Vec<String>,
     /// Side panel state.
     pub side_panel: SidePanelState,
+    /// Current goal lifecycle status, when a goal is active.
+    pub goal_status: Option<GoalStatus>,
     /// Current input buffer.
     pub input: String,
     /// Active ask-user panel, when the agent is waiting for user guidance.
@@ -307,6 +309,7 @@ impl TuiState {
             header,
             transcript: Vec::new(),
             side_panel: SidePanelState::default(),
+            goal_status: None,
             input: String::new(),
             ask_user: None,
             menu: None,
@@ -509,15 +512,23 @@ fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
         SlashCommand::GoalStart(goal) => {
             record_mode_switch(state, ExecutionMode::Goal);
             state.header.mode = ExecutionMode::Goal;
+            state.goal_status = Some(GoalStatus::Running);
             state.side_panel.plan.push(PlanStep {
                 label: goal.clone(),
                 done: false,
             });
             state.push_transcript(format!("goal: {goal}"));
         }
-        SlashCommand::GoalPause => state.push_transcript("goal: paused"),
-        SlashCommand::GoalResume => state.push_transcript("goal: resumed"),
+        SlashCommand::GoalPause => {
+            state.goal_status = Some(GoalStatus::Paused);
+            state.push_transcript("goal: paused");
+        }
+        SlashCommand::GoalResume => {
+            state.goal_status = Some(GoalStatus::Running);
+            state.push_transcript("goal: resumed");
+        }
         SlashCommand::GoalClear => {
+            state.goal_status = Some(GoalStatus::Cleared);
             state.side_panel.plan.clear();
             state.push_transcript("goal: cleared");
         }
@@ -529,7 +540,8 @@ fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
                 .filter(|step| step.done)
                 .count();
             state.push_transcript(format!(
-                "goal: {done}/{} steps done",
+                "goal: {} {done}/{} steps done",
+                goal_status_label(state.goal_status.as_ref()),
                 state.side_panel.plan.len()
             ));
         }
@@ -614,7 +626,20 @@ fn render_header_status(state: &TuiState) -> String {
     if state.config.show_cache_rate {
         parts.push(format!("cache {:.0}%", state.header.cache_hit_rate * 100.0));
     }
+    if let Some(status) = state.goal_status.as_ref() {
+        parts.push(format!("goal {}", goal_status_label(Some(status))));
+    }
     parts.join(" | ")
+}
+
+fn goal_status_label(status: Option<&GoalStatus>) -> &'static str {
+    match status {
+        Some(GoalStatus::Running) => "running",
+        Some(GoalStatus::Paused) => "paused",
+        Some(GoalStatus::Done) => "done",
+        Some(GoalStatus::Cleared) => "cleared",
+        None => "inactive",
+    }
 }
 
 fn theme_accent(config: &TuiConfig) -> Color {
@@ -642,6 +667,13 @@ pub fn render_text_snapshot(state: &TuiState) -> String {
             .filter(|step| step.done)
             .count();
         let _ = writeln!(output);
+        if state.goal_status.is_some() {
+            let _ = writeln!(
+                output,
+                "Goal status: {}",
+                goal_status_label(state.goal_status.as_ref())
+            );
+        }
         let _ = writeln!(output, "Plan {done}/{}", state.side_panel.plan.len());
         for step in &state.side_panel.plan {
             let marker = if step.done { "[x]" } else { "[ ]" };
@@ -731,8 +763,13 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
             })
             .collect::<Vec<_>>()
             .join("\n");
+        let goal = state
+            .goal_status
+            .as_ref()
+            .map(|status| format!("Goal: {}\n\n", goal_status_label(Some(status))))
+            .unwrap_or_default();
         let side = format!(
-            "Plan {done}/{}\n{}\n\nSession\nsteps: {}\nerrors: {}\nelapsed: {}s",
+            "{goal}Plan {done}/{}\n{}\n\nSession\nsteps: {}\nerrors: {}\nelapsed: {}s",
             state.side_panel.plan.len(),
             plan,
             state.side_panel.stats.steps,
@@ -990,10 +1027,17 @@ mod tests {
 
         assert_eq!(outcome, TuiEventOutcome::Continue);
         assert_eq!(state.header.mode, ExecutionMode::Goal);
+        assert_eq!(state.goal_status, Some(GoalStatus::Running));
         assert_eq!(state.side_panel.plan[0].label, "ship release");
         assert_eq!(state.lifecycle_events[0].event, "mode_switch");
         assert_eq!(state.lifecycle_events[0].from, "execute");
         assert_eq!(state.lifecycle_events[0].to, "goal");
+
+        apply_slash_command(&mut state, SlashCommand::GoalPause);
+        assert_eq!(state.goal_status, Some(GoalStatus::Paused));
+        apply_slash_command(&mut state, SlashCommand::GoalStatus);
+        assert!(state.transcript.last().unwrap().contains("goal: paused"));
+        assert!(render_text_snapshot(&state).contains("goal paused"));
     }
 
     #[test]
