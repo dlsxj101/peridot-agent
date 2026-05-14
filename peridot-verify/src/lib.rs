@@ -109,6 +109,27 @@ impl VerifyPipeline {
 
     /// Runs deterministic diff review.
     pub fn run_diff_review(&self) -> PeriResult<VerifyStageResult> {
+        let changed_files = self.changed_files_since_head()?;
+        let blocked = changed_files
+            .iter()
+            .filter(|path| {
+                self.profile
+                    .boundaries
+                    .iter()
+                    .any(|boundary| boundary_blocks_path(boundary, path))
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        if !blocked.is_empty() {
+            return Ok(VerifyStageResult {
+                stage: VerifyStage::DiffReview,
+                passed: false,
+                summary: format!(
+                    "AGENTS boundaries block changed paths: {}",
+                    blocked.join(", ")
+                ),
+            });
+        }
         self.run_command_or_pass(
             VerifyStage::DiffReview,
             "git diff --stat",
@@ -187,6 +208,42 @@ impl VerifyPipeline {
             summary,
         })
     }
+
+    fn changed_files_since_head(&self) -> PeriResult<Vec<String>> {
+        let output = Command::new("git")
+            .args(["status", "--short", "--untracked-files=all"])
+            .current_dir(&self.profile.root)
+            .output()
+            .map_err(|err| PeriError::Verification {
+                stage: "DiffReview".to_string(),
+                message: format!("failed to run `git status --short --untracked-files=all`: {err}"),
+            })?;
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if !output.status.success() && stderr.contains("not a git repository") {
+            return Ok(Vec::new());
+        }
+        if !output.status.success() {
+            return Err(PeriError::Verification {
+                stage: "DiffReview".to_string(),
+                message: stderr.trim().to_string(),
+            });
+        }
+        Ok(String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter_map(parse_git_status_path)
+            .map(str::to_string)
+            .collect())
+    }
+}
+
+fn parse_git_status_path(line: &str) -> Option<&str> {
+    line.get(3..).map(str::trim).filter(|path| !path.is_empty())
+}
+
+fn boundary_blocks_path(boundary: &str, path: &str) -> bool {
+    let boundary = boundary.trim().trim_end_matches('/');
+    let path = path.trim();
+    !boundary.is_empty() && (path == boundary || path.starts_with(&format!("{boundary}/")))
 }
 
 #[cfg(test)]
@@ -230,5 +287,52 @@ mod tests {
         assert_eq!(stage.stage, VerifyStage::Build);
         assert!(!stage.passed);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn diff_review_fails_for_agents_boundary_changes() {
+        if Command::new("git").arg("--version").output().is_err() {
+            return;
+        }
+        let root =
+            std::env::temp_dir().join(format!("peridot-verify-boundary-{}", std::process::id()));
+        fs::create_dir_all(root.join("generated")).unwrap();
+        run_git(&root, ["init"]).unwrap();
+        run_git(&root, ["config", "user.email", "peridot@example.com"]).unwrap();
+        run_git(&root, ["config", "user.name", "Peridot Test"]).unwrap();
+        fs::write(root.join("README.md"), "hello\n").unwrap();
+        run_git(&root, ["add", "--all"]).unwrap();
+        run_git(&root, ["commit", "-m", "chore: initial"]).unwrap();
+        fs::write(root.join("generated/out.txt"), "blocked\n").unwrap();
+        let mut profile = ProjectProfile::minimal(&root);
+        profile.boundaries = vec!["generated/".to_string()];
+
+        let stage = VerifyPipeline::new(profile).run_diff_review().unwrap();
+
+        assert_eq!(stage.stage, VerifyStage::DiffReview);
+        assert!(!stage.passed);
+        assert!(stage.summary.contains("generated/out.txt"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn boundary_matching_respects_path_segments() {
+        assert!(boundary_blocks_path("generated/", "generated/out.txt"));
+        assert!(boundary_blocks_path("generated", "generated"));
+        assert!(!boundary_blocks_path("generated", "generated-old/out.txt"));
+    }
+
+    fn run_git<const N: usize>(root: &std::path::Path, args: [&str; N]) -> PeriResult<String> {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(root)
+            .output()
+            .map_err(|err| PeriError::Tool(format!("failed to run git: {err}")))?;
+        if !output.status.success() {
+            return Err(PeriError::Tool(
+                String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            ));
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
     }
 }
