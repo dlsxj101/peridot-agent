@@ -1,0 +1,15 @@
+# Peridot local state
+.peridot/memory.db
+.peridot/mem/
+.peridot/sessions/
+.peridot/skills/auto/
+.peridot/logs/
+.peridot/auth/
+
+# Rust build output
+target/
+
+# Local editor/system files
+.DS_Store
+*.swp
+*.swo
