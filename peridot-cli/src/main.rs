@@ -587,6 +587,7 @@ where
         &format!("{:?}", summary.stopped_reason),
         &format!("turns={}", summary.turns.len()),
     )?;
+    run_completion_lifecycle_hooks(agent, &options, &session_id, &summary)?;
     if let Err(err) = save_run_session(
         options.project_root,
         &session_id,
@@ -804,6 +805,36 @@ fn run_lifecycle_hook(
     HookRunner::new(options.project_root, options.config.hooks.clone())
         .run_lifecycle_hooks(event, &variables)?;
     Ok(())
+}
+
+fn run_completion_lifecycle_hooks(
+    agent: &HarnessAgent,
+    options: &RunLoopOptions<'_>,
+    session_id: &str,
+    summary: &AgentRunSummary,
+) -> Result<()> {
+    if summary.stopped_reason != StopReason::Done {
+        return Ok(());
+    }
+    match agent.state().mode {
+        ExecutionMode::Plan => run_lifecycle_hook(
+            agent,
+            options,
+            session_id,
+            "plan_completed",
+            "done",
+            "plan_file=todo.md",
+        ),
+        ExecutionMode::Goal => run_lifecycle_hook(
+            agent,
+            options,
+            session_id,
+            "goal_achieved",
+            "done",
+            agent.state().goal.as_deref().unwrap_or(&options.task),
+        ),
+        ExecutionMode::Execute => Ok(()),
+    }
 }
 
 fn exit_for_summary(summary: &AgentRunSummary, headless: bool) {

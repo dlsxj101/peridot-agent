@@ -160,6 +160,58 @@ run = ".peridot/hooks/lifecycle.sh {session_id} {status}"
     fs::remove_dir_all(root).unwrap();
 }
 
+#[cfg(unix)]
+#[test]
+fn plan_completed_lifecycle_hook_runs_for_done_plan() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = temp_project("plan-hook");
+    let hooks_dir = root.join(".peridot/hooks");
+    fs::create_dir_all(&hooks_dir).unwrap();
+    let script = hooks_dir.join("lifecycle.sh");
+    fs::write(&script, "#!/bin/sh\necho \"$1:$2:$3\" >> lifecycle.log\n").unwrap();
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+    fs::write(
+        root.join(".peridot/config.toml"),
+        r#"
+[[hooks.lifecycle]]
+event = "plan_completed"
+run = ".peridot/hooks/lifecycle.sh plan {status} {summary}"
+"#,
+    )
+    .unwrap();
+    let response_file = root.join("responses.jsonl");
+    fs::write(
+        &response_file,
+        r#"{"action":"agent_done","parameters":{"summary":"planned"}}
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(peridot())
+        .args([
+            "--project",
+            root.to_str().unwrap(),
+            "--headless",
+            "--mock-response-file",
+            response_file.to_str().unwrap(),
+            "plan",
+            "plan it",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let log = fs::read_to_string(root.join("lifecycle.log")).unwrap();
+    assert!(log.contains("plan:done:plan_file=todo.md"));
+
+    fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn headless_direct_tool_failure_exits_four() {
     let root = temp_project("headless-failure");
