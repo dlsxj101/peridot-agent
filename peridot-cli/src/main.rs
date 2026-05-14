@@ -5,11 +5,17 @@ use std::io::{IsTerminal, Read};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
+use async_trait::async_trait;
 use clap::{Parser, Subcommand, ValueEnum};
-use peridot_common::{ExecutionMode, PeridotConfig, PermissionMode, ToolCall};
-use peridot_context::ContextManager;
-use peridot_core::{AgentState, HarnessAgent};
-use peridot_llm::parse_action;
+use peridot_common::{
+    ExecutionMode, PeriError, PeriResult, PeridotConfig, PermissionMode, ToolCall,
+};
+use peridot_context::{ContextManager, project_context_limits};
+use peridot_core::{AgentRunRequest, AgentState, HarnessAgent};
+use peridot_llm::{
+    AuthMethod, CompletionRequest, CompletionResponse, LlmProvider, PricingTable, Usage,
+    parse_action,
+};
 use peridot_memory::{MemoryStore, SessionSummary};
 use peridot_project::{ProjectProfile, ProjectScanner};
 use peridot_tools::{ToolRegistry, register_builtin_tools};
@@ -41,6 +47,10 @@ struct Cli {
     /// Output format for scriptable commands.
     #[arg(long, value_enum, default_value_t = OutputFormat::Text, global = true)]
     output: OutputFormat,
+
+    /// Read deterministic assistant JSON responses from a file, one response per line.
+    #[arg(long, global = true)]
+    mock_response_file: Option<PathBuf>,
 
     /// Optional task to start immediately.
     task: Option<String>,
@@ -281,8 +291,38 @@ async fn run_task(
     };
     let mut registry = ToolRegistry::new();
     register_builtin_tools(&mut registry)?;
-    let agent = HarnessAgent::new(state, ContextManager::new(), registry);
+    let context = ContextManager::with_limits(project_context_limits(project_root));
+    let mut agent = HarnessAgent::new(state, context, registry);
     let call = task_to_tool_call(&task);
+
+    if let Some(mock_response_file) = &cli.mock_response_file {
+        let profile = ProjectScanner::new().scan(project_root)?;
+        let denied_paths = profile.boundaries.into_iter().map(PathBuf::from).collect();
+        let provider = FileMockProvider::from_file(mock_response_file)?;
+        let summary = agent
+            .run_until_done(
+                &provider,
+                AgentRunRequest {
+                    task,
+                    model,
+                    max_turns: config.defaults.max_turns,
+                    max_tokens: 4096,
+                    project_root: project_root.to_path_buf(),
+                    denied_paths,
+                },
+            )
+            .await?;
+        if cli.output == OutputFormat::Json || cli.headless {
+            println!("{}", serde_json::to_string_pretty(&summary)?);
+        } else {
+            println!(
+                "stopped={:?} turns={}",
+                summary.stopped_reason,
+                summary.turns.len()
+            );
+        }
+        return Ok(());
+    }
 
     match call {
         Some(call) => {
@@ -324,6 +364,63 @@ async fn run_task(
         }
     }
     Ok(())
+}
+
+struct FileMockProvider {
+    responses: std::sync::Mutex<Vec<String>>,
+}
+
+impl FileMockProvider {
+    fn from_file(path: &Path) -> Result<Self> {
+        let content = fs::read_to_string(path)
+            .with_context(|| format!("failed to read {}", path.display()))?;
+        let responses = content
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(str::to_string)
+            .rev()
+            .collect();
+        Ok(Self {
+            responses: std::sync::Mutex::new(responses),
+        })
+    }
+}
+
+#[async_trait]
+impl LlmProvider for FileMockProvider {
+    async fn complete(&self, _request: CompletionRequest) -> PeriResult<CompletionResponse> {
+        let text = self
+            .responses
+            .lock()
+            .unwrap()
+            .pop()
+            .ok_or_else(|| PeriError::Provider("mock response file exhausted".to_string()))?;
+        Ok(CompletionResponse {
+            text,
+            usage: Usage::default(),
+        })
+    }
+
+    fn supports_cache(&self) -> bool {
+        false
+    }
+
+    fn supports_prefill(&self) -> bool {
+        false
+    }
+
+    fn supports_thinking(&self) -> bool {
+        false
+    }
+
+    fn pricing(&self) -> PricingTable {
+        PricingTable::default()
+    }
+
+    fn auth_method(&self) -> AuthMethod {
+        AuthMethod::NotConfigured
+    }
 }
 
 fn task_to_tool_call(task: &str) -> Option<ToolCall> {
