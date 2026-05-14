@@ -122,6 +122,8 @@ pub enum ActivityKind {
     Stream,
     /// Tool execution.
     Tool,
+    /// Subagent delegation.
+    Subagent,
     /// Verification stage.
     Verification,
 }
@@ -135,6 +137,19 @@ pub struct RuntimeActivity {
     pub label: String,
     /// Human-readable status.
     pub status: String,
+}
+
+/// One delegated subagent shown in the monitoring panel.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SubagentMonitorItem {
+    /// Subagent kind such as fork, worktree, or teammate.
+    pub kind: String,
+    /// Short task label.
+    pub task: String,
+    /// Current state.
+    pub status: String,
+    /// Optional result summary or failure reason.
+    pub summary: Option<String>,
 }
 
 /// Active model stream displayed before it is committed to the transcript.
@@ -304,6 +319,8 @@ pub struct TuiState {
     pub active_stream: Option<StreamState>,
     /// Recent tool, stream, and verification activity.
     pub activities: Vec<RuntimeActivity>,
+    /// Recent delegated subagents.
+    pub subagents: Vec<SubagentMonitorItem>,
     /// Side panel state.
     pub side_panel: SidePanelState,
     /// Current goal lifecycle status, when a goal is active.
@@ -348,6 +365,7 @@ impl TuiState {
             transcript: Vec::new(),
             active_stream: None,
             activities: Vec::new(),
+            subagents: Vec::new(),
             side_panel: SidePanelState::default(),
             goal_status: None,
             input: String::new(),
@@ -448,6 +466,41 @@ impl TuiState {
         );
     }
 
+    /// Records a subagent delegation as running.
+    pub fn record_subagent_started(&mut self, kind: impl Into<String>, task: impl Into<String>) {
+        let kind = kind.into();
+        let task = task.into();
+        self.subagents.push(SubagentMonitorItem {
+            kind: kind.clone(),
+            task: task.clone(),
+            status: "running".to_string(),
+            summary: None,
+        });
+        self.push_activity(ActivityKind::Subagent, kind, format!("running: {task}"));
+        self.trim_subagents();
+    }
+
+    /// Marks a subagent delegation as completed.
+    pub fn record_subagent_completed(
+        &mut self,
+        kind: impl Into<String>,
+        task: impl Into<String>,
+        summary: impl Into<String>,
+    ) {
+        self.record_subagent_finished(kind, task, "done", summary);
+    }
+
+    /// Marks a subagent delegation as failed.
+    pub fn record_subagent_failed(
+        &mut self,
+        kind: impl Into<String>,
+        task: impl Into<String>,
+        summary: impl Into<String>,
+    ) {
+        self.record_subagent_finished(kind, task, "failed", summary);
+        self.side_panel.stats.errors += 1;
+    }
+
     /// Parses the current input as a slash command when possible.
     pub fn current_slash_command(&self) -> Option<SlashCommand> {
         parse_slash_command(&self.input)
@@ -472,6 +525,44 @@ impl TuiState {
         if self.activities.len() > 8 {
             let overflow = self.activities.len() - 8;
             self.activities.drain(0..overflow);
+        }
+    }
+
+    fn record_subagent_finished(
+        &mut self,
+        kind: impl Into<String>,
+        task: impl Into<String>,
+        status: &str,
+        summary: impl Into<String>,
+    ) {
+        let kind = kind.into();
+        let task = task.into();
+        let summary = summary.into();
+        if let Some(item) = self
+            .subagents
+            .iter_mut()
+            .rev()
+            .find(|item| item.kind == kind && item.task == task)
+        {
+            item.status = status.to_string();
+            item.summary = Some(summary.clone());
+        } else {
+            self.subagents.push(SubagentMonitorItem {
+                kind: kind.clone(),
+                task: task.clone(),
+                status: status.to_string(),
+                summary: Some(summary.clone()),
+            });
+        }
+        self.side_panel.stats.steps += 1;
+        self.push_activity(ActivityKind::Subagent, kind, format!("{status}: {summary}"));
+        self.trim_subagents();
+    }
+
+    fn trim_subagents(&mut self) {
+        if self.subagents.len() > 6 {
+            let overflow = self.subagents.len() - 6;
+            self.subagents.drain(0..overflow);
         }
     }
 }
@@ -778,6 +869,7 @@ fn activity_kind_label(kind: &ActivityKind) -> &'static str {
     match kind {
         ActivityKind::Stream => "stream",
         ActivityKind::Tool => "tool",
+        ActivityKind::Subagent => "subagent",
         ActivityKind::Verification => "verify",
     }
 }
@@ -802,6 +894,31 @@ fn render_activity_list(activities: &[RuntimeActivity]) -> String {
         .collect::<Vec<_>>()
         .join("\n");
     format!("Activity\n{rendered}")
+}
+
+fn render_subagent_monitor(subagents: &[SubagentMonitorItem]) -> String {
+    if subagents.is_empty() {
+        return "Subagents\n<none>".to_string();
+    }
+    let rendered = subagents
+        .iter()
+        .rev()
+        .take(4)
+        .rev()
+        .map(|subagent| {
+            let summary = subagent
+                .summary
+                .as_ref()
+                .map(|summary| format!(": {summary}"))
+                .unwrap_or_default();
+            format!(
+                "{} {} [{}]{}",
+                subagent.kind, subagent.task, subagent.status, summary
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!("Subagents\n{rendered}")
 }
 
 fn theme_accent(config: &TuiConfig) -> Color {
@@ -860,6 +977,21 @@ pub fn render_text_snapshot(state: &TuiState) -> String {
                     activity_kind_label(&activity.kind),
                     activity.label,
                     activity.status
+                );
+            }
+        }
+        if !state.subagents.is_empty() {
+            let _ = writeln!(output, "Subagents");
+            for subagent in &state.subagents {
+                let summary = subagent
+                    .summary
+                    .as_ref()
+                    .map(|summary| format!(": {summary}"))
+                    .unwrap_or_default();
+                let _ = writeln!(
+                    output,
+                    "- {} {} [{}]{}",
+                    subagent.kind, subagent.task, subagent.status, summary
                 );
             }
         }
@@ -949,12 +1081,13 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
             .map(|status| format!("Goal: {}\n\n", goal_status_label(Some(status))))
             .unwrap_or_default();
         let side = format!(
-            "{goal}Plan {done}/{}\n{}\n\nSession\nsteps: {}\nerrors: {}\nelapsed: {}s\n\n{}",
+            "{goal}Plan {done}/{}\n{}\n\nSession\nsteps: {}\nerrors: {}\nelapsed: {}s\n\n{}\n\n{}",
             state.side_panel.plan.len(),
             plan,
             state.side_panel.stats.steps,
             state.side_panel.stats.errors,
             state.side_panel.stats.elapsed_seconds,
+            render_subagent_monitor(&state.subagents),
             render_activity_list(&state.activities)
         );
         frame.render_widget(
@@ -1133,6 +1266,27 @@ mod tests {
         let snapshot = render_text_snapshot(&state);
         assert!(snapshot.contains("tool file_write: ok: wrote file"));
         assert!(snapshot.contains("verify cargo test: failed: tests failed"));
+        assert_eq!(state.side_panel.stats.steps, 2);
+        assert_eq!(state.side_panel.stats.errors, 1);
+    }
+
+    #[test]
+    fn records_subagent_monitor_state() {
+        let mut state = TuiState::new(HeaderState::new(
+            ExecutionMode::Goal,
+            PermissionMode::Auto,
+            "mock",
+        ));
+
+        state.record_subagent_started("worktree", "refactor tools");
+        state.record_subagent_completed("worktree", "refactor tools", "branch prepared");
+        state.record_subagent_failed("teammate", "audit release", "runner unavailable");
+
+        let snapshot = render_text_snapshot(&state);
+        assert!(snapshot.contains("subagent worktree: running: refactor tools"));
+        assert!(snapshot.contains("subagent worktree: done: branch prepared"));
+        assert!(snapshot.contains("- worktree refactor tools [done]: branch prepared"));
+        assert!(snapshot.contains("- teammate audit release [failed]: runner unavailable"));
         assert_eq!(state.side_panel.stats.steps, 2);
         assert_eq!(state.side_panel.stats.errors, 1);
     }
