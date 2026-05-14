@@ -6,6 +6,9 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[features]
+e2e = []
+
 [dependencies]
 crossterm = "0.29.0"
 peridot-common = { path = "../peridot-common" }

@@ -6,6 +6,9 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[features]
+e2e = []
+
 [dependencies]
 peridot-common = { path = "../peridot-common" }
 peridot-llm = { path = "../peridot-llm" }

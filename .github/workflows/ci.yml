@@ -5,6 +5,8 @@ on:
     branches: ["main", "codex/**"]
   pull_request:
     branches: ["main"]
+  schedule:
+    - cron: "0 3 * * 1"
 
 jobs:
   rust:
@@ -28,3 +30,20 @@ jobs:
 
       - name: Test
         run: cargo test --workspace
+
+  e2e:
+    name: E2E
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: E2E tests
+        run: cargo test --workspace --features e2e

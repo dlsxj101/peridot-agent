@@ -10,6 +10,9 @@ rust-version.workspace = true
 name = "peridot"
 path = "src/main.rs"
 
+[features]
+e2e = []
+
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
