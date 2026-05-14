@@ -251,6 +251,9 @@ pub struct PeridotConfig {
     /// MCP server definitions loaded at session start.
     #[serde(default)]
     pub mcp: Vec<McpServerConfig>,
+    /// User hook definitions.
+    #[serde(default)]
+    pub hooks: HooksConfig,
 }
 
 /// Authentication configuration.
@@ -497,6 +500,69 @@ pub struct McpServerConfig {
     pub auth: Option<String>,
 }
 
+/// Hook configuration grouped by hook class.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct HooksConfig {
+    /// Tool pre/post hooks.
+    #[serde(default)]
+    pub tool: Vec<HookConfig>,
+    /// System event hooks.
+    #[serde(default)]
+    pub event: Vec<HookConfig>,
+    /// Session lifecycle hooks.
+    #[serde(default)]
+    pub lifecycle: Vec<HookConfig>,
+    /// Default hook timeout in seconds.
+    #[serde(default = "default_hook_timeout_seconds")]
+    pub timeout_seconds: u64,
+}
+
+impl Default for HooksConfig {
+    fn default() -> Self {
+        Self {
+            tool: Vec::new(),
+            event: Vec::new(),
+            lifecycle: Vec::new(),
+            timeout_seconds: default_hook_timeout_seconds(),
+        }
+    }
+}
+
+fn default_hook_timeout_seconds() -> u64 {
+    30
+}
+
+/// One configured user hook.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct HookConfig {
+    /// Hook event name, such as pre:file_write or verification_failed.
+    pub event: String,
+    /// Command template to execute.
+    pub run: String,
+    /// Optional human-readable description.
+    #[serde(default)]
+    pub description: Option<String>,
+    /// Failure behavior.
+    #[serde(default)]
+    pub on_failure: HookFailureMode,
+    /// Optional path filters.
+    #[serde(default)]
+    pub only_paths: Vec<String>,
+}
+
+/// Hook failure behavior.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HookFailureMode {
+    /// Ignore the failure after recording it.
+    Ignore,
+    /// Warn and continue.
+    #[default]
+    Warn,
+    /// Block the enclosing operation.
+    Block,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -518,5 +584,27 @@ mod tests {
         assert_eq!(config.mcp[0].name, "jira");
         assert_eq!(config.mcp[0].transport, McpTransport::Stdio);
         assert_eq!(config.mcp[0].command.as_deref(), Some("npx"));
+    }
+
+    #[test]
+    fn parses_hook_config() {
+        let config = toml::from_str::<PeridotConfig>(
+            r#"
+            [hooks]
+            timeout_seconds = 5
+
+            [[hooks.tool]]
+            event = "pre:file_write"
+            run = ".peridot/hooks/backup.sh {path}"
+            on_failure = "block"
+            only_paths = ["src/**"]
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(config.hooks.timeout_seconds, 5);
+        assert_eq!(config.hooks.tool.len(), 1);
+        assert_eq!(config.hooks.tool[0].on_failure, HookFailureMode::Block);
+        assert_eq!(config.hooks.tool[0].only_paths, vec!["src/**"]);
     }
 }

@@ -1,5 +1,7 @@
 //! Tool contracts, registry, and permission helpers.
 
+pub mod hooks;
+
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
