@@ -1484,13 +1484,20 @@ impl Tool for AgentDelegateTool {
             &ctx.project_root,
             ctx.project_root.join(".peridot/worktrees"),
         );
-        let result = runner
+        let result = match runner
             .run(SubAgentTask {
                 prompt: prompt.clone(),
-                kind,
+                kind: kind.clone(),
                 model_tier: Some(model_tier),
             })
-            .await?;
+            .await
+        {
+            Ok(result) => result,
+            Err(err) => {
+                run_subagent_failed_hook(ctx, &kind, &prompt, &err.to_string())?;
+                return Err(err);
+            }
+        };
         run_subagent_completed_hook(ctx, &result.kind, &prompt)?;
         Ok(ToolResult::success(
             result.summary.clone(),
@@ -1545,6 +1552,25 @@ fn run_subagent_completed_hook(
     kind: &SubAgentKind,
     task: &str,
 ) -> PeriResult<()> {
+    run_subagent_event_hook(ctx, "subagent_completed", kind, task, None)
+}
+
+fn run_subagent_failed_hook(
+    ctx: &ToolContext,
+    kind: &SubAgentKind,
+    task: &str,
+    error_message: &str,
+) -> PeriResult<()> {
+    run_subagent_event_hook(ctx, "subagent_failed", kind, task, Some(error_message))
+}
+
+fn run_subagent_event_hook(
+    ctx: &ToolContext,
+    event: &str,
+    kind: &SubAgentKind,
+    task: &str,
+    error_message: Option<&str>,
+) -> PeriResult<()> {
     let mut variables = HookVariables::new();
     variables.insert(
         "project_root".to_string(),
@@ -1556,8 +1582,10 @@ fn run_subagent_completed_hook(
     );
     variables.insert("agent_type".to_string(), format!("{kind:?}").to_lowercase());
     variables.insert("task".to_string(), task.to_string());
-    HookRunner::new(&ctx.project_root, ctx.hooks.clone())
-        .run_event_hooks("subagent_completed", &variables)?;
+    if let Some(error_message) = error_message {
+        variables.insert("error_message".to_string(), error_message.to_string());
+    }
+    HookRunner::new(&ctx.project_root, ctx.hooks.clone()).run_event_hooks(event, &variables)?;
     Ok(())
 }
 
@@ -2083,6 +2111,48 @@ mod tests {
 
         let log = fs::read_to_string(root.join("subagent.log")).unwrap();
         assert!(log.contains("fork:write tests for parser"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn agent_delegate_runs_subagent_failed_hook() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = std::env::temp_dir().join(format!(
+            "peridot-tools-delegate-failed-hook-{}",
+            std::process::id()
+        ));
+        let hooks_dir = root.join(".peridot/hooks");
+        fs::create_dir_all(&hooks_dir).unwrap();
+        let script = hooks_dir.join("subagent-failed.sh");
+        fs::write(&script, "#!/bin/sh\necho \"$1:$2\" >> subagent.log\n").unwrap();
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let ctx = ToolContext::new(&root, PermissionMode::Auto).with_hooks(HooksConfig {
+            event: vec![peridot_common::HookConfig {
+                event: "subagent_failed".to_string(),
+                run: ".peridot/hooks/subagent-failed.sh {agent_type} \"{task}\"".to_string(),
+                description: None,
+                on_failure: peridot_common::HookFailureMode::Block,
+                only_paths: Vec::new(),
+            }],
+            ..HooksConfig::default()
+        });
+
+        let result = AgentDelegateTool
+            .execute(
+                serde_json::json!({
+                    "prompt": "large worktree change",
+                    "kind": "worktree"
+                }),
+                &ctx,
+            )
+            .await;
+
+        assert!(result.is_err());
+        let log = fs::read_to_string(root.join("subagent.log")).unwrap();
+        assert!(log.contains("worktree:large worktree change"));
         fs::remove_dir_all(root).unwrap();
     }
 
