@@ -4,6 +4,13 @@ use std::fmt::Write;
 
 use peridot_common::{ExecutionMode, PermissionMode};
 use peridot_core::{SlashCommand, parse_slash_command};
+use ratatui::{
+    Frame,
+    layout::{Constraint, Direction, Layout},
+    style::{Color, Style},
+    text::{Line, Span},
+    widgets::{Block, Borders, Paragraph},
+};
 use serde::{Deserialize, Serialize};
 
 /// TUI layout mode selected from terminal size.
@@ -153,6 +160,92 @@ pub fn render_text_snapshot(state: &TuiState) -> String {
     output
 }
 
+/// Draws the TUI state with Ratatui.
+pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
+    let area = frame.area();
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(1),
+            Constraint::Length(3),
+        ])
+        .split(area);
+
+    let header = Paragraph::new(Line::from(vec![
+        Span::styled("PERIDOT", Style::default().fg(Color::Green)),
+        Span::raw(format!(
+            " | {}.{} | {} | ${:.4}",
+            state.header.mode, state.header.permission, state.header.model, state.header.cost_usd
+        )),
+    ]))
+    .block(Block::default().borders(Borders::ALL));
+    frame.render_widget(header, chunks[0]);
+
+    let body_chunks = if state.layout == LayoutMode::Full {
+        Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
+            .split(chunks[1])
+    } else {
+        Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(100)])
+            .split(chunks[1])
+    };
+    let transcript = state
+        .transcript
+        .iter()
+        .rev()
+        .take(body_chunks[0].height.saturating_sub(2) as usize)
+        .rev()
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("\n");
+    frame.render_widget(
+        Paragraph::new(transcript)
+            .block(Block::default().title("Transcript").borders(Borders::ALL)),
+        body_chunks[0],
+    );
+
+    if state.layout == LayoutMode::Full && body_chunks.len() > 1 {
+        let done = state
+            .side_panel
+            .plan
+            .iter()
+            .filter(|step| step.done)
+            .count();
+        let plan = state
+            .side_panel
+            .plan
+            .iter()
+            .map(|step| {
+                let marker = if step.done { "[x]" } else { "[ ]" };
+                format!("{marker} {}", step.label)
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let side = format!(
+            "Plan {done}/{}\n{}\n\nSession\nsteps: {}\nerrors: {}\nelapsed: {}s",
+            state.side_panel.plan.len(),
+            plan,
+            state.side_panel.stats.steps,
+            state.side_panel.stats.errors,
+            state.side_panel.stats.elapsed_seconds
+        );
+        frame.render_widget(
+            Paragraph::new(side).block(Block::default().title("Status").borders(Borders::ALL)),
+            body_chunks[1],
+        );
+    }
+
+    frame.render_widget(
+        Paragraph::new(format!("> {}", state.input))
+            .block(Block::default().title("Input").borders(Borders::ALL)),
+        chunks[2],
+    );
+}
+
 /// Selects a layout mode from terminal dimensions.
 pub fn select_layout(width: u16, height: u16) -> LayoutMode {
     if width >= 120 && height >= 32 {
@@ -208,5 +301,27 @@ mod tests {
         assert!(snapshot.contains("PERIDOT | execute.auto | mock"));
         assert!(snapshot.contains("[x] Implement hooks"));
         assert!(snapshot.contains("tool file_write ok"));
+    }
+
+    #[test]
+    fn draws_with_ratatui_backend() {
+        use ratatui::{Terminal, backend::TestBackend};
+
+        let backend = TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut state = TuiState::new(HeaderState::new(
+            ExecutionMode::Execute,
+            PermissionMode::Auto,
+            "mock",
+        ));
+        state.resize(100, 30);
+        state.push_transcript("hello tui");
+
+        terminal.draw(|frame| draw(frame, &state)).unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let rendered = format!("{buffer:?}");
+        assert!(rendered.contains("PERIDOT"));
+        assert!(rendered.contains("hello tui"));
     }
 }
