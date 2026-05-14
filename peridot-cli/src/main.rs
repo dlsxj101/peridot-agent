@@ -173,6 +173,9 @@ enum Command {
         /// Check for an update without installing.
         #[arg(long)]
         check: bool,
+        /// Install the latest release even when the current version matches.
+        #[arg(long)]
+        force: bool,
     },
     /// Print version information.
     Version,
@@ -272,8 +275,8 @@ async fn main() -> Result<()> {
             run_logout_command(*provider, cli.output)?;
             return Ok(());
         }
-        Some(Command::Update { check }) => {
-            run_update_command(*check, cli.output).await?;
+        Some(Command::Update { check, force }) => {
+            run_update_command(*check, *force, cli.output).await?;
             return Ok(());
         }
         Some(Command::Run { task }) => {

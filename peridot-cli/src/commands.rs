@@ -1252,9 +1252,14 @@ pub(crate) async fn maybe_print_update_notice(
     );
 }
 
-pub(crate) async fn run_update_command(check: bool, output: OutputFormat) -> Result<()> {
+pub(crate) async fn run_update_command(
+    check: bool,
+    force: bool,
+    output: OutputFormat,
+) -> Result<()> {
     let latest = query_latest_release().await?;
-    let installed_path = if !check && latest.update_available {
+    let should_install = !check && (force || latest.update_available);
+    let installed_path = if should_install {
         Some(install_update(&latest.release).await?)
     } else {
         None
@@ -1266,15 +1271,24 @@ pub(crate) async fn run_update_command(check: bool, output: OutputFormat) -> Res
             "update_available": latest.update_available,
             "release_url": latest.html_url,
             "checked_only": check,
+            "forced": force,
             "installed_path": installed_path
         }),
         if let Some(path) = installed_path {
-            format!(
-                "Updated Peridot from {} to {} at {}",
-                env!("CARGO_PKG_VERSION"),
-                latest.latest,
-                path.display()
-            )
+            if latest.update_available {
+                format!(
+                    "Updated Peridot from {} to {} at {}",
+                    env!("CARGO_PKG_VERSION"),
+                    latest.latest,
+                    path.display()
+                )
+            } else {
+                format!(
+                    "Reinstalled Peridot {} at {}",
+                    latest.latest,
+                    path.display()
+                )
+            }
         } else if latest.update_available {
             format!(
                 "Peridot {} is available (current {}): {}",
