@@ -12,6 +12,7 @@ e2e = []
 [dependencies]
 async-trait.workspace = true
 peridot-common = { path = "../peridot-common" }
+peridot-memory = { path = "../peridot-memory" }
 peridot-mcp = { path = "../peridot-mcp" }
 serde.workspace = true
 serde_json.workspace = true

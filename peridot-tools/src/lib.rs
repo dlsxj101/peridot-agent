@@ -15,6 +15,7 @@ use peridot_common::{
     SandboxMode, SecurityConfig, ToolGroup, ToolResult,
 };
 use peridot_mcp::{McpClient, McpTool};
+use peridot_memory::MemoryStore;
 use serde_json::Value;
 
 /// Runtime context passed to tool implementations.
@@ -202,6 +203,7 @@ pub fn register_builtin_tools(registry: &mut ToolRegistry) -> PeriResult<()> {
     registry.register(VerifyLintTool)?;
     registry.register(AgentScratchpadTool)?;
     registry.register(AgentAskUserTool)?;
+    registry.register(AgentMemorySearchTool)?;
     registry.register(AgentDoneTool)?;
     Ok(())
 }
@@ -1107,6 +1109,53 @@ fn first_choice(params: &Value) -> Option<&str> {
         .and_then(Value::as_str)
 }
 
+/// Built-in memory search tool.
+#[derive(Clone, Debug)]
+pub struct AgentMemorySearchTool;
+
+#[async_trait]
+impl Tool for AgentMemorySearchTool {
+    fn name(&self) -> &str {
+        "agent_memory_search"
+    }
+
+    fn group(&self) -> ToolGroup {
+        ToolGroup::Agent
+    }
+
+    fn description(&self) -> &str {
+        "Search project-local learned skills and known error resolutions"
+    }
+
+    async fn execute(&self, params: Value, ctx: &ToolContext) -> PeriResult<ToolResult> {
+        let query = required_str(&params, "query")?;
+        let store = MemoryStore::new(ctx.project_root.join(".peridot/memory.db"));
+        let skills = store.search_skills(query)?;
+        let error = store.get_error_resolution(query)?;
+        Ok(ToolResult::success(
+            format!(
+                "memory search returned {} skills and {} error resolutions",
+                skills.len(),
+                usize::from(error.is_some())
+            ),
+            serde_json::json!({
+                "query": query,
+                "skills": skills,
+                "error_resolution": error
+            }),
+        ))
+    }
+
+    fn validate_params(&self, params: &Value) -> PeriResult<()> {
+        let _ = required_str(params, "query")?;
+        Ok(())
+    }
+
+    fn permission_level(&self) -> PermissionLevel {
+        PermissionLevel::Read
+    }
+}
+
 /// Built-in completion declaration tool.
 #[derive(Clone, Debug)]
 pub struct AgentDoneTool;
@@ -1265,6 +1314,7 @@ mod tests {
         assert!(registry.get("git_status").is_some());
         assert!(registry.get("verify_build").is_some());
         assert!(registry.get("agent_ask_user").is_some());
+        assert!(registry.get("agent_memory_search").is_some());
     }
 
     #[tokio::test]
@@ -1286,6 +1336,28 @@ mod tests {
             .unwrap();
 
         assert_eq!(result.output["answer"], "no");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn memory_search_reads_project_memory() {
+        let root =
+            std::env::temp_dir().join(format!("peridot-tools-memory-{}", std::process::id()));
+        let store = MemoryStore::new(root.join(".peridot/memory.db"));
+        store
+            .save_skill(&peridot_memory::StoredSkill {
+                name: "rust-fmt".to_string(),
+                body: "Run cargo fmt.".to_string(),
+            })
+            .unwrap();
+        let ctx = ToolContext::new(&root, PermissionMode::Auto);
+
+        let result = AgentMemorySearchTool
+            .execute(serde_json::json!({"query":"fmt"}), &ctx)
+            .await
+            .unwrap();
+
+        assert_eq!(result.output["skills"][0]["name"], "rust-fmt");
         fs::remove_dir_all(root).unwrap();
     }
 
