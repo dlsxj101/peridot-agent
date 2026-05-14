@@ -652,6 +652,7 @@ dependencies = [
  "peridot-memory",
  "peridot-project",
  "peridot-tools",
+ "peridot-verify",
  "serde_json",
  "tokio",
  "toml",

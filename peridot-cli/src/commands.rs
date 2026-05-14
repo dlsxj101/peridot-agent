@@ -9,6 +9,7 @@ use peridot_common::{McpServerConfig, McpTransport, PeridotConfig};
 use peridot_mcp::McpClient;
 use peridot_memory::{MemoryStore, SessionSummary};
 use peridot_project::{ProjectProfile, ProjectScanner};
+use peridot_verify::VerifyPipeline;
 
 /// Scriptable output format.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
@@ -383,6 +384,21 @@ pub(crate) fn print_scan(profile: &ProjectProfile, output: OutputFormat) -> Resu
                 println!("Test: {test}");
             }
             println!("AGENTS.md: {}", profile.has_agents_md);
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn run_verify_command(project_root: &Path, output: OutputFormat) -> Result<()> {
+    let profile = ProjectScanner::new().scan(project_root)?;
+    let report = VerifyPipeline::new(profile).run_all()?;
+    match output {
+        OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
+        OutputFormat::Text => {
+            for stage in &report.stages {
+                let marker = if stage.passed { "PASS" } else { "FAIL" };
+                println!("{marker}\t{:?}\t{}", stage.stage, stage.summary);
+            }
         }
     }
     Ok(())

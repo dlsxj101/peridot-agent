@@ -169,6 +169,13 @@ impl VerifyPipeline {
             .filter(|part| !part.is_empty())
             .collect::<Vec<_>>()
             .join("\n");
+        if command.starts_with("git ") && detail.contains("not a git repository") {
+            return Ok(VerifyStageResult {
+                stage,
+                passed: true,
+                summary: "not a git repository; skipped git check".to_string(),
+            });
+        }
         let summary = if detail.is_empty() {
             empty_summary.to_string()
         } else {

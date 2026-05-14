@@ -10,7 +10,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use commands::{
     AgentsCommand, ConfigCommand, McpCommand, OutputFormat, SessionCommand, SkillCommand,
     load_project_config, print_scan, run_agents_command, run_config_command, run_mcp_command,
-    run_session_command, run_skill_command,
+    run_session_command, run_skill_command, run_verify_command,
 };
 use peridot_common::{
     ExecutionMode, PeriError, PeriResult, PeridotConfig, PermissionMode, ToolCall,
@@ -91,6 +91,8 @@ enum Command {
     },
     /// Print a project scan.
     Scan,
+    /// Run deterministic verification.
+    Verify,
     /// Configuration commands.
     Config {
         /// Config subcommand.
@@ -181,6 +183,10 @@ async fn main() -> Result<()> {
         Some(Command::Scan) => {
             let profile = ProjectScanner::new().scan(&project_root)?;
             print_scan(&profile, cli.output)?;
+            return Ok(());
+        }
+        Some(Command::Verify) => {
+            run_verify_command(&project_root, cli.output)?;
             return Ok(());
         }
         Some(Command::Config { command }) => {
