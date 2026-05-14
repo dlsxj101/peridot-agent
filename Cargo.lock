@@ -634,7 +634,9 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "peridot-common",
+ "peridot-git",
  "serde",
+ "tokio",
 ]
 
 [[package]]

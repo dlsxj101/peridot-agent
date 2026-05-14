@@ -9,4 +9,8 @@ rust-version.workspace = true
 [dependencies]
 async-trait.workspace = true
 peridot-common = { path = "../peridot-common" }
+peridot-git = { path = "../peridot-git" }
 serde.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true

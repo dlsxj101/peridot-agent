@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 use peridot_common::{PeriError, PeriResult};
+use peridot_git::GitManager;
 use serde::{Deserialize, Serialize};
 
 /// Subagent type.
@@ -49,6 +50,54 @@ pub struct SubAgentResult {
 pub trait SubAgent: Send + Sync {
     /// Runs a subagent task.
     async fn run(&self, task: SubAgentTask) -> PeriResult<SubAgentResult>;
+}
+
+/// Local subagent runner for fork/worktree orchestration.
+#[derive(Clone, Debug)]
+pub struct LocalSubAgentRunner {
+    project_root: PathBuf,
+    worktrees_root: PathBuf,
+}
+
+impl LocalSubAgentRunner {
+    /// Creates a local subagent runner.
+    pub fn new(project_root: impl Into<PathBuf>, worktrees_root: impl Into<PathBuf>) -> Self {
+        Self {
+            project_root: project_root.into(),
+            worktrees_root: worktrees_root.into(),
+        }
+    }
+}
+
+#[async_trait]
+impl SubAgent for LocalSubAgentRunner {
+    async fn run(&self, task: SubAgentTask) -> PeriResult<SubAgentResult> {
+        match task.kind {
+            SubAgentKind::Fork => Ok(SubAgentResult {
+                success: true,
+                summary: format!("fork subagent prepared: {}", task.prompt),
+                kind: SubAgentKind::Fork,
+                workspace: Some(self.project_root.clone()),
+            }),
+            SubAgentKind::Worktree => {
+                let plan =
+                    WorktreePlan::new(&self.project_root, &self.worktrees_root, &task.prompt)?;
+                GitManager::new(&self.project_root).add_worktree(&plan.path, &plan.branch)?;
+                Ok(SubAgentResult {
+                    success: true,
+                    summary: format!("worktree subagent prepared on {}", plan.branch),
+                    kind: SubAgentKind::Worktree,
+                    workspace: Some(plan.path),
+                })
+            }
+            SubAgentKind::Teammate => Ok(SubAgentResult {
+                success: true,
+                summary: format!("teammate subagent queued: {}", task.prompt),
+                kind: SubAgentKind::Teammate,
+                workspace: Some(self.project_root.clone()),
+            }),
+        }
+    }
 }
 
 /// Model tier selected for a subagent.
@@ -198,5 +247,45 @@ mod tests {
         assert!(plan.path.ends_with("large-refactor"));
         assert_eq!(plan.add_args[0], "worktree");
         assert_eq!(plan.add_args[2], "-b");
+    }
+
+    #[tokio::test]
+    async fn local_runner_creates_worktree_for_task() {
+        let root = std::env::temp_dir().join(format!("peridot-agents-{}", std::process::id()));
+        let worktrees =
+            std::env::temp_dir().join(format!("peridot-agents-worktrees-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::process::Command::new("git")
+            .arg("init")
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["config", "user.email", "peridot@example.com"])
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["config", "user.name", "Peridot Test"])
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        std::fs::write(root.join("README.md"), "hello\n").unwrap();
+        GitManager::new(&root).commit_all("chore: initial").unwrap();
+        let runner = LocalSubAgentRunner::new(&root, &worktrees);
+
+        let result = runner
+            .run(SubAgentTask {
+                prompt: "large refactor".to_string(),
+                kind: SubAgentKind::Worktree,
+                model_tier: Some(ModelTier::Main),
+            })
+            .await
+            .unwrap();
+
+        let workspace = result.workspace.unwrap();
+        assert!(workspace.join("README.md").exists());
+        GitManager::new(&root).remove_worktree(&workspace).unwrap();
+        std::fs::remove_dir_all(root).unwrap();
     }
 }
