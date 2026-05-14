@@ -776,16 +776,85 @@ pub(crate) fn read_stored_api_key(provider: AuthProvider) -> Result<Option<Strin
         .map(str::to_string))
 }
 
-pub(crate) fn read_stored_openai_oauth_access_token() -> Result<Option<String>> {
+pub(crate) async fn read_stored_openai_oauth_access_token() -> Result<Option<String>> {
     let path = auth_file(AuthProvider::OpenaiOauth)?;
     if !path.exists() {
         return Ok(None);
     }
-    let value = serde_json::from_str::<Value>(&fs::read_to_string(path)?)?;
+    let mut value = serde_json::from_str::<Value>(&fs::read_to_string(&path)?)?;
+    if openai_oauth_token_expires_within(&value, 300)
+        && let Some(refreshed) = refresh_openai_oauth_token(&value).await?
+    {
+        value = refreshed;
+        fs::write(&path, serde_json::to_string_pretty(&value)?)?;
+        set_private_permissions(&path)?;
+    }
     Ok(value
         .get("access_token")
         .and_then(Value::as_str)
         .map(str::to_string))
+}
+
+fn openai_oauth_token_expires_within(token: &Value, leeway_seconds: u64) -> bool {
+    let Some(obtained_at) = token.get("obtained_at_unix").and_then(Value::as_u64) else {
+        return false;
+    };
+    let Some(expires_in) = token.get("expires_in").and_then(Value::as_u64) else {
+        return false;
+    };
+    let expires_at = obtained_at.saturating_add(expires_in);
+    let now = unix_timestamp();
+    now.saturating_add(leeway_seconds) >= expires_at
+}
+
+async fn refresh_openai_oauth_token(token: &Value) -> Result<Option<Value>> {
+    let Some(refresh_token) = token.get("refresh_token").and_then(Value::as_str) else {
+        return Ok(None);
+    };
+    let Some(client_id) = token.get("client_id").and_then(Value::as_str) else {
+        return Ok(None);
+    };
+    let mut refreshed = exchange_openai_oauth_refresh_token(client_id, refresh_token)
+        .await
+        .with_context(|| "failed to refresh OpenAI OAuth token")?;
+    let has_new_refresh_token = refreshed
+        .get("refresh_token")
+        .and_then(Value::as_str)
+        .is_some();
+    if let Some(object) = refreshed.as_object_mut() {
+        object.insert(
+            "provider".to_string(),
+            Value::String(AuthProvider::OpenaiOauth.id().to_string()),
+        );
+        object.insert(
+            "client_id".to_string(),
+            Value::String(client_id.to_string()),
+        );
+        if !has_new_refresh_token {
+            object.insert(
+                "refresh_token".to_string(),
+                Value::String(refresh_token.to_string()),
+            );
+        }
+        if let Some(redirect_uri) = token.get("redirect_uri").and_then(Value::as_str) {
+            object.insert(
+                "redirect_uri".to_string(),
+                Value::String(redirect_uri.to_string()),
+            );
+        }
+        object.insert(
+            "obtained_at_unix".to_string(),
+            Value::Number(serde_json::Number::from(unix_timestamp())),
+        );
+    }
+    Ok(Some(refreshed))
+}
+
+fn unix_timestamp() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or_default()
 }
 
 async fn run_openai_oauth_login(output: OutputFormat) -> Result<()> {
@@ -888,6 +957,27 @@ async fn exchange_openai_oauth_code(
     let body = response.text().await?;
     if !status.is_success() {
         anyhow::bail!("OpenAI OAuth token exchange returned {status}: {body}");
+    }
+    Ok(serde_json::from_str(&body)?)
+}
+
+async fn exchange_openai_oauth_refresh_token(
+    client_id: &str,
+    refresh_token: &str,
+) -> Result<Value> {
+    let response = reqwest::Client::new()
+        .post("https://auth.openai.com/oauth/token")
+        .form(&[
+            ("grant_type", "refresh_token"),
+            ("client_id", client_id),
+            ("refresh_token", refresh_token),
+        ])
+        .send()
+        .await?;
+    let status = response.status();
+    let body = response.text().await?;
+    if !status.is_success() {
+        anyhow::bail!("OpenAI OAuth token refresh returned {status}: {body}");
     }
     Ok(serde_json::from_str(&body)?)
 }
@@ -1687,6 +1777,21 @@ mod tests {
         let code = parse_oauth_callback(request, "state+value").unwrap();
 
         assert_eq!(code, "abc 123");
+    }
+
+    #[test]
+    fn detects_openai_oauth_token_expiry_window() {
+        let expiring = serde_json::json!({
+            "obtained_at_unix": unix_timestamp().saturating_sub(3500),
+            "expires_in": 3600
+        });
+        let fresh = serde_json::json!({
+            "obtained_at_unix": unix_timestamp(),
+            "expires_in": 3600
+        });
+
+        assert!(openai_oauth_token_expires_within(&expiring, 300));
+        assert!(!openai_oauth_token_expires_within(&fresh, 300));
     }
 
     #[test]

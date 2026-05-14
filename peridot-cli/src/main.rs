@@ -434,7 +434,7 @@ async fn run_task(
     if cli.live {
         let profile = ProjectScanner::new().scan(project_root)?;
         let denied_paths = profile.boundaries.into_iter().map(PathBuf::from).collect();
-        let provider = live_provider(config, &model)?;
+        let provider = live_provider(config, &model).await?;
         let summary = run_agent_loop(
             &mut agent,
             provider.as_ref(),
@@ -688,7 +688,7 @@ fn project_context_limits_from_config(
     limits
 }
 
-fn live_provider(config: &PeridotConfig, model: &str) -> Result<Box<dyn LlmProvider>> {
+async fn live_provider(config: &PeridotConfig, model: &str) -> Result<Box<dyn LlmProvider>> {
     match config.auth.primary.as_str() {
         "claude-api" => {
             let api_key = std::env::var("ANTHROPIC_API_KEY")
@@ -723,12 +723,13 @@ fn live_provider(config: &PeridotConfig, model: &str) -> Result<Box<dyn LlmProvi
             )))
         }
         "openai-oauth" => {
-            let access_token = std::env::var("OPENAI_ACCESS_TOKEN")
-                .ok()
-                .or_else(|| read_stored_openai_oauth_access_token().ok().flatten())
-                .with_context(
-                    || "OPENAI_ACCESS_TOKEN or peridot login openai-oauth is required for --live",
-                )?;
+            let access_token = match std::env::var("OPENAI_ACCESS_TOKEN").ok() {
+                Some(access_token) => Some(access_token),
+                None => read_stored_openai_oauth_access_token().await?,
+            }
+            .with_context(
+                || "OPENAI_ACCESS_TOKEN or peridot login openai-oauth is required for --live",
+            )?;
             let base_url = if config.api.base_url == "https://api.anthropic.com" {
                 "https://api.openai.com".to_string()
             } else {
