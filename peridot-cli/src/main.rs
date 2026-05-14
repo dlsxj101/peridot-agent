@@ -88,6 +88,8 @@ enum Command {
 /// Config subcommands.
 #[derive(Debug, Subcommand)]
 enum ConfigCommand {
+    /// Initialize project-local Peridot config.
+    Init,
     /// Print the effective config.
     Show,
 }
@@ -183,10 +185,8 @@ async fn main() -> Result<()> {
             print_scan(&profile, cli.output)?;
             return Ok(());
         }
-        Some(Command::Config {
-            command: ConfigCommand::Show,
-        }) => {
-            print_json_or_text(&config, cli.output)?;
+        Some(Command::Config { command }) => {
+            run_config_command(command, &config, &project_root, cli.output)?;
             return Ok(());
         }
         Some(Command::Session { command }) => {
@@ -354,6 +354,67 @@ fn load_project_config(project_root: &Path) -> Result<PeridotConfig> {
 
 fn memory_store(project_root: &Path) -> MemoryStore {
     MemoryStore::new(project_root.join(".peridot/memory.db"))
+}
+
+fn run_config_command(
+    command: &ConfigCommand,
+    config: &PeridotConfig,
+    project_root: &Path,
+    output: OutputFormat,
+) -> Result<()> {
+    match command {
+        ConfigCommand::Init => init_project_config(project_root, output),
+        ConfigCommand::Show => print_json_or_text(config, output),
+    }
+}
+
+fn init_project_config(project_root: &Path, output: OutputFormat) -> Result<()> {
+    let peridot_dir = project_root.join(".peridot");
+    fs::create_dir_all(peridot_dir.join("hooks"))?;
+    fs::create_dir_all(peridot_dir.join("skills"))?;
+    let config_path = peridot_dir.join("config.toml");
+    let created_config = if config_path.exists() {
+        false
+    } else {
+        let config = toml::to_string_pretty(&PeridotConfig::default())?;
+        fs::write(&config_path, config)?;
+        true
+    };
+    let gitignore_path = project_root.join(".gitignore");
+    let managed_entries = [
+        ".peridot/memory.db",
+        ".peridot/mem/",
+        ".peridot/sessions/",
+        ".peridot/skills/auto/",
+        ".peridot/logs/",
+    ];
+    let mut gitignore = fs::read_to_string(&gitignore_path).unwrap_or_default();
+    let mut changed_gitignore = false;
+    for entry in managed_entries {
+        if !gitignore.lines().any(|line| line.trim() == entry) {
+            if !gitignore.ends_with('\n') && !gitignore.is_empty() {
+                gitignore.push('\n');
+            }
+            gitignore.push_str(entry);
+            gitignore.push('\n');
+            changed_gitignore = true;
+        }
+    }
+    if changed_gitignore {
+        fs::write(&gitignore_path, gitignore)?;
+    }
+    print_json_or_text_result(
+        serde_json::json!({
+            "config_path": config_path,
+            "created_config": created_config,
+            "updated_gitignore": changed_gitignore
+        }),
+        format!(
+            "initialized {} (created_config={created_config}, updated_gitignore={changed_gitignore})",
+            peridot_dir.display()
+        ),
+        output,
+    )
 }
 
 fn run_session_command(
