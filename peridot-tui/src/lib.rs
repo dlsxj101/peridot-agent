@@ -101,6 +101,14 @@ pub struct AskUserPanel {
     pub selected_index: usize,
     /// Free-form fallback text.
     pub freeform: String,
+    /// Optional explanation text shown by the [?] item.
+    pub explanation: Option<String>,
+    /// Whether the explanation is currently visible.
+    pub showing_explanation: bool,
+    /// Index of the synthetic Other choice.
+    pub other_index: Option<usize>,
+    /// Index of the synthetic Explain choice.
+    pub explain_index: Option<usize>,
 }
 
 /// Esc menu state.
@@ -139,17 +147,27 @@ impl AskUserPanel {
                 default_index,
             } => Self {
                 question,
-                choices: options,
+                choices: ask_user_choices_with_controls(options),
                 selected_index: default_index.unwrap_or(0),
                 freeform: String::new(),
+                explanation: Some("Peridot needs this decision before continuing.".to_string()),
+                showing_explanation: false,
+                other_index: None,
+                explain_index: None,
             },
             AskUserRequest::MultiSelect {
                 question, options, ..
             } => Self {
                 question,
-                choices: options,
+                choices: ask_user_choices_with_controls(options),
                 selected_index: 0,
                 freeform: String::new(),
+                explanation: Some(
+                    "Peridot needs one or more choices before continuing.".to_string(),
+                ),
+                showing_explanation: false,
+                other_index: None,
+                explain_index: None,
             },
             AskUserRequest::FreeForm {
                 question, default, ..
@@ -158,8 +176,13 @@ impl AskUserPanel {
                 choices: Vec::new(),
                 selected_index: 0,
                 freeform: default.unwrap_or_default(),
+                explanation: None,
+                showing_explanation: false,
+                other_index: None,
+                explain_index: None,
             },
         }
+        .with_control_indexes()
     }
 
     fn selected_answer(&self) -> String {
@@ -168,6 +191,33 @@ impl AskUserPanel {
             .cloned()
             .unwrap_or_else(|| self.freeform.clone())
     }
+
+    fn with_control_indexes(mut self) -> Self {
+        if self.choices.len() >= 2 {
+            let other = self.choices.len() - 2;
+            let explain = self.choices.len() - 1;
+            if self.choices[other] == "[o] Other" && self.choices[explain] == "[?] Explain" {
+                self.other_index = Some(other);
+                self.explain_index = Some(explain);
+            }
+        }
+        self
+    }
+
+    fn enter_other_mode(&mut self) {
+        self.choices.clear();
+        self.selected_index = 0;
+        self.freeform.clear();
+        self.other_index = None;
+        self.explain_index = None;
+        self.showing_explanation = false;
+    }
+}
+
+fn ask_user_choices_with_controls(mut options: Vec<String>) -> Vec<String> {
+    options.push("[o] Other".to_string());
+    options.push("[?] Explain".to_string());
+    options
 }
 
 /// Main TUI state independent from the terminal backend.
@@ -357,7 +407,19 @@ fn handle_ask_user_key_event(state: &mut TuiState, key: KeyEvent) -> TuiEventOut
             panel.freeform.push(character);
             TuiEventOutcome::Continue
         }
+        KeyCode::Char('?') if panel.explain_index.is_some() => {
+            panel.showing_explanation = !panel.showing_explanation;
+            TuiEventOutcome::Continue
+        }
         KeyCode::Enter => {
+            if panel.explain_index == Some(panel.selected_index) {
+                panel.showing_explanation = !panel.showing_explanation;
+                return TuiEventOutcome::Continue;
+            }
+            if panel.other_index == Some(panel.selected_index) {
+                panel.enter_other_mode();
+                return TuiEventOutcome::Continue;
+            }
             let question = panel.question.clone();
             let answer = panel.selected_answer();
             state.ask_user = None;
@@ -638,7 +700,15 @@ fn render_ask_user_panel(panel: &AskUserPanel) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n");
-    format!("{}\n\n{}", panel.question, choices)
+    if panel.showing_explanation {
+        let explanation = panel
+            .explanation
+            .as_deref()
+            .unwrap_or("No explanation provided.");
+        format!("{}\n\n{}\n\n{}", panel.question, choices, explanation)
+    } else {
+        format!("{}\n\n{}", panel.question, choices)
+    }
 }
 
 /// Selects a layout mode from terminal dimensions.
@@ -805,6 +875,8 @@ mod tests {
         });
 
         assert!(render_ask_user_panel(state.ask_user.as_ref().unwrap()).contains("> yes"));
+        assert!(render_ask_user_panel(state.ask_user.as_ref().unwrap()).contains("[o] Other"));
+        assert!(render_ask_user_panel(state.ask_user.as_ref().unwrap()).contains("[?] Explain"));
         assert_eq!(
             handle_key_event(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)),
             TuiEventOutcome::Continue
@@ -819,6 +891,40 @@ mod tests {
 
         assert!(state.ask_user.is_none());
         assert!(state.transcript[0].contains("Proceed? -> no"));
+    }
+
+    #[test]
+    fn ask_user_panel_supports_explain_and_other() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let mut state = TuiState::new(HeaderState::new(
+            ExecutionMode::Execute,
+            PermissionMode::Auto,
+            "mock",
+        ));
+        state.open_ask_user(AskUserRequest::SingleSelect {
+            question: "Proceed?".to_string(),
+            options: vec!["yes".to_string()],
+            default_index: Some(0),
+        });
+
+        handle_key_event(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        handle_key_event(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        handle_key_event(
+            &mut state,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        );
+        assert!(
+            render_ask_user_panel(state.ask_user.as_ref().unwrap())
+                .contains("Peridot needs this decision")
+        );
+
+        handle_key_event(&mut state, KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        handle_key_event(
+            &mut state,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        );
+        assert!(state.ask_user.as_ref().unwrap().choices.is_empty());
     }
 
     #[test]

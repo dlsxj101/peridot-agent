@@ -1240,11 +1240,18 @@ impl Tool for AgentAskUserTool {
 
     async fn execute(&self, params: Value, _ctx: &ToolContext) -> PeriResult<ToolResult> {
         let question = required_str(&params, "question")?;
-        let answer = params
-            .get("default")
+        let kind = ask_user_kind(&params);
+        let choices = ask_user_choices(&params);
+        let default_index = params
+            .get("default_index")
+            .and_then(Value::as_u64)
+            .map(|value| value as usize);
+        let answer = default_ask_user_answer(&params, &choices, default_index);
+        let display_choices = ask_user_display_choices(&kind, &choices);
+        let explanation = params
+            .get("explanation")
             .and_then(Value::as_str)
-            .or_else(|| first_choice(&params))
-            .unwrap_or("")
+            .unwrap_or("Peridot needs this answer to continue without guessing.")
             .to_string();
         Ok(ToolResult::success(
             if answer.is_empty() {
@@ -1254,6 +1261,11 @@ impl Tool for AgentAskUserTool {
             },
             serde_json::json!({
                 "question": question,
+                "kind": kind,
+                "choices": choices,
+                "display_choices": display_choices,
+                "default_index": default_index,
+                "explanation": explanation,
                 "answer": answer,
                 "source": "default"
             }),
@@ -1273,9 +1285,67 @@ impl Tool for AgentAskUserTool {
 fn first_choice(params: &Value) -> Option<&str> {
     params
         .get("choices")
+        .or_else(|| params.get("options"))
         .and_then(Value::as_array)
         .and_then(|choices| choices.first())
         .and_then(Value::as_str)
+}
+
+fn ask_user_kind(params: &Value) -> String {
+    params
+        .get("kind")
+        .or_else(|| params.get("type"))
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| {
+            if ask_user_choices(params).is_empty() {
+                "free_form"
+            } else {
+                "single_select"
+            }
+        })
+        .to_string()
+}
+
+fn ask_user_choices(params: &Value) -> Vec<String> {
+    params
+        .get("choices")
+        .or_else(|| params.get("options"))
+        .and_then(Value::as_array)
+        .map(|choices| {
+            choices
+                .iter()
+                .filter_map(Value::as_str)
+                .map(ToString::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn default_ask_user_answer(
+    params: &Value,
+    choices: &[String],
+    default_index: Option<usize>,
+) -> String {
+    if let Some(default) = params.get("default").and_then(Value::as_str) {
+        return default.to_string();
+    }
+    if let Some(index) = default_index
+        && let Some(choice) = choices.get(index)
+    {
+        return choice.clone();
+    }
+    first_choice(params).unwrap_or("").to_string()
+}
+
+fn ask_user_display_choices(kind: &str, choices: &[String]) -> Vec<String> {
+    if choices.is_empty() || kind == "free_form" {
+        return Vec::new();
+    }
+    choices
+        .iter()
+        .cloned()
+        .chain(["[o] Other".to_string(), "[?] Explain".to_string()])
+        .collect()
 }
 
 /// Built-in memory search tool.
@@ -1662,6 +1732,36 @@ mod tests {
             .unwrap();
 
         assert_eq!(result.output["answer"], "no");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn ask_user_outputs_other_and_explain_controls() {
+        let root =
+            std::env::temp_dir().join(format!("peridot-tools-ask-controls-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let ctx = ToolContext::new(&root, PermissionMode::Auto);
+
+        let result = AgentAskUserTool
+            .execute(
+                serde_json::json!({
+                    "question": "Choose mode",
+                    "choices": ["execute", "goal"],
+                    "default_index": 1,
+                    "explanation": "Goal keeps running until done."
+                }),
+                &ctx,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result.output["answer"], "goal");
+        assert_eq!(result.output["display_choices"][2], "[o] Other");
+        assert_eq!(result.output["display_choices"][3], "[?] Explain");
+        assert_eq!(
+            result.output["explanation"],
+            "Goal keeps running until done."
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
