@@ -177,6 +177,29 @@ pub fn tool_hook_variables(tool: &str, params: &Value) -> HookVariables {
     variables
 }
 
+/// Builds standard lifecycle-hook variables.
+pub fn lifecycle_hook_variables(
+    session_id: &str,
+    mode: &str,
+    permission: &str,
+    project_root: &Path,
+    status: &str,
+    summary: &str,
+) -> HookVariables {
+    let mut variables = HookVariables::new();
+    variables.insert("session_id".to_string(), session_id.to_string());
+    variables.insert("mode".to_string(), mode.to_string());
+    variables.insert("permission".to_string(), permission.to_string());
+    variables.insert(
+        "project_root".to_string(),
+        project_root.display().to_string(),
+    );
+    variables.insert("workspace".to_string(), project_root.display().to_string());
+    variables.insert("status".to_string(), status.to_string());
+    variables.insert("summary".to_string(), summary.to_string());
+    variables
+}
+
 fn render_template(template: &str, variables: &HookVariables) -> String {
     let mut rendered = template.to_string();
     for (key, value) in variables {
@@ -314,5 +337,22 @@ mod tests {
 
         assert!(hook_event_matches(&hook.event, "pre:file_write"));
         assert!(!hook_event_matches(&hook.event, "post:file_write"));
+    }
+
+    #[test]
+    fn lifecycle_variables_include_session_fields() {
+        let variables = lifecycle_hook_variables(
+            "session-1",
+            "execute",
+            "auto",
+            Path::new("/workspace"),
+            "done",
+            "ok",
+        );
+
+        assert_eq!(variables["session_id"], "session-1");
+        assert_eq!(variables["mode"], "execute");
+        assert_eq!(variables["permission"], "auto");
+        assert_eq!(variables["status"], "done");
     }
 }

@@ -26,6 +26,7 @@ use peridot_llm::{
 use peridot_mcp::McpClient;
 use peridot_memory::MemoryStore;
 use peridot_project::ProjectScanner;
+use peridot_tools::hooks::{HookRunner, lifecycle_hook_variables};
 use peridot_tools::{ToolRegistry, register_builtin_tools, register_mcp_tools};
 use peridot_tui::{HeaderState, TuiState, run_interactive};
 
@@ -545,22 +546,54 @@ async fn run_agent_loop<P>(
 where
     P: LlmProvider + ?Sized,
 {
-    Ok(agent
+    let session_id = format!("session-{}", std::process::id());
+    run_lifecycle_hook(agent, &options, &session_id, "session_start", "running", "")?;
+    let summary = agent
         .run_until_done(
             provider,
             AgentRunRequest {
-                task: options.task,
-                model: options.model,
+                task: options.task.clone(),
+                model: options.model.clone(),
                 max_turns: options.max_turns,
                 max_tokens: 4096,
                 budget_usd: options.budget_usd,
                 project_root: options.project_root.to_path_buf(),
-                denied_paths: options.denied_paths,
+                denied_paths: options.denied_paths.clone(),
                 hooks: options.config.hooks.clone(),
                 security: options.config.security.clone(),
             },
         )
-        .await?)
+        .await?;
+    run_lifecycle_hook(
+        agent,
+        &options,
+        &session_id,
+        "session_end",
+        &format!("{:?}", summary.stopped_reason),
+        &format!("turns={}", summary.turns.len()),
+    )?;
+    Ok(summary)
+}
+
+fn run_lifecycle_hook(
+    agent: &HarnessAgent,
+    options: &RunLoopOptions<'_>,
+    session_id: &str,
+    event: &str,
+    status: &str,
+    summary: &str,
+) -> Result<()> {
+    let variables = lifecycle_hook_variables(
+        session_id,
+        &agent.state().mode.to_string(),
+        &agent.state().permission.to_string(),
+        options.project_root,
+        status,
+        summary,
+    );
+    HookRunner::new(options.project_root, options.config.hooks.clone())
+        .run_lifecycle_hooks(event, &variables)?;
+    Ok(())
 }
 
 fn exit_for_summary(summary: &AgentRunSummary, headless: bool) {
