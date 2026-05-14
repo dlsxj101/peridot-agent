@@ -61,6 +61,25 @@ impl GitManager {
         self.run_git(["switch", "-c", name])
     }
 
+    /// Creates a new git worktree from HEAD on a new branch.
+    pub fn add_worktree(&self, path: impl Into<PathBuf>, branch: &str) -> PeriResult<String> {
+        let path = path.into();
+        let path_string = path.display().to_string();
+        self.run_git(["worktree", "add", "-b", branch, &path_string, "HEAD"])
+    }
+
+    /// Removes a git worktree.
+    pub fn remove_worktree(&self, path: impl Into<PathBuf>) -> PeriResult<String> {
+        let path = path.into();
+        let path_string = path.display().to_string();
+        self.run_git(["worktree", "remove", "--force", &path_string])
+    }
+
+    /// Prunes stale worktree metadata.
+    pub fn prune_worktrees(&self) -> PeriResult<String> {
+        self.run_git(["worktree", "prune"])
+    }
+
     /// Stages all changes and creates a commit.
     pub fn commit_all(&self, message: &str) -> PeriResult<String> {
         self.run_git(["add", "--all"])?;
@@ -111,6 +130,32 @@ mod tests {
         assert_eq!(status.branch.as_deref(), Some("feature/test"));
         assert!(status.changed_files.is_empty());
         assert!(log.contains("docs: update readme"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn creates_and_removes_worktree() {
+        if Command::new("git").arg("--version").output().is_err() {
+            return;
+        }
+        let root = std::env::temp_dir().join(format!("peridot-git-wt-{}", std::process::id()));
+        let worktree =
+            std::env::temp_dir().join(format!("peridot-git-wt-child-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        run_raw_git(&root, ["init"]).unwrap();
+        run_raw_git(&root, ["config", "user.email", "peridot@example.com"]).unwrap();
+        run_raw_git(&root, ["config", "user.name", "Peridot Test"]).unwrap();
+        fs::write(root.join("README.md"), "hello\n").unwrap();
+        let manager = GitManager::new(&root);
+        manager.commit_all("chore: initial").unwrap();
+
+        manager
+            .add_worktree(&worktree, "codex/subagent-test")
+            .unwrap();
+
+        assert!(worktree.join("README.md").exists());
+        manager.remove_worktree(&worktree).unwrap();
+        assert!(!worktree.exists());
         fs::remove_dir_all(root).unwrap();
     }
 
