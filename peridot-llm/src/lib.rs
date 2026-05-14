@@ -3,7 +3,7 @@
 use async_trait::async_trait;
 use peridot_common::{PeriError, PeriResult, ToolCall};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, json};
 
 /// Authentication method used by an LLM provider.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -55,8 +55,12 @@ impl LlmMessage {
 pub struct CompletionRequest {
     /// Model identifier.
     pub model: String,
+    /// Optional top-level system prompt.
+    pub system: Option<String>,
     /// Ordered messages.
     pub messages: Vec<LlmMessage>,
+    /// Maximum output tokens.
+    pub max_tokens: Option<u32>,
     /// Whether extended thinking is enabled for the session.
     pub thinking: bool,
 }
@@ -70,6 +74,8 @@ pub struct Usage {
     pub output_tokens: u64,
     /// Cached input tokens.
     pub cache_read_tokens: u64,
+    /// Cache creation input tokens.
+    pub cache_creation_tokens: u64,
     /// Estimated cost in USD.
     pub estimated_cost_usd: f64,
 }
@@ -228,16 +234,30 @@ pub trait LlmProvider: Send + Sync {
 #[derive(Clone, Debug)]
 pub struct ClaudeProvider {
     model: String,
-    api_key_present: bool,
+    api_key: Option<String>,
+    base_url: String,
+    client: reqwest::Client,
     pricing: PricingTable,
 }
 
 impl ClaudeProvider {
     /// Creates a Claude provider skeleton.
     pub fn new(model: impl Into<String>, api_key_present: bool) -> Self {
+        let api_key = api_key_present.then(|| "configured".to_string());
+        Self::with_options(model, api_key, "https://api.anthropic.com")
+    }
+
+    /// Creates a Claude provider with explicit API options.
+    pub fn with_options(
+        model: impl Into<String>,
+        api_key: Option<String>,
+        base_url: impl Into<String>,
+    ) -> Self {
         Self {
             model: model.into(),
-            api_key_present,
+            api_key,
+            base_url: base_url.into(),
+            client: reqwest::Client::new(),
             pricing: PricingTable {
                 input_per_million: 3.0,
                 output_per_million: 15.0,
@@ -250,14 +270,44 @@ impl ClaudeProvider {
     pub fn model(&self) -> &str {
         &self.model
     }
+
+    /// Returns the configured Anthropic base URL.
+    pub fn base_url(&self) -> &str {
+        &self.base_url
+    }
 }
 
 #[async_trait]
 impl LlmProvider for ClaudeProvider {
-    async fn complete(&self, _request: CompletionRequest) -> PeriResult<CompletionResponse> {
-        Err(PeriError::Provider(
-            "ClaudeProvider network path is not implemented yet".to_string(),
-        ))
+    async fn complete(&self, request: CompletionRequest) -> PeriResult<CompletionResponse> {
+        let api_key = self
+            .api_key
+            .as_deref()
+            .ok_or_else(|| PeriError::Provider("missing Anthropic API key".to_string()))?;
+        let payload = anthropic_payload(&request);
+        let endpoint = format!("{}/v1/messages", self.base_url.trim_end_matches('/'));
+        let response = self
+            .client
+            .post(endpoint)
+            .header("x-api-key", api_key)
+            .header("anthropic-version", "2023-06-01")
+            .header("content-type", "application/json")
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|err| PeriError::Provider(format!("Anthropic request failed: {err}")))?;
+
+        let status = response.status();
+        let body = response
+            .text()
+            .await
+            .map_err(|err| PeriError::Provider(format!("Anthropic response read failed: {err}")))?;
+        if !status.is_success() {
+            return Err(PeriError::Provider(format!(
+                "Anthropic request returned {status}: {body}"
+            )));
+        }
+        parse_anthropic_response(&body, self.pricing)
     }
 
     fn supports_cache(&self) -> bool {
@@ -277,12 +327,122 @@ impl LlmProvider for ClaudeProvider {
     }
 
     fn auth_method(&self) -> AuthMethod {
-        if self.api_key_present {
+        if self.api_key.is_some() {
             AuthMethod::ApiKey
         } else {
             AuthMethod::NotConfigured
         }
     }
+}
+
+fn anthropic_payload(request: &CompletionRequest) -> Value {
+    let mut system_parts = Vec::new();
+    if let Some(system) = &request.system {
+        system_parts.push(system.clone());
+    }
+
+    let messages = request
+        .messages
+        .iter()
+        .filter_map(|message| match message.role {
+            MessageRole::System => {
+                system_parts.push(message.content.clone());
+                None
+            }
+            MessageRole::Assistant => Some(json!({
+                "role": "assistant",
+                "content": message.content
+            })),
+            MessageRole::User | MessageRole::Tool => Some(json!({
+                "role": "user",
+                "content": message.content
+            })),
+        })
+        .collect::<Vec<_>>();
+
+    let mut payload = json!({
+        "model": request.model,
+        "max_tokens": request.max_tokens.unwrap_or(4096),
+        "messages": messages
+    });
+
+    if !system_parts.is_empty() {
+        payload["system"] = Value::String(system_parts.join("\n\n"));
+    }
+
+    if request.thinking {
+        payload["thinking"] = json!({
+            "type": "enabled",
+            "budget_tokens": 1024
+        });
+    }
+
+    payload
+}
+
+fn parse_anthropic_response(body: &str, pricing: PricingTable) -> PeriResult<CompletionResponse> {
+    let value = serde_json::from_str::<Value>(body)
+        .map_err(|err| PeriError::Provider(format!("invalid Anthropic JSON: {err}")))?;
+    let text = value
+        .get("content")
+        .and_then(Value::as_array)
+        .map(|content| {
+            content
+                .iter()
+                .filter_map(|part| {
+                    (part.get("type").and_then(Value::as_str) == Some("text"))
+                        .then(|| part.get("text").and_then(Value::as_str))
+                        .flatten()
+                })
+                .collect::<Vec<_>>()
+                .join("")
+        })
+        .unwrap_or_default();
+    let usage_value = value.get("usage").unwrap_or(&Value::Null);
+    let input_tokens = usage_value
+        .get("input_tokens")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let output_tokens = usage_value
+        .get("output_tokens")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let cache_read_tokens = usage_value
+        .get("cache_read_input_tokens")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let cache_creation_tokens = usage_value
+        .get("cache_creation_input_tokens")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let estimated_cost_usd = estimate_cost(
+        pricing,
+        input_tokens + cache_creation_tokens,
+        output_tokens,
+        cache_read_tokens,
+    );
+
+    Ok(CompletionResponse {
+        text,
+        usage: Usage {
+            input_tokens,
+            output_tokens,
+            cache_read_tokens,
+            cache_creation_tokens,
+            estimated_cost_usd,
+        },
+    })
+}
+
+fn estimate_cost(
+    pricing: PricingTable,
+    input_tokens: u64,
+    output_tokens: u64,
+    cache_read_tokens: u64,
+) -> f64 {
+    (input_tokens as f64 / 1_000_000.0 * pricing.input_per_million)
+        + (output_tokens as f64 / 1_000_000.0 * pricing.output_per_million)
+        + (cache_read_tokens as f64 / 1_000_000.0 * pricing.cache_read_per_million)
 }
 
 /// OpenAI provider placeholder for later Codex OAuth/API support.
@@ -361,5 +521,48 @@ mod tests {
                 .unwrap();
 
         assert_eq!(action.tool_call.name, "plan_create");
+    }
+
+    #[test]
+    fn anthropic_payload_moves_system_to_top_level() {
+        let payload = anthropic_payload(&CompletionRequest {
+            model: "claude-sonnet-4-20250514".to_string(),
+            system: Some("top".to_string()),
+            messages: vec![
+                LlmMessage::new(MessageRole::System, "inline"),
+                LlmMessage::new(MessageRole::User, "hello"),
+            ],
+            max_tokens: Some(128),
+            thinking: false,
+        });
+
+        assert_eq!(payload["system"], "top\n\ninline");
+        assert_eq!(payload["messages"][0]["role"], "user");
+    }
+
+    #[test]
+    fn parses_anthropic_usage_and_text() {
+        let response = parse_anthropic_response(
+            r#"{
+                "content":[{"type":"text","text":"hello"}],
+                "usage":{
+                    "input_tokens":10,
+                    "cache_creation_input_tokens":2,
+                    "cache_read_input_tokens":3,
+                    "output_tokens":4
+                }
+            }"#,
+            PricingTable {
+                input_per_million: 3.0,
+                output_per_million: 15.0,
+                cache_read_per_million: 0.30,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(response.text, "hello");
+        assert_eq!(response.usage.input_tokens, 10);
+        assert_eq!(response.usage.cache_creation_tokens, 2);
+        assert!(response.usage.estimated_cost_usd > 0.0);
     }
 }
