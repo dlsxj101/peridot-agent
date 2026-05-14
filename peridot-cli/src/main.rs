@@ -18,8 +18,8 @@ use peridot_common::{
 use peridot_context::{ContextManager, project_context_limits};
 use peridot_core::{AgentRunRequest, AgentState, HarnessAgent};
 use peridot_llm::{
-    AuthMethod, ClaudeProvider, CompletionRequest, CompletionResponse, LlmProvider, PricingTable,
-    Usage, parse_action,
+    AuthMethod, ClaudeProvider, CompletionRequest, CompletionResponse, LlmProvider, OpenAiProvider,
+    PricingTable, Usage, parse_action,
 };
 use peridot_project::ProjectScanner;
 use peridot_tools::{ToolRegistry, register_builtin_tools};
@@ -325,7 +325,7 @@ async fn run_task(
         let provider = live_provider(config, &model)?;
         let summary = run_agent_loop(
             &mut agent,
-            &provider,
+            provider.as_ref(),
             task,
             model,
             config,
@@ -403,7 +403,7 @@ async fn run_agent_loop<P>(
     denied_paths: Vec<PathBuf>,
 ) -> Result<peridot_core::AgentRunSummary>
 where
-    P: LlmProvider,
+    P: LlmProvider + ?Sized,
 {
     Ok(agent
         .run_until_done(
@@ -421,20 +421,36 @@ where
         .await?)
 }
 
-fn live_provider(config: &PeridotConfig, model: &str) -> Result<ClaudeProvider> {
-    if config.auth.primary != "claude-api" {
-        anyhow::bail!(
-            "live provider {} is not implemented yet; use claude-api or --mock-response-file",
-            config.auth.primary
-        );
+fn live_provider(config: &PeridotConfig, model: &str) -> Result<Box<dyn LlmProvider>> {
+    match config.auth.primary.as_str() {
+        "claude-api" => {
+            let api_key = std::env::var("ANTHROPIC_API_KEY")
+                .with_context(|| "ANTHROPIC_API_KEY is required for --live")?;
+            Ok(Box::new(ClaudeProvider::with_options(
+                model.to_string(),
+                Some(api_key),
+                config.api.base_url.clone(),
+            )))
+        }
+        "openai-api" => {
+            let api_key = std::env::var("OPENAI_API_KEY")
+                .with_context(|| "OPENAI_API_KEY is required for --live")?;
+            let base_url = if config.api.base_url == "https://api.anthropic.com" {
+                "https://api.openai.com".to_string()
+            } else {
+                config.api.base_url.clone()
+            };
+            Ok(Box::new(OpenAiProvider::with_options(
+                model.to_string(),
+                Some(api_key),
+                base_url,
+                AuthMethod::ApiKey,
+            )))
+        }
+        provider => anyhow::bail!(
+            "live provider {provider} is not implemented yet; use claude-api, openai-api, or --mock-response-file"
+        ),
     }
-    let api_key = std::env::var("ANTHROPIC_API_KEY")
-        .with_context(|| "ANTHROPIC_API_KEY is required for --live")?;
-    Ok(ClaudeProvider::with_options(
-        model.to_string(),
-        Some(api_key),
-        config.api.base_url.clone(),
-    ))
 }
 
 struct FileMockProvider {

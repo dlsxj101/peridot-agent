@@ -445,29 +445,89 @@ fn estimate_cost(
         + (cache_read_tokens as f64 / 1_000_000.0 * pricing.cache_read_per_million)
 }
 
-/// OpenAI provider placeholder for later Codex OAuth/API support.
+/// OpenAI provider using the Responses API.
 #[derive(Clone, Debug)]
 pub struct OpenAiProvider {
     auth_method: AuthMethod,
+    model: String,
+    api_key: Option<String>,
+    base_url: String,
+    client: reqwest::Client,
+    pricing: PricingTable,
 }
 
 impl OpenAiProvider {
-    /// Creates an OpenAI provider skeleton.
+    /// Creates an OpenAI provider skeleton without credentials.
     pub fn new(auth_method: AuthMethod) -> Self {
-        Self { auth_method }
+        Self::with_options("gpt-5.2", None, "https://api.openai.com", auth_method)
+    }
+
+    /// Creates an OpenAI provider with explicit API options.
+    pub fn with_options(
+        model: impl Into<String>,
+        api_key: Option<String>,
+        base_url: impl Into<String>,
+        auth_method: AuthMethod,
+    ) -> Self {
+        Self {
+            auth_method,
+            model: model.into(),
+            api_key,
+            base_url: base_url.into(),
+            client: reqwest::Client::new(),
+            pricing: PricingTable {
+                input_per_million: 1.25,
+                output_per_million: 10.0,
+                cache_read_per_million: 0.125,
+            },
+        }
+    }
+
+    /// Returns the configured model name.
+    pub fn model(&self) -> &str {
+        &self.model
+    }
+
+    /// Returns the configured OpenAI base URL.
+    pub fn base_url(&self) -> &str {
+        &self.base_url
     }
 }
 
 #[async_trait]
 impl LlmProvider for OpenAiProvider {
-    async fn complete(&self, _request: CompletionRequest) -> PeriResult<CompletionResponse> {
-        Err(PeriError::Provider(
-            "OpenAiProvider network path is not implemented yet".to_string(),
-        ))
+    async fn complete(&self, request: CompletionRequest) -> PeriResult<CompletionResponse> {
+        let api_key = self
+            .api_key
+            .as_deref()
+            .ok_or_else(|| PeriError::Provider("missing OpenAI API key".to_string()))?;
+        let payload = openai_responses_payload(&request);
+        let endpoint = format!("{}/v1/responses", self.base_url.trim_end_matches('/'));
+        let response = self
+            .client
+            .post(endpoint)
+            .bearer_auth(api_key)
+            .header("content-type", "application/json")
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|err| PeriError::Provider(format!("OpenAI request failed: {err}")))?;
+
+        let status = response.status();
+        let body = response
+            .text()
+            .await
+            .map_err(|err| PeriError::Provider(format!("OpenAI response read failed: {err}")))?;
+        if !status.is_success() {
+            return Err(PeriError::Provider(format!(
+                "OpenAI request returned {status}: {body}"
+            )));
+        }
+        parse_openai_response(&body, self.pricing)
     }
 
     fn supports_cache(&self) -> bool {
-        false
+        true
     }
 
     fn supports_prefill(&self) -> bool {
@@ -479,12 +539,110 @@ impl LlmProvider for OpenAiProvider {
     }
 
     fn pricing(&self) -> PricingTable {
-        PricingTable::default()
+        self.pricing
     }
 
     fn auth_method(&self) -> AuthMethod {
         self.auth_method.clone()
     }
+}
+
+fn openai_responses_payload(request: &CompletionRequest) -> Value {
+    let input = request
+        .messages
+        .iter()
+        .filter_map(|message| {
+            if message.role == MessageRole::System {
+                return None;
+            }
+            let role = match message.role {
+                MessageRole::Assistant => "assistant",
+                MessageRole::System | MessageRole::User | MessageRole::Tool => "user",
+            };
+            Some(json!({
+                "role": role,
+                "content": message.content
+            }))
+        })
+        .collect::<Vec<_>>();
+    let mut instructions = Vec::new();
+    if let Some(system) = &request.system {
+        instructions.push(system.clone());
+    }
+    instructions.extend(
+        request
+            .messages
+            .iter()
+            .filter(|message| message.role == MessageRole::System)
+            .map(|message| message.content.clone()),
+    );
+
+    let mut payload = json!({
+        "model": request.model,
+        "input": input,
+        "store": false
+    });
+    if let Some(max_tokens) = request.max_tokens {
+        payload["max_output_tokens"] = json!(max_tokens);
+    }
+    if !instructions.is_empty() {
+        payload["instructions"] = Value::String(instructions.join("\n\n"));
+    }
+    payload
+}
+
+fn parse_openai_response(body: &str, pricing: PricingTable) -> PeriResult<CompletionResponse> {
+    let value = serde_json::from_str::<Value>(body)
+        .map_err(|err| PeriError::Provider(format!("invalid OpenAI JSON: {err}")))?;
+    let text = value
+        .get("output_text")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .unwrap_or_else(|| openai_output_text(&value));
+    let usage_value = value.get("usage").unwrap_or(&Value::Null);
+    let input_tokens = usage_value
+        .get("input_tokens")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let output_tokens = usage_value
+        .get("output_tokens")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let cache_read_tokens = usage_value
+        .get("input_tokens_details")
+        .and_then(|details| details.get("cached_tokens"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let estimated_cost_usd = estimate_cost(pricing, input_tokens, output_tokens, cache_read_tokens);
+
+    Ok(CompletionResponse {
+        text,
+        usage: Usage {
+            input_tokens,
+            output_tokens,
+            cache_read_tokens,
+            cache_creation_tokens: 0,
+            estimated_cost_usd,
+        },
+    })
+}
+
+fn openai_output_text(value: &Value) -> String {
+    value
+        .get("output")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|item| item.get("type").and_then(Value::as_str) == Some("message"))
+        .filter_map(|item| item.get("content").and_then(Value::as_array))
+        .flatten()
+        .filter_map(|content| {
+            (content.get("type").and_then(Value::as_str) == Some("output_text"))
+                .then(|| content.get("text").and_then(Value::as_str))
+                .flatten()
+        })
+        .collect::<Vec<_>>()
+        .join("")
 }
 
 #[cfg(test)]
@@ -541,6 +699,22 @@ mod tests {
     }
 
     #[test]
+    fn openai_payload_uses_responses_shape() {
+        let payload = openai_responses_payload(&CompletionRequest {
+            model: "gpt-5.2".to_string(),
+            system: Some("system".to_string()),
+            messages: vec![LlmMessage::new(MessageRole::User, "hello")],
+            max_tokens: Some(256),
+            thinking: false,
+        });
+
+        assert_eq!(payload["model"], "gpt-5.2");
+        assert_eq!(payload["instructions"], "system");
+        assert_eq!(payload["max_output_tokens"], 256);
+        assert_eq!(payload["input"][0]["role"], "user");
+    }
+
+    #[test]
     fn parses_anthropic_usage_and_text() {
         let response = parse_anthropic_response(
             r#"{
@@ -564,5 +738,42 @@ mod tests {
         assert_eq!(response.usage.input_tokens, 10);
         assert_eq!(response.usage.cache_creation_tokens, 2);
         assert!(response.usage.estimated_cost_usd > 0.0);
+    }
+
+    #[test]
+    fn parses_openai_response_output_text() {
+        let response = parse_openai_response(
+            r#"{
+                "output_text": "{\"action\":\"agent_done\"}",
+                "usage": {
+                    "input_tokens": 10,
+                    "output_tokens": 5,
+                    "input_tokens_details": {"cached_tokens": 2}
+                }
+            }"#,
+            PricingTable::default(),
+        )
+        .unwrap();
+
+        assert_eq!(response.text, "{\"action\":\"agent_done\"}");
+        assert_eq!(response.usage.input_tokens, 10);
+        assert_eq!(response.usage.output_tokens, 5);
+        assert_eq!(response.usage.cache_read_tokens, 2);
+    }
+
+    #[test]
+    fn parses_openai_response_output_items() {
+        let response = parse_openai_response(
+            r#"{
+                "output": [{
+                    "type": "message",
+                    "content": [{"type": "output_text", "text": "ok"}]
+                }]
+            }"#,
+            PricingTable::default(),
+        )
+        .unwrap();
+
+        assert_eq!(response.text, "ok");
     }
 }

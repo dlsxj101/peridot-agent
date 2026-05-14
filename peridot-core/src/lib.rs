@@ -195,7 +195,7 @@ impl HarnessAgent {
         request: AgentTurnRequest,
     ) -> PeriResult<AgentTurnOutcome>
     where
-        P: LlmProvider,
+        P: LlmProvider + ?Sized,
     {
         if let Some(user_input) = request.user_input {
             self.context
@@ -253,7 +253,7 @@ impl HarnessAgent {
         request: AgentRunRequest,
     ) -> PeriResult<AgentRunSummary>
     where
-        P: LlmProvider,
+        P: LlmProvider + ?Sized,
     {
         let mut outcomes = Vec::new();
         let mut total_usage = Usage::default();
