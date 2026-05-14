@@ -3,8 +3,8 @@
 use std::path::PathBuf;
 
 use peridot_common::{
-    AgentPhase, ExecutionMode, HooksConfig, PeriError, PeriResult, PermissionMode, ToolCall,
-    ToolGroup, ToolResult,
+    AgentPhase, ExecutionMode, HooksConfig, PeriError, PeriResult, PermissionMode, SecurityConfig,
+    ToolCall, ToolGroup, ToolResult,
 };
 use peridot_context::{ContextEntry, ContextManager, ContextSource};
 use peridot_llm::{CompletionRequest, LlmProvider, Usage, parse_action};
@@ -129,6 +129,7 @@ impl HarnessAgent {
             project_root,
             denied_paths,
             HooksConfig::default(),
+            SecurityConfig::default(),
         )
         .await
     }
@@ -140,6 +141,7 @@ impl HarnessAgent {
         project_root: impl Into<PathBuf>,
         denied_paths: Vec<PathBuf>,
         hooks: HooksConfig,
+        security: SecurityConfig,
     ) -> PeriResult<ToolResult> {
         let tool = self
             .tools
@@ -149,7 +151,8 @@ impl HarnessAgent {
         let project_root = project_root.into();
         let ctx = ToolContext::new(project_root.clone(), self.state.permission)
             .with_denied_paths(denied_paths)
-            .with_hooks(hooks);
+            .with_hooks(hooks)
+            .with_security(security);
         tool.validate_params(&call.parameters)?;
         let runner = HookRunner::new(&project_root, ctx.hooks.clone());
         let mut variables = tool_hook_variables(&call.name, &call.parameters);
@@ -225,6 +228,7 @@ impl HarnessAgent {
                 request.project_root,
                 request.denied_paths,
                 request.hooks,
+                request.security,
             )
             .await?;
         self.context
@@ -268,6 +272,7 @@ impl HarnessAgent {
                         project_root: request.project_root.clone(),
                         denied_paths: request.denied_paths.clone(),
                         hooks: request.hooks.clone(),
+                        security: request.security.clone(),
                     },
                 )
                 .await?;
@@ -383,6 +388,8 @@ pub struct AgentTurnRequest {
     pub denied_paths: Vec<PathBuf>,
     /// Active hook definitions.
     pub hooks: HooksConfig,
+    /// Active security and sandbox settings.
+    pub security: SecurityConfig,
 }
 
 /// Outcome of one agent turn.
@@ -417,6 +424,8 @@ pub struct AgentRunRequest {
     pub denied_paths: Vec<PathBuf>,
     /// Active hook definitions.
     pub hooks: HooksConfig,
+    /// Active security and sandbox settings.
+    pub security: SecurityConfig,
 }
 
 /// Reason a bounded run stopped.
@@ -703,6 +712,7 @@ mod tests {
                     project_root: root.clone(),
                     denied_paths: Vec::new(),
                     hooks: HooksConfig::default(),
+                    security: SecurityConfig::default(),
                 },
             )
             .await
@@ -772,6 +782,7 @@ mod tests {
                     }],
                     ..HooksConfig::default()
                 },
+                SecurityConfig::default(),
             )
             .await
             .unwrap();
@@ -815,6 +826,7 @@ mod tests {
                     project_root: root.clone(),
                     denied_paths: Vec::new(),
                     hooks: HooksConfig::default(),
+                    security: SecurityConfig::default(),
                 },
             )
             .await

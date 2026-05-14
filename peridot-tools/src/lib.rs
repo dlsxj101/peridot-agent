@@ -12,7 +12,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use peridot_common::{
     HooksConfig, McpServerConfig, PeriError, PeriResult, PermissionLevel, PermissionMode,
-    ToolGroup, ToolResult,
+    SandboxMode, SecurityConfig, ToolGroup, ToolResult,
 };
 use peridot_mcp::{McpClient, McpTool};
 use serde_json::Value;
@@ -28,6 +28,8 @@ pub struct ToolContext {
     pub denied_paths: Vec<PathBuf>,
     /// User hook definitions active for this tool call.
     pub hooks: HooksConfig,
+    /// Security and sandbox settings active for this tool call.
+    pub security: SecurityConfig,
 }
 
 impl ToolContext {
@@ -38,6 +40,7 @@ impl ToolContext {
             permission_mode,
             denied_paths: Vec::new(),
             hooks: HooksConfig::default(),
+            security: SecurityConfig::default(),
         }
     }
 
@@ -50,6 +53,12 @@ impl ToolContext {
     /// Adds hook definitions to the context.
     pub fn with_hooks(mut self, hooks: HooksConfig) -> Self {
         self.hooks = hooks;
+        self
+    }
+
+    /// Adds security configuration to the context.
+    pub fn with_security(mut self, security: SecurityConfig) -> Self {
+        self.security = security;
         self
     }
 }
@@ -354,10 +363,7 @@ impl Tool for ShellExecTool {
     async fn execute(&self, params: Value, ctx: &ToolContext) -> PeriResult<ToolResult> {
         let command = required_str(&params, "command")?;
         reject_hard_blocked_command(command)?;
-        let output = Command::new("sh")
-            .arg("-c")
-            .arg(command)
-            .current_dir(&ctx.project_root)
+        let output = shell_command(command, ctx)?
             .output()
             .map_err(|err| PeriError::Tool(format!("failed to run command: {err}")))?;
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -421,6 +427,58 @@ fn reject_hard_blocked_command(command: &str) -> PeriResult<()> {
         )));
     }
     Ok(())
+}
+
+fn shell_command(command: &str, ctx: &ToolContext) -> PeriResult<Command> {
+    match ctx.security.sandbox {
+        SandboxMode::None => {
+            let mut process = Command::new("sh");
+            process
+                .arg("-c")
+                .arg(command)
+                .current_dir(&ctx.project_root);
+            Ok(process)
+        }
+        SandboxMode::Docker => {
+            let mut process = Command::new("docker");
+            process.args(docker_shell_args(
+                &ctx.project_root,
+                command,
+                &ctx.security.docker_image,
+                ctx.security.docker_network,
+            ));
+            Ok(process)
+        }
+        SandboxMode::Firejail => Err(PeriError::Config(
+            "firejail sandbox is not implemented yet".to_string(),
+        )),
+    }
+}
+
+fn docker_shell_args(
+    project_root: &Path,
+    command: &str,
+    image: &str,
+    network: bool,
+) -> Vec<String> {
+    let mut args = vec![
+        "run".to_string(),
+        "--rm".to_string(),
+        "-v".to_string(),
+        format!("{}:/workspace", project_root.display()),
+        "-w".to_string(),
+        "/workspace".to_string(),
+    ];
+    if !network {
+        args.extend(["--network".to_string(), "none".to_string()]);
+    }
+    args.extend([
+        image.to_string(),
+        "sh".to_string(),
+        "-lc".to_string(),
+        command.to_string(),
+    ]);
+    args
 }
 
 /// Built-in file read tool.
@@ -1229,6 +1287,19 @@ mod tests {
 
         assert_eq!(result.output["answer"], "no");
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn docker_shell_args_mount_workspace_without_network_by_default() {
+        let root = PathBuf::from("/tmp/project");
+        let args = docker_shell_args(&root, "cargo test", "rust:1", false);
+
+        assert_eq!(args[0], "run");
+        assert!(args.contains(&"--rm".to_string()));
+        assert!(args.contains(&"/tmp/project:/workspace".to_string()));
+        assert!(args.contains(&"--network".to_string()));
+        assert!(args.contains(&"none".to_string()));
+        assert_eq!(args.last().map(String::as_str), Some("cargo test"));
     }
 
     #[tokio::test]

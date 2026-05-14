@@ -1315,6 +1315,12 @@ fn print_config(config: &PeridotConfig, output: OutputFormat) -> Result<()> {
             println!("defaults.permission = {}", config.defaults.permission);
             println!("defaults.max_turns = {}", config.defaults.max_turns);
             println!("defaults.budget_usd = {}", config.defaults.budget_usd);
+            println!("security.sandbox = {}", config.security.sandbox);
+            println!("security.docker_image = {}", config.security.docker_image);
+            println!(
+                "security.docker_network = {}",
+                config.security.docker_network
+            );
         }
     }
     Ok(())

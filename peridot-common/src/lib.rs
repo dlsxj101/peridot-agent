@@ -248,12 +248,67 @@ pub struct PeridotConfig {
     /// Context-window settings.
     #[serde(default)]
     pub context: ContextConfig,
+    /// Security and sandbox settings.
+    #[serde(default)]
+    pub security: SecurityConfig,
     /// MCP server definitions loaded at session start.
     #[serde(default)]
     pub mcp: Vec<McpServerConfig>,
     /// User hook definitions.
     #[serde(default)]
     pub hooks: HooksConfig,
+}
+
+/// Command sandbox backend.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SandboxMode {
+    /// Run commands directly with blocklist and path sandbox only.
+    #[default]
+    None,
+    /// Run shell commands through Docker with the project mounted as /workspace.
+    Docker,
+    /// Placeholder for Linux firejail isolation.
+    Firejail,
+}
+
+impl fmt::Display for SandboxMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let value = match self {
+            Self::None => "none",
+            Self::Docker => "docker",
+            Self::Firejail => "firejail",
+        };
+        f.write_str(value)
+    }
+}
+
+/// Security and sandbox configuration.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SecurityConfig {
+    /// Shell command sandbox backend.
+    #[serde(default)]
+    pub sandbox: SandboxMode,
+    /// Docker image used for command sandboxing.
+    #[serde(default = "default_docker_image")]
+    pub docker_image: String,
+    /// Whether Docker sandboxed commands can access the network.
+    #[serde(default)]
+    pub docker_network: bool,
+}
+
+impl Default for SecurityConfig {
+    fn default() -> Self {
+        Self {
+            sandbox: SandboxMode::None,
+            docker_image: default_docker_image(),
+            docker_network: false,
+        }
+    }
+}
+
+fn default_docker_image() -> String {
+    "rust:1-bookworm".to_string()
 }
 
 /// Authentication configuration.
@@ -606,5 +661,22 @@ mod tests {
         assert_eq!(config.hooks.tool.len(), 1);
         assert_eq!(config.hooks.tool[0].on_failure, HookFailureMode::Block);
         assert_eq!(config.hooks.tool[0].only_paths, vec!["src/**"]);
+    }
+
+    #[test]
+    fn parses_security_config() {
+        let config = toml::from_str::<PeridotConfig>(
+            r#"
+            [security]
+            sandbox = "docker"
+            docker_image = "rust:1.95"
+            docker_network = true
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(config.security.sandbox, SandboxMode::Docker);
+        assert_eq!(config.security.docker_image, "rust:1.95");
+        assert!(config.security.docker_network);
     }
 }

@@ -458,6 +458,7 @@ async fn run_task(
                     project_root,
                     denied_paths,
                     config.hooks.clone(),
+                    config.security.clone(),
                 )
                 .await?;
             if cli.output == OutputFormat::Json || cli.headless {
@@ -556,6 +557,7 @@ where
                 project_root: options.project_root.to_path_buf(),
                 denied_paths: options.denied_paths,
                 hooks: options.config.hooks.clone(),
+                security: options.config.security.clone(),
             },
         )
         .await?)
