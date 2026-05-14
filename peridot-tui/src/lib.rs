@@ -114,6 +114,40 @@ pub struct SidePanelState {
     pub stats: SessionStats,
 }
 
+/// Kind of runtime activity displayed in the TUI side panel.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ActivityKind {
+    /// Model streaming or thinking output.
+    Stream,
+    /// Tool execution.
+    Tool,
+    /// Verification stage.
+    Verification,
+}
+
+/// One recent runtime activity.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct RuntimeActivity {
+    /// Activity kind.
+    pub kind: ActivityKind,
+    /// Short label such as a tool name or stage name.
+    pub label: String,
+    /// Human-readable status.
+    pub status: String,
+}
+
+/// Active model stream displayed before it is committed to the transcript.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct StreamState {
+    /// Stream label.
+    pub label: String,
+    /// Accumulated visible text.
+    pub content: String,
+    /// Whether the stream has completed.
+    pub done: bool,
+}
+
 /// Interactive ask-user prompt shown as a special TUI screen.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct AskUserPanel {
@@ -266,6 +300,10 @@ pub struct TuiState {
     pub header: HeaderState,
     /// Transcript lines.
     pub transcript: Vec<String>,
+    /// Active streaming model output.
+    pub active_stream: Option<StreamState>,
+    /// Recent tool, stream, and verification activity.
+    pub activities: Vec<RuntimeActivity>,
     /// Side panel state.
     pub side_panel: SidePanelState,
     /// Current goal lifecycle status, when a goal is active.
@@ -308,6 +346,8 @@ impl TuiState {
             config: TuiConfig::default(),
             header,
             transcript: Vec::new(),
+            active_stream: None,
+            activities: Vec::new(),
             side_panel: SidePanelState::default(),
             goal_status: None,
             input: String::new(),
@@ -333,6 +373,81 @@ impl TuiState {
         self.transcript.push(line.into());
     }
 
+    /// Starts or replaces the active model stream.
+    pub fn begin_stream(&mut self, label: impl Into<String>) {
+        let label = label.into();
+        self.active_stream = Some(StreamState {
+            label: label.clone(),
+            content: String::new(),
+            done: false,
+        });
+        self.push_activity(ActivityKind::Stream, label, "streaming");
+    }
+
+    /// Appends a model stream delta to the active stream.
+    pub fn push_stream_delta(&mut self, delta: &str) {
+        if self.active_stream.is_none() {
+            self.begin_stream("assistant");
+        }
+        if let Some(stream) = self.active_stream.as_mut() {
+            stream.content.push_str(delta);
+        }
+    }
+
+    /// Finishes the active stream and appends it to the transcript.
+    pub fn finish_stream(&mut self) {
+        let Some(mut stream) = self.active_stream.take() else {
+            return;
+        };
+        stream.done = true;
+        let content = stream.content.trim();
+        if content.is_empty() {
+            self.push_transcript(format!("{}: <empty>", stream.label));
+        } else {
+            self.push_transcript(format!("{}: {content}", stream.label));
+        }
+        self.push_activity(ActivityKind::Stream, stream.label, "done");
+        self.side_panel.stats.steps += 1;
+    }
+
+    /// Records one tool execution in the visible activity list.
+    pub fn record_tool_activity(
+        &mut self,
+        tool_name: impl Into<String>,
+        success: bool,
+        summary: impl Into<String>,
+    ) {
+        let status = if success { "ok" } else { "failed" };
+        if !success {
+            self.side_panel.stats.errors += 1;
+        }
+        self.side_panel.stats.steps += 1;
+        self.push_activity(
+            ActivityKind::Tool,
+            tool_name.into(),
+            format!("{status}: {}", summary.into()),
+        );
+    }
+
+    /// Records one verification stage in the visible activity list.
+    pub fn record_verification_activity(
+        &mut self,
+        stage: impl Into<String>,
+        success: bool,
+        summary: impl Into<String>,
+    ) {
+        let status = if success { "passed" } else { "failed" };
+        if !success {
+            self.side_panel.stats.errors += 1;
+        }
+        self.side_panel.stats.steps += 1;
+        self.push_activity(
+            ActivityKind::Verification,
+            stage.into(),
+            format!("{status}: {}", summary.into()),
+        );
+    }
+
     /// Parses the current input as a slash command when possible.
     pub fn current_slash_command(&self) -> Option<SlashCommand> {
         parse_slash_command(&self.input)
@@ -341,6 +456,23 @@ impl TuiState {
     /// Opens an ask-user panel.
     pub fn open_ask_user(&mut self, request: AskUserRequest) {
         self.ask_user = Some(AskUserPanel::from_request(request));
+    }
+
+    fn push_activity(
+        &mut self,
+        kind: ActivityKind,
+        label: impl Into<String>,
+        status: impl Into<String>,
+    ) {
+        self.activities.push(RuntimeActivity {
+            kind,
+            label: label.into(),
+            status: status.into(),
+        });
+        if self.activities.len() > 8 {
+            let overflow = self.activities.len() - 8;
+            self.activities.drain(0..overflow);
+        }
     }
 }
 
@@ -642,6 +774,36 @@ fn goal_status_label(status: Option<&GoalStatus>) -> &'static str {
     }
 }
 
+fn activity_kind_label(kind: &ActivityKind) -> &'static str {
+    match kind {
+        ActivityKind::Stream => "stream",
+        ActivityKind::Tool => "tool",
+        ActivityKind::Verification => "verify",
+    }
+}
+
+fn render_activity_list(activities: &[RuntimeActivity]) -> String {
+    if activities.is_empty() {
+        return "Activity\n<none>".to_string();
+    }
+    let rendered = activities
+        .iter()
+        .rev()
+        .take(5)
+        .rev()
+        .map(|activity| {
+            format!(
+                "{} {}: {}",
+                activity_kind_label(&activity.kind),
+                activity.label,
+                activity.status
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!("Activity\n{rendered}")
+}
+
 fn theme_accent(config: &TuiConfig) -> Color {
     match config.theme.as_str() {
         "light" => Color::Blue,
@@ -658,6 +820,9 @@ pub fn render_text_snapshot(state: &TuiState) -> String {
     let _ = writeln!(output);
     for line in state.transcript.iter().rev().take(20).rev() {
         let _ = writeln!(output, "{line}");
+    }
+    if let Some(stream) = &state.active_stream {
+        let _ = writeln!(output, "{}: {}", stream.label, stream.content);
     }
     if state.layout == LayoutMode::Full && state.config.show_subagent_panel {
         let done = state
@@ -686,6 +851,18 @@ pub fn render_text_snapshot(state: &TuiState) -> String {
             state.side_panel.stats.errors,
             state.side_panel.stats.elapsed_seconds
         );
+        if !state.activities.is_empty() {
+            let _ = writeln!(output, "Activity");
+            for activity in &state.activities {
+                let _ = writeln!(
+                    output,
+                    "- {} {}: {}",
+                    activity_kind_label(&activity.kind),
+                    activity.label,
+                    activity.status
+                );
+            }
+        }
     }
     let _ = write!(output, "> {}", state.input);
     output
@@ -726,15 +903,18 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
     } else if let Some(panel) = &state.ask_user {
         render_ask_user_panel(panel)
     } else {
-        state
+        let mut transcript = state
             .transcript
             .iter()
             .rev()
             .take(body_chunks[0].height.saturating_sub(2) as usize)
             .rev()
             .cloned()
-            .collect::<Vec<_>>()
-            .join("\n")
+            .collect::<Vec<_>>();
+        if let Some(stream) = &state.active_stream {
+            transcript.push(format!("{}: {}", stream.label, stream.content));
+        }
+        transcript.join("\n")
     };
     frame.render_widget(
         Paragraph::new(transcript).block(
@@ -769,12 +949,13 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
             .map(|status| format!("Goal: {}\n\n", goal_status_label(Some(status))))
             .unwrap_or_default();
         let side = format!(
-            "{goal}Plan {done}/{}\n{}\n\nSession\nsteps: {}\nerrors: {}\nelapsed: {}s",
+            "{goal}Plan {done}/{}\n{}\n\nSession\nsteps: {}\nerrors: {}\nelapsed: {}s\n\n{}",
             state.side_panel.plan.len(),
             plan,
             state.side_panel.stats.steps,
             state.side_panel.stats.errors,
-            state.side_panel.stats.elapsed_seconds
+            state.side_panel.stats.elapsed_seconds,
+            render_activity_list(&state.activities)
         );
         frame.render_widget(
             Paragraph::new(side).block(Block::default().title("Status").borders(Borders::ALL)),
@@ -912,6 +1093,48 @@ mod tests {
         assert!(snapshot.contains("PERIDOT | execute.auto | mock"));
         assert!(snapshot.contains("[x] Implement hooks"));
         assert!(snapshot.contains("tool file_write ok"));
+    }
+
+    #[test]
+    fn streaming_state_renders_and_finishes_into_transcript() {
+        let mut state = TuiState::new(HeaderState::new(
+            ExecutionMode::Execute,
+            PermissionMode::Auto,
+            "mock",
+        ));
+
+        state.begin_stream("assistant");
+        state.push_stream_delta("hello");
+        state.push_stream_delta(" world");
+
+        let snapshot = render_text_snapshot(&state);
+        assert!(snapshot.contains("assistant: hello world"));
+        assert!(snapshot.contains("stream assistant: streaming"));
+
+        state.finish_stream();
+
+        assert!(state.active_stream.is_none());
+        assert_eq!(state.transcript[0], "assistant: hello world");
+        assert!(render_text_snapshot(&state).contains("stream assistant: done"));
+        assert_eq!(state.side_panel.stats.steps, 1);
+    }
+
+    #[test]
+    fn records_tool_and_verification_activity() {
+        let mut state = TuiState::new(HeaderState::new(
+            ExecutionMode::Execute,
+            PermissionMode::Auto,
+            "mock",
+        ));
+
+        state.record_tool_activity("file_write", true, "wrote file");
+        state.record_verification_activity("cargo test", false, "tests failed");
+
+        let snapshot = render_text_snapshot(&state);
+        assert!(snapshot.contains("tool file_write: ok: wrote file"));
+        assert!(snapshot.contains("verify cargo test: failed: tests failed"));
+        assert_eq!(state.side_panel.stats.steps, 2);
+        assert_eq!(state.side_panel.stats.errors, 1);
     }
 
     #[test]
