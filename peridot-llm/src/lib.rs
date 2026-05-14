@@ -1,5 +1,7 @@
 //! LLM provider contracts and provider skeletons.
 
+use std::time::Duration;
+
 use async_trait::async_trait;
 use peridot_common::{PeriError, PeriResult, ToolCall};
 use serde::{Deserialize, Serialize};
@@ -259,6 +261,7 @@ pub struct ClaudeProvider {
     api_key: Option<String>,
     base_url: String,
     client: reqwest::Client,
+    max_retries: u8,
     pricing: PricingTable,
 }
 
@@ -275,11 +278,27 @@ impl ClaudeProvider {
         api_key: Option<String>,
         base_url: impl Into<String>,
     ) -> Self {
+        Self::with_transport_options(model, api_key, base_url, 120, 3)
+    }
+
+    /// Creates a Claude provider with explicit API transport options.
+    pub fn with_transport_options(
+        model: impl Into<String>,
+        api_key: Option<String>,
+        base_url: impl Into<String>,
+        timeout_seconds: u64,
+        max_retries: u8,
+    ) -> Self {
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(timeout_seconds.max(1)))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
         Self {
             model: model.into(),
             api_key,
             base_url: base_url.into(),
-            client: reqwest::Client::new(),
+            client,
+            max_retries,
             pricing: PricingTable {
                 input_per_million: 3.0,
                 output_per_million: 15.0,
@@ -297,6 +316,11 @@ impl ClaudeProvider {
     pub fn base_url(&self) -> &str {
         &self.base_url
     }
+
+    /// Returns configured retry count.
+    pub fn max_retries(&self) -> u8 {
+        self.max_retries
+    }
 }
 
 #[async_trait]
@@ -308,28 +332,51 @@ impl LlmProvider for ClaudeProvider {
             .ok_or_else(|| PeriError::Provider("missing Anthropic API key".to_string()))?;
         let payload = anthropic_payload(&request);
         let endpoint = format!("{}/v1/messages", self.base_url.trim_end_matches('/'));
-        let response = self
-            .client
-            .post(endpoint)
-            .header("x-api-key", api_key)
-            .header("anthropic-version", "2023-06-01")
-            .header("content-type", "application/json")
-            .json(&payload)
-            .send()
-            .await
-            .map_err(|err| PeriError::Provider(format!("Anthropic request failed: {err}")))?;
+        let mut last_error = None;
+        for attempt in 0..=self.max_retries {
+            let response = match self
+                .client
+                .post(&endpoint)
+                .header("x-api-key", api_key)
+                .header("anthropic-version", "2023-06-01")
+                .header("content-type", "application/json")
+                .json(&payload)
+                .send()
+                .await
+            {
+                Ok(response) => response,
+                Err(err) => {
+                    last_error = Some(format!("Anthropic request failed: {err}"));
+                    if attempt < self.max_retries {
+                        continue;
+                    }
+                    break;
+                }
+            };
 
-        let status = response.status();
-        let body = response
-            .text()
-            .await
-            .map_err(|err| PeriError::Provider(format!("Anthropic response read failed: {err}")))?;
-        if !status.is_success() {
-            return Err(PeriError::Provider(format!(
-                "Anthropic request returned {status}: {body}"
-            )));
+            let status = response.status();
+            let body = match response.text().await {
+                Ok(body) => body,
+                Err(err) => {
+                    last_error = Some(format!("Anthropic response read failed: {err}"));
+                    if attempt < self.max_retries {
+                        continue;
+                    }
+                    break;
+                }
+            };
+            if status.is_success() {
+                return parse_anthropic_response(&body, self.pricing);
+            }
+            last_error = Some(format!("Anthropic request returned {status}: {body}"));
+            if attempt < self.max_retries && should_retry_status(status) {
+                continue;
+            }
+            break;
         }
-        parse_anthropic_response(&body, self.pricing)
+        Err(PeriError::Provider(
+            last_error.unwrap_or_else(|| "Anthropic request failed".to_string()),
+        ))
     }
 
     fn supports_cache(&self) -> bool {
@@ -467,6 +514,12 @@ fn estimate_cost(
         + (cache_read_tokens as f64 / 1_000_000.0 * pricing.cache_read_per_million)
 }
 
+fn should_retry_status(status: reqwest::StatusCode) -> bool {
+    status == reqwest::StatusCode::REQUEST_TIMEOUT
+        || status == reqwest::StatusCode::TOO_MANY_REQUESTS
+        || status.is_server_error()
+}
+
 /// OpenAI provider using the Responses API.
 #[derive(Clone, Debug)]
 pub struct OpenAiProvider {
@@ -475,6 +528,7 @@ pub struct OpenAiProvider {
     api_key: Option<String>,
     base_url: String,
     client: reqwest::Client,
+    max_retries: u8,
     pricing: PricingTable,
 }
 
@@ -491,12 +545,29 @@ impl OpenAiProvider {
         base_url: impl Into<String>,
         auth_method: AuthMethod,
     ) -> Self {
+        Self::with_transport_options(model, api_key, base_url, auth_method, 120, 3)
+    }
+
+    /// Creates an OpenAI provider with explicit API transport options.
+    pub fn with_transport_options(
+        model: impl Into<String>,
+        api_key: Option<String>,
+        base_url: impl Into<String>,
+        auth_method: AuthMethod,
+        timeout_seconds: u64,
+        max_retries: u8,
+    ) -> Self {
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(timeout_seconds.max(1)))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
         Self {
             auth_method,
             model: model.into(),
             api_key,
             base_url: base_url.into(),
-            client: reqwest::Client::new(),
+            client,
+            max_retries,
             pricing: PricingTable {
                 input_per_million: 1.25,
                 output_per_million: 10.0,
@@ -514,6 +585,11 @@ impl OpenAiProvider {
     pub fn base_url(&self) -> &str {
         &self.base_url
     }
+
+    /// Returns configured retry count.
+    pub fn max_retries(&self) -> u8 {
+        self.max_retries
+    }
 }
 
 #[async_trait]
@@ -525,27 +601,50 @@ impl LlmProvider for OpenAiProvider {
             .ok_or_else(|| PeriError::Provider("missing OpenAI API key".to_string()))?;
         let payload = openai_responses_payload(&request);
         let endpoint = format!("{}/v1/responses", self.base_url.trim_end_matches('/'));
-        let response = self
-            .client
-            .post(endpoint)
-            .bearer_auth(api_key)
-            .header("content-type", "application/json")
-            .json(&payload)
-            .send()
-            .await
-            .map_err(|err| PeriError::Provider(format!("OpenAI request failed: {err}")))?;
+        let mut last_error = None;
+        for attempt in 0..=self.max_retries {
+            let response = match self
+                .client
+                .post(&endpoint)
+                .bearer_auth(api_key)
+                .header("content-type", "application/json")
+                .json(&payload)
+                .send()
+                .await
+            {
+                Ok(response) => response,
+                Err(err) => {
+                    last_error = Some(format!("OpenAI request failed: {err}"));
+                    if attempt < self.max_retries {
+                        continue;
+                    }
+                    break;
+                }
+            };
 
-        let status = response.status();
-        let body = response
-            .text()
-            .await
-            .map_err(|err| PeriError::Provider(format!("OpenAI response read failed: {err}")))?;
-        if !status.is_success() {
-            return Err(PeriError::Provider(format!(
-                "OpenAI request returned {status}: {body}"
-            )));
+            let status = response.status();
+            let body = match response.text().await {
+                Ok(body) => body,
+                Err(err) => {
+                    last_error = Some(format!("OpenAI response read failed: {err}"));
+                    if attempt < self.max_retries {
+                        continue;
+                    }
+                    break;
+                }
+            };
+            if status.is_success() {
+                return parse_openai_response(&body, self.pricing);
+            }
+            last_error = Some(format!("OpenAI request returned {status}: {body}"));
+            if attempt < self.max_retries && should_retry_status(status) {
+                continue;
+            }
+            break;
         }
-        parse_openai_response(&body, self.pricing)
+        Err(PeriError::Provider(
+            last_error.unwrap_or_else(|| "OpenAI request failed".to_string()),
+        ))
     }
 
     fn supports_cache(&self) -> bool {
@@ -777,6 +876,36 @@ mod tests {
 
         assert_eq!(payload["system"], "top\n\ninline");
         assert_eq!(payload["messages"][0]["role"], "user");
+    }
+
+    #[test]
+    fn providers_store_transport_retry_options() {
+        let claude = ClaudeProvider::with_transport_options(
+            "claude-sonnet-4-20250514",
+            Some("key".to_string()),
+            "https://api.anthropic.com",
+            5,
+            7,
+        );
+        let openai = OpenAiProvider::with_transport_options(
+            "gpt-5.2",
+            Some("key".to_string()),
+            "https://api.openai.com",
+            AuthMethod::ApiKey,
+            6,
+            8,
+        );
+
+        assert_eq!(claude.max_retries(), 7);
+        assert_eq!(openai.max_retries(), 8);
+    }
+
+    #[test]
+    fn retry_status_only_includes_transient_failures() {
+        assert!(should_retry_status(reqwest::StatusCode::REQUEST_TIMEOUT));
+        assert!(should_retry_status(reqwest::StatusCode::TOO_MANY_REQUESTS));
+        assert!(should_retry_status(reqwest::StatusCode::BAD_GATEWAY));
+        assert!(!should_retry_status(reqwest::StatusCode::BAD_REQUEST));
     }
 
     #[test]

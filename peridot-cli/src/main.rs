@@ -943,10 +943,12 @@ async fn live_provider(config: &PeridotConfig, model: &str) -> Result<Box<dyn Ll
                 .with_context(
                     || "ANTHROPIC_API_KEY or peridot login claude-api is required for --live",
                 )?;
-            Ok(Box::new(ClaudeProvider::with_options(
+            Ok(Box::new(ClaudeProvider::with_transport_options(
                 model.to_string(),
                 Some(api_key),
                 config.api.base_url.clone(),
+                config.api.timeout_seconds,
+                config.api.max_retries,
             )))
         }
         "openai-api" => {
@@ -961,11 +963,13 @@ async fn live_provider(config: &PeridotConfig, model: &str) -> Result<Box<dyn Ll
             } else {
                 config.api.base_url.clone()
             };
-            Ok(Box::new(OpenAiProvider::with_options(
+            Ok(Box::new(OpenAiProvider::with_transport_options(
                 model.to_string(),
                 Some(api_key),
                 base_url,
                 AuthMethod::ApiKey,
+                config.api.timeout_seconds,
+                config.api.max_retries,
             )))
         }
         "openai-oauth" => {
@@ -981,11 +985,13 @@ async fn live_provider(config: &PeridotConfig, model: &str) -> Result<Box<dyn Ll
             } else {
                 config.api.base_url.clone()
             };
-            Ok(Box::new(OpenAiProvider::with_options(
+            Ok(Box::new(OpenAiProvider::with_transport_options(
                 model.to_string(),
                 Some(access_token),
                 base_url,
                 AuthMethod::OAuth,
+                config.api.timeout_seconds,
+                config.api.max_retries,
             )))
         }
         provider => anyhow::bail!(
