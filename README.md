@@ -7,16 +7,18 @@ Peridot Agent is a Rust CLI/TUI autonomous coding agent. The current implementat
 Implemented:
 
 - Cargo workspace with the 13 spec crates.
-- Provider-neutral LLM contracts and a Claude Messages API provider.
+- Provider-neutral LLM contracts with Claude Messages and OpenAI Responses providers.
 - Append-only context manager with large-observation offload.
 - Built-in file, shell, plan, git, verify, and agent tools.
 - AGENTS.md path boundary enforcement.
 - Bounded agent loop with deterministic mock provider support.
 - Project scanner for Rust, Node, Python, Go, Make, AGENTS metadata, and git state.
 - SQLite-backed session summary store.
-- AGENTS, skill, MCP, and session resume CLI surfaces.
+- AGENTS, skill, MCP, verify, setup, login/logout, and session resume CLI surfaces.
+- MCP stdio initialize, `tools/list`, `tools/call`, and ToolRegistry adapters.
+- Deterministic verification pipeline and git worktree helpers.
 - Configured tool hooks with warn/block behavior and audit JSONL logging.
-- Headless CLI commands and a deterministic TUI snapshot model.
+- Headless CLI commands and Ratatui-backed TUI rendering model.
 
 ## Common Commands
 
@@ -29,7 +31,9 @@ cargo test --workspace
 ```bash
 cargo run -p peridot-cli -- --version
 cargo run -p peridot-cli -- scan --output json
+cargo run -p peridot-cli -- setup
 cargo run -p peridot-cli -- config init
+cargo run -p peridot-cli -- verify --output json
 cargo run -p peridot-cli -- session save demo "initial work"
 cargo run -p peridot-cli -- session list
 cargo run -p peridot-cli -- session resume demo
@@ -53,12 +57,13 @@ cargo run -p peridot-cli -- run "create hello.py" \
   --headless --output json
 ```
 
-## Live Claude Loop
+## Live Providers
 
-Live execution uses `ANTHROPIC_API_KEY` and the configured Claude API base URL:
+Live execution uses environment credentials or credentials stored with `peridot login`:
 
 ```bash
 ANTHROPIC_API_KEY=... cargo run -p peridot-cli -- run "inspect this project" --live
+OPENAI_API_KEY=... cargo run -p peridot-cli -- login openai-api
 ```
 
 Live model responses must currently follow Peridot's JSON action protocol:
@@ -70,10 +75,10 @@ Live model responses must currently follow Peridot's JSON action protocol:
 ## Project Initialization
 
 ```bash
-peridot config init
+peridot setup
 ```
 
-This creates `.peridot/config.toml`, `.peridot/hooks/`, `.peridot/skills/`, and gitignore entries for local memory, sessions, logs, and generated skills.
+This creates `.peridot/config.toml`, `.peridot/hooks/`, `.peridot/skills/`, gitignore entries for local memory/logs/generated skills, and an `AGENTS.md` draft when no compatible instruction file exists.
 
 ## Hooks And Audit
 
