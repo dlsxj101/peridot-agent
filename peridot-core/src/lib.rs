@@ -323,6 +323,12 @@ impl HarnessAgent {
                     request.budget_usd,
                 )?;
                 budget_warning_sent = true;
+                if self.state.mode == ExecutionMode::Goal {
+                    self.context.append(ContextEntry::trusted(
+                        ContextSource::PlanReminder,
+                        budget_warning_message(total_usage.estimated_cost_usd, request.budget_usd),
+                    ));
+                }
             }
             let done = outcome.done;
             let recovery = stuck_detector.record(&outcome);
@@ -371,6 +377,11 @@ impl HarnessAgent {
                 });
             }
             if request.budget_usd > 0.0 && total_usage.estimated_cost_usd >= request.budget_usd {
+                self.state.phase = AgentPhase::Recovering;
+                self.context.append(ContextEntry::trusted(
+                    ContextSource::PlanReminder,
+                    budget_exceeded_message(total_usage.estimated_cost_usd, request.budget_usd),
+                ));
                 return Ok(AgentRunSummary {
                     turns: outcomes,
                     usage: total_usage,
@@ -419,6 +430,18 @@ fn run_budget_warning_hook(
     variables.insert("percentage".to_string(), format!("{percentage:.0}"));
     HookRunner::new(root, hooks.clone()).run_event_hooks("budget_warning", &variables)?;
     Ok(())
+}
+
+fn budget_warning_message(current_usd: f64, limit_usd: f64) -> String {
+    format!(
+        "Budget warning: estimated spend is ${current_usd:.6} against a ${limit_usd:.6} limit. In goal mode, ask the user before taking costly follow-up steps unless the remaining work is clearly cheap and necessary."
+    )
+}
+
+fn budget_exceeded_message(current_usd: f64, limit_usd: f64) -> String {
+    format!(
+        "Budget exceeded: estimated spend is ${current_usd:.6} against a ${limit_usd:.6} limit. Pause autonomous work and use agent_ask_user before continuing."
+    )
 }
 
 fn run_context_compacted_hook(
@@ -1488,6 +1511,102 @@ mod tests {
 
         let log = std::fs::read_to_string(root.join("budget.log")).unwrap();
         assert!(log.contains("60"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn goal_budget_warning_is_injected_into_context() {
+        let root = std::env::temp_dir().join(format!(
+            "peridot-core-goal-budget-warning-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let mut registry = ToolRegistry::new();
+        register_builtin_tools(&mut registry).unwrap();
+        let mut agent = HarnessAgent::new(
+            AgentState::new(ExecutionMode::Goal, PermissionMode::Auto),
+            ContextManager::new(),
+            registry,
+        );
+        let provider = StaticProvider::with_cost(
+            vec![
+                json!({"action":"plan_update","parameters":{"update":"one more step"}}).to_string(),
+                json!({"action":"agent_done","parameters":{"summary":"done"}}).to_string(),
+            ],
+            0.06,
+        );
+
+        let summary = agent
+            .run_until_done(
+                &provider,
+                AgentRunRequest {
+                    task: "watch budget".to_string(),
+                    model: "mock".to_string(),
+                    goal_checker_model: None,
+                    max_turns: 2,
+                    max_tokens: 512,
+                    budget_usd: 1.0,
+                    budget_warning_pct: 5,
+                    project_root: root.clone(),
+                    denied_paths: Vec::new(),
+                    hooks: HooksConfig::default(),
+                    security: SecurityConfig::default(),
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(summary.stopped_reason, StopReason::Done);
+        assert!(agent.context().entries().iter().any(|entry| {
+            entry.source == ContextSource::PlanReminder && entry.content.contains("Budget warning")
+        }));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn goal_budget_stop_injects_pause_directive() {
+        let root = std::env::temp_dir().join(format!(
+            "peridot-core-goal-budget-stop-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let mut registry = ToolRegistry::new();
+        register_builtin_tools(&mut registry).unwrap();
+        let mut agent = HarnessAgent::new(
+            AgentState::new(ExecutionMode::Goal, PermissionMode::Auto),
+            ContextManager::new(),
+            registry,
+        );
+        let provider = StaticProvider::with_cost(
+            vec![json!({"action":"plan_update","parameters":{"update":"costly"}}).to_string()],
+            0.2,
+        );
+
+        let summary = agent
+            .run_until_done(
+                &provider,
+                AgentRunRequest {
+                    task: "hit budget".to_string(),
+                    model: "mock".to_string(),
+                    goal_checker_model: None,
+                    max_turns: 2,
+                    max_tokens: 512,
+                    budget_usd: 0.1,
+                    budget_warning_pct: 50,
+                    project_root: root.clone(),
+                    denied_paths: Vec::new(),
+                    hooks: HooksConfig::default(),
+                    security: SecurityConfig::default(),
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(summary.stopped_reason, StopReason::Budget);
+        assert_eq!(agent.state().phase, AgentPhase::Recovering);
+        assert!(agent.context().entries().iter().any(|entry| {
+            entry.source == ContextSource::PlanReminder && entry.content.contains("Budget exceeded")
+        }));
         std::fs::remove_dir_all(root).unwrap();
     }
 
