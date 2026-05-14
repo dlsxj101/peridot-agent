@@ -32,7 +32,9 @@ jobs:
         run: cargo test --workspace
 
       - name: Installer syntax
-        run: bash -n install.sh
+        run: |
+          sh -n install.sh
+          bash -n install.sh
 
   e2e:
     name: E2E
