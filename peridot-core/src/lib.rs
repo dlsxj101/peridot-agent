@@ -10,7 +10,7 @@ use peridot_common::{
 use peridot_context::{ContextEntry, ContextManager, ContextSource};
 use peridot_llm::{CompletionRequest, LlmMessage, LlmProvider, MessageRole, Usage, parse_action};
 use peridot_tools::audit::{AuditEvent, append_audit_event};
-use peridot_tools::hooks::{HookRunner, tool_hook_variables};
+use peridot_tools::hooks::{HookRunner, HookVariables, tool_hook_variables};
 use peridot_tools::{ToolContext, ToolRegistry};
 use serde::{Deserialize, Serialize};
 
@@ -287,6 +287,7 @@ impl HarnessAgent {
                 Ok(outcome) => outcome,
                 Err(err) => {
                     self.state.phase = AgentPhase::Recovering;
+                    run_error_event_hooks(&request.project_root, &request.hooks, &err)?;
                     self.context.append(ContextEntry::trusted(
                         ContextSource::PlanReminder,
                         recovery_message(&err),
@@ -300,6 +301,7 @@ impl HarnessAgent {
             outcomes.push(outcome);
             if let Some(message) = recovery {
                 self.state.phase = AgentPhase::Recovering;
+                run_recovery_event_hook(&request.project_root, &request.hooks, "stuck", &message)?;
                 self.context
                     .append(ContextEntry::trusted(ContextSource::PlanReminder, message));
             }
@@ -321,6 +323,12 @@ impl HarnessAgent {
                     ));
                     if !verdict.satisfied {
                         self.state.phase = AgentPhase::Recovering;
+                        run_recovery_event_hook(
+                            &request.project_root,
+                            &request.hooks,
+                            "goal_checker",
+                            &verdict.reason,
+                        )?;
                         self.context.append(ContextEntry::trusted(
                             ContextSource::PlanReminder,
                             "Goal checker says the objective is not satisfied yet. Continue with a concrete next action.".to_string(),
@@ -349,6 +357,36 @@ impl HarnessAgent {
             stopped_reason: StopReason::MaxTurns,
         })
     }
+}
+
+fn run_error_event_hooks(root: &Path, hooks: &HooksConfig, error: &PeriError) -> PeriResult<()> {
+    let mut variables = recovery_hook_variables(root, "error", &error.to_string());
+    variables.insert("error_type".to_string(), classify_error(error).to_string());
+    variables.insert("error_message".to_string(), error.to_string());
+    let runner = HookRunner::new(root, hooks.clone());
+    runner.run_event_hooks("error", &variables)?;
+    runner.run_event_hooks("recovery_triggered", &variables)?;
+    Ok(())
+}
+
+fn run_recovery_event_hook(
+    root: &Path,
+    hooks: &HooksConfig,
+    recovery_type: &str,
+    message: &str,
+) -> PeriResult<()> {
+    let variables = recovery_hook_variables(root, recovery_type, message);
+    HookRunner::new(root, hooks.clone()).run_event_hooks("recovery_triggered", &variables)?;
+    Ok(())
+}
+
+fn recovery_hook_variables(root: &Path, recovery_type: &str, message: &str) -> HookVariables {
+    let mut variables = HookVariables::new();
+    variables.insert("project_root".to_string(), root.display().to_string());
+    variables.insert("workspace".to_string(), root.display().to_string());
+    variables.insert("recovery_type".to_string(), recovery_type.to_string());
+    variables.insert("message".to_string(), message.replace(['\r', '\n'], " "));
+    variables
 }
 
 fn recovery_message(error: &PeriError) -> String {
@@ -1272,6 +1310,72 @@ mod tests {
                 .content
                 .contains("previous turn failed with not_found")
         }));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn run_until_done_emits_error_and_recovery_hooks() {
+        let root = std::env::temp_dir().join(format!(
+            "peridot-core-recovery-hooks-{}",
+            std::process::id()
+        ));
+        let hooks_dir = root.join(".peridot/hooks");
+        std::fs::create_dir_all(&hooks_dir).unwrap();
+        let script = hooks_dir.join("event.sh");
+        std::fs::write(&script, "#!/bin/sh\necho \"$1:$2\" >> events.log\n").unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let mut registry = ToolRegistry::new();
+        register_builtin_tools(&mut registry).unwrap();
+        let mut agent = HarnessAgent::new(
+            AgentState::new(ExecutionMode::Goal, PermissionMode::Auto),
+            ContextManager::new(),
+            registry,
+        );
+        let provider = StaticProvider::new(vec![
+            json!({"action":"file_read","parameters":{"path":"missing.txt"}}).to_string(),
+            json!({"action":"agent_done","parameters":{"summary":"recovered"}}).to_string(),
+        ]);
+
+        agent
+            .run_until_done(
+                &provider,
+                AgentRunRequest {
+                    task: "recover from missing file".to_string(),
+                    model: "mock".to_string(),
+                    goal_checker_model: None,
+                    max_turns: 2,
+                    max_tokens: 512,
+                    budget_usd: 5.0,
+                    project_root: root.clone(),
+                    denied_paths: Vec::new(),
+                    hooks: HooksConfig {
+                        event: vec![
+                            HookConfig {
+                                event: "error".to_string(),
+                                run: ".peridot/hooks/event.sh error {error_type}".to_string(),
+                                description: None,
+                                on_failure: HookFailureMode::Block,
+                                only_paths: Vec::new(),
+                            },
+                            HookConfig {
+                                event: "recovery_triggered".to_string(),
+                                run: ".peridot/hooks/event.sh recovery {recovery_type}".to_string(),
+                                description: None,
+                                on_failure: HookFailureMode::Block,
+                                only_paths: Vec::new(),
+                            },
+                        ],
+                        ..HooksConfig::default()
+                    },
+                    security: SecurityConfig::default(),
+                },
+            )
+            .await
+            .unwrap();
+
+        let log = std::fs::read_to_string(root.join("events.log")).unwrap();
+        assert!(log.contains("error:not_found"));
+        assert!(log.contains("recovery:error"));
         std::fs::remove_dir_all(root).unwrap();
     }
 
