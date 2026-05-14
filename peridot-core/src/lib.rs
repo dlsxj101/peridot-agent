@@ -261,6 +261,7 @@ impl HarnessAgent {
     {
         let mut outcomes = Vec::new();
         let mut total_usage = Usage::default();
+        let mut stuck_detector = StuckDetector::new(3);
         for turn_index in 0..request.max_turns {
             let outcome = self
                 .run_turn(
@@ -278,7 +279,13 @@ impl HarnessAgent {
                 .await?;
             accumulate_usage(&mut total_usage, outcome.usage);
             let done = outcome.done;
+            let recovery = stuck_detector.record(&outcome);
             outcomes.push(outcome);
+            if let Some(message) = recovery {
+                self.state.phase = AgentPhase::Recovering;
+                self.context
+                    .append(ContextEntry::trusted(ContextSource::PlanReminder, message));
+            }
             if done {
                 return Ok(AgentRunSummary {
                     turns: outcomes,
@@ -300,6 +307,40 @@ impl HarnessAgent {
             usage: total_usage,
             stopped_reason: StopReason::MaxTurns,
         })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct StuckDetector {
+    last_signature: Option<String>,
+    repeat_count: usize,
+    threshold: usize,
+}
+
+impl StuckDetector {
+    fn new(threshold: usize) -> Self {
+        Self {
+            last_signature: None,
+            repeat_count: 0,
+            threshold,
+        }
+    }
+
+    fn record(&mut self, outcome: &AgentTurnOutcome) -> Option<String> {
+        let signature = format!("{}:{}", outcome.tool_name, outcome.tool_result.summary);
+        if self.last_signature.as_deref() == Some(signature.as_str()) {
+            self.repeat_count += 1;
+        } else {
+            self.last_signature = Some(signature);
+            self.repeat_count = 1;
+        }
+        if self.repeat_count < self.threshold {
+            return None;
+        }
+        Some(format!(
+            "Recovery directive: the last action repeated {} times with the same result. Re-read the goal, choose a different tool or path, and update the plan before continuing.",
+            self.repeat_count
+        ))
     }
 }
 
@@ -847,6 +888,53 @@ mod tests {
 
         assert_eq!(summary.stopped_reason, StopReason::Budget);
         assert_eq!(summary.turns.len(), 1);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn repeated_actions_inject_recovery_directive() {
+        let root = std::env::temp_dir().join(format!("peridot-core-stuck-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let mut registry = ToolRegistry::new();
+        register_builtin_tools(&mut registry).unwrap();
+        let mut agent = HarnessAgent::new(
+            AgentState::new(ExecutionMode::Goal, PermissionMode::Auto),
+            ContextManager::new(),
+            registry,
+        );
+        let repeated =
+            json!({"action":"plan_update","parameters":{"update":"still trying"}}).to_string();
+        let provider = StaticProvider::new(vec![
+            repeated.clone(),
+            repeated.clone(),
+            repeated,
+            json!({"action":"agent_done","parameters":{"summary":"recovered"}}).to_string(),
+        ]);
+
+        let summary = agent
+            .run_until_done(
+                &provider,
+                AgentRunRequest {
+                    task: "avoid loops".to_string(),
+                    model: "mock".to_string(),
+                    max_turns: 4,
+                    max_tokens: 512,
+                    budget_usd: 5.0,
+                    project_root: root.clone(),
+                    denied_paths: Vec::new(),
+                    hooks: HooksConfig::default(),
+                    security: SecurityConfig::default(),
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(summary.stopped_reason, StopReason::Done);
+        assert!(agent.context().entries().iter().any(|entry| {
+            entry
+                .content
+                .contains("Recovery directive: the last action repeated 3 times")
+        }));
         std::fs::remove_dir_all(root).unwrap();
     }
 }
