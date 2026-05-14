@@ -8,6 +8,7 @@ use peridot_common::{
 };
 use peridot_context::{ContextEntry, ContextManager, ContextSource};
 use peridot_llm::{CompletionRequest, LlmProvider, Usage, parse_action};
+use peridot_tools::audit::{AuditEvent, append_audit_event};
 use peridot_tools::hooks::{HookRunner, tool_hook_variables};
 use peridot_tools::{ToolContext, ToolRegistry};
 use serde::{Deserialize, Serialize};
@@ -160,7 +161,23 @@ impl HarnessAgent {
         variables.insert("mode".to_string(), self.state.mode.to_string());
         variables.insert("permission".to_string(), self.state.permission.to_string());
         runner.run_tool_hooks(&format!("pre:{}", call.name), &variables)?;
+        let tool_name = call.name.clone();
+        let params = call.parameters.clone();
         let result = tool.execute(call.parameters, &ctx).await?;
+        let _ = append_audit_event(
+            &project_root,
+            &AuditEvent::tool_call(
+                &tool_name,
+                result.success,
+                &result.summary,
+                serde_json::json!({
+                    "params": params,
+                    "phase": self.state.phase,
+                    "mode": self.state.mode,
+                    "permission": self.state.permission
+                }),
+            ),
+        );
         variables.insert(
             "result_json".to_string(),
             serde_json::to_string(&result).map_err(|err| {

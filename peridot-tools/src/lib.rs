@@ -1,5 +1,6 @@
 //! Tool contracts, registry, and permission helpers.
 
+pub mod audit;
 pub mod hooks;
 
 use std::collections::BTreeMap;
