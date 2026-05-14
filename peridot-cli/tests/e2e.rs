@@ -1,7 +1,8 @@
 #![cfg(feature = "e2e")]
 
 use std::fs;
-use std::process::Command;
+use std::io::Write;
+use std::process::{Command, Stdio};
 
 fn peridot() -> &'static str {
     env!("CARGO_BIN_EXE_peridot")
@@ -148,6 +149,56 @@ fn top_level_headless_goal_outputs_json_summary() {
     assert_eq!(
         summary["turns"][0]["tool_result"]["summary"],
         "goal completed"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn headless_reads_task_from_stdin_pipe() {
+    let root = temp_project("stdin");
+    let response_file = root.join("responses.jsonl");
+    fs::write(
+        &response_file,
+        r#"{"action":"agent_done","parameters":{"summary":"piped task done"}}
+"#,
+    )
+    .unwrap();
+
+    let mut child = Command::new(peridot())
+        .args([
+            "--project",
+            root.to_str().unwrap(),
+            "--headless",
+            "--output",
+            "json",
+            "--mock-response-file",
+            response_file.to_str().unwrap(),
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(b"finish from stdin\n")
+        .unwrap();
+
+    let output = child.wait_with_output().unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let summary: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(summary["stopped_reason"], "Done");
+    assert_eq!(
+        summary["turns"][0]["tool_result"]["summary"],
+        "piped task done"
     );
 
     fs::remove_dir_all(root).unwrap();
