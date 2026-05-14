@@ -15,10 +15,12 @@ Implemented:
 - Project scanner for Rust, Node, Python, Go, Make, AGENTS metadata, and git state.
 - SQLite-backed session summary store.
 - AGENTS, skill, MCP, verify, setup, login/logout, and session resume CLI surfaces.
-- MCP stdio initialize, `tools/list`, `tools/call`, and ToolRegistry adapters.
+- MCP stdio and HTTP initialize, `tools/list`, `tools/call`, auth headers, and ToolRegistry adapters.
 - Deterministic verification pipeline and git worktree helpers.
 - Configured tool hooks with warn/block behavior and audit JSONL logging.
-- Headless CLI commands and Ratatui-backed TUI rendering model.
+- OpenAI API-key and OAuth PKCE login storage.
+- Headless CLI commands and Ratatui-backed interactive TUI shell.
+- GitHub Actions CI, six-target release packaging, and `install.sh`.
 
 ## Common Commands
 
@@ -64,6 +66,7 @@ Live execution uses environment credentials or credentials stored with `peridot 
 ```bash
 ANTHROPIC_API_KEY=... cargo run -p peridot-cli -- run "inspect this project" --live
 OPENAI_API_KEY=... cargo run -p peridot-cli -- login openai-api
+OPENAI_OAUTH_CLIENT_ID=... cargo run -p peridot-cli -- login openai-oauth
 ```
 
 Live model responses must currently follow Peridot's JSON action protocol:
@@ -96,3 +99,11 @@ only_paths = ["src/**"]
 ```
 
 Tool calls append audit entries to `.peridot/logs/audit.jsonl`.
+
+## Release
+
+CI runs formatting, Clippy, and the workspace test suite on pushes and pull requests. Tags matching `v*` build release tarballs for Linux, macOS, and Windows on x86_64 and aarch64.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/peridot-ai/peridot/main/install.sh | sh
+```

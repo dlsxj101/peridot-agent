@@ -8,6 +8,7 @@ bin_dir="${PERIDOT_BIN_DIR:-$HOME/.local/bin}"
 case "$(uname -s)" in
   Darwin) os="apple-darwin" ;;
   Linux) os="unknown-linux-gnu" ;;
+  MINGW* | MSYS* | CYGWIN*) os="pc-windows-msvc" ;;
   *)
     echo "unsupported OS: $(uname -s)" >&2
     exit 1
@@ -22,6 +23,11 @@ case "$(uname -m)" in
     exit 1
     ;;
 esac
+
+ext=""
+if [ "$os" = "pc-windows-msvc" ]; then
+  ext=".exe"
+fi
 
 mkdir -p "$bin_dir"
 
@@ -48,8 +54,12 @@ else
 fi
 
 tar -xzf "$tmp_dir/peridot.tar.gz" -C "$tmp_dir"
-install -m 0755 "$tmp_dir/peridot" "$bin_dir/peridot"
-ln -sf "$bin_dir/peridot" "$bin_dir/peri"
+install -m 0755 "$tmp_dir/peridot$ext" "$bin_dir/peridot$ext"
+if [ "$ext" = ".exe" ]; then
+  ln -sf "$bin_dir/peridot$ext" "$bin_dir/peri$ext"
+else
+  ln -sf "$bin_dir/peridot" "$bin_dir/peri"
+fi
 
-echo "Installed peridot to $bin_dir/peridot"
-echo "Installed peri alias to $bin_dir/peri"
+echo "Installed peridot to $bin_dir/peridot$ext"
+echo "Installed peri alias to $bin_dir/peri$ext"
