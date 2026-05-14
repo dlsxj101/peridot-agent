@@ -86,6 +86,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          bash -n install.sh
+          cp install.sh dist/install.sh
           cd dist
           sha256sum peridot-* > SHA256SUMS
           version="${GITHUB_REF_NAME#v}"
@@ -141,3 +143,4 @@ jobs:
             dist/*.zip
             dist/SHA256SUMS
             dist/peridot.rb
+            dist/install.sh

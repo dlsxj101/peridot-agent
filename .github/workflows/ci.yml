@@ -31,6 +31,9 @@ jobs:
       - name: Test
         run: cargo test --workspace
 
+      - name: Installer syntax
+        run: bash -n install.sh
+
   e2e:
     name: E2E
     runs-on: ubuntu-latest
