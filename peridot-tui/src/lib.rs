@@ -12,7 +12,7 @@ use crossterm::{
         size as terminal_size,
     },
 };
-use peridot_common::{AskUserRequest, ExecutionMode, PermissionMode};
+use peridot_common::{AskUserRequest, ExecutionMode, PermissionMode, TuiConfig};
 use peridot_core::{SlashCommand, parse_slash_command};
 use ratatui::{
     Frame, Terminal,
@@ -249,6 +249,8 @@ fn ask_user_choices_with_controls(mut options: Vec<String>) -> Vec<String> {
 pub struct TuiState {
     /// Current layout mode.
     pub layout: LayoutMode,
+    /// User-facing TUI settings.
+    pub config: TuiConfig,
     /// Header state.
     pub header: HeaderState,
     /// Transcript lines.
@@ -288,6 +290,7 @@ impl TuiState {
     pub fn new(header: HeaderState) -> Self {
         Self {
             layout: LayoutMode::Full,
+            config: TuiConfig::default(),
             header,
             transcript: Vec::new(),
             side_panel: SidePanelState::default(),
@@ -295,6 +298,12 @@ impl TuiState {
             ask_user: None,
             menu: None,
         }
+    }
+
+    /// Applies configured TUI display settings.
+    pub fn with_config(mut self, config: TuiConfig) -> Self {
+        self.config = config;
+        self
     }
 
     /// Selects a layout mode from terminal dimensions.
@@ -545,25 +554,45 @@ impl Drop for TerminalGuard {
     }
 }
 
+fn render_header_text(state: &TuiState) -> String {
+    format!("PERIDOT | {}", render_header_status(state))
+}
+
+fn render_header_status(state: &TuiState) -> String {
+    let mut parts = vec![
+        format!("{}.{}", state.header.mode, state.header.permission),
+        state.header.model.clone(),
+    ];
+    if state.config.show_token_count {
+        parts.push(format!("{} tok", state.header.total_tokens));
+    }
+    if state.config.show_cost {
+        parts.push(format!("${:.4}", state.header.cost_usd));
+    }
+    if state.config.show_cache_rate {
+        parts.push(format!("cache {:.0}%", state.header.cache_hit_rate * 100.0));
+    }
+    parts.join(" | ")
+}
+
+fn theme_accent(config: &TuiConfig) -> Color {
+    match config.theme.as_str() {
+        "light" => Color::Blue,
+        "auto" => Color::Cyan,
+        _ => Color::Green,
+    }
+}
+
 /// Renders a deterministic text snapshot for tests and headless previews.
 pub fn render_text_snapshot(state: &TuiState) -> String {
     let mut output = String::new();
-    let _ = writeln!(
-        output,
-        "PERIDOT | {}.{} | {} | {} tok | ${:.4} | cache {:.0}%",
-        state.header.mode,
-        state.header.permission,
-        state.header.model,
-        state.header.total_tokens,
-        state.header.cost_usd,
-        state.header.cache_hit_rate * 100.0
-    );
+    let _ = writeln!(output, "{}", render_header_text(state));
     let _ = writeln!(output, "layout: {:?}", state.layout);
     let _ = writeln!(output);
     for line in state.transcript.iter().rev().take(20).rev() {
         let _ = writeln!(output, "{line}");
     }
-    if state.layout == LayoutMode::Full {
+    if state.layout == LayoutMode::Full && state.config.show_subagent_panel {
         let done = state
             .side_panel
             .plan
@@ -601,21 +630,13 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
         .split(area);
 
     let header = Paragraph::new(Line::from(vec![
-        Span::styled("PERIDOT", Style::default().fg(Color::Green)),
-        Span::raw(format!(
-            " | {}.{} | {} | {} tok | ${:.4} | cache {:.0}%",
-            state.header.mode,
-            state.header.permission,
-            state.header.model,
-            state.header.total_tokens,
-            state.header.cost_usd,
-            state.header.cache_hit_rate * 100.0
-        )),
+        Span::styled("PERIDOT", Style::default().fg(theme_accent(&state.config))),
+        Span::raw(format!(" | {}", render_header_status(state))),
     ]))
     .block(Block::default().borders(Borders::ALL));
     frame.render_widget(header, chunks[0]);
 
-    let body_chunks = if state.layout == LayoutMode::Full {
+    let body_chunks = if state.layout == LayoutMode::Full && state.config.show_subagent_panel {
         Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
@@ -650,7 +671,8 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
         body_chunks[0],
     );
 
-    if state.layout == LayoutMode::Full && body_chunks.len() > 1 {
+    if state.layout == LayoutMode::Full && state.config.show_subagent_panel && body_chunks.len() > 1
+    {
         let done = state
             .side_panel
             .plan
@@ -811,6 +833,31 @@ mod tests {
         assert!(snapshot.contains("PERIDOT | execute.auto | mock"));
         assert!(snapshot.contains("[x] Implement hooks"));
         assert!(snapshot.contains("tool file_write ok"));
+    }
+
+    #[test]
+    fn tui_config_hides_optional_metrics_and_side_panel() {
+        let mut header = HeaderState::new(ExecutionMode::Execute, PermissionMode::Auto, "mock");
+        header.record_usage(80, 20, 20, 0, 0.05);
+        let mut state = TuiState::new(header).with_config(TuiConfig {
+            show_token_count: false,
+            show_cost: false,
+            show_cache_rate: false,
+            show_subagent_panel: false,
+            ..TuiConfig::default()
+        });
+        state.side_panel.plan.push(PlanStep {
+            label: "hidden status".to_string(),
+            done: false,
+        });
+
+        let snapshot = render_text_snapshot(&state);
+
+        assert!(snapshot.contains("PERIDOT | execute.auto | mock"));
+        assert!(!snapshot.contains("tok"));
+        assert!(!snapshot.contains("$"));
+        assert!(!snapshot.contains("cache"));
+        assert!(!snapshot.contains("hidden status"));
     }
 
     #[test]

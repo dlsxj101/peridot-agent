@@ -251,6 +251,9 @@ pub struct PeridotConfig {
     /// Learned memory and self-improvement settings.
     #[serde(default)]
     pub memory: MemoryConfig,
+    /// Terminal UI settings.
+    #[serde(default)]
+    pub tui: TuiConfig,
     /// Security and sandbox settings.
     #[serde(default)]
     pub security: SecurityConfig,
@@ -263,6 +266,54 @@ pub struct PeridotConfig {
     /// User hook definitions.
     #[serde(default)]
     pub hooks: HooksConfig,
+}
+
+/// Terminal UI configuration.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct TuiConfig {
+    /// Theme identifier.
+    #[serde(default = "default_tui_theme")]
+    pub theme: String,
+    /// Whether model thinking should be shown when available.
+    #[serde(default = "default_true")]
+    pub show_thinking: bool,
+    /// Whether token totals should be shown.
+    #[serde(default = "default_true")]
+    pub show_token_count: bool,
+    /// Whether estimated cost should be shown.
+    #[serde(default = "default_true")]
+    pub show_cost: bool,
+    /// Whether prompt cache hit rate should be shown.
+    #[serde(default = "default_true")]
+    pub show_cache_rate: bool,
+    /// Whether the right-side status panel should be shown.
+    #[serde(default = "default_true")]
+    pub show_subagent_panel: bool,
+    /// Streaming presentation speed: realtime, fast, or instant.
+    #[serde(default = "default_stream_speed")]
+    pub stream_speed: String,
+}
+
+impl Default for TuiConfig {
+    fn default() -> Self {
+        Self {
+            theme: default_tui_theme(),
+            show_thinking: true,
+            show_token_count: true,
+            show_cost: true,
+            show_cache_rate: true,
+            show_subagent_panel: true,
+            stream_speed: default_stream_speed(),
+        }
+    }
+}
+
+fn default_tui_theme() -> String {
+    "peridot-night".to_string()
+}
+
+fn default_stream_speed() -> String {
+    "realtime".to_string()
 }
 
 /// Git automation configuration.
@@ -763,6 +814,29 @@ mod tests {
         assert_eq!(config.hooks.tool.len(), 1);
         assert_eq!(config.hooks.tool[0].on_failure, HookFailureMode::Block);
         assert_eq!(config.hooks.tool[0].only_paths, vec!["src/**"]);
+    }
+
+    #[test]
+    fn parses_tui_config() {
+        let config = toml::from_str::<PeridotConfig>(
+            r#"
+            [tui]
+            theme = "light"
+            show_token_count = false
+            show_cost = false
+            show_cache_rate = false
+            show_subagent_panel = false
+            stream_speed = "instant"
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(config.tui.theme, "light");
+        assert!(!config.tui.show_token_count);
+        assert!(!config.tui.show_cost);
+        assert!(!config.tui.show_cache_rate);
+        assert!(!config.tui.show_subagent_panel);
+        assert_eq!(config.tui.stream_speed, "instant");
     }
 
     #[test]

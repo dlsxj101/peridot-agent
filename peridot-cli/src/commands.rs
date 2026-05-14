@@ -293,6 +293,12 @@ fn merge_project_config(
     if raw_config.get("context").is_some() {
         config.context = project_config.context;
     }
+    if raw_config.get("memory").is_some() {
+        config.memory = project_config.memory;
+    }
+    if raw_config.get("tui").is_some() {
+        config.tui = project_config.tui;
+    }
     if raw_config.get("mcp").is_some() {
         config.mcp = project_config.mcp;
     }
@@ -1754,6 +1760,27 @@ mod tests {
         );
         assert!(!config.security.ask_before_install);
         assert!(config.security.ask_before_delete);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn project_config_merges_memory_and_tui_sections() {
+        let root = std::env::temp_dir().join(format!(
+            "peridot-cli-config-memory-tui-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(root.join(".peridot")).unwrap();
+        fs::write(
+            root.join(".peridot/config.toml"),
+            "[memory]\nauto_skills = false\n\n[tui]\nshow_cost = false\nstream_speed = \"instant\"\n",
+        )
+        .unwrap();
+
+        let config = load_effective_config_inner(&root, None, false, false).unwrap();
+
+        assert!(!config.memory.auto_skills);
+        assert!(!config.tui.show_cost);
+        assert_eq!(config.tui.stream_speed, "instant");
         fs::remove_dir_all(root).unwrap();
     }
 

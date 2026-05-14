@@ -356,7 +356,8 @@ async fn main() -> Result<()> {
                     }
                 } else {
                     let mut state =
-                        TuiState::new(HeaderState::new(mode, permission, model.clone()));
+                        TuiState::new(HeaderState::new(mode, permission, model.clone()))
+                            .with_config(config.tui.clone());
                     state.push_transcript("Peridot ready. Type a task, /plan, /execute, /goal <objective>, /safe, /auto, /yolo, or Esc.");
                     if let Some(task) = run_interactive(state)?.submitted {
                         run_task(task, mode, &cli, &config, &project_root).await?;
