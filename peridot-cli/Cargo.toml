@@ -19,6 +19,7 @@ peridot-context = { path = "../peridot-context" }
 peridot-core = { path = "../peridot-core" }
 peridot-llm = { path = "../peridot-llm" }
 peridot-memory = { path = "../peridot-memory" }
+peridot-mcp = { path = "../peridot-mcp" }
 peridot-project = { path = "../peridot-project" }
 peridot-tools = { path = "../peridot-tools" }
 serde_json.workspace = true

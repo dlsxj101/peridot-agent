@@ -199,7 +199,7 @@ async fn main() -> Result<()> {
             return Ok(());
         }
         Some(Command::Mcp { command }) => {
-            run_mcp_command(command, &config, cli.output)?;
+            run_mcp_command(command, &config, cli.output).await?;
             return Ok(());
         }
         Some(Command::Run { task }) => {

@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use clap::{Subcommand, ValueEnum};
 use peridot_common::{McpServerConfig, McpTransport, PeridotConfig};
+use peridot_mcp::McpClient;
 use peridot_memory::{MemoryStore, SessionSummary};
 use peridot_project::{ProjectProfile, ProjectScanner};
 
@@ -307,7 +308,7 @@ pub(crate) fn run_skill_command(
     Ok(())
 }
 
-pub(crate) fn run_mcp_command(
+pub(crate) async fn run_mcp_command(
     command: &McpCommand,
     config: &PeridotConfig,
     output: OutputFormat,
@@ -336,18 +337,21 @@ pub(crate) fn run_mcp_command(
                 .find(|server| server.name == *name)
                 .with_context(|| format!("MCP server not found: {name}"))?;
             validate_mcp_server(server)?;
+            let tools = McpClient::new(server.clone()).list_tools().await?;
             print_json_or_text_result(
                 serde_json::json!({
                     "name": server.name,
                     "transport": server.transport,
                     "target": mcp_target(server),
-                    "configured": true
+                    "configured": true,
+                    "tools": tools
                 }),
                 format!(
-                    "MCP server {} is configured for {} ({})",
+                    "MCP server {} is configured for {} ({}) with {} tools",
                     server.name,
                     server.transport,
-                    mcp_target(server)
+                    mcp_target(server),
+                    tools.len()
                 ),
                 output,
             )?;
