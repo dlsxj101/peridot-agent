@@ -8,8 +8,8 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use clap::{Parser, Subcommand, ValueEnum};
 use commands::{
-    AgentsCommand, ConfigCommand, OutputFormat, SessionCommand, load_project_config, print_scan,
-    run_agents_command, run_config_command, run_session_command,
+    AgentsCommand, ConfigCommand, OutputFormat, SessionCommand, SkillCommand, load_project_config,
+    print_scan, run_agents_command, run_config_command, run_session_command, run_skill_command,
 };
 use peridot_common::{
     ExecutionMode, PeriError, PeriResult, PeridotConfig, PermissionMode, ToolCall,
@@ -107,6 +107,12 @@ enum Command {
         #[command(subcommand)]
         command: AgentsCommand,
     },
+    /// Skill library commands.
+    Skill {
+        /// Skill subcommand.
+        #[command(subcommand)]
+        command: SkillCommand,
+    },
     /// Print version information.
     Version,
 }
@@ -179,6 +185,10 @@ async fn main() -> Result<()> {
         }
         Some(Command::Agents { command }) => {
             run_agents_command(command, &project_root, cli.output)?;
+            return Ok(());
+        }
+        Some(Command::Skill { command }) => {
+            run_skill_command(command, &project_root, cli.output)?;
             return Ok(());
         }
         Some(Command::Run { task }) => {
