@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use peridot_common::{
-    PeriError, PeriResult, PermissionLevel, PermissionMode, ToolGroup, ToolResult,
+    HooksConfig, PeriError, PeriResult, PermissionLevel, PermissionMode, ToolGroup, ToolResult,
 };
 use serde_json::Value;
 
@@ -23,6 +23,8 @@ pub struct ToolContext {
     pub permission_mode: PermissionMode,
     /// Project-local path prefixes that must not be modified.
     pub denied_paths: Vec<PathBuf>,
+    /// User hook definitions active for this tool call.
+    pub hooks: HooksConfig,
 }
 
 impl ToolContext {
@@ -32,12 +34,19 @@ impl ToolContext {
             project_root: project_root.into(),
             permission_mode,
             denied_paths: Vec::new(),
+            hooks: HooksConfig::default(),
         }
     }
 
     /// Adds denied path prefixes to the context.
     pub fn with_denied_paths(mut self, denied_paths: impl IntoIterator<Item = PathBuf>) -> Self {
         self.denied_paths = denied_paths.into_iter().collect();
+        self
+    }
+
+    /// Adds hook definitions to the context.
+    pub fn with_hooks(mut self, hooks: HooksConfig) -> Self {
+        self.hooks = hooks;
         self
     }
 }

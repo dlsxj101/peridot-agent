@@ -84,10 +84,9 @@ impl HookRunner {
         variables: &HookVariables,
     ) -> PeriResult<Vec<HookOutcome>> {
         let mut outcomes = Vec::new();
-        for hook in hooks
-            .iter()
-            .filter(|hook| hook.event == event && hook_path_matches(hook, variables))
-        {
+        for hook in hooks.iter().filter(|hook| {
+            hook_event_matches(&hook.event, event) && hook_path_matches(hook, variables)
+        }) {
             let outcome = self.run_one(hook, variables);
             match outcome {
                 Ok(outcome) if outcome.success() => outcomes.push(outcome),
@@ -229,6 +228,13 @@ fn hook_path_matches(hook: &HookConfig, variables: &HookVariables) -> bool {
     })
 }
 
+fn hook_event_matches(pattern: &str, event: &str) -> bool {
+    pattern == event
+        || pattern
+            .strip_suffix("*")
+            .is_some_and(|prefix| event.starts_with(prefix))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -294,5 +300,19 @@ mod tests {
 
         assert!(matches!(error, PeriError::PermissionDenied(_)));
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn wildcard_event_matches_tool_hook() {
+        let hook = HookConfig {
+            event: "pre:*".to_string(),
+            run: ".peridot/hooks/check.sh".to_string(),
+            description: None,
+            on_failure: HookFailureMode::Warn,
+            only_paths: Vec::new(),
+        };
+
+        assert!(hook_event_matches(&hook.event, "pre:file_write"));
+        assert!(!hook_event_matches(&hook.event, "post:file_write"));
     }
 }

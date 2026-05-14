@@ -3,11 +3,12 @@
 use std::path::PathBuf;
 
 use peridot_common::{
-    AgentPhase, ExecutionMode, PeriError, PeriResult, PermissionMode, ToolCall, ToolGroup,
-    ToolResult,
+    AgentPhase, ExecutionMode, HooksConfig, PeriError, PeriResult, PermissionMode, ToolCall,
+    ToolGroup, ToolResult,
 };
 use peridot_context::{ContextEntry, ContextManager, ContextSource};
 use peridot_llm::{CompletionRequest, LlmProvider, Usage, parse_action};
+use peridot_tools::hooks::{HookRunner, tool_hook_variables};
 use peridot_tools::{ToolContext, ToolRegistry};
 use serde::{Deserialize, Serialize};
 
@@ -122,15 +123,52 @@ impl HarnessAgent {
         project_root: impl Into<PathBuf>,
         denied_paths: Vec<PathBuf>,
     ) -> PeriResult<ToolResult> {
+        self.execute_tool_call_with_runtime(
+            call,
+            project_root,
+            denied_paths,
+            HooksConfig::default(),
+        )
+        .await
+    }
+
+    /// Executes one tool call with explicit boundaries and hook configuration.
+    pub async fn execute_tool_call_with_runtime(
+        &self,
+        call: ToolCall,
+        project_root: impl Into<PathBuf>,
+        denied_paths: Vec<PathBuf>,
+        hooks: HooksConfig,
+    ) -> PeriResult<ToolResult> {
         let tool = self
             .tools
             .get(&call.name)
             .ok_or_else(|| PeriError::Tool(format!("unknown tool: {}", call.name)))?;
         ensure_tool_allowed(self.state.mode, self.state.phase, tool.group(), &call.name)?;
-        let ctx =
-            ToolContext::new(project_root, self.state.permission).with_denied_paths(denied_paths);
+        let project_root = project_root.into();
+        let ctx = ToolContext::new(project_root.clone(), self.state.permission)
+            .with_denied_paths(denied_paths)
+            .with_hooks(hooks);
         tool.validate_params(&call.parameters)?;
-        tool.execute(call.parameters, &ctx).await
+        let runner = HookRunner::new(&project_root, ctx.hooks.clone());
+        let mut variables = tool_hook_variables(&call.name, &call.parameters);
+        variables.insert(
+            "project_root".to_string(),
+            project_root.display().to_string(),
+        );
+        variables.insert("workspace".to_string(), project_root.display().to_string());
+        variables.insert("mode".to_string(), self.state.mode.to_string());
+        variables.insert("permission".to_string(), self.state.permission.to_string());
+        runner.run_tool_hooks(&format!("pre:{}", call.name), &variables)?;
+        let result = tool.execute(call.parameters, &ctx).await?;
+        variables.insert(
+            "result_json".to_string(),
+            serde_json::to_string(&result).map_err(|err| {
+                PeriError::Parse(format!("failed to serialize hook result: {err}"))
+            })?,
+        );
+        runner.run_tool_hooks(&format!("post:{}", call.name), &variables)?;
+        Ok(result)
     }
 
     /// Runs one model/tool turn and records the observation in context.
@@ -165,10 +203,11 @@ impl HarnessAgent {
         let tool_name = parsed.tool_call.name.clone();
         self.state.phase = AgentPhase::Executing;
         let tool_result = self
-            .execute_tool_call_with_denied_paths(
+            .execute_tool_call_with_runtime(
                 parsed.tool_call,
                 request.project_root,
                 request.denied_paths,
+                request.hooks,
             )
             .await?;
         self.context
@@ -211,6 +250,7 @@ impl HarnessAgent {
                         max_tokens: request.max_tokens,
                         project_root: request.project_root.clone(),
                         denied_paths: request.denied_paths.clone(),
+                        hooks: request.hooks.clone(),
                     },
                 )
                 .await?;
@@ -317,6 +357,8 @@ pub struct AgentTurnRequest {
     pub project_root: PathBuf,
     /// Denied path prefixes.
     pub denied_paths: Vec<PathBuf>,
+    /// Active hook definitions.
+    pub hooks: HooksConfig,
 }
 
 /// Outcome of one agent turn.
@@ -347,6 +389,8 @@ pub struct AgentRunRequest {
     pub project_root: PathBuf,
     /// Denied path prefixes.
     pub denied_paths: Vec<PathBuf>,
+    /// Active hook definitions.
+    pub hooks: HooksConfig,
 }
 
 /// Reason a bounded run stopped.
@@ -493,9 +537,11 @@ impl GoalController {
 mod tests {
     use super::*;
     use async_trait::async_trait;
+    use peridot_common::{HookConfig, HookFailureMode};
     use peridot_llm::{AuthMethod, CompletionResponse, PricingTable};
     use peridot_tools::register_builtin_tools;
     use serde_json::json;
+    use std::os::unix::fs::PermissionsExt;
     use std::sync::Mutex;
 
     #[test]
@@ -618,6 +664,7 @@ mod tests {
                     max_tokens: 512,
                     project_root: root.clone(),
                     denied_paths: Vec::new(),
+                    hooks: HooksConfig::default(),
                 },
             )
             .await
@@ -653,6 +700,52 @@ mod tests {
 
         assert!(matches!(result, Err(PeriError::PermissionDenied(_))));
         assert!(!root.join("blocked.txt").exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn tool_hooks_wrap_execution() {
+        let root = std::env::temp_dir().join(format!("peridot-core-hooks-{}", std::process::id()));
+        let hooks_dir = root.join(".peridot/hooks");
+        std::fs::create_dir_all(&hooks_dir).unwrap();
+        let script = hooks_dir.join("mark.sh");
+        std::fs::write(&script, "#!/bin/sh\necho $1 >> hook.log\n").unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let mut registry = ToolRegistry::new();
+        register_builtin_tools(&mut registry).unwrap();
+        let agent = HarnessAgent::new(
+            AgentState::new(ExecutionMode::Execute, PermissionMode::Auto),
+            ContextManager::new(),
+            registry,
+        );
+
+        agent
+            .execute_tool_call_with_runtime(
+                ToolCall::new("file_write", json!({"path":"hooked.txt","content":"ok"})),
+                &root,
+                Vec::new(),
+                HooksConfig {
+                    tool: vec![HookConfig {
+                        event: "pre:file_write".to_string(),
+                        run: ".peridot/hooks/mark.sh {path}".to_string(),
+                        description: None,
+                        on_failure: HookFailureMode::Block,
+                        only_paths: Vec::new(),
+                    }],
+                    ..HooksConfig::default()
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(root.join("hook.log")).unwrap(),
+            "hooked.txt\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join("hooked.txt")).unwrap(),
+            "ok"
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
 }

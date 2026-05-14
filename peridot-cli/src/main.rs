@@ -302,7 +302,7 @@ async fn run_task(
             &provider,
             task,
             model,
-            config.defaults.max_turns,
+            config,
             project_root,
             denied_paths,
         )
@@ -328,7 +328,7 @@ async fn run_task(
             &provider,
             task,
             model,
-            config.defaults.max_turns,
+            config,
             project_root,
             denied_paths,
         )
@@ -351,7 +351,12 @@ async fn run_task(
             let profile = ProjectScanner::new().scan(project_root)?;
             let denied_paths = profile.boundaries.into_iter().map(PathBuf::from).collect();
             let result = agent
-                .execute_tool_call_with_denied_paths(call, project_root, denied_paths)
+                .execute_tool_call_with_runtime(
+                    call,
+                    project_root,
+                    denied_paths,
+                    config.hooks.clone(),
+                )
                 .await?;
             if cli.output == OutputFormat::Json || cli.headless {
                 println!("{}", serde_json::to_string_pretty(&result)?);
@@ -393,7 +398,7 @@ async fn run_agent_loop<P>(
     provider: &P,
     task: String,
     model: String,
-    max_turns: u32,
+    config: &PeridotConfig,
     project_root: &Path,
     denied_paths: Vec<PathBuf>,
 ) -> Result<peridot_core::AgentRunSummary>
@@ -406,10 +411,11 @@ where
             AgentRunRequest {
                 task,
                 model,
-                max_turns,
+                max_turns: config.defaults.max_turns,
                 max_tokens: 4096,
                 project_root: project_root.to_path_buf(),
                 denied_paths,
+                hooks: config.hooks.clone(),
             },
         )
         .await?)
