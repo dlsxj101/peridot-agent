@@ -8,7 +8,10 @@ use peridot_common::{
     ToolCall, ToolGroup, ToolResult,
 };
 use peridot_context::{ContextEntry, ContextManager, ContextSource};
-use peridot_llm::{CompletionRequest, LlmMessage, LlmProvider, MessageRole, Usage, parse_action};
+use peridot_llm::{
+    CompletionRequest, CompletionResponse, CompletionStreamChunk, LlmMessage, LlmProvider,
+    MessageRole, Usage, parse_action,
+};
 use peridot_tools::audit::{AuditEvent, append_audit_event};
 use peridot_tools::hooks::{HookRunner, HookVariables, tool_hook_variables};
 use peridot_tools::{ToolContext, ToolRegistry};
@@ -219,15 +222,17 @@ impl HarnessAgent {
             )?;
         }
 
-        let completion = provider
-            .complete(CompletionRequest {
+        let completion = stream_completion(
+            provider,
+            CompletionRequest {
                 model: request.model,
                 system: Some(system_prompt_for_mode(self.state.mode)),
                 messages: self.context.to_messages(),
                 max_tokens: Some(request.max_tokens),
                 thinking: self.state.mode == ExecutionMode::Goal,
-            })
-            .await?;
+            },
+        )
+        .await?;
         self.context.append(ContextEntry::trusted(
             ContextSource::Assistant,
             completion.text.clone(),
@@ -652,6 +657,43 @@ fn accumulate_usage(total: &mut Usage, usage: Usage) {
     total.estimated_cost_usd += usage.estimated_cost_usd;
 }
 
+async fn stream_completion<P>(
+    provider: &P,
+    request: CompletionRequest,
+) -> PeriResult<CompletionResponse>
+where
+    P: LlmProvider + ?Sized,
+{
+    let chunks = provider.stream(request).await?;
+    collect_stream_chunks(chunks)
+}
+
+fn collect_stream_chunks(chunks: Vec<CompletionStreamChunk>) -> PeriResult<CompletionResponse> {
+    if chunks.is_empty() {
+        return Err(PeriError::Provider(
+            "provider stream returned no chunks".to_string(),
+        ));
+    }
+    let mut text = String::new();
+    let mut usage = Usage::default();
+    let mut saw_done = false;
+    for chunk in chunks {
+        text.push_str(&chunk.delta);
+        if chunk.done {
+            saw_done = true;
+        }
+        if let Some(chunk_usage) = chunk.usage {
+            usage = chunk_usage;
+        }
+    }
+    if !saw_done {
+        return Err(PeriError::Provider(
+            "provider stream ended without a done chunk".to_string(),
+        ));
+    }
+    Ok(CompletionResponse { text, usage })
+}
+
 /// Request for one agent turn.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AgentTurnRequest {
@@ -935,7 +977,7 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use peridot_common::{HookConfig, HookFailureMode};
-    use peridot_llm::{AuthMethod, CompletionResponse, PricingTable};
+    use peridot_llm::{AuthMethod, CompletionResponse, CompletionStreamChunk, PricingTable};
     use peridot_tools::register_builtin_tools;
     use serde_json::json;
     use std::os::unix::fs::PermissionsExt;
@@ -978,6 +1020,8 @@ mod tests {
         cost_usd: f64,
     }
 
+    struct StreamingOnlyProvider;
+
     impl StaticProvider {
         fn new(responses: Vec<String>) -> Self {
             Self {
@@ -1013,6 +1057,59 @@ mod tests {
                     estimated_cost_usd: self.cost_usd,
                 },
             })
+        }
+
+        fn supports_cache(&self) -> bool {
+            false
+        }
+
+        fn supports_prefill(&self) -> bool {
+            false
+        }
+
+        fn supports_thinking(&self) -> bool {
+            false
+        }
+
+        fn pricing(&self) -> PricingTable {
+            PricingTable::default()
+        }
+
+        fn auth_method(&self) -> AuthMethod {
+            AuthMethod::NotConfigured
+        }
+    }
+
+    #[async_trait]
+    impl LlmProvider for StreamingOnlyProvider {
+        async fn complete(&self, _request: CompletionRequest) -> PeriResult<CompletionResponse> {
+            Err(PeriError::Provider(
+                "complete should not be used for streamed turns".to_string(),
+            ))
+        }
+
+        async fn stream(
+            &self,
+            _request: CompletionRequest,
+        ) -> PeriResult<Vec<CompletionStreamChunk>> {
+            Ok(vec![
+                CompletionStreamChunk {
+                    delta: "{\"action\":\"agent_done\",\"parameters\":".to_string(),
+                    done: false,
+                    usage: None,
+                },
+                CompletionStreamChunk {
+                    delta: "{\"summary\":\"streamed\"}}".to_string(),
+                    done: true,
+                    usage: Some(Usage {
+                        input_tokens: 2,
+                        output_tokens: 3,
+                        cache_read_tokens: 1,
+                        cache_creation_tokens: 0,
+                        estimated_cost_usd: 0.04,
+                    }),
+                },
+            ])
         }
 
         fn supports_cache(&self) -> bool {
@@ -1158,6 +1255,44 @@ mod tests {
 
         assert!(agent.context().entries().iter().any(|entry| {
             entry.source == ContextSource::PlanReminder && entry.content.contains("Keep context")
+        }));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn run_turn_uses_provider_stream_chunks() {
+        let root =
+            std::env::temp_dir().join(format!("peridot-core-stream-turn-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let mut registry = ToolRegistry::new();
+        register_builtin_tools(&mut registry).unwrap();
+        let mut agent = HarnessAgent::new(
+            AgentState::new(ExecutionMode::Execute, PermissionMode::Auto),
+            ContextManager::new(),
+            registry,
+        );
+
+        let outcome = agent
+            .run_turn(
+                &StreamingOnlyProvider,
+                AgentTurnRequest {
+                    user_input: Some("finish".to_string()),
+                    model: "mock".to_string(),
+                    max_tokens: 512,
+                    project_root: root.clone(),
+                    denied_paths: Vec::new(),
+                    hooks: HooksConfig::default(),
+                    security: SecurityConfig::default(),
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(outcome.tool_name, "agent_done");
+        assert!(outcome.done);
+        assert_eq!(outcome.usage.output_tokens, 3);
+        assert!(agent.context().entries().iter().any(|entry| {
+            entry.source == ContextSource::Assistant && entry.content.contains("streamed")
         }));
         std::fs::remove_dir_all(root).unwrap();
     }
