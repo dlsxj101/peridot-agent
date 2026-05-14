@@ -204,6 +204,47 @@ fn headless_reads_task_from_stdin_pipe() {
     fs::remove_dir_all(root).unwrap();
 }
 
+#[test]
+fn env_headless_enables_scriptable_output() {
+    let root = temp_project("env-headless");
+    let response_file = root.join("responses.jsonl");
+    fs::write(
+        &response_file,
+        r#"{"action":"agent_done","parameters":{"summary":"env headless done"}}
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(peridot())
+        .env("PERIDOT_HEADLESS", "1")
+        .args([
+            "--project",
+            root.to_str().unwrap(),
+            "--output",
+            "json",
+            "--mock-response-file",
+            response_file.to_str().unwrap(),
+            "run",
+            "finish from env",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let summary: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(summary["stopped_reason"], "Done");
+    assert_eq!(
+        summary["turns"][0]["tool_result"]["summary"],
+        "env headless done"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
 #[cfg(unix)]
 #[test]
 fn lifecycle_hooks_run_for_mock_agent_loop() {
