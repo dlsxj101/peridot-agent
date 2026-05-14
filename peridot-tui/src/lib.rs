@@ -1,5 +1,7 @@
 //! Terminal UI state and rendering boundary.
 
+use std::fmt::Write;
+
 use peridot_common::{ExecutionMode, PermissionMode};
 use peridot_core::{SlashCommand, parse_slash_command};
 use serde::{Deserialize, Serialize};
@@ -17,7 +19,7 @@ pub enum LayoutMode {
 }
 
 /// Header state shown at the top of the TUI.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct HeaderState {
     /// Active execution mode.
     pub mode: ExecutionMode,
@@ -25,6 +27,8 @@ pub struct HeaderState {
     pub permission: PermissionMode,
     /// Active model name.
     pub model: String,
+    /// Estimated cost in USD.
+    pub cost_usd: f64,
 }
 
 impl HeaderState {
@@ -34,12 +38,42 @@ impl HeaderState {
             mode,
             permission,
             model: model.into(),
+            cost_usd: 0.0,
         }
     }
 }
 
-/// Main TUI state independent from the terminal backend.
+/// One plan item shown in the side panel.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct PlanStep {
+    /// Step label.
+    pub label: String,
+    /// Whether the step has completed.
+    pub done: bool,
+}
+
+/// Session statistics shown in the side panel.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct SessionStats {
+    /// Completed tool/model steps.
+    pub steps: u32,
+    /// Recoverable error count.
+    pub errors: u32,
+    /// Elapsed seconds.
+    pub elapsed_seconds: u64,
+}
+
+/// Right-side panel state.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct SidePanelState {
+    /// Current plan steps.
+    pub plan: Vec<PlanStep>,
+    /// Session statistics.
+    pub stats: SessionStats,
+}
+
+/// Main TUI state independent from the terminal backend.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TuiState {
     /// Current layout mode.
     pub layout: LayoutMode,
@@ -47,6 +81,8 @@ pub struct TuiState {
     pub header: HeaderState,
     /// Transcript lines.
     pub transcript: Vec<String>,
+    /// Side panel state.
+    pub side_panel: SidePanelState,
     /// Current input buffer.
     pub input: String,
 }
@@ -58,6 +94,7 @@ impl TuiState {
             layout: LayoutMode::Full,
             header,
             transcript: Vec::new(),
+            side_panel: SidePanelState::default(),
             input: String::new(),
         }
     }
@@ -76,6 +113,44 @@ impl TuiState {
     pub fn current_slash_command(&self) -> Option<SlashCommand> {
         parse_slash_command(&self.input)
     }
+}
+
+/// Renders a deterministic text snapshot for tests and headless previews.
+pub fn render_text_snapshot(state: &TuiState) -> String {
+    let mut output = String::new();
+    let _ = writeln!(
+        output,
+        "PERIDOT | {}.{} | {} | ${:.4}",
+        state.header.mode, state.header.permission, state.header.model, state.header.cost_usd
+    );
+    let _ = writeln!(output, "layout: {:?}", state.layout);
+    let _ = writeln!(output);
+    for line in state.transcript.iter().rev().take(20).rev() {
+        let _ = writeln!(output, "{line}");
+    }
+    if state.layout == LayoutMode::Full {
+        let done = state
+            .side_panel
+            .plan
+            .iter()
+            .filter(|step| step.done)
+            .count();
+        let _ = writeln!(output);
+        let _ = writeln!(output, "Plan {done}/{}", state.side_panel.plan.len());
+        for step in &state.side_panel.plan {
+            let marker = if step.done { "[x]" } else { "[ ]" };
+            let _ = writeln!(output, "{marker} {}", step.label);
+        }
+        let _ = writeln!(
+            output,
+            "Session steps={} errors={} elapsed={}s",
+            state.side_panel.stats.steps,
+            state.side_panel.stats.errors,
+            state.side_panel.stats.elapsed_seconds
+        );
+    }
+    let _ = write!(output, "> {}", state.input);
+    output
 }
 
 /// Selects a layout mode from terminal dimensions.
@@ -113,5 +188,25 @@ mod tests {
             state.current_slash_command(),
             Some(SlashCommand::GoalStart("fix tests".to_string()))
         );
+    }
+
+    #[test]
+    fn renders_text_snapshot() {
+        let mut state = TuiState::new(HeaderState::new(
+            ExecutionMode::Execute,
+            PermissionMode::Auto,
+            "mock",
+        ));
+        state.push_transcript("tool file_write ok");
+        state.side_panel.plan.push(PlanStep {
+            label: "Implement hooks".to_string(),
+            done: true,
+        });
+
+        let snapshot = render_text_snapshot(&state);
+
+        assert!(snapshot.contains("PERIDOT | execute.auto | mock"));
+        assert!(snapshot.contains("[x] Implement hooks"));
+        assert!(snapshot.contains("tool file_write ok"));
     }
 }
