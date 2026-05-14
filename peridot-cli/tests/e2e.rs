@@ -212,6 +212,43 @@ run = ".peridot/hooks/lifecycle.sh plan {status} {summary}"
     fs::remove_dir_all(root).unwrap();
 }
 
+#[cfg(unix)]
+#[test]
+fn verify_command_runs_verification_passed_hook() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = temp_project("verify-hook");
+    let hooks_dir = root.join(".peridot/hooks");
+    fs::create_dir_all(&hooks_dir).unwrap();
+    let script = hooks_dir.join("verify.sh");
+    fs::write(&script, "#!/bin/sh\necho \"$1:$2\" >> verify.log\n").unwrap();
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+    fs::write(
+        root.join(".peridot/config.toml"),
+        r#"
+[[hooks.event]]
+event = "verification_passed"
+run = ".peridot/hooks/verify.sh {stage} {status}"
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(peridot())
+        .args(["--project", root.to_str().unwrap(), "--headless", "verify"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let log = fs::read_to_string(root.join("verify.log")).unwrap();
+    assert!(log.contains("diff_review:passed"));
+
+    fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn headless_direct_tool_failure_exits_four() {
     let root = temp_project("headless-failure");

@@ -190,7 +190,9 @@ impl VerifyPipeline {
             .filter(|part| !part.is_empty())
             .collect::<Vec<_>>()
             .join("\n");
-        if command.starts_with("git ") && detail.contains("not a git repository") {
+        if command.starts_with("git ")
+            && detail.to_ascii_lowercase().contains("not a git repository")
+        {
             return Ok(VerifyStageResult {
                 stage,
                 passed: true,
@@ -286,6 +288,20 @@ mod tests {
 
         assert_eq!(stage.stage, VerifyStage::Build);
         assert!(!stage.passed);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn git_checks_are_skipped_outside_repositories() {
+        let root =
+            std::env::temp_dir().join(format!("peridot-verify-non-git-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let profile = ProjectProfile::minimal(&root);
+
+        let report = VerifyPipeline::new(profile).run_all().unwrap();
+
+        assert!(report.passed());
+        assert!(report.stages.iter().all(|stage| stage.passed));
         fs::remove_dir_all(root).unwrap();
     }
 

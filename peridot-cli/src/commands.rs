@@ -11,11 +11,12 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use clap::{Subcommand, ValueEnum};
-use peridot_common::{McpServerConfig, McpTransport, PeridotConfig};
+use peridot_common::{HooksConfig, McpServerConfig, McpTransport, PeridotConfig};
 use peridot_mcp::McpClient;
 use peridot_memory::{MemoryStore, SessionSummary};
 use peridot_project::{ProjectProfile, ProjectScanner};
-use peridot_verify::VerifyPipeline;
+use peridot_tools::hooks::{HookRunner, HookVariables};
+use peridot_verify::{VerifyPipeline, VerifyReport, VerifyStage, VerifyStageResult};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
@@ -694,9 +695,14 @@ pub(crate) fn print_scan(profile: &ProjectProfile, output: OutputFormat) -> Resu
     Ok(())
 }
 
-pub(crate) fn run_verify_command(project_root: &Path, output: OutputFormat) -> Result<()> {
+pub(crate) fn run_verify_command(
+    project_root: &Path,
+    config: &PeridotConfig,
+    output: OutputFormat,
+) -> Result<()> {
     let profile = ProjectScanner::new().scan(project_root)?;
     let report = VerifyPipeline::new(profile).run_all()?;
+    run_verification_event_hooks(project_root, &config.hooks, &report)?;
     match output {
         OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
         OutputFormat::Text => {
@@ -707,6 +713,59 @@ pub(crate) fn run_verify_command(project_root: &Path, output: OutputFormat) -> R
         }
     }
     Ok(())
+}
+
+fn run_verification_event_hooks(
+    project_root: &Path,
+    hooks: &HooksConfig,
+    report: &VerifyReport,
+) -> Result<()> {
+    let selected = verification_hook_stage(report);
+    let event = if report.passed() {
+        "verification_passed"
+    } else {
+        "verification_failed"
+    };
+    let mut variables = HookVariables::new();
+    variables.insert(
+        "project_root".to_string(),
+        project_root.display().to_string(),
+    );
+    variables.insert("workspace".to_string(), project_root.display().to_string());
+    variables.insert(
+        "stage".to_string(),
+        verify_stage_name(&selected.stage).to_string(),
+    );
+    variables.insert(
+        "status".to_string(),
+        if report.passed() { "passed" } else { "failed" }.to_string(),
+    );
+    variables.insert("output".to_string(), hook_summary_value(&selected.summary));
+    HookRunner::new(project_root, hooks.clone()).run_event_hooks(event, &variables)?;
+    Ok(())
+}
+
+fn verification_hook_stage(report: &VerifyReport) -> &VerifyStageResult {
+    report
+        .stages
+        .iter()
+        .find(|stage| !stage.passed)
+        .or_else(|| report.stages.last())
+        .expect("verification reports always include at least one stage")
+}
+
+fn verify_stage_name(stage: &VerifyStage) -> &'static str {
+    match stage {
+        VerifyStage::Deterministic => "deterministic",
+        VerifyStage::Build => "build",
+        VerifyStage::Test => "test",
+        VerifyStage::DiffReview => "diff_review",
+        VerifyStage::Grader => "grader",
+    }
+}
+
+fn hook_summary_value(summary: &str) -> String {
+    summary.replace(['\r', '\n'], " ")
 }
 
 pub(crate) fn run_setup_command(project_root: &Path, output: OutputFormat) -> Result<()> {

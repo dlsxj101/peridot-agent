@@ -1116,7 +1116,7 @@ impl Tool for VerifyBuildTool {
             .get("command")
             .and_then(Value::as_str)
             .unwrap_or("cargo build --workspace");
-        run_read_only_command(command, ctx, "verify build")
+        run_verification_command(command, ctx, "verify build", "build")
     }
 
     fn permission_level(&self) -> PermissionLevel {
@@ -1147,7 +1147,7 @@ impl Tool for VerifyTestTool {
             .get("command")
             .and_then(Value::as_str)
             .unwrap_or("cargo test --workspace");
-        run_read_only_command(command, ctx, "verify test")
+        run_verification_command(command, ctx, "verify test", "test")
     }
 
     fn permission_level(&self) -> PermissionLevel {
@@ -1178,7 +1178,7 @@ impl Tool for VerifyLintTool {
             .get("command")
             .and_then(Value::as_str)
             .unwrap_or("cargo clippy --workspace -- -D warnings");
-        run_read_only_command(command, ctx, "verify lint")
+        run_verification_command(command, ctx, "verify lint", "lint")
     }
 
     fn permission_level(&self) -> PermissionLevel {
@@ -1206,6 +1206,59 @@ fn run_read_only_command(command: &str, ctx: &ToolContext, label: &str) -> PeriR
             "stderr": stderr
         }),
     })
+}
+
+fn run_verification_command(
+    command: &str,
+    ctx: &ToolContext,
+    label: &str,
+    stage: &str,
+) -> PeriResult<ToolResult> {
+    let result = run_read_only_command(command, ctx, label)?;
+    let stdout = result.output["stdout"].as_str().unwrap_or_default();
+    let stderr = result.output["stderr"].as_str().unwrap_or_default();
+    let detail = [stdout, stderr]
+        .into_iter()
+        .filter(|part| !part.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let hook_output = if detail.trim().is_empty() {
+        result.summary.clone()
+    } else {
+        detail.replace(['\r', '\n'], " ")
+    };
+    run_verification_event_hook(ctx, stage, result.success, &hook_output)?;
+    Ok(result)
+}
+
+fn run_verification_event_hook(
+    ctx: &ToolContext,
+    stage: &str,
+    passed: bool,
+    output: &str,
+) -> PeriResult<()> {
+    let mut variables = HookVariables::new();
+    variables.insert(
+        "project_root".to_string(),
+        ctx.project_root.display().to_string(),
+    );
+    variables.insert(
+        "workspace".to_string(),
+        ctx.project_root.display().to_string(),
+    );
+    variables.insert("stage".to_string(), stage.to_string());
+    variables.insert(
+        "status".to_string(),
+        if passed { "passed" } else { "failed" }.to_string(),
+    );
+    variables.insert("output".to_string(), output.to_string());
+    let event = if passed {
+        "verification_passed"
+    } else {
+        "verification_failed"
+    };
+    HookRunner::new(&ctx.project_root, ctx.hooks.clone()).run_event_hooks(event, &variables)?;
+    Ok(())
 }
 
 /// Built-in scratchpad tool.
@@ -2077,6 +2130,40 @@ mod tests {
 
         assert!(!result.success);
         assert_eq!(result.output["status"], 7);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn verify_tool_runs_verification_failed_hook() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root =
+            std::env::temp_dir().join(format!("peridot-tools-verify-hook-{}", std::process::id()));
+        let hooks_dir = root.join(".peridot/hooks");
+        fs::create_dir_all(&hooks_dir).unwrap();
+        let script = hooks_dir.join("verify.sh");
+        fs::write(&script, "#!/bin/sh\necho \"$1:$2\" >> verify.log\n").unwrap();
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+        let ctx = ToolContext::new(&root, PermissionMode::Auto).with_hooks(HooksConfig {
+            event: vec![peridot_common::HookConfig {
+                event: "verification_failed".to_string(),
+                run: ".peridot/hooks/verify.sh {stage} {status}".to_string(),
+                description: None,
+                on_failure: peridot_common::HookFailureMode::Block,
+                only_paths: Vec::new(),
+            }],
+            ..HooksConfig::default()
+        });
+
+        let result = VerifyBuildTool
+            .execute(serde_json::json!({"command":"exit 7"}), &ctx)
+            .await
+            .unwrap();
+
+        assert!(!result.success);
+        let log = fs::read_to_string(root.join("verify.log")).unwrap();
+        assert!(log.contains("build:failed"));
         fs::remove_dir_all(root).unwrap();
     }
 }

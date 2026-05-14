@@ -236,7 +236,7 @@ async fn main() -> Result<()> {
             return Ok(());
         }
         Some(Command::Verify) => {
-            run_verify_command(&project_root, cli.output)?;
+            run_verify_command(&project_root, &config, cli.output)?;
             return Ok(());
         }
         Some(Command::Setup) => {
