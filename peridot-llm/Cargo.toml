@@ -11,6 +11,7 @@ e2e = []
 
 [dependencies]
 async-trait.workspace = true
+futures-util.workspace = true
 peridot-common = { path = "../peridot-common" }
 reqwest.workspace = true
 serde.workspace = true

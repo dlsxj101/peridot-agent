@@ -3,6 +3,7 @@
 use std::time::Duration;
 
 use async_trait::async_trait;
+use futures_util::StreamExt;
 use peridot_common::{PeriError, PeriResult, ToolCall};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -222,7 +223,7 @@ pub struct PricingTable {
     pub cache_read_per_million: f64,
 }
 
-/// Provider abstraction for chat completion and future streaming support.
+/// Provider abstraction for chat completion and streaming support.
 #[async_trait]
 pub trait LlmProvider: Send + Sync {
     /// Complete one model request.
@@ -254,7 +255,7 @@ pub trait LlmProvider: Send + Sync {
     fn auth_method(&self) -> AuthMethod;
 }
 
-/// Claude provider placeholder for Session 1.
+/// Claude provider using the Anthropic Messages API.
 #[derive(Clone, Debug)]
 pub struct ClaudeProvider {
     model: String,
@@ -376,6 +377,54 @@ impl LlmProvider for ClaudeProvider {
         }
         Err(PeriError::Provider(
             last_error.unwrap_or_else(|| "Anthropic request failed".to_string()),
+        ))
+    }
+
+    async fn stream(&self, request: CompletionRequest) -> PeriResult<Vec<CompletionStreamChunk>> {
+        let api_key = self
+            .api_key
+            .as_deref()
+            .ok_or_else(|| PeriError::Provider("missing Anthropic API key".to_string()))?;
+        let mut payload = anthropic_payload(&request);
+        payload["stream"] = Value::Bool(true);
+        let endpoint = format!("{}/v1/messages", self.base_url.trim_end_matches('/'));
+        let mut last_error = None;
+        for attempt in 0..=self.max_retries {
+            let response = match self
+                .client
+                .post(&endpoint)
+                .header("x-api-key", api_key)
+                .header("anthropic-version", "2023-06-01")
+                .header("content-type", "application/json")
+                .header("accept", "text/event-stream")
+                .json(&payload)
+                .send()
+                .await
+            {
+                Ok(response) => response,
+                Err(err) => {
+                    last_error = Some(format!("Anthropic stream request failed: {err}"));
+                    if attempt < self.max_retries {
+                        continue;
+                    }
+                    break;
+                }
+            };
+
+            let status = response.status();
+            if status.is_success() {
+                let body = read_streaming_response(response).await?;
+                return parse_anthropic_stream(&body, self.pricing);
+            }
+            let body = response.text().await.unwrap_or_default();
+            last_error = Some(format!("Anthropic stream returned {status}: {body}"));
+            if attempt < self.max_retries && should_retry_status(status) {
+                continue;
+            }
+            break;
+        }
+        Err(PeriError::Provider(
+            last_error.unwrap_or_else(|| "Anthropic stream failed".to_string()),
         ))
     }
 
@@ -503,6 +552,87 @@ fn parse_anthropic_response(body: &str, pricing: PricingTable) -> PeriResult<Com
     })
 }
 
+fn parse_anthropic_stream(
+    body: &str,
+    pricing: PricingTable,
+) -> PeriResult<Vec<CompletionStreamChunk>> {
+    let mut chunks = Vec::new();
+    let mut input_tokens = 0;
+    let mut output_tokens = 0;
+    let mut cache_read_tokens = 0;
+    let mut cache_creation_tokens = 0;
+
+    for data in sse_data_events(body) {
+        if data == "[DONE]" {
+            break;
+        }
+        let value = serde_json::from_str::<Value>(&data)
+            .map_err(|err| PeriError::Provider(format!("invalid Anthropic stream JSON: {err}")))?;
+        match value.get("type").and_then(Value::as_str) {
+            Some("message_start") => {
+                if let Some(usage) = value
+                    .get("message")
+                    .and_then(|message| message.get("usage"))
+                {
+                    input_tokens = usage
+                        .get("input_tokens")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(input_tokens);
+                    cache_read_tokens = usage
+                        .get("cache_read_input_tokens")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(cache_read_tokens);
+                    cache_creation_tokens = usage
+                        .get("cache_creation_input_tokens")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(cache_creation_tokens);
+                }
+            }
+            Some("content_block_delta") => {
+                if let Some(delta) = value
+                    .get("delta")
+                    .and_then(|delta| delta.get("text"))
+                    .and_then(Value::as_str)
+                {
+                    chunks.push(CompletionStreamChunk {
+                        delta: delta.to_string(),
+                        done: false,
+                        usage: None,
+                    });
+                }
+            }
+            Some("message_delta") => {
+                if let Some(usage) = value.get("usage") {
+                    output_tokens = usage
+                        .get("output_tokens")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(output_tokens);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let estimated_cost_usd = estimate_cost(
+        pricing,
+        input_tokens + cache_creation_tokens,
+        output_tokens,
+        cache_read_tokens,
+    );
+    chunks.push(CompletionStreamChunk {
+        delta: String::new(),
+        done: true,
+        usage: Some(Usage {
+            input_tokens,
+            output_tokens,
+            cache_read_tokens,
+            cache_creation_tokens,
+            estimated_cost_usd,
+        }),
+    });
+    Ok(chunks)
+}
+
 fn estimate_cost(
     pricing: PricingTable,
     input_tokens: u64,
@@ -518,6 +648,18 @@ fn should_retry_status(status: reqwest::StatusCode) -> bool {
     status == reqwest::StatusCode::REQUEST_TIMEOUT
         || status == reqwest::StatusCode::TOO_MANY_REQUESTS
         || status.is_server_error()
+}
+
+async fn read_streaming_response(response: reqwest::Response) -> PeriResult<String> {
+    let mut body = Vec::new();
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk =
+            chunk.map_err(|err| PeriError::Provider(format!("stream read failed: {err}")))?;
+        body.extend_from_slice(&chunk);
+    }
+    String::from_utf8(body)
+        .map_err(|err| PeriError::Provider(format!("stream response was not UTF-8: {err}")))
 }
 
 /// OpenAI provider using the Responses API.
@@ -647,6 +789,53 @@ impl LlmProvider for OpenAiProvider {
         ))
     }
 
+    async fn stream(&self, request: CompletionRequest) -> PeriResult<Vec<CompletionStreamChunk>> {
+        let api_key = self
+            .api_key
+            .as_deref()
+            .ok_or_else(|| PeriError::Provider("missing OpenAI API key".to_string()))?;
+        let mut payload = openai_responses_payload(&request);
+        payload["stream"] = Value::Bool(true);
+        let endpoint = format!("{}/v1/responses", self.base_url.trim_end_matches('/'));
+        let mut last_error = None;
+        for attempt in 0..=self.max_retries {
+            let response = match self
+                .client
+                .post(&endpoint)
+                .bearer_auth(api_key)
+                .header("content-type", "application/json")
+                .header("accept", "text/event-stream")
+                .json(&payload)
+                .send()
+                .await
+            {
+                Ok(response) => response,
+                Err(err) => {
+                    last_error = Some(format!("OpenAI stream request failed: {err}"));
+                    if attempt < self.max_retries {
+                        continue;
+                    }
+                    break;
+                }
+            };
+
+            let status = response.status();
+            if status.is_success() {
+                let body = read_streaming_response(response).await?;
+                return parse_openai_stream(&body, self.pricing);
+            }
+            let body = response.text().await.unwrap_or_default();
+            last_error = Some(format!("OpenAI stream returned {status}: {body}"));
+            if attempt < self.max_retries && should_retry_status(status) {
+                continue;
+            }
+            break;
+        }
+        Err(PeriError::Provider(
+            last_error.unwrap_or_else(|| "OpenAI stream failed".to_string()),
+        ))
+    }
+
     fn supports_cache(&self) -> bool {
         true
     }
@@ -748,6 +937,70 @@ fn parse_openai_response(body: &str, pricing: PricingTable) -> PeriResult<Comple
     })
 }
 
+fn parse_openai_stream(
+    body: &str,
+    pricing: PricingTable,
+) -> PeriResult<Vec<CompletionStreamChunk>> {
+    let mut chunks = Vec::new();
+    let mut input_tokens = 0;
+    let mut output_tokens = 0;
+    let mut cache_read_tokens = 0;
+
+    for data in sse_data_events(body) {
+        if data == "[DONE]" {
+            break;
+        }
+        let value = serde_json::from_str::<Value>(&data)
+            .map_err(|err| PeriError::Provider(format!("invalid OpenAI stream JSON: {err}")))?;
+        match value.get("type").and_then(Value::as_str) {
+            Some("response.output_text.delta") => {
+                if let Some(delta) = value.get("delta").and_then(Value::as_str) {
+                    chunks.push(CompletionStreamChunk {
+                        delta: delta.to_string(),
+                        done: false,
+                        usage: None,
+                    });
+                }
+            }
+            Some("response.completed") => {
+                if let Some(usage) = value
+                    .get("response")
+                    .and_then(|response| response.get("usage"))
+                {
+                    input_tokens = usage
+                        .get("input_tokens")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(input_tokens);
+                    output_tokens = usage
+                        .get("output_tokens")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(output_tokens);
+                    cache_read_tokens = usage
+                        .get("input_tokens_details")
+                        .and_then(|details| details.get("cached_tokens"))
+                        .and_then(Value::as_u64)
+                        .unwrap_or(cache_read_tokens);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let estimated_cost_usd = estimate_cost(pricing, input_tokens, output_tokens, cache_read_tokens);
+    chunks.push(CompletionStreamChunk {
+        delta: String::new(),
+        done: true,
+        usage: Some(Usage {
+            input_tokens,
+            output_tokens,
+            cache_read_tokens,
+            cache_creation_tokens: 0,
+            estimated_cost_usd,
+        }),
+    });
+    Ok(chunks)
+}
+
 fn openai_output_text(value: &Value) -> String {
     value
         .get("output")
@@ -764,6 +1017,31 @@ fn openai_output_text(value: &Value) -> String {
         })
         .collect::<Vec<_>>()
         .join("")
+}
+
+fn sse_data_events(body: &str) -> Vec<String> {
+    let mut events = Vec::new();
+    let mut current = Vec::new();
+    for line in body.lines() {
+        let line = line.trim_end_matches('\r');
+        if line.is_empty() {
+            if !current.is_empty() {
+                events.push(current.join("\n"));
+                current.clear();
+            }
+            continue;
+        }
+        if line.starts_with(':') {
+            continue;
+        }
+        if let Some(data) = line.strip_prefix("data:") {
+            current.push(data.trim_start().to_string());
+        }
+    }
+    if !current.is_empty() {
+        events.push(current.join("\n"));
+    }
+    events
 }
 
 #[cfg(test)]
@@ -951,6 +1229,42 @@ mod tests {
     }
 
     #[test]
+    fn parses_anthropic_stream_chunks_and_usage() {
+        let chunks = parse_anthropic_stream(
+            r#"event: message_start
+data: {"type":"message_start","message":{"usage":{"input_tokens":10,"cache_creation_input_tokens":2,"cache_read_input_tokens":3}}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"hel"}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"lo"}}
+
+event: message_delta
+data: {"type":"message_delta","usage":{"output_tokens":4}}
+
+event: message_stop
+data: {"type":"message_stop"}
+"#,
+            PricingTable {
+                input_per_million: 3.0,
+                output_per_million: 15.0,
+                cache_read_per_million: 0.30,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(chunks[0].delta, "hel");
+        assert_eq!(chunks[1].delta, "lo");
+        assert!(chunks.last().unwrap().done);
+        let usage = chunks.last().unwrap().usage.unwrap();
+        assert_eq!(usage.input_tokens, 10);
+        assert_eq!(usage.output_tokens, 4);
+        assert_eq!(usage.cache_read_tokens, 3);
+        assert_eq!(usage.cache_creation_tokens, 2);
+    }
+
+    #[test]
     fn parses_openai_response_output_text() {
         let response = parse_openai_response(
             r#"{
@@ -969,6 +1283,33 @@ mod tests {
         assert_eq!(response.usage.input_tokens, 10);
         assert_eq!(response.usage.output_tokens, 5);
         assert_eq!(response.usage.cache_read_tokens, 2);
+    }
+
+    #[test]
+    fn parses_openai_stream_chunks_and_usage() {
+        let chunks = parse_openai_stream(
+            r#"event: response.output_text.delta
+data: {"type":"response.output_text.delta","delta":"hel"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","delta":"lo"}
+
+event: response.completed
+data: {"type":"response.completed","response":{"usage":{"input_tokens":10,"output_tokens":5,"input_tokens_details":{"cached_tokens":2}}}}
+
+data: [DONE]
+"#,
+            PricingTable::default(),
+        )
+        .unwrap();
+
+        assert_eq!(chunks[0].delta, "hel");
+        assert_eq!(chunks[1].delta, "lo");
+        assert!(chunks.last().unwrap().done);
+        let usage = chunks.last().unwrap().usage.unwrap();
+        assert_eq!(usage.input_tokens, 10);
+        assert_eq!(usage.output_tokens, 5);
+        assert_eq!(usage.cache_read_tokens, 2);
     }
 
     #[test]
