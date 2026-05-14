@@ -3,6 +3,7 @@
 use std::fs;
 use std::io::{IsTerminal, Read};
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
@@ -24,7 +25,7 @@ use peridot_llm::{
     PricingTable, Usage, parse_action,
 };
 use peridot_mcp::McpClient;
-use peridot_memory::MemoryStore;
+use peridot_memory::{MemoryStore, SessionSummary};
 use peridot_project::ProjectScanner;
 use peridot_tools::hooks::{HookRunner, lifecycle_hook_variables};
 use peridot_tools::{ToolRegistry, register_builtin_tools, register_mcp_tools};
@@ -556,7 +557,7 @@ async fn run_agent_loop<P>(
 where
     P: LlmProvider + ?Sized,
 {
-    let session_id = format!("session-{}", std::process::id());
+    let session_id = format!("session-{}-{}", std::process::id(), unix_timestamp());
     run_lifecycle_hook(agent, &options, &session_id, "session_start", "running", "")?;
     let summary = agent
         .run_until_done(
@@ -582,7 +583,51 @@ where
         &format!("{:?}", summary.stopped_reason),
         &format!("turns={}", summary.turns.len()),
     )?;
+    if let Err(err) = save_run_session(options.project_root, &session_id, &summary, &options.task) {
+        eprintln!("warning: failed to save session {session_id}: {err}");
+    }
     Ok(summary)
+}
+
+fn save_run_session(
+    project_root: &Path,
+    session_id: &str,
+    summary: &AgentRunSummary,
+    task: &str,
+) -> Result<()> {
+    let task = compact_summary_text(task, 160);
+    let session = SessionSummary {
+        id: session_id.to_string(),
+        summary: format!(
+            "task=\"{}\" stopped={:?} turns={} cost=${:.6}",
+            task,
+            summary.stopped_reason,
+            summary.turns.len(),
+            summary.usage.estimated_cost_usd
+        ),
+    };
+    MemoryStore::new(project_root.join(".peridot/memory.db")).save_session(&session)?;
+    Ok(())
+}
+
+fn compact_summary_text(value: &str, max_chars: usize) -> String {
+    let value = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    if value.chars().count() <= max_chars {
+        return value;
+    }
+    let mut compact = value
+        .chars()
+        .take(max_chars.saturating_sub(3))
+        .collect::<String>();
+    compact.push_str("...");
+    compact
+}
+
+fn unix_timestamp() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or_default()
 }
 
 fn run_lifecycle_hook(
@@ -800,5 +845,33 @@ mod tests {
             text,
             "Resume session demo from this summary: created parser"
         );
+    }
+
+    #[test]
+    fn saves_run_summary_for_resume() {
+        let root =
+            std::env::temp_dir().join(format!("peridot-cli-run-save-{}", std::process::id()));
+        let summary = AgentRunSummary {
+            turns: Vec::new(),
+            usage: Usage::default(),
+            stopped_reason: StopReason::Done,
+        };
+
+        save_run_session(&root, "session-test", &summary, "finish the parser").unwrap();
+
+        let session = MemoryStore::new(root.join(".peridot/memory.db"))
+            .get_session("session-test")
+            .unwrap()
+            .unwrap();
+        assert!(session.summary.contains("finish the parser"));
+        assert!(session.summary.contains("stopped=Done"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn compact_summary_text_limits_long_tasks() {
+        let compact = compact_summary_text("a b c d e f", 5);
+
+        assert_eq!(compact, "a ...");
     }
 }
