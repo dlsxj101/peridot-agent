@@ -16,6 +16,7 @@ use peridot_common::{
 };
 use peridot_mcp::{McpClient, McpTool};
 use peridot_memory::MemoryStore;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// Runtime context passed to tool implementations.
@@ -787,6 +788,20 @@ impl Tool for FileListTool {
 #[derive(Clone, Debug)]
 pub struct PlanCreateTool;
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+struct PlanFile {
+    objective: String,
+    steps: Vec<PlanStep>,
+    updates: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+struct PlanStep {
+    id: usize,
+    text: String,
+    status: String,
+}
+
 #[async_trait]
 impl Tool for PlanCreateTool {
     fn name(&self) -> &str {
@@ -811,17 +826,33 @@ impl Tool for PlanCreateTool {
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default();
-        let mut markdown = format!("# Plan\n\nObjective: {objective}\n\n");
-        for (idx, step) in steps.iter().enumerate() {
-            let text = step.as_str().unwrap_or("unnamed step");
-            markdown.push_str(&format!("{}. [ ] {text}\n", idx + 1));
-        }
-        let path = ensure_within_project(&ctx.project_root, &ctx.project_root.join("todo.md"))?;
-        fs::write(&path, markdown)
-            .map_err(|err| PeriError::Tool(format!("failed to write {}: {err}", path.display())))?;
+        let plan = PlanFile {
+            objective: objective.to_string(),
+            steps: steps
+                .iter()
+                .enumerate()
+                .map(|(idx, step)| PlanStep {
+                    id: idx + 1,
+                    text: plan_step_text(step),
+                    status: "pending".to_string(),
+                })
+                .collect(),
+            updates: Vec::new(),
+        };
+        let markdown_path =
+            ensure_within_project(&ctx.project_root, &ctx.project_root.join("todo.md"))?;
+        let json_path =
+            ensure_within_project(&ctx.project_root, &ctx.project_root.join("todo.json"))?;
+        fs::write(&markdown_path, render_plan_markdown(&plan)).map_err(|err| {
+            PeriError::Tool(format!(
+                "failed to write {}: {err}",
+                markdown_path.display()
+            ))
+        })?;
+        write_plan_json(&json_path, &plan)?;
         Ok(ToolResult::success(
-            "created todo.md",
-            serde_json::json!({ "path": path }),
+            "created todo.md and todo.json",
+            serde_json::json!({ "markdown_path": markdown_path, "json_path": json_path }),
         ))
     }
 
@@ -853,15 +884,43 @@ impl Tool for PlanUpdateTool {
     }
 
     async fn execute(&self, params: Value, ctx: &ToolContext) -> PeriResult<ToolResult> {
-        let update = required_str(&params, "update")?;
-        let path = ensure_within_project(&ctx.project_root, &ctx.project_root.join("todo.md"))?;
-        let mut content = fs::read_to_string(&path).unwrap_or_else(|_| "# Plan\n\n".to_string());
-        content.push_str(&format!("\n- {update}\n"));
-        fs::write(&path, content)
-            .map_err(|err| PeriError::Tool(format!("failed to write {}: {err}", path.display())))?;
+        let update = params.get("update").and_then(Value::as_str).unwrap_or("");
+        let markdown_path =
+            ensure_within_project(&ctx.project_root, &ctx.project_root.join("todo.md"))?;
+        let json_path =
+            ensure_within_project(&ctx.project_root, &ctx.project_root.join("todo.json"))?;
+        let mut plan = read_plan_file(&json_path).unwrap_or_else(|| PlanFile {
+            objective: "Peridot task".to_string(),
+            steps: Vec::new(),
+            updates: Vec::new(),
+        });
+        if let Some(step_id) = params.get("step").and_then(Value::as_u64) {
+            let status = params
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or("done")
+                .to_string();
+            if let Some(step) = plan
+                .steps
+                .iter_mut()
+                .find(|step| step.id == step_id as usize)
+            {
+                step.status = status;
+            }
+        }
+        if !update.trim().is_empty() {
+            plan.updates.push(update.to_string());
+        }
+        fs::write(&markdown_path, render_plan_markdown(&plan)).map_err(|err| {
+            PeriError::Tool(format!(
+                "failed to write {}: {err}",
+                markdown_path.display()
+            ))
+        })?;
+        write_plan_json(&json_path, &plan)?;
         Ok(ToolResult::success(
-            "updated todo.md",
-            serde_json::json!({ "path": path }),
+            "updated todo.md and todo.json",
+            serde_json::json!({ "markdown_path": markdown_path, "json_path": json_path }),
         ))
     }
 
@@ -871,6 +930,54 @@ impl Tool for PlanUpdateTool {
 
     fn can_run_concurrent(&self) -> bool {
         false
+    }
+}
+
+fn plan_step_text(value: &Value) -> String {
+    value
+        .as_str()
+        .or_else(|| value.get("text").and_then(Value::as_str))
+        .unwrap_or("unnamed step")
+        .to_string()
+}
+
+fn read_plan_file(path: &Path) -> Option<PlanFile> {
+    fs::read_to_string(path)
+        .ok()
+        .and_then(|content| serde_json::from_str(&content).ok())
+}
+
+fn write_plan_json(path: &Path, plan: &PlanFile) -> PeriResult<()> {
+    let content = serde_json::to_string_pretty(plan)
+        .map_err(|err| PeriError::Parse(format!("failed to serialize plan: {err}")))?;
+    fs::write(path, content)
+        .map_err(|err| PeriError::Tool(format!("failed to write {}: {err}", path.display())))
+}
+
+fn render_plan_markdown(plan: &PlanFile) -> String {
+    let mut markdown = format!("# Plan\n\nObjective: {}\n\n", plan.objective);
+    for step in &plan.steps {
+        markdown.push_str(&format!(
+            "{}. [{}] {}\n",
+            step.id,
+            markdown_status_marker(&step.status),
+            step.text
+        ));
+    }
+    if !plan.updates.is_empty() {
+        markdown.push_str("\n## Updates\n");
+        for update in &plan.updates {
+            markdown.push_str(&format!("- {update}\n"));
+        }
+    }
+    markdown
+}
+
+fn markdown_status_marker(status: &str) -> &'static str {
+    match status {
+        "done" | "completed" => "x",
+        "in_progress" | "active" => ">",
+        _ => " ",
     }
 }
 
@@ -1340,6 +1447,74 @@ mod tests {
             fs::read_to_string(root.join("sample.txt")).unwrap(),
             "goodbye\nhello\n"
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn plan_create_writes_markdown_and_json() {
+        let root =
+            std::env::temp_dir().join(format!("peridot-tools-plan-create-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let ctx = ToolContext::new(&root, PermissionMode::Auto);
+
+        PlanCreateTool
+            .execute(
+                serde_json::json!({
+                    "objective": "ship feature",
+                    "steps": ["write code", {"text": "run tests"}]
+                }),
+                &ctx,
+            )
+            .await
+            .unwrap();
+
+        let markdown = fs::read_to_string(root.join("todo.md")).unwrap();
+        let json = fs::read_to_string(root.join("todo.json")).unwrap();
+        let plan = serde_json::from_str::<PlanFile>(&json).unwrap();
+
+        assert!(markdown.contains("Objective: ship feature"));
+        assert!(markdown.contains("1. [ ] write code"));
+        assert_eq!(plan.steps[1].text, "run tests");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn plan_update_marks_step_and_records_update() {
+        let root =
+            std::env::temp_dir().join(format!("peridot-tools-plan-update-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let ctx = ToolContext::new(&root, PermissionMode::Auto);
+        PlanCreateTool
+            .execute(
+                serde_json::json!({
+                    "objective": "ship feature",
+                    "steps": ["write code"]
+                }),
+                &ctx,
+            )
+            .await
+            .unwrap();
+
+        PlanUpdateTool
+            .execute(
+                serde_json::json!({
+                    "step": 1,
+                    "status": "done",
+                    "update": "code written"
+                }),
+                &ctx,
+            )
+            .await
+            .unwrap();
+
+        let markdown = fs::read_to_string(root.join("todo.md")).unwrap();
+        let json = fs::read_to_string(root.join("todo.json")).unwrap();
+        let plan = serde_json::from_str::<PlanFile>(&json).unwrap();
+
+        assert!(markdown.contains("1. [x] write code"));
+        assert!(markdown.contains("- code written"));
+        assert_eq!(plan.steps[0].status, "done");
+        assert_eq!(plan.updates, vec!["code written"]);
         fs::remove_dir_all(root).unwrap();
     }
 
