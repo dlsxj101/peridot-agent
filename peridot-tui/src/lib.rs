@@ -45,6 +45,10 @@ pub struct HeaderState {
     pub permission: PermissionMode,
     /// Active model name.
     pub model: String,
+    /// Total provider tokens observed by the session.
+    pub total_tokens: u64,
+    /// Prompt-cache hit rate in the range 0.0..=1.0.
+    pub cache_hit_rate: f64,
     /// Estimated cost in USD.
     pub cost_usd: f64,
 }
@@ -56,7 +60,27 @@ impl HeaderState {
             mode,
             permission,
             model: model.into(),
+            total_tokens: 0,
+            cache_hit_rate: 0.0,
             cost_usd: 0.0,
+        }
+    }
+
+    /// Records provider usage for header display.
+    pub fn record_usage(
+        &mut self,
+        input_tokens: u64,
+        output_tokens: u64,
+        cache_read_tokens: u64,
+        cache_creation_tokens: u64,
+        cost_usd: f64,
+    ) {
+        self.total_tokens +=
+            input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens;
+        self.cost_usd += cost_usd;
+        let prompt_tokens = input_tokens + cache_read_tokens + cache_creation_tokens;
+        if prompt_tokens > 0 {
+            self.cache_hit_rate = cache_read_tokens as f64 / prompt_tokens as f64;
         }
     }
 }
@@ -526,8 +550,13 @@ pub fn render_text_snapshot(state: &TuiState) -> String {
     let mut output = String::new();
     let _ = writeln!(
         output,
-        "PERIDOT | {}.{} | {} | ${:.4}",
-        state.header.mode, state.header.permission, state.header.model, state.header.cost_usd
+        "PERIDOT | {}.{} | {} | {} tok | ${:.4} | cache {:.0}%",
+        state.header.mode,
+        state.header.permission,
+        state.header.model,
+        state.header.total_tokens,
+        state.header.cost_usd,
+        state.header.cache_hit_rate * 100.0
     );
     let _ = writeln!(output, "layout: {:?}", state.layout);
     let _ = writeln!(output);
@@ -574,8 +603,13 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
     let header = Paragraph::new(Line::from(vec![
         Span::styled("PERIDOT", Style::default().fg(Color::Green)),
         Span::raw(format!(
-            " | {}.{} | {} | ${:.4}",
-            state.header.mode, state.header.permission, state.header.model, state.header.cost_usd
+            " | {}.{} | {} | {} tok | ${:.4} | cache {:.0}%",
+            state.header.mode,
+            state.header.permission,
+            state.header.model,
+            state.header.total_tokens,
+            state.header.cost_usd,
+            state.header.cache_hit_rate * 100.0
         )),
     ]))
     .block(Block::default().borders(Borders::ALL));
@@ -731,6 +765,17 @@ mod tests {
         assert_eq!(select_layout(140, 40), LayoutMode::Full);
         assert_eq!(select_layout(90, 24), LayoutMode::Compact);
         assert_eq!(select_layout(60, 12), LayoutMode::Minimal);
+    }
+
+    #[test]
+    fn header_records_tokens_cost_and_cache_rate() {
+        let mut header = HeaderState::new(ExecutionMode::Execute, PermissionMode::Auto, "mock");
+
+        header.record_usage(80, 20, 20, 0, 0.05);
+
+        assert_eq!(header.total_tokens, 120);
+        assert_eq!(header.cost_usd, 0.05);
+        assert!((header.cache_hit_rate - 0.2).abs() < f64::EPSILON);
     }
 
     #[test]
