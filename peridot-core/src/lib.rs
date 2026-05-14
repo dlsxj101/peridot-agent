@@ -263,7 +263,7 @@ impl HarnessAgent {
         let mut total_usage = Usage::default();
         let mut stuck_detector = StuckDetector::new(3);
         for turn_index in 0..request.max_turns {
-            let outcome = self
+            let outcome = match self
                 .run_turn(
                     provider,
                     AgentTurnRequest {
@@ -276,7 +276,18 @@ impl HarnessAgent {
                         security: request.security.clone(),
                     },
                 )
-                .await?;
+                .await
+            {
+                Ok(outcome) => outcome,
+                Err(err) => {
+                    self.state.phase = AgentPhase::Recovering;
+                    self.context.append(ContextEntry::trusted(
+                        ContextSource::PlanReminder,
+                        recovery_message(&err),
+                    ));
+                    continue;
+                }
+            };
             accumulate_usage(&mut total_usage, outcome.usage);
             let done = outcome.done;
             let recovery = stuck_detector.record(&outcome);
@@ -307,6 +318,37 @@ impl HarnessAgent {
             usage: total_usage,
             stopped_reason: StopReason::MaxTurns,
         })
+    }
+}
+
+fn recovery_message(error: &PeriError) -> String {
+    format!(
+        "Recovery directive: previous turn failed with {}: {error}. Preserve this error in context, avoid repeating the same action, and choose a concrete recovery strategy.",
+        classify_error(error)
+    )
+}
+
+fn classify_error(error: &PeriError) -> &'static str {
+    match error {
+        PeriError::PermissionDenied(_) | PeriError::PathBoundary(_) => "permission",
+        PeriError::Provider(_) => "api_error",
+        PeriError::Parse(_) => "parse",
+        PeriError::Verification { .. } => "verification",
+        PeriError::Config(_) => "config",
+        PeriError::Tool(message) => classify_tool_error(message),
+    }
+}
+
+fn classify_tool_error(message: &str) -> &'static str {
+    let lower = message.to_ascii_lowercase();
+    if lower.contains("timed out") || lower.contains("timeout") {
+        "timeout"
+    } else if lower.contains("not found") || lower.contains("no such file") {
+        "not_found"
+    } else if lower.contains("permission denied") || lower.contains("denied") {
+        "permission"
+    } else {
+        "tool"
     }
 }
 
@@ -936,5 +978,66 @@ mod tests {
                 .contains("Recovery directive: the last action repeated 3 times")
         }));
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn run_until_done_recovers_after_tool_error() {
+        let root =
+            std::env::temp_dir().join(format!("peridot-core-recover-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let mut registry = ToolRegistry::new();
+        register_builtin_tools(&mut registry).unwrap();
+        let mut agent = HarnessAgent::new(
+            AgentState::new(ExecutionMode::Goal, PermissionMode::Auto),
+            ContextManager::new(),
+            registry,
+        );
+        let provider = StaticProvider::new(vec![
+            json!({"action":"file_read","parameters":{"path":"missing.txt"}}).to_string(),
+            json!({"action":"agent_done","parameters":{"summary":"recovered"}}).to_string(),
+        ]);
+
+        let summary = agent
+            .run_until_done(
+                &provider,
+                AgentRunRequest {
+                    task: "recover from missing file".to_string(),
+                    model: "mock".to_string(),
+                    max_turns: 2,
+                    max_tokens: 512,
+                    budget_usd: 5.0,
+                    project_root: root.clone(),
+                    denied_paths: Vec::new(),
+                    hooks: HooksConfig::default(),
+                    security: SecurityConfig::default(),
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(summary.stopped_reason, StopReason::Done);
+        assert_eq!(summary.turns.len(), 1);
+        assert!(agent.context().entries().iter().any(|entry| {
+            entry
+                .content
+                .contains("previous turn failed with not_found")
+        }));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn classifies_tool_errors() {
+        assert_eq!(
+            classify_error(&PeriError::Tool("No such file or directory".to_string())),
+            "not_found"
+        );
+        assert_eq!(
+            classify_error(&PeriError::Tool("operation timed out".to_string())),
+            "timeout"
+        );
+        assert_eq!(
+            classify_error(&PeriError::PermissionDenied("blocked".to_string())),
+            "permission"
+        );
     }
 }
