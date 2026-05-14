@@ -9,10 +9,10 @@ use async_trait::async_trait;
 use clap::{Parser, Subcommand, ValueEnum};
 use commands::{
     AgentsCommand, AuthProvider, ConfigCommand, McpCommand, OutputFormat, SessionCommand,
-    SkillCommand, load_project_config, print_scan, read_stored_api_key, run_agents_command,
-    run_config_command, run_login_command, run_logout_command, run_mcp_command,
-    run_session_command, run_setup_command, run_skill_command, run_update_command,
-    run_verify_command,
+    SkillCommand, load_project_config, print_scan, read_stored_api_key,
+    read_stored_openai_oauth_access_token, run_agents_command, run_config_command,
+    run_login_command, run_logout_command, run_mcp_command, run_session_command, run_setup_command,
+    run_skill_command, run_update_command, run_verify_command,
 };
 use peridot_common::{
     ExecutionMode, PeriError, PeriResult, PeridotConfig, PermissionMode, ToolCall,
@@ -236,7 +236,7 @@ async fn main() -> Result<()> {
             return Ok(());
         }
         Some(Command::Login { provider }) => {
-            run_login_command(*provider, cli.output)?;
+            run_login_command(*provider, cli.output).await?;
             return Ok(());
         }
         Some(Command::Logout { provider }) => {
@@ -512,8 +512,27 @@ fn live_provider(config: &PeridotConfig, model: &str) -> Result<Box<dyn LlmProvi
                 AuthMethod::ApiKey,
             )))
         }
+        "openai-oauth" => {
+            let access_token = std::env::var("OPENAI_ACCESS_TOKEN")
+                .ok()
+                .or_else(|| read_stored_openai_oauth_access_token().ok().flatten())
+                .with_context(
+                    || "OPENAI_ACCESS_TOKEN or peridot login openai-oauth is required for --live",
+                )?;
+            let base_url = if config.api.base_url == "https://api.anthropic.com" {
+                "https://api.openai.com".to_string()
+            } else {
+                config.api.base_url.clone()
+            };
+            Ok(Box::new(OpenAiProvider::with_options(
+                model.to_string(),
+                Some(access_token),
+                base_url,
+                AuthMethod::OAuth,
+            )))
+        }
         provider => anyhow::bail!(
-            "live provider {provider} is not implemented yet; use claude-api, openai-api, or --mock-response-file"
+            "live provider {provider} is not implemented yet; use claude-api, openai-api, openai-oauth, or --mock-response-file"
         ),
     }
 }

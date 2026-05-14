@@ -1,10 +1,15 @@
 //! Scriptable CLI subcommand handlers.
 
+use std::collections::HashMap;
 use std::fs;
+use std::io::{Read, Write};
+use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use clap::{Subcommand, ValueEnum};
 use peridot_common::{McpServerConfig, McpTransport, PeridotConfig};
 use peridot_mcp::McpClient;
@@ -12,6 +17,7 @@ use peridot_memory::{MemoryStore, SessionSummary};
 use peridot_project::{ProjectProfile, ProjectScanner};
 use peridot_verify::VerifyPipeline;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 /// Scriptable output format.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
@@ -22,13 +28,15 @@ pub(crate) enum OutputFormat {
     Json,
 }
 
-/// API-key auth providers supported by `peridot login`.
+/// Auth providers supported by `peridot login`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 pub(crate) enum AuthProvider {
     /// Anthropic Claude API key.
     ClaudeApi,
     /// OpenAI API key.
     OpenaiApi,
+    /// OpenAI OAuth PKCE flow.
+    OpenaiOauth,
 }
 
 impl AuthProvider {
@@ -36,13 +44,15 @@ impl AuthProvider {
         match self {
             Self::ClaudeApi => "claude-api",
             Self::OpenaiApi => "openai-api",
+            Self::OpenaiOauth => "openai-oauth",
         }
     }
 
-    fn env_var(self) -> &'static str {
+    fn api_key_env_var(self) -> Option<&'static str> {
         match self {
-            Self::ClaudeApi => "ANTHROPIC_API_KEY",
-            Self::OpenaiApi => "OPENAI_API_KEY",
+            Self::ClaudeApi => Some("ANTHROPIC_API_KEY"),
+            Self::OpenaiApi => Some("OPENAI_API_KEY"),
+            Self::OpenaiOauth => None,
         }
     }
 }
@@ -460,9 +470,15 @@ pub(crate) fn run_setup_command(project_root: &Path, output: OutputFormat) -> Re
     )
 }
 
-pub(crate) fn run_login_command(provider: AuthProvider, output: OutputFormat) -> Result<()> {
-    let api_key = std::env::var(provider.env_var())
-        .with_context(|| format!("{} is required for login", provider.env_var()))?;
+pub(crate) async fn run_login_command(provider: AuthProvider, output: OutputFormat) -> Result<()> {
+    if provider == AuthProvider::OpenaiOauth {
+        return run_openai_oauth_login(output).await;
+    }
+    let env_var = provider
+        .api_key_env_var()
+        .with_context(|| format!("{} does not use API-key login", provider.id()))?;
+    let api_key =
+        std::env::var(env_var).with_context(|| format!("{env_var} is required for login"))?;
     let path = auth_file(provider)?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -505,6 +521,263 @@ pub(crate) fn read_stored_api_key(provider: AuthProvider) -> Result<Option<Strin
         .get("api_key")
         .and_then(Value::as_str)
         .map(str::to_string))
+}
+
+pub(crate) fn read_stored_openai_oauth_access_token() -> Result<Option<String>> {
+    let path = auth_file(AuthProvider::OpenaiOauth)?;
+    if !path.exists() {
+        return Ok(None);
+    }
+    let value = serde_json::from_str::<Value>(&fs::read_to_string(path)?)?;
+    Ok(value
+        .get("access_token")
+        .and_then(Value::as_str)
+        .map(str::to_string))
+}
+
+async fn run_openai_oauth_login(output: OutputFormat) -> Result<()> {
+    let client_id = std::env::var("OPENAI_OAUTH_CLIENT_ID")
+        .with_context(|| "OPENAI_OAUTH_CLIENT_ID is required for openai-oauth login")?;
+    let port = std::env::var("PERIDOT_OAUTH_PORT")
+        .ok()
+        .and_then(|value| value.parse::<u16>().ok())
+        .unwrap_or(14552);
+    let scope = std::env::var("OPENAI_OAUTH_SCOPE")
+        .unwrap_or_else(|_| "openid profile email offline_access".to_string());
+    let redirect_uri = format!("http://127.0.0.1:{port}/callback");
+    let state = random_urlsafe(32);
+    let code_verifier = random_urlsafe(64);
+    let code_challenge = pkce_challenge(&code_verifier);
+    let auth_url =
+        openai_oauth_authorize_url(&client_id, &redirect_uri, &scope, &state, &code_challenge);
+
+    if output == OutputFormat::Text {
+        println!("Open this URL to authorize Peridot:\n{auth_url}");
+        if open_browser(&auth_url) {
+            println!("Opened browser; waiting for OAuth callback on {redirect_uri}");
+        } else {
+            println!("Could not open a browser automatically; paste the URL into your browser.");
+        }
+    }
+
+    let code = wait_for_oauth_code(port, &state)?;
+    let mut token = exchange_openai_oauth_code(&client_id, &redirect_uri, &code_verifier, &code)
+        .await
+        .with_context(|| "failed to exchange OpenAI OAuth authorization code")?;
+    if let Some(object) = token.as_object_mut() {
+        object.insert(
+            "provider".to_string(),
+            Value::String(AuthProvider::OpenaiOauth.id().to_string()),
+        );
+        object.insert("client_id".to_string(), Value::String(client_id));
+        object.insert("redirect_uri".to_string(), Value::String(redirect_uri));
+        object.insert(
+            "obtained_at_unix".to_string(),
+            Value::Number(serde_json::Number::from(
+                SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
+            )),
+        );
+    }
+
+    let path = auth_file(AuthProvider::OpenaiOauth)?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(&path, serde_json::to_string_pretty(&token)?)?;
+    set_private_permissions(&path)?;
+    print_json_or_text_result(
+        serde_json::json!({
+            "provider": AuthProvider::OpenaiOauth.id(),
+            "path": path,
+            "stored": true,
+            "token_type": token.get("token_type").and_then(Value::as_str)
+        }),
+        format!("stored credentials for {}", AuthProvider::OpenaiOauth.id()),
+        output,
+    )
+}
+
+fn openai_oauth_authorize_url(
+    client_id: &str,
+    redirect_uri: &str,
+    scope: &str,
+    state: &str,
+    code_challenge: &str,
+) -> String {
+    format!(
+        "https://auth.openai.com/oauth/authorize?response_type=code&client_id={}&redirect_uri={}&scope={}&state={}&code_challenge={}&code_challenge_method=S256",
+        url_encode(client_id),
+        url_encode(redirect_uri),
+        url_encode(scope),
+        url_encode(state),
+        url_encode(code_challenge)
+    )
+}
+
+async fn exchange_openai_oauth_code(
+    client_id: &str,
+    redirect_uri: &str,
+    code_verifier: &str,
+    code: &str,
+) -> Result<Value> {
+    let response = reqwest::Client::new()
+        .post("https://auth.openai.com/oauth/token")
+        .form(&[
+            ("grant_type", "authorization_code"),
+            ("client_id", client_id),
+            ("redirect_uri", redirect_uri),
+            ("code_verifier", code_verifier),
+            ("code", code),
+        ])
+        .send()
+        .await?;
+    let status = response.status();
+    let body = response.text().await?;
+    if !status.is_success() {
+        anyhow::bail!("OpenAI OAuth token exchange returned {status}: {body}");
+    }
+    Ok(serde_json::from_str(&body)?)
+}
+
+fn wait_for_oauth_code(port: u16, expected_state: &str) -> Result<String> {
+    let listener = TcpListener::bind(("127.0.0.1", port))
+        .with_context(|| format!("failed to bind local OAuth callback port {port}"))?;
+    listener.set_nonblocking(true)?;
+    let deadline = SystemTime::now() + Duration::from_secs(300);
+    loop {
+        match listener.accept() {
+            Ok((mut stream, _)) => {
+                stream.set_read_timeout(Some(Duration::from_secs(5)))?;
+                let mut buffer = [0_u8; 8192];
+                let size = stream.read(&mut buffer)?;
+                let request = String::from_utf8_lossy(&buffer[..size]);
+                let result = parse_oauth_callback(&request, expected_state);
+                let body = if result.is_ok() {
+                    "Peridot login complete. You can close this window."
+                } else {
+                    "Peridot login failed. Return to the terminal for details."
+                };
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: text/plain; charset=utf-8\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                stream.write_all(response.as_bytes())?;
+                return result;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                if SystemTime::now() >= deadline {
+                    anyhow::bail!("timed out waiting for OpenAI OAuth callback");
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            Err(error) => return Err(error).with_context(|| "failed to accept OAuth callback"),
+        }
+    }
+}
+
+fn parse_oauth_callback(request: &str, expected_state: &str) -> Result<String> {
+    let target = request
+        .lines()
+        .next()
+        .and_then(|line| line.split_whitespace().nth(1))
+        .with_context(|| "invalid OAuth callback request")?;
+    let query = target
+        .split_once('?')
+        .map(|(_, query)| query)
+        .unwrap_or_default();
+    let params = parse_query(query)?;
+    if let Some(error) = params.get("error") {
+        anyhow::bail!("OpenAI OAuth error: {error}");
+    }
+    let state = params
+        .get("state")
+        .with_context(|| "OpenAI OAuth callback omitted state")?;
+    if state != expected_state {
+        anyhow::bail!("OpenAI OAuth state mismatch");
+    }
+    params
+        .get("code")
+        .cloned()
+        .with_context(|| "OpenAI OAuth callback omitted code")
+}
+
+fn parse_query(query: &str) -> Result<HashMap<String, String>> {
+    let mut params = HashMap::new();
+    for pair in query.split('&').filter(|pair| !pair.is_empty()) {
+        let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+        params.insert(percent_decode(key)?, percent_decode(value)?);
+    }
+    Ok(params)
+}
+
+fn pkce_challenge(verifier: &str) -> String {
+    URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()))
+}
+
+fn random_urlsafe(bytes: usize) -> String {
+    let mut random = vec![0_u8; bytes];
+    for chunk in random.chunks_mut(32) {
+        let sample: [u8; 32] = rand::random();
+        let len = chunk.len();
+        chunk.copy_from_slice(&sample[..len]);
+    }
+    URL_SAFE_NO_PAD.encode(random)
+}
+
+fn open_browser(url: &str) -> bool {
+    let mut command = if cfg!(target_os = "macos") {
+        let mut command = Command::new("open");
+        command.arg(url);
+        command
+    } else if cfg!(target_os = "windows") {
+        let mut command = Command::new("cmd");
+        command.args(["/C", "start", "", url]);
+        command
+    } else {
+        let mut command = Command::new("xdg-open");
+        command.arg(url);
+        command
+    };
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .is_ok()
+}
+
+fn url_encode(value: &str) -> String {
+    let mut encoded = String::new();
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                encoded.push(byte as char);
+            }
+            _ => encoded.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    encoded
+}
+
+fn percent_decode(value: &str) -> Result<String> {
+    let mut bytes = Vec::with_capacity(value.len());
+    let mut iter = value.as_bytes().iter().copied();
+    while let Some(byte) = iter.next() {
+        match byte {
+            b'+' => bytes.push(b' '),
+            b'%' => {
+                let high = iter.next().with_context(|| "incomplete percent escape")?;
+                let low = iter.next().with_context(|| "incomplete percent escape")?;
+                let hex = [high, low];
+                let decoded = u8::from_str_radix(std::str::from_utf8(&hex)?, 16)
+                    .with_context(|| "invalid percent escape")?;
+                bytes.push(decoded);
+            }
+            _ => bytes.push(byte),
+        }
+    }
+    Ok(String::from_utf8(bytes)?)
 }
 
 pub(crate) async fn run_update_command(check: bool, output: OutputFormat) -> Result<()> {
@@ -891,5 +1164,38 @@ mod tests {
             github_owner_repo("git@github.com:peridot-ai/peridot"),
             Some(("peridot-ai".to_string(), "peridot".to_string()))
         );
+    }
+
+    #[test]
+    fn derives_pkce_challenge() {
+        assert_eq!(
+            pkce_challenge("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"),
+            "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+        );
+    }
+
+    #[test]
+    fn parses_oauth_callback_query() {
+        let request = "GET /callback?code=abc%20123&state=state%2Bvalue HTTP/1.1\r\n\r\n";
+
+        let code = parse_oauth_callback(request, "state+value").unwrap();
+
+        assert_eq!(code, "abc 123");
+    }
+
+    #[test]
+    fn builds_openai_authorize_url_with_escaped_values() {
+        let url = openai_oauth_authorize_url(
+            "client id",
+            "http://127.0.0.1:14552/callback",
+            "openid profile",
+            "state",
+            "challenge",
+        );
+
+        assert!(url.contains("client_id=client%20id"));
+        assert!(url.contains("redirect_uri=http%3A%2F%2F127.0.0.1%3A14552%2Fcallback"));
+        assert!(url.contains("scope=openid%20profile"));
+        assert!(url.contains("code_challenge_method=S256"));
     }
 }
