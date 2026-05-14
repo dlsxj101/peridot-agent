@@ -11,7 +11,7 @@ use commands::{
     AgentsCommand, AuthProvider, ConfigCommand, McpCommand, OutputFormat, SessionCommand,
     SkillCommand, load_project_config, print_scan, read_stored_api_key, run_agents_command,
     run_config_command, run_login_command, run_logout_command, run_mcp_command,
-    run_session_command, run_skill_command, run_verify_command,
+    run_session_command, run_setup_command, run_skill_command, run_verify_command,
 };
 use peridot_common::{
     ExecutionMode, PeriError, PeriResult, PeridotConfig, PermissionMode, ToolCall,
@@ -94,6 +94,8 @@ enum Command {
     Scan,
     /// Run deterministic verification.
     Verify,
+    /// Initialize project-local Peridot files.
+    Setup,
     /// Configuration commands.
     Config {
         /// Config subcommand.
@@ -200,6 +202,10 @@ async fn main() -> Result<()> {
         }
         Some(Command::Verify) => {
             run_verify_command(&project_root, cli.output)?;
+            return Ok(());
+        }
+        Some(Command::Setup) => {
+            run_setup_command(&project_root, cli.output)?;
             return Ok(());
         }
         Some(Command::Config { command }) => {

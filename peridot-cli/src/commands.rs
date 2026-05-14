@@ -430,6 +430,32 @@ pub(crate) fn run_verify_command(project_root: &Path, output: OutputFormat) -> R
     Ok(())
 }
 
+pub(crate) fn run_setup_command(project_root: &Path, output: OutputFormat) -> Result<()> {
+    let config_result = init_project_config_value(project_root)?;
+    let agents_path = project_root.join("AGENTS.md");
+    let created_agents = if find_agents_instruction(project_root).is_none() {
+        let profile = ProjectScanner::new().scan(project_root)?;
+        fs::write(&agents_path, agents_draft(&profile))?;
+        true
+    } else {
+        false
+    };
+    print_json_or_text_result(
+        serde_json::json!({
+            "config_path": config_result.config_path,
+            "created_config": config_result.created_config,
+            "updated_gitignore": config_result.updated_gitignore,
+            "agents_path": agents_path,
+            "created_agents": created_agents
+        }),
+        format!(
+            "setup complete (created_config={}, updated_gitignore={}, created_agents={})",
+            config_result.created_config, config_result.updated_gitignore, created_agents
+        ),
+        output,
+    )
+}
+
 pub(crate) fn run_login_command(provider: AuthProvider, output: OutputFormat) -> Result<()> {
     let api_key = std::env::var(provider.env_var())
         .with_context(|| format!("{} is required for login", provider.env_var()))?;
@@ -498,6 +524,31 @@ fn set_private_permissions(_path: &Path) -> Result<()> {
 }
 
 fn init_project_config(project_root: &Path, output: OutputFormat) -> Result<()> {
+    let result = init_project_config_value(project_root)?;
+    print_json_or_text_result(
+        serde_json::json!({
+            "config_path": result.config_path,
+            "created_config": result.created_config,
+            "updated_gitignore": result.updated_gitignore
+        }),
+        format!(
+            "initialized {} (created_config={}, updated_gitignore={})",
+            result.peridot_dir.display(),
+            result.created_config,
+            result.updated_gitignore
+        ),
+        output,
+    )
+}
+
+struct ConfigInitResult {
+    peridot_dir: PathBuf,
+    config_path: PathBuf,
+    created_config: bool,
+    updated_gitignore: bool,
+}
+
+fn init_project_config_value(project_root: &Path) -> Result<ConfigInitResult> {
     let peridot_dir = project_root.join(".peridot");
     fs::create_dir_all(peridot_dir.join("hooks"))?;
     fs::create_dir_all(peridot_dir.join("skills"))?;
@@ -532,18 +583,12 @@ fn init_project_config(project_root: &Path, output: OutputFormat) -> Result<()> 
     if changed_gitignore {
         fs::write(&gitignore_path, gitignore)?;
     }
-    print_json_or_text_result(
-        serde_json::json!({
-            "config_path": config_path,
-            "created_config": created_config,
-            "updated_gitignore": changed_gitignore
-        }),
-        format!(
-            "initialized {} (created_config={created_config}, updated_gitignore={changed_gitignore})",
-            peridot_dir.display()
-        ),
-        output,
-    )
+    Ok(ConfigInitResult {
+        peridot_dir,
+        config_path,
+        created_config,
+        updated_gitignore: changed_gitignore,
+    })
 }
 
 fn memory_store(project_root: &Path) -> MemoryStore {
