@@ -420,14 +420,13 @@ async fn run_task(
         )
         .await?;
         if cli.output == OutputFormat::Json || cli.effective_headless() {
-            println!("{}", serde_json::to_string_pretty(&summary)?);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&run_summary_output(&summary, mode))?
+            );
             exit_for_summary(&summary, cli.effective_headless());
         } else {
-            println!(
-                "stopped={:?} turns={}",
-                summary.stopped_reason,
-                summary.turns.len()
-            );
+            print_run_summary_text(&summary, mode);
         }
         return Ok(());
     }
@@ -451,15 +450,13 @@ async fn run_task(
         )
         .await?;
         if cli.output == OutputFormat::Json || cli.effective_headless() {
-            println!("{}", serde_json::to_string_pretty(&summary)?);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&run_summary_output(&summary, mode))?
+            );
             exit_for_summary(&summary, cli.effective_headless());
         } else {
-            println!(
-                "stopped={:?} turns={} cost=${:.6}",
-                summary.stopped_reason,
-                summary.turns.len(),
-                summary.usage.estimated_cost_usd
-            );
+            print_run_summary_text(&summary, mode);
         }
         return Ok(());
     }
@@ -758,6 +755,94 @@ fn exit_for_summary(summary: &AgentRunSummary, headless: bool) {
     }
 }
 
+fn run_summary_output(summary: &AgentRunSummary, mode: ExecutionMode) -> serde_json::Value {
+    let mut output = serde_json::to_value(summary).unwrap_or_else(|_| serde_json::json!({}));
+    if mode == ExecutionMode::Plan
+        && summary.stopped_reason == StopReason::Done
+        && let Some(object) = output.as_object_mut()
+    {
+        object.insert(
+            "next_actions".to_string(),
+            serde_json::Value::Array(
+                plan_completion_choices()
+                    .into_iter()
+                    .map(|choice| choice.to_json())
+                    .collect(),
+            ),
+        );
+    }
+    output
+}
+
+fn print_run_summary_text(summary: &AgentRunSummary, mode: ExecutionMode) {
+    println!(
+        "stopped={:?} turns={} cost=${:.6}",
+        summary.stopped_reason,
+        summary.turns.len(),
+        summary.usage.estimated_cost_usd
+    );
+    if mode == ExecutionMode::Plan && summary.stopped_reason == StopReason::Done {
+        println!("{}", render_plan_completion_choices());
+    }
+}
+
+fn render_plan_completion_choices() -> String {
+    plan_completion_choices()
+        .into_iter()
+        .map(|choice| format!("[{}] {}", choice.id, choice.label))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn plan_completion_choices() -> Vec<PlanCompletionChoice> {
+    vec![
+        PlanCompletionChoice::new(
+            1,
+            "Execute·auto",
+            ExecutionMode::Execute,
+            PermissionMode::Auto,
+        ),
+        PlanCompletionChoice::new(
+            2,
+            "Execute·safe",
+            ExecutionMode::Execute,
+            PermissionMode::Safe,
+        ),
+        PlanCompletionChoice::new(3, "Goal·auto", ExecutionMode::Goal, PermissionMode::Auto),
+        PlanCompletionChoice::new(4, "Goal·yolo", ExecutionMode::Goal, PermissionMode::Yolo),
+        PlanCompletionChoice::new(5, "Revise plan", ExecutionMode::Plan, PermissionMode::Safe),
+        PlanCompletionChoice::new(6, "Cancel", ExecutionMode::Plan, PermissionMode::Safe),
+    ]
+}
+
+#[derive(Clone, Debug)]
+struct PlanCompletionChoice {
+    id: u8,
+    label: &'static str,
+    mode: ExecutionMode,
+    permission: PermissionMode,
+}
+
+impl PlanCompletionChoice {
+    fn new(id: u8, label: &'static str, mode: ExecutionMode, permission: PermissionMode) -> Self {
+        Self {
+            id,
+            label,
+            mode,
+            permission,
+        }
+    }
+
+    fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "id": self.id,
+            "label": self.label,
+            "mode": self.mode,
+            "permission": self.permission
+        })
+    }
+}
+
 fn env_truthy(name: &str) -> bool {
     std::env::var(name)
         .ok()
@@ -982,6 +1067,21 @@ mod tests {
         let compact = compact_summary_text("a b c d e f", 5);
 
         assert_eq!(compact, "a ...");
+    }
+
+    #[test]
+    fn plan_summary_output_includes_execution_choices() {
+        let summary = AgentRunSummary {
+            turns: Vec::new(),
+            usage: Usage::default(),
+            stopped_reason: StopReason::Done,
+        };
+
+        let output = run_summary_output(&summary, ExecutionMode::Plan);
+
+        assert_eq!(output["next_actions"][0]["label"], "Execute·auto");
+        assert_eq!(output["next_actions"][3]["permission"], "yolo");
+        assert!(render_plan_completion_choices().contains("[6] Cancel"));
     }
 
     #[test]
