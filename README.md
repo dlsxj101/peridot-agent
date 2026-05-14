@@ -102,7 +102,7 @@ Tool calls append audit entries to `.peridot/logs/audit.jsonl`.
 
 ## Release
 
-CI runs formatting, Clippy, and the workspace test suite on pushes and pull requests. Tags matching `v*` build release tarballs for Linux, macOS, and Windows on x86_64 and aarch64.
+CI runs formatting, Clippy, and the workspace test suite on pushes and pull requests. Tags matching `v*` build release archives for Linux, macOS, and Windows on x86_64 and aarch64. Unix targets publish `.tar.gz`; Windows publishes both `.tar.gz` and `.zip`.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/peridot-ai/peridot/main/install.sh | sh

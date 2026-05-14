@@ -56,12 +56,15 @@ jobs:
           fi
           cp "target/${{ matrix.target }}/release/peridot${ext}" "dist/peridot${ext}"
           tar -C dist -czf "peridot-${{ matrix.target }}.tar.gz" "peridot${ext}"
+          if [[ "${{ matrix.target }}" == *windows* ]]; then
+            powershell -NoProfile -Command "Compress-Archive -Path dist/peridot${ext} -DestinationPath peridot-${{ matrix.target }}.zip -Force"
+          fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: peridot-${{ matrix.target }}
-          path: peridot-${{ matrix.target }}.tar.gz
+          path: peridot-${{ matrix.target }}.*
 
   publish:
     name: Publish
@@ -79,4 +82,6 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*.tar.gz
+          files: |
+            dist/*.tar.gz
+            dist/*.zip
