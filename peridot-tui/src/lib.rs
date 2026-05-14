@@ -103,6 +103,32 @@ pub struct AskUserPanel {
     pub freeform: String,
 }
 
+/// Esc menu state.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct MenuState {
+    /// Menu options.
+    pub options: Vec<String>,
+    /// Highlighted option.
+    pub selected_index: usize,
+}
+
+impl Default for MenuState {
+    fn default() -> Self {
+        Self {
+            options: vec![
+                "Mode".to_string(),
+                "Permission".to_string(),
+                "Save Session".to_string(),
+                "History".to_string(),
+                "Settings".to_string(),
+                "Keybindings".to_string(),
+                "Quit".to_string(),
+            ],
+            selected_index: 0,
+        }
+    }
+}
+
 impl AskUserPanel {
     /// Builds a panel from an ask-user request.
     pub fn from_request(request: AskUserRequest) -> Self {
@@ -159,6 +185,8 @@ pub struct TuiState {
     pub input: String,
     /// Active ask-user panel, when the agent is waiting for user guidance.
     pub ask_user: Option<AskUserPanel>,
+    /// Active Esc menu.
+    pub menu: Option<MenuState>,
 }
 
 /// Result produced when an interactive TUI session exits.
@@ -191,6 +219,7 @@ impl TuiState {
             side_panel: SidePanelState::default(),
             input: String::new(),
             ask_user: None,
+            menu: None,
         }
     }
 
@@ -239,6 +268,9 @@ pub fn run_interactive(mut state: TuiState) -> io::Result<TuiExit> {
 
 /// Applies a keyboard event to the TUI state.
 pub fn handle_key_event(state: &mut TuiState, key: KeyEvent) -> TuiEventOutcome {
+    if state.menu.is_some() {
+        return handle_menu_key_event(state, key);
+    }
     if state.ask_user.is_some() {
         return handle_ask_user_key_event(state, key);
     }
@@ -246,7 +278,10 @@ pub fn handle_key_event(state: &mut TuiState, key: KeyEvent) -> TuiEventOutcome 
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             TuiEventOutcome::Quit
         }
-        KeyCode::Esc => TuiEventOutcome::Quit,
+        KeyCode::Esc => {
+            state.menu = Some(MenuState::default());
+            TuiEventOutcome::Continue
+        }
         KeyCode::Backspace => {
             state.input.pop();
             TuiEventOutcome::Continue
@@ -255,6 +290,41 @@ pub fn handle_key_event(state: &mut TuiState, key: KeyEvent) -> TuiEventOutcome 
         KeyCode::Char(character) => {
             state.input.push(character);
             TuiEventOutcome::Continue
+        }
+        _ => TuiEventOutcome::Continue,
+    }
+}
+
+fn handle_menu_key_event(state: &mut TuiState, key: KeyEvent) -> TuiEventOutcome {
+    let Some(menu) = state.menu.as_mut() else {
+        return TuiEventOutcome::Continue;
+    };
+    match key.code {
+        KeyCode::Esc | KeyCode::Char('q') => {
+            state.menu = None;
+            TuiEventOutcome::Continue
+        }
+        KeyCode::Up => {
+            menu.selected_index = menu.selected_index.saturating_sub(1);
+            TuiEventOutcome::Continue
+        }
+        KeyCode::Down => {
+            menu.selected_index = (menu.selected_index + 1).min(menu.options.len() - 1);
+            TuiEventOutcome::Continue
+        }
+        KeyCode::Enter => {
+            let selected = menu
+                .options
+                .get(menu.selected_index)
+                .cloned()
+                .unwrap_or_default();
+            state.menu = None;
+            if selected == "Quit" {
+                TuiEventOutcome::Quit
+            } else {
+                state.push_transcript(format!("menu: {selected}"));
+                TuiEventOutcome::Continue
+            }
         }
         _ => TuiEventOutcome::Continue,
     }
@@ -460,7 +530,9 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
             .constraints([Constraint::Percentage(100)])
             .split(chunks[1])
     };
-    let transcript = if let Some(panel) = &state.ask_user {
+    let transcript = if let Some(menu) = &state.menu {
+        render_menu(menu)
+    } else if let Some(panel) = &state.ask_user {
         render_ask_user_panel(panel)
     } else {
         state
@@ -521,11 +593,31 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
 }
 
 fn body_title(state: &TuiState) -> &'static str {
-    if state.ask_user.is_some() {
+    if state.menu.is_some() {
+        "Menu"
+    } else if state.ask_user.is_some() {
         "Ask User"
     } else {
         "Transcript"
     }
+}
+
+fn render_menu(menu: &MenuState) -> String {
+    let options = menu
+        .options
+        .iter()
+        .enumerate()
+        .map(|(index, option)| {
+            let marker = if index == menu.selected_index {
+                ">"
+            } else {
+                " "
+            };
+            format!("{marker} {option}")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!("Peridot Menu\n\n{options}")
 }
 
 fn render_ask_user_panel(panel: &AskUserPanel) -> String {
@@ -727,5 +819,32 @@ mod tests {
 
         assert!(state.ask_user.is_none());
         assert!(state.transcript[0].contains("Proceed? -> no"));
+    }
+
+    #[test]
+    fn escape_opens_menu_and_q_closes_it() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let mut state = TuiState::new(HeaderState::new(
+            ExecutionMode::Execute,
+            PermissionMode::Auto,
+            "mock",
+        ));
+
+        assert_eq!(
+            handle_key_event(&mut state, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+            TuiEventOutcome::Continue
+        );
+        assert!(state.menu.is_some());
+        assert!(render_menu(state.menu.as_ref().unwrap()).contains("Peridot Menu"));
+
+        assert_eq!(
+            handle_key_event(
+                &mut state,
+                KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE)
+            ),
+            TuiEventOutcome::Continue
+        );
+        assert!(state.menu.is_none());
     }
 }
