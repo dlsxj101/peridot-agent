@@ -89,6 +89,18 @@ pub struct CompletionResponse {
     pub usage: Usage,
 }
 
+/// Provider-neutral streaming chunk.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct CompletionStreamChunk {
+    /// Text delta for this chunk.
+    pub delta: String,
+    /// Whether this is the final chunk.
+    pub done: bool,
+    /// Usage accounting, populated on the final chunk when available.
+    #[serde(default)]
+    pub usage: Option<Usage>,
+}
+
 /// Structured model action parsed from assistant text.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ParsedAction {
@@ -213,6 +225,16 @@ pub struct PricingTable {
 pub trait LlmProvider: Send + Sync {
     /// Complete one model request.
     async fn complete(&self, request: CompletionRequest) -> PeriResult<CompletionResponse>;
+
+    /// Stream one model request as provider-neutral chunks.
+    async fn stream(&self, request: CompletionRequest) -> PeriResult<Vec<CompletionStreamChunk>> {
+        let response = self.complete(request).await?;
+        Ok(vec![CompletionStreamChunk {
+            delta: response.text,
+            done: true,
+            usage: Some(response.usage),
+        }])
+    }
 
     /// Returns true when the provider supports prompt caching.
     fn supports_cache(&self) -> bool;
@@ -649,6 +671,45 @@ fn openai_output_text(value: &Value) -> String {
 mod tests {
     use super::*;
 
+    #[derive(Clone, Debug)]
+    struct StaticProvider;
+
+    #[async_trait]
+    impl LlmProvider for StaticProvider {
+        async fn complete(&self, _request: CompletionRequest) -> PeriResult<CompletionResponse> {
+            Ok(CompletionResponse {
+                text: "hello".to_string(),
+                usage: Usage {
+                    input_tokens: 1,
+                    output_tokens: 2,
+                    cache_read_tokens: 0,
+                    cache_creation_tokens: 0,
+                    estimated_cost_usd: 0.01,
+                },
+            })
+        }
+
+        fn supports_cache(&self) -> bool {
+            false
+        }
+
+        fn supports_prefill(&self) -> bool {
+            false
+        }
+
+        fn supports_thinking(&self) -> bool {
+            false
+        }
+
+        fn pricing(&self) -> PricingTable {
+            PricingTable::default()
+        }
+
+        fn auth_method(&self) -> AuthMethod {
+            AuthMethod::NotConfigured
+        }
+    }
+
     #[test]
     fn parses_direct_json_action() {
         let action =
@@ -679,6 +740,26 @@ mod tests {
                 .unwrap();
 
         assert_eq!(action.tool_call.name, "plan_create");
+    }
+
+    #[tokio::test]
+    async fn default_stream_returns_single_done_chunk() {
+        let provider = StaticProvider;
+        let chunks = provider
+            .stream(CompletionRequest {
+                model: "mock".to_string(),
+                system: None,
+                messages: vec![LlmMessage::new(MessageRole::User, "hello")],
+                max_tokens: Some(16),
+                thinking: false,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].delta, "hello");
+        assert!(chunks[0].done);
+        assert_eq!(chunks[0].usage.unwrap().output_tokens, 2);
     }
 
     #[test]
