@@ -2,6 +2,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use anyhow::{Context, Result};
 use clap::{Subcommand, ValueEnum};
@@ -53,6 +54,8 @@ pub(crate) enum ConfigCommand {
     Init,
     /// Print the effective config.
     Show,
+    /// Open project-local config in $EDITOR.
+    Edit,
 }
 
 /// Session subcommands.
@@ -150,6 +153,7 @@ pub(crate) fn run_config_command(
     match command {
         ConfigCommand::Init => init_project_config(project_root, output),
         ConfigCommand::Show => print_config(config, output),
+        ConfigCommand::Edit => edit_project_config(project_root),
     }
 }
 
@@ -539,6 +543,19 @@ fn init_project_config(project_root: &Path, output: OutputFormat) -> Result<()> 
         ),
         output,
     )
+}
+
+fn edit_project_config(project_root: &Path) -> Result<()> {
+    let result = init_project_config_value(project_root)?;
+    let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vi".to_string());
+    let status = Command::new(&editor)
+        .arg(&result.config_path)
+        .status()
+        .with_context(|| format!("failed to launch editor `{editor}`"))?;
+    if !status.success() {
+        anyhow::bail!("editor `{editor}` exited with {status}");
+    }
+    Ok(())
 }
 
 struct ConfigInitResult {
