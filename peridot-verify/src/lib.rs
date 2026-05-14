@@ -33,6 +33,20 @@ pub struct VerifyStageResult {
     pub summary: String,
 }
 
+/// Full deterministic verification report.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct VerifyReport {
+    /// Ordered stage results.
+    pub stages: Vec<VerifyStageResult>,
+}
+
+impl VerifyReport {
+    /// Returns true when all recorded stages passed.
+    pub fn passed(&self) -> bool {
+        self.stages.iter().all(|stage| stage.passed)
+    }
+}
+
 /// Verification pipeline configured for a project.
 #[derive(Clone, Debug)]
 pub struct VerifyPipeline {
@@ -50,13 +64,29 @@ impl VerifyPipeline {
         &self.profile
     }
 
-    /// Runs the currently implemented skeleton checks.
+    /// Runs deterministic stages in spec order.
+    pub fn run_all(&self) -> PeriResult<VerifyReport> {
+        let mut stages = vec![self.run_deterministic()?];
+        if let Some(stage) = self.run_build()? {
+            stages.push(stage);
+        }
+        if let Some(stage) = self.run_test()? {
+            stages.push(stage);
+        }
+        if let Some(stage) = self.run_lint()? {
+            stages.push(stage);
+        }
+        stages.push(self.run_diff_review()?);
+        Ok(VerifyReport { stages })
+    }
+
+    /// Runs deterministic checks.
     pub fn run_deterministic(&self) -> PeriResult<VerifyStageResult> {
-        Ok(VerifyStageResult {
-            stage: VerifyStage::Deterministic,
-            passed: true,
-            summary: "verification skeleton passed".to_string(),
-        })
+        self.run_command_or_pass(
+            VerifyStage::Deterministic,
+            "git diff --check",
+            "no whitespace conflict markers detected",
+        )
     }
 
     /// Runs the detected build command when one exists.
@@ -71,7 +101,19 @@ impl VerifyPipeline {
 
     /// Runs the detected lint command when one exists.
     pub fn run_lint(&self) -> PeriResult<Option<VerifyStageResult>> {
-        self.run_optional_command(VerifyStage::Build, self.profile.commands.lint.as_deref())
+        self.run_optional_command(
+            VerifyStage::Deterministic,
+            self.profile.commands.lint.as_deref(),
+        )
+    }
+
+    /// Runs deterministic diff review.
+    pub fn run_diff_review(&self) -> PeriResult<VerifyStageResult> {
+        self.run_command_or_pass(
+            VerifyStage::DiffReview,
+            "git diff --stat",
+            "no diff to review",
+        )
     }
 
     fn run_optional_command(
@@ -103,5 +145,83 @@ impl VerifyPipeline {
             passed: output.status.success(),
             summary,
         }))
+    }
+
+    fn run_command_or_pass(
+        &self,
+        stage: VerifyStage,
+        command: &str,
+        empty_summary: &str,
+    ) -> PeriResult<VerifyStageResult> {
+        let output = Command::new("sh")
+            .arg("-c")
+            .arg(command)
+            .current_dir(&self.profile.root)
+            .output()
+            .map_err(|err| PeriError::Verification {
+                stage: format!("{stage:?}"),
+                message: format!("failed to run `{command}`: {err}"),
+            })?;
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let detail = [stdout, stderr]
+            .into_iter()
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let summary = if detail.is_empty() {
+            empty_summary.to_string()
+        } else {
+            detail
+        };
+        Ok(VerifyStageResult {
+            stage,
+            passed: output.status.success(),
+            summary,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use peridot_project::ProjectProfile;
+    use std::fs;
+
+    #[test]
+    fn run_all_records_stages() {
+        let root = std::env::temp_dir().join(format!("peridot-verify-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        Command::new("git")
+            .arg("init")
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        let profile = ProjectProfile::minimal(&root);
+
+        let report = VerifyPipeline::new(profile).run_all().unwrap();
+
+        assert!(report.passed());
+        assert!(
+            report
+                .stages
+                .iter()
+                .any(|stage| stage.stage == VerifyStage::DiffReview)
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn optional_command_failure_is_recorded() {
+        let root = std::env::temp_dir().join(format!("peridot-verify-fail-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let mut profile = ProjectProfile::minimal(&root);
+        profile.commands.build = Some("exit 7".to_string());
+
+        let stage = VerifyPipeline::new(profile).run_build().unwrap().unwrap();
+
+        assert_eq!(stage.stage, VerifyStage::Build);
+        assert!(!stage.passed);
+        fs::remove_dir_all(root).unwrap();
     }
 }
