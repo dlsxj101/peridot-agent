@@ -220,6 +220,15 @@ fn apply_agents_preferences(project_root: &Path, config: &mut PeridotConfig) -> 
     if let Some(ask_before_delete) = preferences.ask_before_delete {
         config.security.ask_before_delete = ask_before_delete;
     }
+    if let Some(auto_commit) = preferences.auto_commit {
+        config.git.auto_commit = auto_commit;
+    }
+    if let Some(commit_frequency) = preferences.commit_frequency {
+        config.git.commit_frequency = commit_frequency;
+    }
+    if let Some(branch_prefix) = preferences.branch_prefix {
+        config.git.branch_prefix = branch_prefix;
+    }
     Ok(())
 }
 
@@ -288,6 +297,9 @@ fn merge_project_config(
     }
     if raw_config.get("hooks").is_some() {
         config.hooks = project_config.hooks;
+    }
+    if raw_config.get("git").is_some() {
+        config.git = project_config.git;
     }
     if let Some(defaults) = raw_config.get("defaults").and_then(toml::Value::as_table) {
         if defaults.contains_key("mode") {
@@ -1585,6 +1597,10 @@ fn print_config(config: &PeridotConfig, output: OutputFormat) -> Result<()> {
                 "security.ask_before_delete = {}",
                 config.security.ask_before_delete
             );
+            println!("git.auto_commit = {}", config.git.auto_commit);
+            println!("git.commit_frequency = {}", config.git.commit_frequency);
+            println!("git.branch_prefix = {}", config.git.branch_prefix);
+            println!("git.auto_branch = {}", config.git.auto_branch);
         }
     }
     Ok(())
@@ -1645,6 +1661,8 @@ mod tests {
         );
         assert!(!config.security.ask_before_install);
         assert!(!config.security.ask_before_delete);
+        assert!(!config.git.auto_commit);
+        assert_eq!(config.git.branch_prefix, "peridot/");
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -1677,6 +1695,30 @@ mod tests {
         );
         assert!(!config.security.ask_before_install);
         assert!(config.security.ask_before_delete);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn agents_git_preferences_feed_effective_config() {
+        let root = std::env::temp_dir().join(format!(
+            "peridot-cli-git-preferences-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("AGENTS.md"),
+            "## preferences\n\
+             auto_commit: true\n\
+             commit_frequency: logical_unit\n\
+             branch_prefix: agent/\n",
+        )
+        .unwrap();
+
+        let config = load_effective_config_inner(&root, None, false, false).unwrap();
+
+        assert!(config.git.auto_commit);
+        assert_eq!(config.git.commit_frequency, "logical_unit");
+        assert_eq!(config.git.branch_prefix, "agent/");
         fs::remove_dir_all(root).unwrap();
     }
 

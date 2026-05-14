@@ -34,16 +34,23 @@ impl GitManager {
 
     /// Returns a compact git status snapshot.
     pub fn status(&self) -> PeriResult<GitStatus> {
-        let branch = self.run_git(["rev-parse", "--abbrev-ref", "HEAD"])?;
-        let status = self.run_git(["status", "--short"])?;
+        let branch = self.run_git(["branch", "--show-current"]).ok();
+        let status = self.run_git(["status", "--short", "--untracked-files=all"])?;
         Ok(GitStatus {
-            branch: Some(branch.trim().to_string()),
+            branch: branch.map(|branch| branch.trim().to_string()),
             changed_files: status
                 .lines()
-                .filter_map(|line| line.get(3..))
+                .filter_map(parse_status_path)
                 .map(PathBuf::from)
                 .collect(),
         })
+    }
+
+    /// Returns whether the root is inside a git work tree.
+    pub fn is_repository(&self) -> bool {
+        self.run_git(["rev-parse", "--is-inside-work-tree"])
+            .map(|value| value.trim() == "true")
+            .unwrap_or(false)
     }
 
     /// Returns the current git diff.
@@ -101,10 +108,15 @@ impl GitManager {
     }
 }
 
+fn parse_status_path(line: &str) -> Option<&str> {
+    line.get(3..).map(str::trim).filter(|path| !path.is_empty())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
+    use std::path::Path;
 
     #[test]
     fn creates_branch_and_commit_in_temp_repo() {
@@ -171,5 +183,25 @@ mod tests {
             ));
         }
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    }
+
+    #[test]
+    fn status_includes_untracked_files() {
+        if Command::new("git").arg("--version").output().is_err() {
+            return;
+        }
+        let root =
+            std::env::temp_dir().join(format!("peridot-git-untracked-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        run_raw_git(&root, ["init"]).unwrap();
+        fs::write(root.join("new.txt"), "hello\n").unwrap();
+
+        let status = GitManager::new(&root).status().unwrap();
+
+        assert_eq!(
+            status.changed_files,
+            vec![Path::new("new.txt").to_path_buf()]
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 }

@@ -251,12 +251,59 @@ pub struct PeridotConfig {
     /// Security and sandbox settings.
     #[serde(default)]
     pub security: SecurityConfig,
+    /// Git automation settings.
+    #[serde(default)]
+    pub git: GitConfig,
     /// MCP server definitions loaded at session start.
     #[serde(default)]
     pub mcp: Vec<McpServerConfig>,
     /// User hook definitions.
     #[serde(default)]
     pub hooks: HooksConfig,
+}
+
+/// Git automation configuration.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct GitConfig {
+    /// Whether completed logical units should be committed automatically.
+    #[serde(default)]
+    pub auto_commit: bool,
+    /// Preferred commit cadence.
+    #[serde(default = "default_commit_frequency")]
+    pub commit_frequency: String,
+    /// Branch prefix for agent-created branches.
+    #[serde(default = "default_branch_prefix")]
+    pub branch_prefix: String,
+    /// Whether Peridot may create a branch before committing.
+    #[serde(default)]
+    pub auto_branch: bool,
+    /// Commit message style.
+    #[serde(default = "default_commit_message_style")]
+    pub commit_message_style: String,
+}
+
+impl Default for GitConfig {
+    fn default() -> Self {
+        Self {
+            auto_commit: false,
+            commit_frequency: default_commit_frequency(),
+            branch_prefix: default_branch_prefix(),
+            auto_branch: false,
+            commit_message_style: default_commit_message_style(),
+        }
+    }
+}
+
+fn default_commit_frequency() -> String {
+    "logical_unit".to_string()
+}
+
+fn default_branch_prefix() -> String {
+    "peridot/".to_string()
+}
+
+fn default_commit_message_style() -> String {
+    "conventional".to_string()
 }
 
 /// Command sandbox backend.
@@ -698,5 +745,26 @@ mod tests {
         assert!(config.security.docker_network);
         assert!(!config.security.ask_before_install);
         assert!(!config.security.ask_before_delete);
+    }
+
+    #[test]
+    fn parses_git_config() {
+        let config = toml::from_str::<PeridotConfig>(
+            r#"
+            [git]
+            auto_commit = true
+            commit_frequency = "logical_unit"
+            branch_prefix = "agent/"
+            auto_branch = true
+            commit_message_style = "conventional"
+            "#,
+        )
+        .unwrap();
+
+        assert!(config.git.auto_commit);
+        assert_eq!(config.git.commit_frequency, "logical_unit");
+        assert_eq!(config.git.branch_prefix, "agent/");
+        assert!(config.git.auto_branch);
+        assert_eq!(config.git.commit_message_style, "conventional");
     }
 }

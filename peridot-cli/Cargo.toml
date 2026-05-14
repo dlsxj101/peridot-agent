@@ -24,6 +24,7 @@ peridot-llm = { path = "../peridot-llm" }
 peridot-memory = { path = "../peridot-memory" }
 peridot-mcp = { path = "../peridot-mcp" }
 peridot-project = { path = "../peridot-project" }
+peridot-git = { path = "../peridot-git" }
 peridot-tools = { path = "../peridot-tools" }
 peridot-verify = { path = "../peridot-verify" }
 reqwest.workspace = true

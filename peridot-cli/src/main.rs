@@ -20,6 +20,7 @@ use peridot_common::{
 };
 use peridot_context::{ContextLimits, ContextManager, project_context_limits};
 use peridot_core::{AgentRunRequest, AgentRunSummary, AgentState, HarnessAgent, StopReason};
+use peridot_git::GitManager;
 use peridot_llm::{
     AuthMethod, ClaudeProvider, CompletionRequest, CompletionResponse, LlmProvider, OpenAiProvider,
     PricingTable, Usage, parse_action,
@@ -589,6 +590,14 @@ where
     if let Err(err) = save_run_session(options.project_root, &session_id, &summary, &options.task) {
         eprintln!("warning: failed to save session {session_id}: {err}");
     }
+    if let Err(err) = auto_commit_run(
+        options.project_root,
+        options.config,
+        &summary,
+        &options.task,
+    ) {
+        eprintln!("warning: failed to auto-commit session {session_id}: {err}");
+    }
     Ok(summary)
 }
 
@@ -611,6 +620,90 @@ fn save_run_session(
     };
     MemoryStore::new(project_root.join(".peridot/memory.db")).save_session(&session)?;
     Ok(())
+}
+
+fn auto_commit_run(
+    project_root: &Path,
+    config: &PeridotConfig,
+    summary: &AgentRunSummary,
+    task: &str,
+) -> Result<Option<String>> {
+    if !config.git.auto_commit || summary.stopped_reason != StopReason::Done {
+        return Ok(None);
+    }
+    let manager = GitManager::new(project_root);
+    if !manager.is_repository() {
+        return Ok(None);
+    }
+    let status = manager.status()?;
+    if status.changed_files.is_empty() {
+        return Ok(None);
+    }
+    if config.git.auto_branch {
+        ensure_auto_branch(&manager, &config.git.branch_prefix, task)?;
+    }
+    let message = commit_message_for_task(task, &config.git.commit_message_style);
+    manager.commit_all(&message)?;
+    Ok(Some(message))
+}
+
+fn ensure_auto_branch(manager: &GitManager, branch_prefix: &str, task: &str) -> Result<()> {
+    let status = manager.status()?;
+    let current = status.branch.unwrap_or_default();
+    if current.starts_with(branch_prefix) {
+        return Ok(());
+    }
+    let branch = format!(
+        "{}{}-{}",
+        branch_prefix,
+        slugify_for_branch(task),
+        unix_timestamp()
+    );
+    manager.create_branch(&branch)?;
+    Ok(())
+}
+
+fn commit_message_for_task(task: &str, style: &str) -> String {
+    let subject = compact_summary_text(task, 64)
+        .trim_matches('"')
+        .trim()
+        .to_string();
+    if style == "conventional" {
+        format!("chore(agent): {}", fallback_subject(&subject))
+    } else {
+        fallback_subject(&subject).to_string()
+    }
+}
+
+fn fallback_subject(subject: &str) -> &str {
+    if subject.is_empty() {
+        "complete agent task"
+    } else {
+        subject
+    }
+}
+
+fn slugify_for_branch(task: &str) -> String {
+    let mut slug = String::new();
+    let mut last_dash = false;
+    for ch in task.chars().flat_map(char::to_lowercase) {
+        if ch.is_ascii_alphanumeric() {
+            slug.push(ch);
+            last_dash = false;
+        } else if !last_dash && !slug.is_empty() {
+            slug.push('-');
+            last_dash = true;
+        }
+        if slug.len() >= 40 {
+            break;
+        }
+    }
+    let slug = slug.trim_matches('-');
+    if slug.is_empty() {
+        "task".to_string()
+    } else {
+        slug.to_string()
+    }
 }
 
 fn compact_summary_text(value: &str, max_chars: usize) -> String {
@@ -842,6 +935,7 @@ fn read_piped_task() -> Result<Option<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::Command;
 
     #[test]
     fn resume_text_wraps_current_task() {
@@ -888,5 +982,64 @@ mod tests {
         let compact = compact_summary_text("a b c d e f", 5);
 
         assert_eq!(compact, "a ...");
+    }
+
+    #[test]
+    fn commit_message_uses_conventional_style() {
+        assert_eq!(
+            commit_message_for_task("fix the parser", "conventional"),
+            "chore(agent): fix the parser"
+        );
+        assert_eq!(slugify_for_branch("Fix the parser!"), "fix-the-parser");
+    }
+
+    #[test]
+    fn auto_commit_run_commits_dirty_worktree() {
+        if Command::new("git").arg("--version").output().is_err() {
+            return;
+        }
+        let root =
+            std::env::temp_dir().join(format!("peridot-cli-auto-commit-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        run_git(&root, ["init"]).unwrap();
+        run_git(&root, ["config", "user.email", "peridot@example.com"]).unwrap();
+        run_git(&root, ["config", "user.name", "Peridot Test"]).unwrap();
+        fs::write(root.join("README.md"), "hello\n").unwrap();
+        run_git(&root, ["add", "--all"]).unwrap();
+        run_git(&root, ["commit", "-m", "chore: initial"]).unwrap();
+        fs::write(root.join("result.txt"), "done\n").unwrap();
+        let summary = AgentRunSummary {
+            turns: Vec::new(),
+            usage: Usage::default(),
+            stopped_reason: StopReason::Done,
+        };
+        let config = PeridotConfig {
+            git: peridot_common::GitConfig {
+                auto_commit: true,
+                auto_branch: true,
+                branch_prefix: "peridot/".to_string(),
+                ..peridot_common::GitConfig::default()
+            },
+            ..PeridotConfig::default()
+        };
+
+        let message = auto_commit_run(&root, &config, &summary, "write result file")
+            .unwrap()
+            .unwrap();
+        let status = run_git(&root, ["status", "--short"]).unwrap();
+        let branch = run_git(&root, ["rev-parse", "--abbrev-ref", "HEAD"]).unwrap();
+
+        assert_eq!(message, "chore(agent): write result file");
+        assert!(status.trim().is_empty());
+        assert!(branch.trim().starts_with("peridot/write-result-file-"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    fn run_git<const N: usize>(root: &Path, args: [&str; N]) -> Result<String> {
+        let output = Command::new("git").args(args).current_dir(root).output()?;
+        if !output.status.success() {
+            anyhow::bail!("{}", String::from_utf8_lossy(&output.stderr).trim());
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
     }
 }
