@@ -16,7 +16,8 @@ use commands::{
     run_skill_command, run_update_command, run_verify_command,
 };
 use peridot_common::{
-    ContextConfig, ExecutionMode, PeriError, PeriResult, PeridotConfig, PermissionMode, ToolCall,
+    ContextConfig, ExecutionMode, MemoryConfig, PeriError, PeriResult, PeridotConfig,
+    PermissionMode, ToolCall,
 };
 use peridot_context::{ContextLimits, ContextManager, project_context_limits};
 use peridot_core::{AgentRunRequest, AgentRunSummary, AgentState, HarnessAgent, StopReason};
@@ -26,7 +27,7 @@ use peridot_llm::{
     PricingTable, Usage, parse_action,
 };
 use peridot_mcp::McpClient;
-use peridot_memory::{MemoryStore, SessionSummary};
+use peridot_memory::{MemoryStore, SessionSummary, StoredSkill};
 use peridot_project::ProjectScanner;
 use peridot_tools::hooks::{HookRunner, lifecycle_hook_variables};
 use peridot_tools::{ToolRegistry, register_builtin_tools, register_mcp_tools};
@@ -586,7 +587,13 @@ where
         &format!("{:?}", summary.stopped_reason),
         &format!("turns={}", summary.turns.len()),
     )?;
-    if let Err(err) = save_run_session(options.project_root, &session_id, &summary, &options.task) {
+    if let Err(err) = save_run_session(
+        options.project_root,
+        &session_id,
+        &summary,
+        &options.task,
+        &options.config.memory,
+    ) {
         eprintln!("warning: failed to save session {session_id}: {err}");
     }
     if let Err(err) = auto_commit_run(
@@ -605,7 +612,11 @@ fn save_run_session(
     session_id: &str,
     summary: &AgentRunSummary,
     task: &str,
+    memory: &MemoryConfig,
 ) -> Result<()> {
+    if !memory.session_history {
+        return Ok(());
+    }
     let task = compact_summary_text(task, 160);
     let session = SessionSummary {
         id: session_id.to_string(),
@@ -617,8 +628,57 @@ fn save_run_session(
             summary.usage.estimated_cost_usd
         ),
     };
-    MemoryStore::new(project_root.join(".peridot/memory.db")).save_session(&session)?;
+    let store = MemoryStore::new(project_root.join(".peridot/memory.db"));
+    store.save_session(&session)?;
+    if memory.auto_skills && summary.stopped_reason == StopReason::Done {
+        save_auto_skill(
+            project_root,
+            &store,
+            session_id,
+            summary,
+            &task,
+            memory.skills_review,
+        )?;
+    }
     Ok(())
+}
+
+fn save_auto_skill(
+    project_root: &Path,
+    store: &MemoryStore,
+    session_id: &str,
+    summary: &AgentRunSummary,
+    task: &str,
+    needs_review: bool,
+) -> Result<()> {
+    let name = format!("auto-{}", slugify_for_branch(task));
+    let body = auto_skill_body(session_id, summary, task, needs_review);
+    store.save_skill(&StoredSkill {
+        name: name.clone(),
+        body: body.clone(),
+    })?;
+    let skills_dir = project_root.join(".peridot/skills/auto");
+    fs::create_dir_all(&skills_dir)?;
+    fs::write(skills_dir.join(format!("{name}.md")), body)?;
+    Ok(())
+}
+
+fn auto_skill_body(
+    session_id: &str,
+    summary: &AgentRunSummary,
+    task: &str,
+    needs_review: bool,
+) -> String {
+    let review = if needs_review { "true" } else { "false" };
+    let tools = summary
+        .turns
+        .iter()
+        .map(|turn| format!("- {}: {}", turn.tool_name, turn.tool_result.summary))
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "# Auto Skill: {task}\n\nreview_required: {review}\nsession: {session_id}\n\n## When To Use\nRepeat this pattern for similar tasks.\n\n## Observed Steps\n{tools}\n"
+    )
 }
 
 fn auto_commit_run(
@@ -1059,7 +1119,17 @@ mod tests {
             stopped_reason: StopReason::Done,
         };
 
-        save_run_session(&root, "session-test", &summary, "finish the parser").unwrap();
+        save_run_session(
+            &root,
+            "session-test",
+            &summary,
+            "finish the parser",
+            &MemoryConfig {
+                auto_skills: false,
+                ..MemoryConfig::default()
+            },
+        )
+        .unwrap();
 
         let session = MemoryStore::new(root.join(".peridot/memory.db"))
             .get_session("session-test")
@@ -1067,6 +1137,46 @@ mod tests {
             .unwrap();
         assert!(session.summary.contains("finish the parser"));
         assert!(session.summary.contains("stopped=Done"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn completed_run_saves_auto_skill_when_enabled() {
+        let root =
+            std::env::temp_dir().join(format!("peridot-cli-auto-skill-{}", std::process::id()));
+        let summary = AgentRunSummary {
+            turns: vec![peridot_core::AgentTurnOutcome {
+                tool_name: "verify_test".to_string(),
+                tool_result: peridot_common::ToolResult::success(
+                    "tests passed",
+                    serde_json::json!({}),
+                ),
+                usage: Usage::default(),
+                done: true,
+            }],
+            usage: Usage::default(),
+            stopped_reason: StopReason::Done,
+        };
+
+        save_run_session(
+            &root,
+            "session-auto",
+            &summary,
+            "fix parser tests",
+            &MemoryConfig::default(),
+        )
+        .unwrap();
+
+        let skill = MemoryStore::new(root.join(".peridot/memory.db"))
+            .search_skills("parser")
+            .unwrap()
+            .pop()
+            .unwrap();
+        assert_eq!(skill.name, "auto-fix-parser-tests");
+        assert!(
+            root.join(".peridot/skills/auto/auto-fix-parser-tests.md")
+                .exists()
+        );
         fs::remove_dir_all(root).unwrap();
     }
 

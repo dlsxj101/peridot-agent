@@ -248,6 +248,9 @@ pub struct PeridotConfig {
     /// Context-window settings.
     #[serde(default)]
     pub context: ContextConfig,
+    /// Learned memory and self-improvement settings.
+    #[serde(default)]
+    pub memory: MemoryConfig,
     /// Security and sandbox settings.
     #[serde(default)]
     pub security: SecurityConfig,
@@ -574,6 +577,42 @@ fn default_thinking() -> String {
     "auto".to_string()
 }
 
+/// Learned memory and self-improvement configuration.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct MemoryConfig {
+    /// Whether completed sessions are stored in memory.
+    #[serde(default = "default_true")]
+    pub session_history: bool,
+    /// Whether successful sessions can create auto skills.
+    #[serde(default = "default_true")]
+    pub auto_skills: bool,
+    /// Whether generated skills should be marked for human review.
+    #[serde(default = "default_true")]
+    pub skills_review: bool,
+    /// Maximum session summaries to keep.
+    #[serde(default = "default_max_sessions_stored")]
+    pub max_sessions_stored: usize,
+}
+
+impl Default for MemoryConfig {
+    fn default() -> Self {
+        Self {
+            session_history: true,
+            auto_skills: true,
+            skills_review: true,
+            max_sessions_stored: default_max_sessions_stored(),
+        }
+    }
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_max_sessions_stored() -> usize {
+    100
+}
+
 /// MCP transport type.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -766,5 +805,24 @@ mod tests {
         assert_eq!(config.git.branch_prefix, "agent/");
         assert!(config.git.auto_branch);
         assert_eq!(config.git.commit_message_style, "conventional");
+    }
+
+    #[test]
+    fn parses_memory_config() {
+        let config = toml::from_str::<PeridotConfig>(
+            r#"
+            [memory]
+            session_history = false
+            auto_skills = false
+            skills_review = false
+            max_sessions_stored = 12
+            "#,
+        )
+        .unwrap();
+
+        assert!(!config.memory.session_history);
+        assert!(!config.memory.auto_skills);
+        assert!(!config.memory.skills_review);
+        assert_eq!(config.memory.max_sessions_stored, 12);
     }
 }
