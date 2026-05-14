@@ -307,6 +307,77 @@ fn headless_text_output_stays_text_for_direct_tools() {
     fs::remove_dir_all(root).unwrap();
 }
 
+#[test]
+fn headless_max_turns_exits_three() {
+    let root = temp_project("max-turns");
+    let response_file = root.join("responses.jsonl");
+    fs::write(
+        &response_file,
+        r#"{"action":"plan_update","parameters":{"update":"still working"}}
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(peridot())
+        .args([
+            "--project",
+            root.to_str().unwrap(),
+            "--headless",
+            "--output",
+            "json",
+            "--max-turns",
+            "1",
+            "--mock-response-file",
+            response_file.to_str().unwrap(),
+            "run",
+            "never finish",
+        ])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(3));
+    let summary: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(summary["stopped_reason"], "MaxTurns");
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn headless_budget_exhaustion_exits_two() {
+    let root = temp_project("budget");
+    let response_file = root.join("responses.jsonl");
+    fs::write(
+        &response_file,
+        r#"{"text":"{\"action\":\"plan_update\",\"parameters\":{\"update\":\"costly step\"}}","usage":{"input_tokens":1,"output_tokens":1,"cache_read_tokens":0,"cache_creation_tokens":0,"estimated_cost_usd":1.25}}
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(peridot())
+        .args([
+            "--project",
+            root.to_str().unwrap(),
+            "--headless",
+            "--output",
+            "json",
+            "--budget",
+            "0.50",
+            "--mock-response-file",
+            response_file.to_str().unwrap(),
+            "run",
+            "spend too much",
+        ])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(2));
+    let summary: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(summary["stopped_reason"], "Budget");
+    assert_eq!(summary["usage"]["estimated_cost_usd"], 1.25);
+
+    fs::remove_dir_all(root).unwrap();
+}
+
 #[cfg(unix)]
 #[test]
 fn lifecycle_hooks_run_for_mock_agent_loop() {

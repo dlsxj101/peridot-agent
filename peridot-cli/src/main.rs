@@ -1062,6 +1062,38 @@ impl FileMockProvider {
     }
 }
 
+fn parse_mock_completion_response(line: String) -> PeriResult<CompletionResponse> {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
+        return Ok(CompletionResponse {
+            text: line,
+            usage: Usage::default(),
+        });
+    };
+    let Some(object) = value.as_object() else {
+        return Ok(CompletionResponse {
+            text: line,
+            usage: Usage::default(),
+        });
+    };
+    let Some(text) = object.get("text").and_then(serde_json::Value::as_str) else {
+        return Ok(CompletionResponse {
+            text: line,
+            usage: Usage::default(),
+        });
+    };
+    let usage = object
+        .get("usage")
+        .cloned()
+        .map(serde_json::from_value)
+        .transpose()
+        .map_err(|err| PeriError::Provider(format!("invalid mock response usage: {err}")))?
+        .unwrap_or_default();
+    Ok(CompletionResponse {
+        text: text.to_string(),
+        usage,
+    })
+}
+
 #[async_trait]
 impl LlmProvider for FileMockProvider {
     async fn complete(&self, _request: CompletionRequest) -> PeriResult<CompletionResponse> {
@@ -1071,10 +1103,7 @@ impl LlmProvider for FileMockProvider {
             .unwrap()
             .pop()
             .ok_or_else(|| PeriError::Provider("mock response file exhausted".to_string()))?;
-        Ok(CompletionResponse {
-            text,
-            usage: Usage::default(),
-        })
+        parse_mock_completion_response(text)
     }
 
     fn supports_cache(&self) -> bool {
