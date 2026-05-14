@@ -812,24 +812,113 @@ pub(crate) async fn run_update_command(check: bool, output: OutputFormat) -> Res
         .unwrap_or_default()
         .to_string();
     let update_available = !latest.is_empty() && latest != current;
-    if !check && update_available {
-        anyhow::bail!("self-install is not implemented yet; download the release from {html_url}");
-    }
+    let installed_path = if !check && update_available {
+        Some(install_update(&value).await?)
+    } else {
+        None
+    };
     print_json_or_text_result(
         serde_json::json!({
             "current": current,
             "latest": latest,
             "update_available": update_available,
             "release_url": html_url,
-            "checked_only": check
+            "checked_only": check,
+            "installed_path": installed_path
         }),
-        if update_available {
+        if let Some(path) = installed_path {
+            format!(
+                "Updated Peridot from {current} to {latest} at {}",
+                path.display()
+            )
+        } else if update_available {
             format!("Peridot {latest} is available (current {current}): {html_url}")
         } else {
             format!("Peridot is up to date ({current})")
         },
         output,
     )
+}
+
+async fn install_update(release: &Value) -> Result<PathBuf> {
+    let target = current_release_target()?;
+    let asset_name = format!("peridot-{target}.tar.gz");
+    let asset_url = release_asset_url(release, &asset_name)
+        .with_context(|| format!("release asset not found: {asset_name}"))?;
+    let temp_dir = std::env::temp_dir().join(format!(
+        "peridot-update-{}-{}",
+        std::process::id(),
+        SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs()
+    ));
+    fs::create_dir_all(&temp_dir)?;
+    let archive_path = temp_dir.join(&asset_name);
+    let bytes = reqwest::Client::new()
+        .get(&asset_url)
+        .header("user-agent", "peridot-agent")
+        .send()
+        .await
+        .with_context(|| format!("failed to download {asset_url}"))?
+        .error_for_status()
+        .with_context(|| format!("failed to download {asset_url}"))?
+        .bytes()
+        .await?;
+    fs::write(&archive_path, bytes)?;
+    let status = Command::new("tar")
+        .arg("-xzf")
+        .arg(&archive_path)
+        .arg("-C")
+        .arg(&temp_dir)
+        .status()
+        .with_context(|| "failed to run tar for update archive")?;
+    if !status.success() {
+        anyhow::bail!("tar failed while extracting update archive: {status}");
+    }
+    let binary_name = if target.contains("windows") {
+        "peridot.exe"
+    } else {
+        "peridot"
+    };
+    let extracted = temp_dir.join(binary_name);
+    if !extracted.exists() {
+        anyhow::bail!("update archive did not contain {binary_name}");
+    }
+    let current_exe = std::env::current_exe()?;
+    let backup = current_exe.with_file_name(format!(
+        "{}.old",
+        current_exe
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("peridot")
+    ));
+    let _ = fs::copy(&current_exe, backup);
+    fs::copy(&extracted, &current_exe)
+        .with_context(|| format!("failed to replace {}", current_exe.display()))?;
+    set_executable_permissions(&current_exe)?;
+    let _ = fs::remove_dir_all(temp_dir);
+    Ok(current_exe)
+}
+
+fn release_asset_url(release: &Value, asset_name: &str) -> Option<String> {
+    release
+        .get("assets")?
+        .as_array()?
+        .iter()
+        .find(|asset| asset.get("name").and_then(Value::as_str) == Some(asset_name))?
+        .get("browser_download_url")?
+        .as_str()
+        .map(str::to_string)
+}
+
+fn current_release_target() -> Result<&'static str> {
+    match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("linux", "x86_64") => Ok("x86_64-unknown-linux-gnu"),
+        ("linux", "aarch64") => Ok("aarch64-unknown-linux-gnu"),
+        ("macos", "x86_64") => Ok("x86_64-apple-darwin"),
+        ("macos", "aarch64") => Ok("aarch64-apple-darwin"),
+        ("windows", "x86_64") => Ok("x86_64-pc-windows-msvc"),
+        ("windows", "aarch64") => Ok("aarch64-pc-windows-msvc"),
+        (os, arch) => anyhow::bail!("unsupported update target: {os}-{arch}"),
+    }
 }
 
 fn github_owner_repo(repository: &str) -> Option<(String, String)> {
@@ -863,6 +952,19 @@ fn set_private_permissions(path: &Path) -> Result<()> {
 
 #[cfg(not(unix))]
 fn set_private_permissions(_path: &Path) -> Result<()> {
+    Ok(())
+}
+
+#[cfg(unix)]
+fn set_executable_permissions(path: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    fs::set_permissions(path, fs::Permissions::from_mode(0o755))?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn set_executable_permissions(_path: &Path) -> Result<()> {
     Ok(())
 }
 
@@ -1197,5 +1299,28 @@ mod tests {
         assert!(url.contains("redirect_uri=http%3A%2F%2F127.0.0.1%3A14552%2Fcallback"));
         assert!(url.contains("scope=openid%20profile"));
         assert!(url.contains("code_challenge_method=S256"));
+    }
+
+    #[test]
+    fn finds_release_asset_url() {
+        let release = serde_json::json!({
+            "assets": [
+                {"name": "peridot-x86_64-unknown-linux-gnu.tar.gz", "browser_download_url": "https://example.test/peridot.tar.gz"}
+            ]
+        });
+
+        assert_eq!(
+            release_asset_url(&release, "peridot-x86_64-unknown-linux-gnu.tar.gz"),
+            Some("https://example.test/peridot.tar.gz".to_string())
+        );
+        assert_eq!(release_asset_url(&release, "missing.tar.gz"), None);
+    }
+
+    #[test]
+    fn current_target_has_release_asset_name_shape() {
+        let target = current_release_target().unwrap();
+
+        assert!(target.contains('-'));
+        assert!(format!("peridot-{target}.tar.gz").starts_with("peridot-"));
     }
 }
