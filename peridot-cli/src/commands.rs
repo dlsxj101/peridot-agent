@@ -308,6 +308,9 @@ fn merge_project_config(
     if raw_config.get("git").is_some() {
         config.git = project_config.git;
     }
+    if raw_config.get("updates").is_some() {
+        config.updates = project_config.updates;
+    }
     if let Some(defaults) = raw_config.get("defaults").and_then(toml::Value::as_table) {
         if defaults.contains_key("mode") {
             config.defaults.mode = project_config.defaults.mode;
@@ -1200,7 +1203,93 @@ fn percent_decode(value: &str) -> Result<String> {
     Ok(String::from_utf8(bytes)?)
 }
 
+#[derive(Clone, Debug)]
+struct LatestRelease {
+    release: Value,
+    latest: String,
+    html_url: String,
+    update_available: bool,
+}
+
+pub(crate) async fn maybe_print_update_notice(
+    config: &PeridotConfig,
+    headless: bool,
+    output: OutputFormat,
+) {
+    if headless || output == OutputFormat::Json || !config.updates.auto_check {
+        return;
+    }
+    if !update_check_due(&config.updates.auto_check_interval) {
+        return;
+    }
+    let result = query_latest_release().await;
+    let _ = mark_update_checked();
+    let Ok(latest) = result else {
+        return;
+    };
+    if !latest.update_available {
+        return;
+    }
+    if config.updates.auto_install {
+        match install_update(&latest.release).await {
+            Ok(path) => eprintln!(
+                "Peridot v{} installed at {}.",
+                latest.latest,
+                path.display()
+            ),
+            Err(err) => eprintln!(
+                "Peridot v{} is available, but auto-update failed: {err}",
+                latest.latest
+            ),
+        }
+        return;
+    }
+    eprintln!(
+        "Peridot v{} is available (current v{}). Run {} to update.",
+        latest.latest,
+        env!("CARGO_PKG_VERSION"),
+        update_command_hint()
+    );
+}
+
 pub(crate) async fn run_update_command(check: bool, output: OutputFormat) -> Result<()> {
+    let latest = query_latest_release().await?;
+    let installed_path = if !check && latest.update_available {
+        Some(install_update(&latest.release).await?)
+    } else {
+        None
+    };
+    print_json_or_text_result(
+        serde_json::json!({
+            "current": env!("CARGO_PKG_VERSION"),
+            "latest": latest.latest,
+            "update_available": latest.update_available,
+            "release_url": latest.html_url,
+            "checked_only": check,
+            "installed_path": installed_path
+        }),
+        if let Some(path) = installed_path {
+            format!(
+                "Updated Peridot from {} to {} at {}",
+                env!("CARGO_PKG_VERSION"),
+                latest.latest,
+                path.display()
+            )
+        } else if latest.update_available {
+            format!(
+                "Peridot {} is available (current {}): {}",
+                latest.latest,
+                env!("CARGO_PKG_VERSION"),
+                latest.html_url
+            )
+        } else {
+            format!("Peridot is up to date ({})", env!("CARGO_PKG_VERSION"))
+        },
+        output,
+    )
+}
+
+async fn query_latest_release() -> Result<LatestRelease> {
     let current = env!("CARGO_PKG_VERSION");
     let repo = std::env::var("PERIDOT_UPDATE_REPO")
         .unwrap_or_else(|_| env!("CARGO_PKG_REPOSITORY").to_string());
@@ -1232,32 +1321,81 @@ pub(crate) async fn run_update_command(check: bool, output: OutputFormat) -> Res
         .unwrap_or_default()
         .to_string();
     let update_available = !latest.is_empty() && latest != current;
-    let installed_path = if !check && update_available {
-        Some(install_update(&value).await?)
-    } else {
-        None
+    Ok(LatestRelease {
+        release: value,
+        latest,
+        html_url,
+        update_available,
+    })
+}
+
+fn update_check_due(interval: &str) -> bool {
+    let interval = parse_update_interval(interval);
+    let Some(path) = update_check_state_path() else {
+        return true;
     };
-    print_json_or_text_result(
-        serde_json::json!({
-            "current": current,
-            "latest": latest,
-            "update_available": update_available,
-            "release_url": html_url,
-            "checked_only": check,
-            "installed_path": installed_path
-        }),
-        if let Some(path) = installed_path {
-            format!(
-                "Updated Peridot from {current} to {latest} at {}",
-                path.display()
-            )
-        } else if update_available {
-            format!("Peridot {latest} is available (current {current}): {html_url}")
-        } else {
-            format!("Peridot is up to date ({current})")
-        },
-        output,
-    )
+    let Ok(content) = fs::read_to_string(path) else {
+        return true;
+    };
+    let Ok(last_checked) = content.trim().parse::<u64>() else {
+        return true;
+    };
+    let now = unix_timestamp();
+    now.saturating_sub(last_checked) >= interval.as_secs()
+}
+
+fn mark_update_checked() -> Result<()> {
+    let Some(path) = update_check_state_path() else {
+        return Ok(());
+    };
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(path, unix_timestamp().to_string())?;
+    Ok(())
+}
+
+fn update_check_state_path() -> Option<PathBuf> {
+    if let Some(home) = std::env::var_os("PERIDOT_HOME") {
+        return Some(PathBuf::from(home).join("update-check"));
+    }
+    std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".peridot/update-check"))
+}
+
+fn parse_update_interval(value: &str) -> Duration {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Duration::from_secs(24 * 60 * 60);
+    }
+    let (number, multiplier) = match trimmed.as_bytes().last().copied() {
+        Some(b'm') => (&trimmed[..trimmed.len() - 1], 60),
+        Some(b'h') => (&trimmed[..trimmed.len() - 1], 60 * 60),
+        Some(b'd') => (&trimmed[..trimmed.len() - 1], 24 * 60 * 60),
+        _ => (trimmed, 1),
+    };
+    let seconds = number
+        .parse::<u64>()
+        .ok()
+        .and_then(|value| value.checked_mul(multiplier))
+        .filter(|value| *value > 0)
+        .unwrap_or(24 * 60 * 60);
+    Duration::from_secs(seconds)
+}
+
+fn update_command_hint() -> &'static str {
+    if installed_by_homebrew() {
+        "brew upgrade peridot"
+    } else {
+        "peri update"
+    }
+}
+
+fn installed_by_homebrew() -> bool {
+    let Ok(path) = std::env::current_exe() else {
+        return false;
+    };
+    let value = path.to_string_lossy();
+    value.contains("/Cellar/peridot/") || value.contains("/homebrew/Cellar/peridot/")
 }
 
 async fn install_update(release: &Value) -> Result<PathBuf> {
@@ -1749,6 +1887,12 @@ fn print_config(config: &PeridotConfig, output: OutputFormat) -> Result<()> {
             println!("git.commit_frequency = {}", config.git.commit_frequency);
             println!("git.branch_prefix = {}", config.git.branch_prefix);
             println!("git.auto_branch = {}", config.git.auto_branch);
+            println!("updates.auto_check = {}", config.updates.auto_check);
+            println!(
+                "updates.auto_check_interval = {}",
+                config.updates.auto_check_interval
+            );
+            println!("updates.auto_install = {}", config.updates.auto_install);
         }
     }
     Ok(())
@@ -1849,13 +1993,13 @@ mod tests {
     #[test]
     fn project_config_merges_memory_and_tui_sections() {
         let root = std::env::temp_dir().join(format!(
-            "peridot-cli-config-memory-tui-{}",
+            "peridot-cli-config-memory-tui-updates-{}",
             std::process::id()
         ));
         fs::create_dir_all(root.join(".peridot")).unwrap();
         fs::write(
             root.join(".peridot/config.toml"),
-            "[memory]\nauto_skills = false\n\n[tui]\nshow_cost = false\nstream_speed = \"instant\"\n",
+            "[memory]\nauto_skills = false\n\n[tui]\nshow_cost = false\nstream_speed = \"instant\"\n\n[updates]\nauto_check = false\nauto_check_interval = \"12h\"\n",
         )
         .unwrap();
 
@@ -1864,6 +2008,8 @@ mod tests {
         assert!(!config.memory.auto_skills);
         assert!(!config.tui.show_cost);
         assert_eq!(config.tui.stream_speed, "instant");
+        assert!(!config.updates.auto_check);
+        assert_eq!(config.updates.auto_check_interval, "12h");
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -2055,6 +2201,23 @@ mod tests {
 
         verify_sha256(b"peridot", &expected, "peridot-test.tar.gz").unwrap();
         assert!(verify_sha256(b"other", &expected, "peridot-test.tar.gz").is_err());
+    }
+
+    #[test]
+    fn parses_update_intervals() {
+        assert_eq!(parse_update_interval("30m"), Duration::from_secs(30 * 60));
+        assert_eq!(
+            parse_update_interval("12h"),
+            Duration::from_secs(12 * 60 * 60)
+        );
+        assert_eq!(
+            parse_update_interval("7d"),
+            Duration::from_secs(7 * 24 * 60 * 60)
+        );
+        assert_eq!(
+            parse_update_interval("bad"),
+            Duration::from_secs(24 * 60 * 60)
+        );
     }
 
     #[cfg(unix)]

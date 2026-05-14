@@ -10,10 +10,11 @@ use async_trait::async_trait;
 use clap::{Parser, Subcommand, ValueEnum};
 use commands::{
     AgentsCommand, AuthProvider, ConfigCommand, McpCommand, OutputFormat, SessionCommand,
-    SkillCommand, load_effective_config, print_scan, read_stored_api_key,
-    read_stored_openai_oauth_access_token, run_agents_command, run_config_command,
-    run_login_command, run_logout_command, run_mcp_command, run_session_command, run_setup_command,
-    run_skill_command, run_update_command, run_verify_command,
+    SkillCommand, load_effective_config, maybe_print_update_notice, print_scan,
+    read_stored_api_key, read_stored_openai_oauth_access_token, run_agents_command,
+    run_config_command, run_login_command, run_logout_command, run_mcp_command,
+    run_session_command, run_setup_command, run_skill_command, run_update_command,
+    run_verify_command,
 };
 use peridot_common::{
     ContextConfig, ExecutionMode, MemoryConfig, PeriError, PeriResult, PeridotConfig,
@@ -355,6 +356,7 @@ async fn main() -> Result<()> {
                         ),
                     }
                 } else {
+                    maybe_print_update_notice(&config, cli.effective_headless(), cli.output).await;
                     let mut state =
                         TuiState::new(HeaderState::new(mode, permission, model.clone()))
                             .with_config(config.tui.clone());
@@ -379,6 +381,7 @@ async fn run_task(
     config: &PeridotConfig,
     project_root: &Path,
 ) -> Result<()> {
+    maybe_print_update_notice(config, cli.effective_headless(), cli.output).await;
     let task = apply_resume(task, cli.resume.as_deref(), project_root)?;
     let permission = cli
         .permission

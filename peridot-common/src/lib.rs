@@ -260,6 +260,9 @@ pub struct PeridotConfig {
     /// Git automation settings.
     #[serde(default)]
     pub git: GitConfig,
+    /// Self-update notification and installation settings.
+    #[serde(default)]
+    pub updates: UpdatesConfig,
     /// MCP server definitions loaded at session start.
     #[serde(default)]
     pub mcp: Vec<McpServerConfig>,
@@ -358,6 +361,34 @@ fn default_branch_prefix() -> String {
 
 fn default_commit_message_style() -> String {
     "conventional".to_string()
+}
+
+/// Self-update notification and installation settings.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct UpdatesConfig {
+    /// Whether interactive sessions check for a newer release.
+    #[serde(default = "default_true")]
+    pub auto_check: bool,
+    /// Minimum interval between update checks.
+    #[serde(default = "default_auto_check_interval")]
+    pub auto_check_interval: String,
+    /// Whether an available update may be installed without prompting.
+    #[serde(default)]
+    pub auto_install: bool,
+}
+
+impl Default for UpdatesConfig {
+    fn default() -> Self {
+        Self {
+            auto_check: true,
+            auto_check_interval: default_auto_check_interval(),
+            auto_install: false,
+        }
+    }
+}
+
+fn default_auto_check_interval() -> String {
+    "24h".to_string()
 }
 
 /// Command sandbox backend.
@@ -879,6 +910,23 @@ mod tests {
         assert_eq!(config.git.branch_prefix, "agent/");
         assert!(config.git.auto_branch);
         assert_eq!(config.git.commit_message_style, "conventional");
+    }
+
+    #[test]
+    fn parses_updates_config() {
+        let config = toml::from_str::<PeridotConfig>(
+            r#"
+            [updates]
+            auto_check = false
+            auto_check_interval = "12h"
+            auto_install = true
+            "#,
+        )
+        .unwrap();
+
+        assert!(!config.updates.auto_check);
+        assert_eq!(config.updates.auto_check_interval, "12h");
+        assert!(config.updates.auto_install);
     }
 
     #[test]
