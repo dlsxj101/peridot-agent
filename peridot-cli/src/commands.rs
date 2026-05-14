@@ -1265,6 +1265,8 @@ async fn install_update(release: &Value) -> Result<PathBuf> {
     let asset_name = format!("peridot-{target}.tar.gz");
     let asset_url = release_asset_url(release, &asset_name)
         .with_context(|| format!("release asset not found: {asset_name}"))?;
+    let checksum_url = release_asset_url(release, "SHA256SUMS")
+        .with_context(|| "release asset not found: SHA256SUMS")?;
     let temp_dir = std::env::temp_dir().join(format!(
         "peridot-update-{}-{}",
         std::process::id(),
@@ -1272,7 +1274,19 @@ async fn install_update(release: &Value) -> Result<PathBuf> {
     ));
     fs::create_dir_all(&temp_dir)?;
     let archive_path = temp_dir.join(&asset_name);
-    let bytes = reqwest::Client::new()
+    let client = reqwest::Client::new();
+    let checksums = client
+        .get(&checksum_url)
+        .header("user-agent", "peridot-agent")
+        .send()
+        .await
+        .with_context(|| format!("failed to download {checksum_url}"))?
+        .error_for_status()
+        .with_context(|| format!("failed to download {checksum_url}"))?
+        .text()
+        .await?;
+    let expected_checksum = checksum_for_asset(&checksums, &asset_name)?;
+    let bytes = client
         .get(&asset_url)
         .header("user-agent", "peridot-agent")
         .send()
@@ -1282,6 +1296,7 @@ async fn install_update(release: &Value) -> Result<PathBuf> {
         .with_context(|| format!("failed to download {asset_url}"))?
         .bytes()
         .await?;
+    verify_sha256(bytes.as_ref(), &expected_checksum, &asset_name)?;
     fs::write(&archive_path, bytes)?;
     let status = Command::new("tar")
         .arg("-xzf")
@@ -1314,8 +1329,76 @@ async fn install_update(release: &Value) -> Result<PathBuf> {
     fs::copy(&extracted, &current_exe)
         .with_context(|| format!("failed to replace {}", current_exe.display()))?;
     set_executable_permissions(&current_exe)?;
+    ensure_peri_alias(&current_exe, target)?;
     let _ = fs::remove_dir_all(temp_dir);
     Ok(current_exe)
+}
+
+fn checksum_for_asset(checksums: &str, asset_name: &str) -> Result<String> {
+    for line in checksums.lines() {
+        let mut parts = line.split_whitespace();
+        let Some(checksum) = parts.next() else {
+            continue;
+        };
+        let Some(name) = parts.next() else {
+            continue;
+        };
+        if name.trim_start_matches('*') != asset_name {
+            continue;
+        }
+        if checksum.len() != 64
+            || !checksum
+                .chars()
+                .all(|character| character.is_ascii_hexdigit())
+        {
+            anyhow::bail!("invalid SHA256 checksum for {asset_name}");
+        }
+        return Ok(checksum.to_ascii_lowercase());
+    }
+    anyhow::bail!("SHA256SUMS did not include {asset_name}")
+}
+
+fn verify_sha256(bytes: &[u8], expected: &str, asset_name: &str) -> Result<()> {
+    let actual = sha256_hex(bytes);
+    if actual != expected.to_ascii_lowercase() {
+        anyhow::bail!("SHA256 mismatch for {asset_name}: expected {expected}, got {actual}");
+    }
+    Ok(())
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+fn ensure_peri_alias(current_exe: &Path, target: &str) -> Result<PathBuf> {
+    let alias_name = if target.contains("windows") {
+        "peri.exe"
+    } else {
+        "peri"
+    };
+    let alias = current_exe.with_file_name(alias_name);
+    if alias == current_exe {
+        return Ok(alias);
+    }
+    install_alias(current_exe, &alias)
+        .with_context(|| format!("failed to create peri alias at {}", alias.display()))?;
+    Ok(alias)
+}
+
+#[cfg(unix)]
+fn install_alias(current_exe: &Path, alias: &Path) -> Result<()> {
+    let _ = fs::remove_file(alias);
+    std::os::unix::fs::symlink(current_exe, alias)?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn install_alias(current_exe: &Path, alias: &Path) -> Result<()> {
+    fs::copy(current_exe, alias)?;
+    Ok(())
 }
 
 fn release_asset_url(release: &Value, asset_name: &str) -> Option<String> {
@@ -1951,6 +2034,47 @@ mod tests {
             Some("https://example.test/peridot.tar.gz".to_string())
         );
         assert_eq!(release_asset_url(&release, "missing.tar.gz"), None);
+    }
+
+    #[test]
+    fn reads_release_checksum_for_asset() {
+        let checksums = "\
+1111111111111111111111111111111111111111111111111111111111111111  peridot-aarch64-apple-darwin.tar.gz\n\
+2222222222222222222222222222222222222222222222222222222222222222  *peridot-x86_64-unknown-linux-gnu.tar.gz\n";
+
+        assert_eq!(
+            checksum_for_asset(checksums, "peridot-x86_64-unknown-linux-gnu.tar.gz").unwrap(),
+            "2222222222222222222222222222222222222222222222222222222222222222"
+        );
+        assert!(checksum_for_asset(checksums, "missing.tar.gz").is_err());
+    }
+
+    #[test]
+    fn verifies_sha256_digest() {
+        let expected = sha256_hex(b"peridot");
+
+        verify_sha256(b"peridot", &expected, "peridot-test.tar.gz").unwrap();
+        assert!(verify_sha256(b"other", &expected, "peridot-test.tar.gz").is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ensure_peri_alias_creates_unix_symlink() {
+        let root = std::env::temp_dir().join(format!("peridot-cli-alias-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let binary = root.join("peridot");
+        fs::write(&binary, "binary").unwrap();
+
+        let alias = ensure_peri_alias(&binary, "x86_64-unknown-linux-gnu").unwrap();
+
+        assert_eq!(alias, root.join("peri"));
+        assert!(
+            fs::symlink_metadata(&alias)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
