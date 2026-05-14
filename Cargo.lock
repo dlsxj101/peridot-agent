@@ -1234,6 +1234,7 @@ dependencies = [
  "peridot-project",
  "peridot-tools",
  "peridot-verify",
+ "reqwest",
  "serde_json",
  "tokio",
  "toml",

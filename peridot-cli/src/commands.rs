@@ -507,6 +507,72 @@ pub(crate) fn read_stored_api_key(provider: AuthProvider) -> Result<Option<Strin
         .map(str::to_string))
 }
 
+pub(crate) async fn run_update_command(check: bool, output: OutputFormat) -> Result<()> {
+    let current = env!("CARGO_PKG_VERSION");
+    let repo = std::env::var("PERIDOT_UPDATE_REPO")
+        .unwrap_or_else(|_| env!("CARGO_PKG_REPOSITORY").to_string());
+    let Some((owner, name)) = github_owner_repo(&repo) else {
+        anyhow::bail!("repository is not a GitHub URL: {repo}");
+    };
+    let url = format!("https://api.github.com/repos/{owner}/{name}/releases/latest");
+    let response = reqwest::Client::new()
+        .get(&url)
+        .header("user-agent", "peridot-agent")
+        .send()
+        .await
+        .with_context(|| format!("failed to query {url}"))?;
+    let status = response.status();
+    let body = response.text().await?;
+    if !status.is_success() {
+        anyhow::bail!("GitHub latest release query returned {status}: {body}");
+    }
+    let value = serde_json::from_str::<Value>(&body)?;
+    let latest = value
+        .get("tag_name")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim_start_matches('v')
+        .to_string();
+    let html_url = value
+        .get("html_url")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let update_available = !latest.is_empty() && latest != current;
+    if !check && update_available {
+        anyhow::bail!("self-install is not implemented yet; download the release from {html_url}");
+    }
+    print_json_or_text_result(
+        serde_json::json!({
+            "current": current,
+            "latest": latest,
+            "update_available": update_available,
+            "release_url": html_url,
+            "checked_only": check
+        }),
+        if update_available {
+            format!("Peridot {latest} is available (current {current}): {html_url}")
+        } else {
+            format!("Peridot is up to date ({current})")
+        },
+        output,
+    )
+}
+
+fn github_owner_repo(repository: &str) -> Option<(String, String)> {
+    let trimmed = repository
+        .trim()
+        .trim_end_matches(".git")
+        .trim_end_matches('/');
+    let path = trimmed
+        .strip_prefix("https://github.com/")
+        .or_else(|| trimmed.strip_prefix("git@github.com:"))?;
+    let mut parts = path.split('/');
+    let owner = parts.next()?.to_string();
+    let repo = parts.next()?.to_string();
+    Some((owner, repo))
+}
+
 fn auth_file(provider: AuthProvider) -> Result<PathBuf> {
     let home = std::env::var_os("HOME").with_context(|| "HOME is required")?;
     Ok(PathBuf::from(home)
@@ -813,5 +879,17 @@ mod tests {
 
         assert!(skills.iter().any(|skill| skill.name == "rust"));
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn parses_github_repository_urls() {
+        assert_eq!(
+            github_owner_repo("https://github.com/peridot-ai/peridot.git"),
+            Some(("peridot-ai".to_string(), "peridot".to_string()))
+        );
+        assert_eq!(
+            github_owner_repo("git@github.com:peridot-ai/peridot"),
+            Some(("peridot-ai".to_string(), "peridot".to_string()))
+        );
     }
 }

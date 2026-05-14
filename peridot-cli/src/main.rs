@@ -11,7 +11,8 @@ use commands::{
     AgentsCommand, AuthProvider, ConfigCommand, McpCommand, OutputFormat, SessionCommand,
     SkillCommand, load_project_config, print_scan, read_stored_api_key, run_agents_command,
     run_config_command, run_login_command, run_logout_command, run_mcp_command,
-    run_session_command, run_setup_command, run_skill_command, run_verify_command,
+    run_session_command, run_setup_command, run_skill_command, run_update_command,
+    run_verify_command,
 };
 use peridot_common::{
     ExecutionMode, PeriError, PeriResult, PeridotConfig, PermissionMode, ToolCall,
@@ -138,6 +139,12 @@ enum Command {
         #[arg(value_enum)]
         provider: AuthProvider,
     },
+    /// Check for or apply Peridot updates.
+    Update {
+        /// Check for an update without installing.
+        #[arg(long)]
+        check: bool,
+    },
     /// Print version information.
     Version,
 }
@@ -234,6 +241,10 @@ async fn main() -> Result<()> {
         }
         Some(Command::Logout { provider }) => {
             run_logout_command(*provider, cli.output)?;
+            return Ok(());
+        }
+        Some(Command::Update { check }) => {
+            run_update_command(*check, cli.output).await?;
             return Ok(());
         }
         Some(Command::Run { task }) => {
