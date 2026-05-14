@@ -32,6 +32,11 @@ pub(crate) enum ConfigCommand {
 pub(crate) enum SessionCommand {
     /// List saved sessions.
     List,
+    /// Print a resume prompt for one saved session.
+    Resume {
+        /// Session id.
+        id: String,
+    },
     /// Save a session summary.
     Save {
         /// Session id.
@@ -136,6 +141,26 @@ pub(crate) fn run_session_command(
                         println!("{}\t{}", session.id, session.summary);
                     }
                 }
+            }
+        }
+        SessionCommand::Resume { id } => {
+            let session = store
+                .get_session(id)?
+                .with_context(|| format!("session not found: {id}"))?;
+            let resume_task = format!(
+                "Resume session {} from this summary: {}",
+                session.id, session.summary
+            );
+            match output {
+                OutputFormat::Json => println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "id": session.id,
+                        "summary": session.summary,
+                        "resume_task": resume_task
+                    }))?
+                ),
+                OutputFormat::Text => println!("{resume_task}"),
             }
         }
         SessionCommand::Save { id, summary } => {
