@@ -8,8 +8,9 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use clap::{Parser, Subcommand, ValueEnum};
 use commands::{
-    AgentsCommand, ConfigCommand, McpCommand, OutputFormat, SessionCommand, SkillCommand,
-    load_project_config, print_scan, run_agents_command, run_config_command, run_mcp_command,
+    AgentsCommand, AuthProvider, ConfigCommand, McpCommand, OutputFormat, SessionCommand,
+    SkillCommand, load_project_config, print_scan, read_stored_api_key, run_agents_command,
+    run_config_command, run_login_command, run_logout_command, run_mcp_command,
     run_session_command, run_skill_command, run_verify_command,
 };
 use peridot_common::{
@@ -123,6 +124,18 @@ enum Command {
         #[command(subcommand)]
         command: McpCommand,
     },
+    /// Store provider credentials from environment.
+    Login {
+        /// Provider to configure.
+        #[arg(value_enum)]
+        provider: AuthProvider,
+    },
+    /// Remove stored provider credentials.
+    Logout {
+        /// Provider to remove.
+        #[arg(value_enum)]
+        provider: AuthProvider,
+    },
     /// Print version information.
     Version,
 }
@@ -207,6 +220,14 @@ async fn main() -> Result<()> {
         }
         Some(Command::Mcp { command }) => {
             run_mcp_command(command, &config, cli.output).await?;
+            return Ok(());
+        }
+        Some(Command::Login { provider }) => {
+            run_login_command(*provider, cli.output)?;
+            return Ok(());
+        }
+        Some(Command::Logout { provider }) => {
+            run_logout_command(*provider, cli.output)?;
             return Ok(());
         }
         Some(Command::Run { task }) => {
@@ -444,7 +465,11 @@ fn live_provider(config: &PeridotConfig, model: &str) -> Result<Box<dyn LlmProvi
     match config.auth.primary.as_str() {
         "claude-api" => {
             let api_key = std::env::var("ANTHROPIC_API_KEY")
-                .with_context(|| "ANTHROPIC_API_KEY is required for --live")?;
+                .ok()
+                .or_else(|| read_stored_api_key(AuthProvider::ClaudeApi).ok().flatten())
+                .with_context(
+                    || "ANTHROPIC_API_KEY or peridot login claude-api is required for --live",
+                )?;
             Ok(Box::new(ClaudeProvider::with_options(
                 model.to_string(),
                 Some(api_key),
@@ -453,7 +478,11 @@ fn live_provider(config: &PeridotConfig, model: &str) -> Result<Box<dyn LlmProvi
         }
         "openai-api" => {
             let api_key = std::env::var("OPENAI_API_KEY")
-                .with_context(|| "OPENAI_API_KEY is required for --live")?;
+                .ok()
+                .or_else(|| read_stored_api_key(AuthProvider::OpenaiApi).ok().flatten())
+                .with_context(
+                    || "OPENAI_API_KEY or peridot login openai-api is required for --live",
+                )?;
             let base_url = if config.api.base_url == "https://api.anthropic.com" {
                 "https://api.openai.com".to_string()
             } else {

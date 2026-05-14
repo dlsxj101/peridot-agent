@@ -10,6 +10,7 @@ use peridot_mcp::McpClient;
 use peridot_memory::{MemoryStore, SessionSummary};
 use peridot_project::{ProjectProfile, ProjectScanner};
 use peridot_verify::VerifyPipeline;
+use serde_json::Value;
 
 /// Scriptable output format.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
@@ -18,6 +19,31 @@ pub(crate) enum OutputFormat {
     Text,
     /// JSON.
     Json,
+}
+
+/// API-key auth providers supported by `peridot login`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub(crate) enum AuthProvider {
+    /// Anthropic Claude API key.
+    ClaudeApi,
+    /// OpenAI API key.
+    OpenaiApi,
+}
+
+impl AuthProvider {
+    fn id(self) -> &'static str {
+        match self {
+            Self::ClaudeApi => "claude-api",
+            Self::OpenaiApi => "openai-api",
+        }
+    }
+
+    fn env_var(self) -> &'static str {
+        match self {
+            Self::ClaudeApi => "ANTHROPIC_API_KEY",
+            Self::OpenaiApi => "OPENAI_API_KEY",
+        }
+    }
 }
 
 /// Config subcommands.
@@ -401,6 +427,73 @@ pub(crate) fn run_verify_command(project_root: &Path, output: OutputFormat) -> R
             }
         }
     }
+    Ok(())
+}
+
+pub(crate) fn run_login_command(provider: AuthProvider, output: OutputFormat) -> Result<()> {
+    let api_key = std::env::var(provider.env_var())
+        .with_context(|| format!("{} is required for login", provider.env_var()))?;
+    let path = auth_file(provider)?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let content = serde_json::to_string_pretty(&serde_json::json!({
+        "provider": provider.id(),
+        "api_key": api_key
+    }))?;
+    fs::write(&path, content)?;
+    set_private_permissions(&path)?;
+    print_json_or_text_result(
+        serde_json::json!({"provider": provider.id(), "path": path, "stored": true}),
+        format!("stored credentials for {}", provider.id()),
+        output,
+    )
+}
+
+pub(crate) fn run_logout_command(provider: AuthProvider, output: OutputFormat) -> Result<()> {
+    let path = auth_file(provider)?;
+    let removed = if path.exists() {
+        fs::remove_file(&path)?;
+        true
+    } else {
+        false
+    };
+    print_json_or_text_result(
+        serde_json::json!({"provider": provider.id(), "path": path, "removed": removed}),
+        format!("removed credentials for {}: {removed}", provider.id()),
+        output,
+    )
+}
+
+pub(crate) fn read_stored_api_key(provider: AuthProvider) -> Result<Option<String>> {
+    let path = auth_file(provider)?;
+    if !path.exists() {
+        return Ok(None);
+    }
+    let value = serde_json::from_str::<Value>(&fs::read_to_string(path)?)?;
+    Ok(value
+        .get("api_key")
+        .and_then(Value::as_str)
+        .map(str::to_string))
+}
+
+fn auth_file(provider: AuthProvider) -> Result<PathBuf> {
+    let home = std::env::var_os("HOME").with_context(|| "HOME is required")?;
+    Ok(PathBuf::from(home)
+        .join(".peridot/auth")
+        .join(format!("{}.json", provider.id())))
+}
+
+#[cfg(unix)]
+fn set_private_permissions(path: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn set_private_permissions(_path: &Path) -> Result<()> {
     Ok(())
 }
 
