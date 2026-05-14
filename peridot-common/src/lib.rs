@@ -1,5 +1,6 @@
 //! Shared domain types for Peridot crates.
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::path::PathBuf;
 
@@ -247,6 +248,9 @@ pub struct PeridotConfig {
     /// Context-window settings.
     #[serde(default)]
     pub context: ContextConfig,
+    /// MCP server definitions loaded at session start.
+    #[serde(default)]
+    pub mcp: Vec<McpServerConfig>,
 }
 
 /// Authentication configuration.
@@ -447,4 +451,72 @@ fn default_observation_max_chars() -> usize {
 
 fn default_thinking() -> String {
     "auto".to_string()
+}
+
+/// MCP transport type.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum McpTransport {
+    /// Standard input/output transport.
+    Stdio,
+    /// HTTP/SSE transport.
+    Http,
+}
+
+impl fmt::Display for McpTransport {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let value = match self {
+            Self::Stdio => "stdio",
+            Self::Http => "http",
+        };
+        f.write_str(value)
+    }
+}
+
+/// MCP server configuration.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct McpServerConfig {
+    /// Server name.
+    pub name: String,
+    /// Transport kind.
+    pub transport: McpTransport,
+    /// Stdio command.
+    #[serde(default)]
+    pub command: Option<String>,
+    /// Stdio command arguments.
+    #[serde(default)]
+    pub args: Vec<String>,
+    /// Stdio environment variables.
+    #[serde(default)]
+    pub env: BTreeMap<String, String>,
+    /// HTTP/SSE endpoint.
+    #[serde(default)]
+    pub url: Option<String>,
+    /// HTTP auth declaration, for example bearer:${TOKEN}.
+    #[serde(default)]
+    pub auth: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_mcp_config() {
+        let config = toml::from_str::<PeridotConfig>(
+            r#"
+            [[mcp]]
+            name = "jira"
+            transport = "stdio"
+            command = "npx"
+            args = ["-y", "jira-mcp"]
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(config.mcp.len(), 1);
+        assert_eq!(config.mcp[0].name, "jira");
+        assert_eq!(config.mcp[0].transport, McpTransport::Stdio);
+        assert_eq!(config.mcp[0].command.as_deref(), Some("npx"));
+    }
 }

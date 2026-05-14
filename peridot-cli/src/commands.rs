@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use clap::{Subcommand, ValueEnum};
-use peridot_common::PeridotConfig;
+use peridot_common::{McpServerConfig, McpTransport, PeridotConfig};
 use peridot_memory::{MemoryStore, SessionSummary};
 use peridot_project::{ProjectProfile, ProjectScanner};
 
@@ -73,6 +73,18 @@ pub(crate) enum SkillCommand {
     /// Remove a project-local skill.
     Remove {
         /// Skill name or file stem.
+        name: String,
+    },
+}
+
+/// MCP server subcommands.
+#[derive(Debug, Subcommand)]
+pub(crate) enum McpCommand {
+    /// List configured MCP servers.
+    List,
+    /// Validate one MCP server definition.
+    Test {
+        /// MCP server name.
         name: String,
     },
 }
@@ -270,6 +282,55 @@ pub(crate) fn run_skill_command(
     Ok(())
 }
 
+pub(crate) fn run_mcp_command(
+    command: &McpCommand,
+    config: &PeridotConfig,
+    output: OutputFormat,
+) -> Result<()> {
+    match command {
+        McpCommand::List => match output {
+            OutputFormat::Json => println!(
+                "{}",
+                serde_json::to_string_pretty(&config.mcp.iter().map(mcp_json).collect::<Vec<_>>())?
+            ),
+            OutputFormat::Text => {
+                for server in &config.mcp {
+                    println!(
+                        "{}\t{}\t{}",
+                        server.name,
+                        server.transport,
+                        mcp_target(server)
+                    );
+                }
+            }
+        },
+        McpCommand::Test { name } => {
+            let server = config
+                .mcp
+                .iter()
+                .find(|server| server.name == *name)
+                .with_context(|| format!("MCP server not found: {name}"))?;
+            validate_mcp_server(server)?;
+            print_json_or_text_result(
+                serde_json::json!({
+                    "name": server.name,
+                    "transport": server.transport,
+                    "target": mcp_target(server),
+                    "configured": true
+                }),
+                format!(
+                    "MCP server {} is configured for {} ({})",
+                    server.name,
+                    server.transport,
+                    mcp_target(server)
+                ),
+                output,
+            )?;
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn print_scan(profile: &ProjectProfile, output: OutputFormat) -> Result<()> {
     match output {
         OutputFormat::Json => println!("{}", serde_json::to_string_pretty(profile)?),
@@ -422,6 +483,51 @@ fn skill_json(skill: &SkillEntry) -> serde_json::Value {
         "name": skill.name,
         "scope": skill.scope,
         "path": skill.path
+    })
+}
+
+fn validate_mcp_server(server: &McpServerConfig) -> Result<()> {
+    match server.transport {
+        McpTransport::Stdio => {
+            if server
+                .command
+                .as_deref()
+                .unwrap_or_default()
+                .trim()
+                .is_empty()
+            {
+                anyhow::bail!("stdio MCP server {} is missing command", server.name);
+            }
+        }
+        McpTransport::Http => {
+            if server.url.as_deref().unwrap_or_default().trim().is_empty() {
+                anyhow::bail!("http MCP server {} is missing url", server.name);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn mcp_target(server: &McpServerConfig) -> String {
+    match server.transport {
+        McpTransport::Stdio => {
+            let mut parts = Vec::new();
+            if let Some(command) = &server.command {
+                parts.push(command.clone());
+            }
+            parts.extend(server.args.iter().cloned());
+            parts.join(" ")
+        }
+        McpTransport::Http => server.url.clone().unwrap_or_default(),
+    }
+}
+
+fn mcp_json(server: &McpServerConfig) -> serde_json::Value {
+    serde_json::json!({
+        "name": server.name,
+        "transport": server.transport,
+        "target": mcp_target(server),
+        "configured": validate_mcp_server(server).is_ok()
     })
 }
 

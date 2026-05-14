@@ -653,6 +653,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror",
+ "toml",
 ]
 
 [[package]]
@@ -701,6 +702,7 @@ dependencies = [
 name = "peridot-mcp"
 version = "0.1.0"
 dependencies = [
+ "peridot-common",
  "serde",
 ]
 
