@@ -245,6 +245,68 @@ fn env_headless_enables_scriptable_output() {
     fs::remove_dir_all(root).unwrap();
 }
 
+#[test]
+fn headless_text_output_stays_text_for_agent_runs() {
+    let root = temp_project("headless-text");
+    let response_file = root.join("responses.jsonl");
+    fs::write(
+        &response_file,
+        r#"{"action":"agent_done","parameters":{"summary":"text mode done"}}
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(peridot())
+        .args([
+            "--project",
+            root.to_str().unwrap(),
+            "--headless",
+            "--mock-response-file",
+            response_file.to_str().unwrap(),
+            "run",
+            "finish as text",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("stopped=Done turns=1"));
+    assert!(!stdout.trim_start().starts_with('{'));
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn headless_text_output_stays_text_for_direct_tools() {
+    let root = temp_project("headless-tool-text");
+    let output = Command::new(peridot())
+        .args([
+            "--project",
+            root.to_str().unwrap(),
+            "--headless",
+            r#"{"action":"file_write","parameters":{"path":"note.txt","content":"hello\n"}}"#,
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("wrote"));
+    assert!(stdout.contains("note.txt"));
+    assert!(!stdout.trim_start().starts_with('{'));
+
+    fs::remove_dir_all(root).unwrap();
+}
+
 #[cfg(unix)]
 #[test]
 fn lifecycle_hooks_run_for_mock_agent_loop() {

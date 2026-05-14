@@ -429,15 +429,15 @@ async fn run_task(
             },
         )
         .await?;
-        if cli.output == OutputFormat::Json || cli.effective_headless() {
+        if cli.output == OutputFormat::Json {
             println!(
                 "{}",
                 serde_json::to_string_pretty(&run_summary_output(&summary, mode))?
             );
-            exit_for_summary(&summary, cli.effective_headless());
         } else {
             print_run_summary_text(&summary, mode);
         }
+        exit_for_summary(&summary, cli.effective_headless());
         return Ok(());
     }
 
@@ -459,15 +459,15 @@ async fn run_task(
             },
         )
         .await?;
-        if cli.output == OutputFormat::Json || cli.effective_headless() {
+        if cli.output == OutputFormat::Json {
             println!(
                 "{}",
                 serde_json::to_string_pretty(&run_summary_output(&summary, mode))?
             );
-            exit_for_summary(&summary, cli.effective_headless());
         } else {
             print_run_summary_text(&summary, mode);
         }
+        exit_for_summary(&summary, cli.effective_headless());
         return Ok(());
     }
 
@@ -484,7 +484,7 @@ async fn run_task(
                     config.security.clone(),
                 )
                 .await?;
-            if cli.output == OutputFormat::Json || cli.effective_headless() {
+            if cli.output == OutputFormat::Json {
                 println!("{}", serde_json::to_string_pretty(&result)?);
             } else {
                 println!("{}", result.summary);
@@ -492,7 +492,7 @@ async fn run_task(
             exit_for_tool_result(&result, cli.effective_headless());
         }
         None => {
-            if cli.output == OutputFormat::Json || cli.effective_headless() {
+            if cli.output == OutputFormat::Json {
                 println!(
                     "{}",
                     serde_json::to_string_pretty(&serde_json::json!({
