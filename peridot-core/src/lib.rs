@@ -3,7 +3,8 @@
 use std::path::PathBuf;
 
 use peridot_common::{
-    AgentPhase, ExecutionMode, PeriError, PeriResult, PermissionMode, ToolCall, ToolResult,
+    AgentPhase, ExecutionMode, PeriError, PeriResult, PermissionMode, ToolCall, ToolGroup,
+    ToolResult,
 };
 use peridot_context::{ContextEntry, ContextManager, ContextSource};
 use peridot_llm::{CompletionRequest, LlmProvider, Usage, parse_action};
@@ -125,6 +126,7 @@ impl HarnessAgent {
             .tools
             .get(&call.name)
             .ok_or_else(|| PeriError::Tool(format!("unknown tool: {}", call.name)))?;
+        ensure_tool_allowed(self.state.mode, self.state.phase, tool.group(), &call.name)?;
         let ctx =
             ToolContext::new(project_root, self.state.permission).with_denied_paths(denied_paths);
         tool.validate_params(&call.parameters)?;
@@ -230,6 +232,62 @@ impl HarnessAgent {
             stopped_reason: StopReason::MaxTurns,
         })
     }
+}
+
+fn ensure_tool_allowed(
+    mode: ExecutionMode,
+    phase: AgentPhase,
+    group: ToolGroup,
+    name: &str,
+) -> PeriResult<()> {
+    if mode == ExecutionMode::Plan {
+        let allowed = matches!(
+            group,
+            ToolGroup::File | ToolGroup::Git | ToolGroup::Plan | ToolGroup::Agent | ToolGroup::Web
+        ) && !matches!(name, "file_write" | "file_patch" | "shell_exec");
+        if !allowed {
+            return Err(PeriError::PermissionDenied(format!(
+                "Plan mode blocks tool {name}"
+            )));
+        }
+    }
+
+    if phase == AgentPhase::Verifying {
+        let allowed = matches!(group, ToolGroup::Verify | ToolGroup::File | ToolGroup::Plan);
+        if !allowed {
+            return Err(PeriError::PermissionDenied(format!(
+                "Verifying phase blocks tool {name}"
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+/// Returns the tool groups available for a state.
+pub fn allowed_tool_groups(mode: ExecutionMode, phase: AgentPhase) -> Vec<ToolGroup> {
+    if mode == ExecutionMode::Plan {
+        return vec![
+            ToolGroup::File,
+            ToolGroup::Git,
+            ToolGroup::Plan,
+            ToolGroup::Agent,
+            ToolGroup::Web,
+        ];
+    }
+    if phase == AgentPhase::Verifying {
+        return vec![ToolGroup::Verify, ToolGroup::File, ToolGroup::Plan];
+    }
+    vec![
+        ToolGroup::Shell,
+        ToolGroup::File,
+        ToolGroup::Git,
+        ToolGroup::Web,
+        ToolGroup::Plan,
+        ToolGroup::Verify,
+        ToolGroup::Agent,
+        ToolGroup::Mcp,
+    ]
 }
 
 fn system_prompt_for_mode(mode: ExecutionMode) -> String {
@@ -571,6 +629,30 @@ mod tests {
             std::fs::read_to_string(root.join("loop.txt")).unwrap(),
             "ok\n"
         );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn plan_mode_blocks_file_write() {
+        let root = std::env::temp_dir().join(format!("peridot-core-plan-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let mut registry = ToolRegistry::new();
+        register_builtin_tools(&mut registry).unwrap();
+        let agent = HarnessAgent::new(
+            AgentState::new(ExecutionMode::Plan, PermissionMode::Auto),
+            ContextManager::new(),
+            registry,
+        );
+
+        let result = agent
+            .execute_tool_call(
+                ToolCall::new("file_write", json!({"path":"blocked.txt","content":"nope"})),
+                &root,
+            )
+            .await;
+
+        assert!(matches!(result, Err(PeriError::PermissionDenied(_))));
+        assert!(!root.join("blocked.txt").exists());
         std::fs::remove_dir_all(root).unwrap();
     }
 }
