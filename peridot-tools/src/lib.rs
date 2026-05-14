@@ -192,6 +192,7 @@ pub fn register_builtin_tools(registry: &mut ToolRegistry) -> PeriResult<()> {
     registry.register(VerifyTestTool)?;
     registry.register(VerifyLintTool)?;
     registry.register(AgentScratchpadTool)?;
+    registry.register(AgentAskUserTool)?;
     registry.register(AgentDoneTool)?;
     Ok(())
 }
@@ -990,6 +991,64 @@ impl Tool for AgentScratchpadTool {
     }
 }
 
+/// Built-in user question tool with deterministic fallback behavior.
+#[derive(Clone, Debug)]
+pub struct AgentAskUserTool;
+
+#[async_trait]
+impl Tool for AgentAskUserTool {
+    fn name(&self) -> &str {
+        "agent_ask_user"
+    }
+
+    fn group(&self) -> ToolGroup {
+        ToolGroup::Agent
+    }
+
+    fn description(&self) -> &str {
+        "Ask the user a question, returning a default answer in headless execution"
+    }
+
+    async fn execute(&self, params: Value, _ctx: &ToolContext) -> PeriResult<ToolResult> {
+        let question = required_str(&params, "question")?;
+        let answer = params
+            .get("default")
+            .and_then(Value::as_str)
+            .or_else(|| first_choice(&params))
+            .unwrap_or("")
+            .to_string();
+        Ok(ToolResult::success(
+            if answer.is_empty() {
+                format!("asked user: {question}")
+            } else {
+                format!("asked user: {question} -> {answer}")
+            },
+            serde_json::json!({
+                "question": question,
+                "answer": answer,
+                "source": "default"
+            }),
+        ))
+    }
+
+    fn validate_params(&self, params: &Value) -> PeriResult<()> {
+        let _ = required_str(params, "question")?;
+        Ok(())
+    }
+
+    fn permission_level(&self) -> PermissionLevel {
+        PermissionLevel::Read
+    }
+}
+
+fn first_choice(params: &Value) -> Option<&str> {
+    params
+        .get("choices")
+        .and_then(Value::as_array)
+        .and_then(|choices| choices.first())
+        .and_then(Value::as_str)
+}
+
 /// Built-in completion declaration tool.
 #[derive(Clone, Debug)]
 pub struct AgentDoneTool;
@@ -1147,6 +1206,29 @@ mod tests {
 
         assert!(registry.get("git_status").is_some());
         assert!(registry.get("verify_build").is_some());
+        assert!(registry.get("agent_ask_user").is_some());
+    }
+
+    #[tokio::test]
+    async fn ask_user_returns_default_answer() {
+        let root = std::env::temp_dir().join(format!("peridot-tools-ask-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let ctx = ToolContext::new(&root, PermissionMode::Auto);
+
+        let result = AgentAskUserTool
+            .execute(
+                serde_json::json!({
+                    "question": "Proceed?",
+                    "choices": ["yes", "no"],
+                    "default": "no"
+                }),
+                &ctx,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result.output["answer"], "no");
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[tokio::test]
