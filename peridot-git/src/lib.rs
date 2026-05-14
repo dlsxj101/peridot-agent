@@ -56,10 +56,68 @@ impl GitManager {
         self.run_git(["log", "--oneline", &format!("-{limit}")])
     }
 
+    /// Creates and checks out a branch.
+    pub fn create_branch(&self, name: &str) -> PeriResult<String> {
+        self.run_git(["switch", "-c", name])
+    }
+
+    /// Stages all changes and creates a commit.
+    pub fn commit_all(&self, message: &str) -> PeriResult<String> {
+        self.run_git(["add", "--all"])?;
+        self.run_git(["commit", "-m", message])
+    }
+
     fn run_git<const N: usize>(&self, args: [&str; N]) -> PeriResult<String> {
         let output = Command::new("git")
             .args(args)
             .current_dir(&self.root)
+            .output()
+            .map_err(|err| PeriError::Tool(format!("failed to run git: {err}")))?;
+        if !output.status.success() {
+            return Err(PeriError::Tool(
+                String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            ));
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn creates_branch_and_commit_in_temp_repo() {
+        if Command::new("git").arg("--version").output().is_err() {
+            return;
+        }
+        let root = std::env::temp_dir().join(format!("peridot-git-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        run_raw_git(&root, ["init"]).unwrap();
+        run_raw_git(&root, ["config", "user.email", "peridot@example.com"]).unwrap();
+        run_raw_git(&root, ["config", "user.name", "Peridot Test"]).unwrap();
+        fs::write(root.join("README.md"), "hello\n").unwrap();
+
+        let manager = GitManager::new(&root);
+        manager.commit_all("chore: initial").unwrap();
+        manager.create_branch("feature/test").unwrap();
+        fs::write(root.join("README.md"), "hello again\n").unwrap();
+        manager.commit_all("docs: update readme").unwrap();
+
+        let status = manager.status().unwrap();
+        let log = manager.log(2).unwrap();
+
+        assert_eq!(status.branch.as_deref(), Some("feature/test"));
+        assert!(status.changed_files.is_empty());
+        assert!(log.contains("docs: update readme"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    fn run_raw_git<const N: usize>(root: &PathBuf, args: [&str; N]) -> PeriResult<String> {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(root)
             .output()
             .map_err(|err| PeriError::Tool(format!("failed to run git: {err}")))?;
         if !output.status.success() {
