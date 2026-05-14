@@ -1,6 +1,7 @@
 //! Peridot command-line entrypoint.
 
 use std::fs;
+use std::io::{IsTerminal, Read};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -240,14 +241,18 @@ async fn main() -> Result<()> {
             run_task(task.clone(), mode, &cli, &config, &project_root).await?;
         }
         None => {
-            let model = cli
-                .model
-                .clone()
-                .unwrap_or_else(|| config.models.main.clone());
-            println!(
-                "Hello Peridot: mode={} permission={} model={}",
-                mode, permission, model
-            );
+            if let Some(task) = read_piped_task()? {
+                run_task(task, mode, &cli, &config, &project_root).await?;
+            } else {
+                let model = cli
+                    .model
+                    .clone()
+                    .unwrap_or_else(|| config.models.main.clone());
+                println!(
+                    "Hello Peridot: mode={} permission={} model={}",
+                    mode, permission, model
+                );
+            }
         }
     }
 
@@ -338,6 +343,21 @@ fn task_to_tool_call(task: &str) -> Option<ToolCall> {
     }
 
     None
+}
+
+fn read_piped_task() -> Result<Option<String>> {
+    let stdin = std::io::stdin();
+    if stdin.is_terminal() {
+        return Ok(None);
+    }
+    let mut task = String::new();
+    stdin.lock().read_to_string(&mut task)?;
+    let task = task.trim().to_string();
+    if task.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(task))
+    }
 }
 
 fn load_project_config(project_root: &Path) -> Result<PeridotConfig> {
