@@ -82,6 +82,12 @@ impl SubAgent for LocalSubAgentRunner {
             SubAgentKind::Worktree => {
                 let plan =
                     WorktreePlan::new(&self.project_root, &self.worktrees_root, &task.prompt)?;
+                std::fs::create_dir_all(&self.worktrees_root).map_err(|err| {
+                    PeriError::Tool(format!(
+                        "failed to create worktrees root {}: {err}",
+                        self.worktrees_root.display()
+                    ))
+                })?;
                 GitManager::new(&self.project_root).add_worktree(&plan.path, &plan.branch)?;
                 Ok(SubAgentResult {
                     success: true,

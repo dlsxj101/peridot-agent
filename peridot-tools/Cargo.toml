@@ -11,6 +11,7 @@ e2e = []
 
 [dependencies]
 async-trait.workspace = true
+peridot-agents = { path = "../peridot-agents" }
 peridot-common = { path = "../peridot-common" }
 peridot-memory = { path = "../peridot-memory" }
 peridot-mcp = { path = "../peridot-mcp" }

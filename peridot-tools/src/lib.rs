@@ -10,6 +10,9 @@ use std::process::Command;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use peridot_agents::{
+    LocalSubAgentRunner, ModelTier, SubAgent, SubAgentKind, SubAgentPolicy, SubAgentTask,
+};
 use peridot_common::{
     HooksConfig, McpServerConfig, PeriError, PeriResult, PermissionLevel, PermissionMode,
     SandboxMode, SecurityConfig, ToolGroup, ToolResult,
@@ -204,6 +207,7 @@ pub fn register_builtin_tools(registry: &mut ToolRegistry) -> PeriResult<()> {
     registry.register(VerifyLintTool)?;
     registry.register(AgentScratchpadTool)?;
     registry.register(AgentAskUserTool)?;
+    registry.register(AgentDelegateTool)?;
     registry.register(AgentMemorySearchTool)?;
     registry.register(AgentDoneTool)?;
     Ok(())
@@ -1350,6 +1354,86 @@ fn ask_user_display_choices(kind: &str, choices: &[String]) -> Vec<String> {
         .collect()
 }
 
+/// Built-in subagent delegation tool.
+#[derive(Clone, Debug)]
+pub struct AgentDelegateTool;
+
+#[async_trait]
+impl Tool for AgentDelegateTool {
+    fn name(&self) -> &str {
+        "agent_delegate"
+    }
+
+    fn group(&self) -> ToolGroup {
+        ToolGroup::Agent
+    }
+
+    fn description(&self) -> &str {
+        "Prepare a fork, worktree, or teammate subagent for a bounded task"
+    }
+
+    async fn execute(&self, params: Value, ctx: &ToolContext) -> PeriResult<ToolResult> {
+        let prompt = required_str(&params, "prompt")?.to_string();
+        let (kind, model_tier) = subagent_selection(&params, &prompt)?;
+        let runner = LocalSubAgentRunner::new(
+            &ctx.project_root,
+            ctx.project_root.join(".peridot/worktrees"),
+        );
+        let result = runner
+            .run(SubAgentTask {
+                prompt,
+                kind,
+                model_tier: Some(model_tier),
+            })
+            .await?;
+        Ok(ToolResult::success(
+            result.summary.clone(),
+            serde_json::json!(result),
+        ))
+    }
+
+    fn validate_params(&self, params: &Value) -> PeriResult<()> {
+        let _ = required_str(params, "prompt")?;
+        Ok(())
+    }
+
+    fn permission_level(&self) -> PermissionLevel {
+        PermissionLevel::Write
+    }
+
+    fn can_run_concurrent(&self) -> bool {
+        false
+    }
+}
+
+fn subagent_selection(params: &Value, prompt: &str) -> PeriResult<(SubAgentKind, ModelTier)> {
+    let policy = SubAgentPolicy;
+    let (default_kind, default_tier) = policy.select(prompt);
+    let kind = match params.get("kind").and_then(Value::as_str) {
+        Some("fork") => SubAgentKind::Fork,
+        Some("worktree") => SubAgentKind::Worktree,
+        Some("teammate") => SubAgentKind::Teammate,
+        Some(value) => {
+            return Err(PeriError::Config(format!(
+                "unsupported subagent kind: {value}"
+            )));
+        }
+        None => default_kind,
+    };
+    let tier = match params.get("model_tier").and_then(Value::as_str) {
+        Some("haiku") => ModelTier::Haiku,
+        Some("main") => ModelTier::Main,
+        Some("opus") => ModelTier::Opus,
+        Some(value) => {
+            return Err(PeriError::Config(format!(
+                "unsupported subagent model tier: {value}"
+            )));
+        }
+        None => default_tier,
+    };
+    Ok((kind, tier))
+}
+
 /// Built-in memory search tool.
 #[derive(Clone, Debug)]
 pub struct AgentMemorySearchTool;
@@ -1712,6 +1796,7 @@ mod tests {
         assert!(registry.get("git_status").is_some());
         assert!(registry.get("verify_build").is_some());
         assert!(registry.get("agent_ask_user").is_some());
+        assert!(registry.get("agent_delegate").is_some());
         assert!(registry.get("agent_memory_search").is_some());
     }
 
@@ -1763,6 +1848,34 @@ mod tests {
         assert_eq!(
             result.output["explanation"],
             "Goal keeps running until done."
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn agent_delegate_prepares_fork_subagent() {
+        let root =
+            std::env::temp_dir().join(format!("peridot-tools-delegate-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let ctx = ToolContext::new(&root, PermissionMode::Auto);
+
+        let result = AgentDelegateTool
+            .execute(
+                serde_json::json!({
+                    "prompt": "write tests for parser",
+                    "kind": "fork"
+                }),
+                &ctx,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result.output["kind"], "fork");
+        assert!(
+            result.output["summary"]
+                .as_str()
+                .unwrap()
+                .contains("prepared")
         );
         fs::remove_dir_all(root).unwrap();
     }

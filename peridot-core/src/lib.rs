@@ -426,7 +426,10 @@ fn ensure_tool_allowed(
         let allowed = matches!(
             group,
             ToolGroup::File | ToolGroup::Git | ToolGroup::Plan | ToolGroup::Agent | ToolGroup::Web
-        ) && !matches!(name, "file_write" | "file_patch" | "shell_exec");
+        ) && !matches!(
+            name,
+            "file_write" | "file_patch" | "shell_exec" | "agent_delegate"
+        );
         if !allowed {
             return Err(PeriError::PermissionDenied(format!(
                 "Plan mode blocks tool {name}"
@@ -1061,6 +1064,33 @@ mod tests {
 
         assert!(matches!(result, Err(PeriError::PermissionDenied(_))));
         assert!(!root.join("blocked.txt").exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn plan_mode_blocks_subagent_delegation() {
+        let root =
+            std::env::temp_dir().join(format!("peridot-core-plan-delegate-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let mut registry = ToolRegistry::new();
+        register_builtin_tools(&mut registry).unwrap();
+        let agent = HarnessAgent::new(
+            AgentState::new(ExecutionMode::Plan, PermissionMode::Auto),
+            ContextManager::new(),
+            registry,
+        );
+
+        let result = agent
+            .execute_tool_call(
+                ToolCall::new(
+                    "agent_delegate",
+                    json!({"prompt":"write tests", "kind":"fork"}),
+                ),
+                &root,
+            )
+            .await;
+
+        assert!(matches!(result, Err(PeriError::PermissionDenied(_))));
         std::fs::remove_dir_all(root).unwrap();
     }
 
