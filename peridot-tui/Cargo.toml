@@ -7,6 +7,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+crossterm = "0.29.0"
 peridot-common = { path = "../peridot-common" }
 peridot-core = { path = "../peridot-core" }
 ratatui = "0.30.0"

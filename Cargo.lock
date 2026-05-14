@@ -1299,6 +1299,7 @@ dependencies = [
  "peridot-memory",
  "peridot-project",
  "peridot-tools",
+ "peridot-tui",
  "peridot-verify",
  "rand 0.10.1",
  "reqwest",
@@ -1403,6 +1404,7 @@ dependencies = [
 name = "peridot-tui"
 version = "0.1.0"
 dependencies = [
+ "crossterm",
  "peridot-common",
  "peridot-core",
  "ratatui",

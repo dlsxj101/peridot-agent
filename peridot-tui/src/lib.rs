@@ -1,11 +1,22 @@
 //! Terminal UI state and rendering boundary.
 
-use std::fmt::Write;
+use std::fmt::Write as FmtWrite;
+use std::io::{self, Stdout};
+use std::time::Duration;
 
+use crossterm::{
+    event::{self, Event, KeyCode, KeyEvent, KeyModifiers},
+    execute,
+    terminal::{
+        EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+        size as terminal_size,
+    },
+};
 use peridot_common::{ExecutionMode, PermissionMode};
 use peridot_core::{SlashCommand, parse_slash_command};
 use ratatui::{
-    Frame,
+    Frame, Terminal,
+    backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout},
     style::{Color, Style},
     text::{Line, Span},
@@ -94,6 +105,26 @@ pub struct TuiState {
     pub input: String,
 }
 
+/// Result produced when an interactive TUI session exits.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct TuiExit {
+    /// Final TUI state.
+    pub state: TuiState,
+    /// Submitted task, when the user pressed Enter on non-command input.
+    pub submitted: Option<String>,
+}
+
+/// Outcome of handling one terminal input event.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TuiEventOutcome {
+    /// Keep rendering the current TUI session.
+    Continue,
+    /// Exit without submitting a task.
+    Quit,
+    /// Exit and submit the contained task text.
+    Submit(String),
+}
+
 impl TuiState {
     /// Creates a new TUI state.
     pub fn new(header: HeaderState) -> Self {
@@ -119,6 +150,139 @@ impl TuiState {
     /// Parses the current input as a slash command when possible.
     pub fn current_slash_command(&self) -> Option<SlashCommand> {
         parse_slash_command(&self.input)
+    }
+}
+
+/// Runs the interactive terminal UI until the user quits or submits a task.
+pub fn run_interactive(mut state: TuiState) -> io::Result<TuiExit> {
+    let mut terminal = TerminalGuard::enter()?;
+    let (width, height) = terminal_size()?;
+    state.resize(width, height);
+    let submitted = loop {
+        terminal.terminal.draw(|frame| draw(frame, &state))?;
+        if event::poll(Duration::from_millis(250))? {
+            match event::read()? {
+                Event::Key(key) => match handle_key_event(&mut state, key) {
+                    TuiEventOutcome::Continue => {}
+                    TuiEventOutcome::Quit => break None,
+                    TuiEventOutcome::Submit(task) => break Some(task),
+                },
+                Event::Resize(width, height) => state.resize(width, height),
+                _ => {}
+            }
+        }
+    };
+    Ok(TuiExit { state, submitted })
+}
+
+/// Applies a keyboard event to the TUI state.
+pub fn handle_key_event(state: &mut TuiState, key: KeyEvent) -> TuiEventOutcome {
+    match key.code {
+        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            TuiEventOutcome::Quit
+        }
+        KeyCode::Esc => TuiEventOutcome::Quit,
+        KeyCode::Backspace => {
+            state.input.pop();
+            TuiEventOutcome::Continue
+        }
+        KeyCode::Enter => submit_input(state),
+        KeyCode::Char(character) => {
+            state.input.push(character);
+            TuiEventOutcome::Continue
+        }
+        _ => TuiEventOutcome::Continue,
+    }
+}
+
+fn submit_input(state: &mut TuiState) -> TuiEventOutcome {
+    let input = state.input.trim().to_string();
+    state.input.clear();
+    if input.is_empty() {
+        return TuiEventOutcome::Continue;
+    }
+    if input == "/quit" || input == "/exit" {
+        return TuiEventOutcome::Quit;
+    }
+    state.push_transcript(format!("> {input}"));
+    if let Some(command) = parse_slash_command(&input) {
+        apply_slash_command(state, command);
+        return TuiEventOutcome::Continue;
+    }
+    TuiEventOutcome::Submit(input)
+}
+
+fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
+    match command {
+        SlashCommand::Plan => {
+            state.header.mode = ExecutionMode::Plan;
+            state.push_transcript("mode: plan");
+        }
+        SlashCommand::Execute => {
+            state.header.mode = ExecutionMode::Execute;
+            state.push_transcript("mode: execute");
+        }
+        SlashCommand::GoalStart(goal) => {
+            state.header.mode = ExecutionMode::Goal;
+            state.side_panel.plan.push(PlanStep {
+                label: goal.clone(),
+                done: false,
+            });
+            state.push_transcript(format!("goal: {goal}"));
+        }
+        SlashCommand::GoalPause => state.push_transcript("goal: paused"),
+        SlashCommand::GoalResume => state.push_transcript("goal: resumed"),
+        SlashCommand::GoalClear => {
+            state.side_panel.plan.clear();
+            state.push_transcript("goal: cleared");
+        }
+        SlashCommand::GoalStatus => {
+            let done = state
+                .side_panel
+                .plan
+                .iter()
+                .filter(|step| step.done)
+                .count();
+            state.push_transcript(format!(
+                "goal: {done}/{} steps done",
+                state.side_panel.plan.len()
+            ));
+        }
+        SlashCommand::Safe => {
+            state.header.permission = PermissionMode::Safe;
+            state.push_transcript("permission: safe");
+        }
+        SlashCommand::Auto => {
+            state.header.permission = PermissionMode::Auto;
+            state.push_transcript("permission: auto");
+        }
+        SlashCommand::Yolo => {
+            state.header.permission = PermissionMode::Yolo;
+            state.push_transcript("permission: yolo");
+        }
+    }
+}
+
+struct TerminalGuard {
+    terminal: Terminal<CrosstermBackend<Stdout>>,
+}
+
+impl TerminalGuard {
+    fn enter() -> io::Result<Self> {
+        enable_raw_mode()?;
+        let mut stdout = io::stdout();
+        execute!(stdout, EnterAlternateScreen)?;
+        let backend = CrosstermBackend::new(stdout);
+        let terminal = Terminal::new(backend)?;
+        Ok(Self { terminal })
+    }
+}
+
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
+        let _ = disable_raw_mode();
+        let _ = execute!(self.terminal.backend_mut(), LeaveAlternateScreen);
+        let _ = self.terminal.show_cursor();
     }
 }
 
@@ -323,5 +487,74 @@ mod tests {
         let rendered = format!("{buffer:?}");
         assert!(rendered.contains("PERIDOT"));
         assert!(rendered.contains("hello tui"));
+    }
+
+    #[test]
+    fn key_events_edit_and_submit_input() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let mut state = TuiState::new(HeaderState::new(
+            ExecutionMode::Execute,
+            PermissionMode::Auto,
+            "mock",
+        ));
+
+        assert_eq!(
+            handle_key_event(
+                &mut state,
+                KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE)
+            ),
+            TuiEventOutcome::Continue
+        );
+        assert_eq!(
+            handle_key_event(
+                &mut state,
+                KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE)
+            ),
+            TuiEventOutcome::Continue
+        );
+        assert_eq!(
+            handle_key_event(
+                &mut state,
+                KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE)
+            ),
+            TuiEventOutcome::Continue
+        );
+        assert_eq!(state.input, "f");
+
+        assert_eq!(
+            handle_key_event(
+                &mut state,
+                KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)
+            ),
+            TuiEventOutcome::Submit("f".to_string())
+        );
+    }
+
+    #[test]
+    fn slash_commands_update_tui_state() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let mut state = TuiState::new(HeaderState::new(
+            ExecutionMode::Execute,
+            PermissionMode::Auto,
+            "mock",
+        ));
+        for character in "/goal ship release".chars() {
+            let outcome = handle_key_event(
+                &mut state,
+                KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE),
+            );
+            assert_eq!(outcome, TuiEventOutcome::Continue);
+        }
+
+        let outcome = handle_key_event(
+            &mut state,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        );
+
+        assert_eq!(outcome, TuiEventOutcome::Continue);
+        assert_eq!(state.header.mode, ExecutionMode::Goal);
+        assert_eq!(state.side_panel.plan[0].label, "ship release");
     }
 }

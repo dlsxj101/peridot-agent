@@ -26,6 +26,7 @@ use peridot_llm::{
 use peridot_mcp::McpClient;
 use peridot_project::ProjectScanner;
 use peridot_tools::{ToolRegistry, register_builtin_tools, register_mcp_tools};
+use peridot_tui::{HeaderState, TuiState, run_interactive};
 
 mod commands;
 
@@ -301,10 +302,30 @@ async fn main() -> Result<()> {
                     .model
                     .clone()
                     .unwrap_or_else(|| config.models.main.clone());
-                println!(
-                    "Hello Peridot: mode={} permission={} model={}",
-                    mode, permission, model
-                );
+                if cli.headless || cli.output == OutputFormat::Json {
+                    match cli.output {
+                        OutputFormat::Json => println!(
+                            "{}",
+                            serde_json::to_string_pretty(&serde_json::json!({
+                                "status": "idle",
+                                "mode": mode,
+                                "permission": permission,
+                                "model": model
+                            }))?
+                        ),
+                        OutputFormat::Text => println!(
+                            "Hello Peridot: mode={} permission={} model={}",
+                            mode, permission, model
+                        ),
+                    }
+                } else {
+                    let mut state =
+                        TuiState::new(HeaderState::new(mode, permission, model.clone()));
+                    state.push_transcript("Peridot ready. Type a task, /plan, /execute, /goal <objective>, /safe, /auto, /yolo, or Esc.");
+                    if let Some(task) = run_interactive(state)?.submitted {
+                        run_task(task, mode, &cli, &config, &project_root).await?;
+                    }
+                }
             }
         }
     }
@@ -431,7 +452,7 @@ async fn run_task(
                     task
                 );
                 println!(
-                    "No live LLM provider is wired yet; try a JSON tool action or ask for hello.py."
+                    "Use --live for a model run, --mock-response-file for deterministic replay, or enter a JSON tool action."
                 );
             }
         }
