@@ -246,7 +246,11 @@ async fn run_task(
 
     match call {
         Some(call) => {
-            let result = agent.execute_tool_call(call, project_root).await?;
+            let profile = ProjectScanner::new().scan(project_root)?;
+            let denied_paths = profile.boundaries.into_iter().map(PathBuf::from).collect();
+            let result = agent
+                .execute_tool_call_with_denied_paths(call, project_root, denied_paths)
+                .await?;
             if cli.output == OutputFormat::Json || cli.headless {
                 println!("{}", serde_json::to_string_pretty(&result)?);
             } else {

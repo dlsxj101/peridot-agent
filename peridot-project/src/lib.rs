@@ -123,6 +123,8 @@ pub struct ProjectProfile {
     pub has_agents_md: bool,
     /// Parsed AGENTS overrides.
     pub agents_md_overrides: Vec<String>,
+    /// Parsed path boundaries that must not be modified.
+    pub boundaries: Vec<String>,
 }
 
 impl ProjectProfile {
@@ -149,6 +151,7 @@ impl ProjectProfile {
             ci: None,
             has_agents_md: false,
             agents_md_overrides: Vec::new(),
+            boundaries: Vec::new(),
         }
     }
 }
@@ -168,7 +171,9 @@ impl ProjectScanner {
         let root = root.as_ref();
         let mut profile = ProjectProfile::minimal(root);
         profile.has_agents_md = find_agents_file(root).is_some();
-        profile.agents_md_overrides = parse_agents_overrides(root)?;
+        let agents = parse_agents_file(root)?;
+        profile.agents_md_overrides = agents.overrides;
+        profile.boundaries = agents.boundaries;
         detect_root_markers(root, &mut profile);
         detect_structure(root, &mut profile);
         profile.git = detect_git_state(root);
@@ -315,13 +320,19 @@ fn find_agents_file(root: &Path) -> Option<PathBuf> {
     .find(|path| path.exists())
 }
 
-fn parse_agents_overrides(root: &Path) -> PeriResult<Vec<String>> {
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct ParsedAgents {
+    overrides: Vec<String>,
+    boundaries: Vec<String>,
+}
+
+fn parse_agents_file(root: &Path) -> PeriResult<ParsedAgents> {
     let Some(path) = find_agents_file(root) else {
-        return Ok(Vec::new());
+        return Ok(ParsedAgents::default());
     };
     let content = fs::read_to_string(&path)
         .map_err(|err| peridot_common::PeriError::Parse(format!("{}: {err}", path.display())))?;
-    let mut overrides = Vec::new();
+    let mut parsed = ParsedAgents::default();
     let mut section = String::new();
     for line in content.lines() {
         if let Some(stripped) = line.strip_prefix("## ") {
@@ -331,11 +342,25 @@ fn parse_agents_overrides(root: &Path) -> PeriResult<Vec<String>> {
         if matches!(section.as_str(), "commands" | "boundaries" | "preferences") {
             let trimmed = line.trim();
             if !trimmed.is_empty() {
-                overrides.push(format!("{section}: {trimmed}"));
+                parsed.overrides.push(format!("{section}: {trimmed}"));
+                if section == "boundaries"
+                    && let Some(boundary) = parse_do_not_modify_boundary(trimmed)
+                {
+                    parsed.boundaries.push(boundary);
+                }
             }
         }
     }
-    Ok(overrides)
+    Ok(parsed)
+}
+
+fn parse_do_not_modify_boundary(line: &str) -> Option<String> {
+    let line = line.trim_start_matches(['-', '*', ' ']).trim();
+    let prefix = "DO NOT modify ";
+    line.strip_prefix(prefix)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.trim_end_matches('.').to_string())
 }
 
 fn detect_git_state(root: &Path) -> Option<GitState> {
@@ -403,6 +428,7 @@ mod tests {
             profile.agents_md_overrides,
             vec!["boundaries: - DO NOT modify generated/"]
         );
+        assert_eq!(profile.boundaries, vec!["generated/"]);
         fs::remove_dir_all(root).unwrap();
     }
 }

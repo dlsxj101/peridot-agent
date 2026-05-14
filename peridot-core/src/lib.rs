@@ -85,11 +85,23 @@ impl HarnessAgent {
         call: ToolCall,
         project_root: impl Into<PathBuf>,
     ) -> PeriResult<ToolResult> {
+        self.execute_tool_call_with_denied_paths(call, project_root, Vec::new())
+            .await
+    }
+
+    /// Executes one tool call with explicit project path boundaries.
+    pub async fn execute_tool_call_with_denied_paths(
+        &self,
+        call: ToolCall,
+        project_root: impl Into<PathBuf>,
+        denied_paths: Vec<PathBuf>,
+    ) -> PeriResult<ToolResult> {
         let tool = self
             .tools
             .get(&call.name)
             .ok_or_else(|| PeriError::Tool(format!("unknown tool: {}", call.name)))?;
-        let ctx = ToolContext::new(project_root, self.state.permission);
+        let ctx =
+            ToolContext::new(project_root, self.state.permission).with_denied_paths(denied_paths);
         tool.validate_params(&call.parameters)?;
         tool.execute(call.parameters, &ctx).await
     }
