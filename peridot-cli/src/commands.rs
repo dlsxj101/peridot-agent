@@ -148,15 +148,98 @@ struct SkillEntry {
 }
 
 pub(crate) fn load_project_config(project_root: &Path) -> Result<PeridotConfig> {
+    let mut config = PeridotConfig::default();
+    apply_agents_preferences(project_root, &mut config)?;
+
     let path = project_root.join(".peridot/config.toml");
     if !path.exists() {
-        return Ok(PeridotConfig::default());
+        return Ok(config);
     }
     let content =
         fs::read_to_string(&path).with_context(|| format!("failed to read {}", path.display()))?;
-    let config = toml::from_str::<PeridotConfig>(&content)
+    let project_config = toml::from_str::<PeridotConfig>(&content)
         .with_context(|| format!("failed to parse {}", path.display()))?;
+    let raw_config = toml::from_str::<toml::Value>(&content)
+        .with_context(|| format!("failed to parse {}", path.display()))?;
+    merge_project_config(&raw_config, project_config, &mut config);
     Ok(config)
+}
+
+fn apply_agents_preferences(project_root: &Path, config: &mut PeridotConfig) -> Result<()> {
+    let profile = ProjectScanner::new().scan(project_root)?;
+    let preferences = profile.preferences;
+    if let Some(mode) = preferences.default_mode {
+        config.defaults.mode = mode;
+    }
+    if let Some(permission) = preferences.default_permission {
+        config.defaults.permission = permission;
+    }
+    if let Some(ask_before_install) = preferences.ask_before_install {
+        config.security.ask_before_install = ask_before_install;
+    }
+    if let Some(ask_before_delete) = preferences.ask_before_delete {
+        config.security.ask_before_delete = ask_before_delete;
+    }
+    Ok(())
+}
+
+fn merge_project_config(
+    raw_config: &toml::Value,
+    project_config: PeridotConfig,
+    config: &mut PeridotConfig,
+) {
+    if raw_config.get("auth").is_some() {
+        config.auth = project_config.auth;
+    }
+    if raw_config.get("models").is_some() {
+        config.models = project_config.models;
+    }
+    if raw_config.get("api").is_some() {
+        config.api = project_config.api;
+    }
+    if raw_config.get("context").is_some() {
+        config.context = project_config.context;
+    }
+    if raw_config.get("mcp").is_some() {
+        config.mcp = project_config.mcp;
+    }
+    if raw_config.get("hooks").is_some() {
+        config.hooks = project_config.hooks;
+    }
+    if let Some(defaults) = raw_config.get("defaults").and_then(toml::Value::as_table) {
+        if defaults.contains_key("mode") {
+            config.defaults.mode = project_config.defaults.mode;
+        }
+        if defaults.contains_key("permission") {
+            config.defaults.permission = project_config.defaults.permission;
+        }
+        if defaults.contains_key("max_turns") {
+            config.defaults.max_turns = project_config.defaults.max_turns;
+        }
+        if defaults.contains_key("budget_usd") {
+            config.defaults.budget_usd = project_config.defaults.budget_usd;
+        }
+        if defaults.contains_key("budget_warning_pct") {
+            config.defaults.budget_warning_pct = project_config.defaults.budget_warning_pct;
+        }
+    }
+    if let Some(security) = raw_config.get("security").and_then(toml::Value::as_table) {
+        if security.contains_key("sandbox") {
+            config.security.sandbox = project_config.security.sandbox;
+        }
+        if security.contains_key("docker_image") {
+            config.security.docker_image = project_config.security.docker_image;
+        }
+        if security.contains_key("docker_network") {
+            config.security.docker_network = project_config.security.docker_network;
+        }
+        if security.contains_key("ask_before_install") {
+            config.security.ask_before_install = project_config.security.ask_before_install;
+        }
+        if security.contains_key("ask_before_delete") {
+            config.security.ask_before_delete = project_config.security.ask_before_delete;
+        }
+    }
 }
 
 pub(crate) fn run_config_command(
@@ -1321,6 +1404,14 @@ fn print_config(config: &PeridotConfig, output: OutputFormat) -> Result<()> {
                 "security.docker_network = {}",
                 config.security.docker_network
             );
+            println!(
+                "security.ask_before_install = {}",
+                config.security.ask_before_install
+            );
+            println!(
+                "security.ask_before_delete = {}",
+                config.security.ask_before_delete
+            );
         }
     }
     Ok(())
@@ -1352,6 +1443,67 @@ mod tests {
         let skills = collect_skills(&root).unwrap();
 
         assert!(skills.iter().any(|skill| skill.name == "rust"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn loads_agents_preferences_into_effective_config() {
+        let root = std::env::temp_dir().join(format!(
+            "peridot-cli-agents-preferences-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("AGENTS.md"),
+            "## preferences\n\
+             default_mode: goal\n\
+             default_permission: safe\n\
+             ask_before_install: false\n\
+             ask_before_delete: false\n",
+        )
+        .unwrap();
+
+        let config = load_project_config(&root).unwrap();
+
+        assert_eq!(config.defaults.mode, peridot_common::ExecutionMode::Goal);
+        assert_eq!(
+            config.defaults.permission,
+            peridot_common::PermissionMode::Safe
+        );
+        assert!(!config.security.ask_before_install);
+        assert!(!config.security.ask_before_delete);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn project_config_overrides_agents_preferences_selectively() {
+        let root =
+            std::env::temp_dir().join(format!("peridot-cli-config-merge-{}", std::process::id()));
+        fs::create_dir_all(root.join(".peridot")).unwrap();
+        fs::write(
+            root.join("AGENTS.md"),
+            "## preferences\n\
+             default_mode: goal\n\
+             default_permission: safe\n\
+             ask_before_install: false\n\
+             ask_before_delete: false\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join(".peridot/config.toml"),
+            "[defaults]\npermission = \"yolo\"\n\n[security]\nask_before_delete = true\n",
+        )
+        .unwrap();
+
+        let config = load_project_config(&root).unwrap();
+
+        assert_eq!(config.defaults.mode, peridot_common::ExecutionMode::Goal);
+        assert_eq!(
+            config.defaults.permission,
+            peridot_common::PermissionMode::Yolo
+        );
+        assert!(!config.security.ask_before_install);
+        assert!(config.security.ask_before_delete);
         fs::remove_dir_all(root).unwrap();
     }
 

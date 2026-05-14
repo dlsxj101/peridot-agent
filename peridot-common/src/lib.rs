@@ -295,6 +295,12 @@ pub struct SecurityConfig {
     /// Whether Docker sandboxed commands can access the network.
     #[serde(default)]
     pub docker_network: bool,
+    /// Whether dependency installation commands require explicit approval.
+    #[serde(default = "default_ask_before_install")]
+    pub ask_before_install: bool,
+    /// Whether destructive delete/history commands require explicit approval.
+    #[serde(default = "default_ask_before_delete")]
+    pub ask_before_delete: bool,
 }
 
 impl Default for SecurityConfig {
@@ -303,12 +309,22 @@ impl Default for SecurityConfig {
             sandbox: SandboxMode::None,
             docker_image: default_docker_image(),
             docker_network: false,
+            ask_before_install: default_ask_before_install(),
+            ask_before_delete: default_ask_before_delete(),
         }
     }
 }
 
 fn default_docker_image() -> String {
     "rust:1-bookworm".to_string()
+}
+
+fn default_ask_before_install() -> bool {
+    true
+}
+
+fn default_ask_before_delete() -> bool {
+    true
 }
 
 /// Authentication configuration.
@@ -671,6 +687,8 @@ mod tests {
             sandbox = "docker"
             docker_image = "rust:1.95"
             docker_network = true
+            ask_before_install = false
+            ask_before_delete = false
             "#,
         )
         .unwrap();
@@ -678,5 +696,7 @@ mod tests {
         assert_eq!(config.security.sandbox, SandboxMode::Docker);
         assert_eq!(config.security.docker_image, "rust:1.95");
         assert!(config.security.docker_network);
+        assert!(!config.security.ask_before_install);
+        assert!(!config.security.ask_before_delete);
     }
 }

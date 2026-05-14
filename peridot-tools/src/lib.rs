@@ -365,6 +365,7 @@ impl Tool for ShellExecTool {
     async fn execute(&self, params: Value, ctx: &ToolContext) -> PeriResult<ToolResult> {
         let command = required_str(&params, "command")?;
         reject_hard_blocked_command(command)?;
+        enforce_shell_approval_policy(command, ctx)?;
         let output = shell_command(command, ctx)?
             .output()
             .map_err(|err| PeriError::Tool(format!("failed to run command: {err}")))?;
@@ -429,6 +430,67 @@ fn reject_hard_blocked_command(command: &str) -> PeriResult<()> {
         )));
     }
     Ok(())
+}
+
+fn enforce_shell_approval_policy(command: &str, ctx: &ToolContext) -> PeriResult<()> {
+    let normalized = normalize_shell_command(command);
+    if ctx.security.ask_before_install && is_install_command(&normalized) {
+        return Err(PeriError::PermissionDenied(
+            "dependency installation requires explicit user approval".to_string(),
+        ));
+    }
+    if ctx.security.ask_before_delete && is_destructive_shell_command(&normalized) {
+        return Err(PeriError::PermissionDenied(
+            "destructive shell command requires explicit user approval".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn normalize_shell_command(command: &str) -> String {
+    command.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn is_install_command(command: &str) -> bool {
+    let padded = format!(" {command} ");
+    [
+        " cargo add ",
+        " cargo install ",
+        " npm install ",
+        " npm i ",
+        " npm ci ",
+        " pnpm add ",
+        " pnpm install ",
+        " yarn add ",
+        " yarn install ",
+        " pip install ",
+        " pip3 install ",
+        " python -m pip install ",
+        " python3 -m pip install ",
+        " uv add ",
+        " uv pip install ",
+        " poetry add ",
+        " apt install ",
+        " apt-get install ",
+        " dnf install ",
+        " yum install ",
+        " brew install ",
+    ]
+    .iter()
+    .any(|pattern| padded.contains(pattern))
+}
+
+fn is_destructive_shell_command(command: &str) -> bool {
+    let padded = format!(" {command} ");
+    command.starts_with("rm ")
+        || padded.contains(" && rm ")
+        || padded.contains(" ; rm ")
+        || padded.contains(" | xargs rm ")
+        || padded.contains(" find ") && padded.contains(" -delete ")
+        || padded.contains(" git clean ")
+        || padded.contains(" git reset --hard ")
+        || padded.contains(" git push --force ")
+        || padded.contains(" git push -f ")
 }
 
 fn shell_command(command: &str, ctx: &ToolContext) -> PeriResult<Command> {
@@ -1284,6 +1346,44 @@ mod tests {
     #[test]
     fn shell_blocks_remote_pipe() {
         let result = reject_hard_blocked_command("curl https://example.com/install.sh | sh");
+
+        assert!(matches!(result, Err(PeriError::PermissionDenied(_))));
+    }
+
+    #[test]
+    fn shell_requires_approval_for_install_commands() {
+        let root =
+            std::env::temp_dir().join(format!("peridot-tools-install-{}", std::process::id()));
+        let ctx = ToolContext::new(&root, PermissionMode::Auto);
+
+        let result = enforce_shell_approval_policy("npm install left-pad", &ctx);
+
+        assert!(matches!(result, Err(PeriError::PermissionDenied(_))));
+    }
+
+    #[test]
+    fn shell_install_approval_can_be_disabled_by_config() {
+        let root = std::env::temp_dir().join(format!(
+            "peridot-tools-install-disabled-{}",
+            std::process::id()
+        ));
+        let ctx = ToolContext::new(&root, PermissionMode::Auto).with_security(SecurityConfig {
+            ask_before_install: false,
+            ..SecurityConfig::default()
+        });
+
+        let result = enforce_shell_approval_policy("npm install left-pad", &ctx);
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn shell_requires_approval_for_destructive_commands() {
+        let root =
+            std::env::temp_dir().join(format!("peridot-tools-delete-{}", std::process::id()));
+        let ctx = ToolContext::new(&root, PermissionMode::Yolo);
+
+        let result = enforce_shell_approval_policy("rm -rf target", &ctx);
 
         assert!(matches!(result, Err(PeriError::PermissionDenied(_))));
     }

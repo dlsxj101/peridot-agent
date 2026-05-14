@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use peridot_common::PeriResult;
+use peridot_common::{ExecutionMode, PeriError, PeriResult, PermissionMode};
 use serde::{Deserialize, Serialize};
 
 /// Detected project language.
@@ -48,6 +48,25 @@ pub struct ProjectCommands {
     pub format: Option<String>,
     /// Development server command.
     pub dev: Option<String>,
+}
+
+/// Structured preferences parsed from AGENTS.md.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ProjectPreferences {
+    /// Default execution mode requested by the project.
+    pub default_mode: Option<ExecutionMode>,
+    /// Default permission mode requested by the project.
+    pub default_permission: Option<PermissionMode>,
+    /// Whether dependency installation commands require explicit user approval.
+    pub ask_before_install: Option<bool>,
+    /// Whether destructive delete/history commands require explicit user approval.
+    pub ask_before_delete: Option<bool>,
+    /// Whether the agent should commit completed logical units automatically.
+    pub auto_commit: Option<bool>,
+    /// Preferred commit cadence, such as "logical_unit".
+    pub commit_frequency: Option<String>,
+    /// Preferred branch prefix for agent-created branches.
+    pub branch_prefix: Option<String>,
 }
 
 /// Repository structure category.
@@ -123,6 +142,8 @@ pub struct ProjectProfile {
     pub has_agents_md: bool,
     /// Parsed AGENTS overrides.
     pub agents_md_overrides: Vec<String>,
+    /// Structured AGENTS preferences.
+    pub preferences: ProjectPreferences,
     /// Parsed path boundaries that must not be modified.
     pub boundaries: Vec<String>,
 }
@@ -151,6 +172,7 @@ impl ProjectProfile {
             ci: None,
             has_agents_md: false,
             agents_md_overrides: Vec::new(),
+            preferences: ProjectPreferences::default(),
             boundaries: Vec::new(),
         }
     }
@@ -173,6 +195,7 @@ impl ProjectScanner {
         profile.has_agents_md = find_agents_file(root).is_some();
         let agents = parse_agents_file(root)?;
         profile.agents_md_overrides = agents.overrides;
+        profile.preferences = agents.preferences;
         profile.boundaries = agents.boundaries;
         detect_root_markers(root, &mut profile);
         detect_structure(root, &mut profile);
@@ -323,6 +346,7 @@ fn find_agents_file(root: &Path) -> Option<PathBuf> {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct ParsedAgents {
     overrides: Vec<String>,
+    preferences: ProjectPreferences,
     boundaries: Vec<String>,
 }
 
@@ -348,14 +372,90 @@ fn parse_agents_file(root: &Path) -> PeriResult<ParsedAgents> {
                 {
                     parsed.boundaries.push(boundary);
                 }
+                if section == "preferences" {
+                    parse_preference_line(trimmed, &mut parsed.preferences)?;
+                }
             }
         }
     }
     Ok(parsed)
 }
 
+fn parse_preference_line(line: &str, preferences: &mut ProjectPreferences) -> PeriResult<()> {
+    let line = strip_list_marker(line);
+    let Some((key, value)) = line.split_once(':') else {
+        return Ok(());
+    };
+    let key = key.trim().to_ascii_lowercase();
+    let value = value.trim().trim_matches(['"', '\'']);
+    if value.is_empty() {
+        return Ok(());
+    }
+    match key.as_str() {
+        "default_mode" => {
+            preferences.default_mode = Some(parse_execution_mode(value)?);
+        }
+        "default_permission" => {
+            preferences.default_permission = Some(parse_permission_mode(value)?);
+        }
+        "ask_before_install" => {
+            preferences.ask_before_install = Some(parse_bool_preference(key.as_str(), value)?);
+        }
+        "ask_before_delete" => {
+            preferences.ask_before_delete = Some(parse_bool_preference(key.as_str(), value)?);
+        }
+        "auto_commit" => {
+            preferences.auto_commit = Some(parse_bool_preference(key.as_str(), value)?);
+        }
+        "commit_frequency" => {
+            preferences.commit_frequency = Some(value.to_string());
+        }
+        "branch_prefix" => {
+            preferences.branch_prefix = Some(value.to_string());
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn strip_list_marker(line: &str) -> &str {
+    line.trim_start_matches(['-', '*', ' ']).trim()
+}
+
+fn parse_execution_mode(value: &str) -> PeriResult<ExecutionMode> {
+    match value.to_ascii_lowercase().as_str() {
+        "plan" => Ok(ExecutionMode::Plan),
+        "execute" => Ok(ExecutionMode::Execute),
+        "goal" => Ok(ExecutionMode::Goal),
+        _ => Err(PeriError::Parse(format!(
+            "unsupported AGENTS default_mode: {value}"
+        ))),
+    }
+}
+
+fn parse_permission_mode(value: &str) -> PeriResult<PermissionMode> {
+    match value.to_ascii_lowercase().as_str() {
+        "safe" => Ok(PermissionMode::Safe),
+        "auto" => Ok(PermissionMode::Auto),
+        "yolo" => Ok(PermissionMode::Yolo),
+        _ => Err(PeriError::Parse(format!(
+            "unsupported AGENTS default_permission: {value}"
+        ))),
+    }
+}
+
+fn parse_bool_preference(key: &str, value: &str) -> PeriResult<bool> {
+    match value.to_ascii_lowercase().as_str() {
+        "true" | "yes" | "y" | "1" | "on" => Ok(true),
+        "false" | "no" | "n" | "0" | "off" => Ok(false),
+        _ => Err(PeriError::Parse(format!(
+            "unsupported AGENTS boolean value for {key}: {value}"
+        ))),
+    }
+}
+
 fn parse_do_not_modify_boundary(line: &str) -> Option<String> {
-    let line = line.trim_start_matches(['-', '*', ' ']).trim();
+    let line = strip_list_marker(line);
     let prefix = "DO NOT modify ";
     line.strip_prefix(prefix)
         .map(str::trim)
@@ -429,6 +529,47 @@ mod tests {
             vec!["boundaries: - DO NOT modify generated/"]
         );
         assert_eq!(profile.boundaries, vec!["generated/"]);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn parses_agents_preferences() {
+        let root = std::env::temp_dir().join(format!(
+            "peridot-project-agents-preferences-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("AGENTS.md"),
+            "## preferences\n\
+             default_mode: goal\n\
+             default_permission: safe\n\
+             ask_before_install: true\n\
+             ask_before_delete: false\n\
+             auto_commit: true\n\
+             commit_frequency: logical_unit\n\
+             branch_prefix: peridot/\n",
+        )
+        .unwrap();
+
+        let profile = ProjectScanner::new().scan(&root).unwrap();
+
+        assert_eq!(profile.preferences.default_mode, Some(ExecutionMode::Goal));
+        assert_eq!(
+            profile.preferences.default_permission,
+            Some(PermissionMode::Safe)
+        );
+        assert_eq!(profile.preferences.ask_before_install, Some(true));
+        assert_eq!(profile.preferences.ask_before_delete, Some(false));
+        assert_eq!(profile.preferences.auto_commit, Some(true));
+        assert_eq!(
+            profile.preferences.commit_frequency.as_deref(),
+            Some("logical_unit")
+        );
+        assert_eq!(
+            profile.preferences.branch_prefix.as_deref(),
+            Some("peridot/")
+        );
         fs::remove_dir_all(root).unwrap();
     }
 }
