@@ -282,6 +282,7 @@ impl HarnessAgent {
         let mut total_usage = Usage::default();
         let mut stuck_detector = StuckDetector::new(3);
         let mut budget_warning_sent = false;
+        let mut consecutive_parse_failures = 0usize;
         for turn_index in 0..request.max_turns {
             let outcome = match self
                 .run_turn(
@@ -298,14 +299,28 @@ impl HarnessAgent {
                 )
                 .await
             {
-                Ok(outcome) => outcome,
+                Ok(outcome) => {
+                    consecutive_parse_failures = 0;
+                    outcome
+                }
                 Err(err) => {
                     self.state.phase = AgentPhase::Recovering;
                     run_error_event_hooks(&request.project_root, &request.hooks, &err)?;
+                    if classify_error(&err) == "parse" {
+                        consecutive_parse_failures += 1;
+                    } else {
+                        consecutive_parse_failures = 0;
+                    }
                     self.context.append(ContextEntry::trusted(
                         ContextSource::PlanReminder,
                         recovery_message(&err),
                     ));
+                    if consecutive_parse_failures == 3 {
+                        self.context.append(ContextEntry::trusted(
+                            ContextSource::PlanReminder,
+                            format_reminder_message(),
+                        ));
+                    }
                     continue;
                 }
             };
@@ -500,6 +515,10 @@ fn recovery_message(error: &PeriError) -> String {
         "Recovery directive: previous turn failed with {}: {error}. Preserve this error in context, avoid repeating the same action, and choose a concrete recovery strategy.",
         classify_error(error)
     )
+}
+
+fn format_reminder_message() -> String {
+    "Format reminder: respond with a single JSON object like {\"thinking\":\"brief reason\",\"action\":\"tool_name\",\"parameters\":{}}. Do not wrap it in prose unless the JSON object remains recoverable.".to_string()
 }
 
 fn classify_error(error: &PeriError) -> &'static str {
@@ -1762,6 +1781,55 @@ mod tests {
             entry
                 .content
                 .contains("previous turn failed with not_found")
+        }));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn repeated_parse_failures_inject_format_reminder() {
+        let root = std::env::temp_dir().join(format!(
+            "peridot-core-parse-recovery-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let mut registry = ToolRegistry::new();
+        register_builtin_tools(&mut registry).unwrap();
+        let mut agent = HarnessAgent::new(
+            AgentState::new(ExecutionMode::Goal, PermissionMode::Auto),
+            ContextManager::new(),
+            registry,
+        );
+        let provider = StaticProvider::new(vec![
+            "plain text".to_string(),
+            "still no action".to_string(),
+            "no json here".to_string(),
+            json!({"action":"agent_done","parameters":{"summary":"recovered"}}).to_string(),
+        ]);
+
+        let summary = agent
+            .run_until_done(
+                &provider,
+                AgentRunRequest {
+                    task: "recover parse".to_string(),
+                    model: "mock".to_string(),
+                    goal_checker_model: None,
+                    max_turns: 4,
+                    max_tokens: 512,
+                    budget_usd: 5.0,
+                    budget_warning_pct: 50,
+                    project_root: root.clone(),
+                    denied_paths: Vec::new(),
+                    hooks: HooksConfig::default(),
+                    security: SecurityConfig::default(),
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(summary.stopped_reason, StopReason::Done);
+        assert_eq!(summary.turns.len(), 1);
+        assert!(agent.context().entries().iter().any(|entry| {
+            entry.source == ContextSource::PlanReminder && entry.content.contains("Format reminder")
         }));
         std::fs::remove_dir_all(root).unwrap();
     }
