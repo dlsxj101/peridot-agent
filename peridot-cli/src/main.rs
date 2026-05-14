@@ -479,6 +479,7 @@ async fn run_task(
             } else {
                 println!("{}", result.summary);
             }
+            exit_for_tool_result(&result, cli.effective_headless());
         }
         None => {
             if cli.output == OutputFormat::Json || cli.effective_headless() {
@@ -753,6 +754,12 @@ fn exit_for_summary(summary: &AgentRunSummary, headless: bool) {
         StopReason::Done => {}
         StopReason::Budget => std::process::exit(2),
         StopReason::MaxTurns => std::process::exit(3),
+    }
+}
+
+fn exit_for_tool_result(result: &peridot_common::ToolResult, headless: bool) {
+    if headless && !result.success {
+        std::process::exit(4);
     }
 }
 

@@ -159,3 +159,24 @@ run = ".peridot/hooks/lifecycle.sh {session_id} {status}"
 
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn headless_direct_tool_failure_exits_four() {
+    let root = temp_project("headless-failure");
+    let output = Command::new(peridot())
+        .args([
+            "--project",
+            root.to_str().unwrap(),
+            "--headless",
+            "--output",
+            "json",
+            r#"{"action":"verify_build","parameters":{"command":"exit 7"}}"#,
+        ])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(4));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("\"success\": false"));
+
+    fs::remove_dir_all(root).unwrap();
+}

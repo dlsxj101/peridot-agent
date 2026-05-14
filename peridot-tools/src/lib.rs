@@ -1165,15 +1165,17 @@ fn run_read_only_command(command: &str, ctx: &ToolContext, label: &str) -> PeriR
         .map_err(|err| PeriError::Tool(format!("failed to run {label}: {err}")))?;
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    Ok(ToolResult::success(
-        format!("{label} exited {}", output.status.code().unwrap_or(-1)),
-        serde_json::json!({
+    let success = output.status.success();
+    Ok(ToolResult {
+        success,
+        summary: format!("{label} exited {}", output.status.code().unwrap_or(-1)),
+        output: serde_json::json!({
             "status": output.status.code(),
-            "success": output.status.success(),
+            "success": success,
             "stdout": stdout,
             "stderr": stderr
         }),
-    ))
+    })
 }
 
 /// Built-in scratchpad tool.
@@ -1844,6 +1846,22 @@ mod tests {
 
         assert_eq!(result.output["success"], true);
         assert_eq!(result.output["stdout"], "ok");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn verify_tool_marks_failed_command_unsuccessful() {
+        let root =
+            std::env::temp_dir().join(format!("peridot-tools-verify-fail-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let ctx = ToolContext::new(&root, PermissionMode::Auto);
+        let result = VerifyBuildTool
+            .execute(serde_json::json!({"command":"exit 7"}), &ctx)
+            .await
+            .unwrap();
+
+        assert!(!result.success);
+        assert_eq!(result.output["status"], 7);
         fs::remove_dir_all(root).unwrap();
     }
 }
