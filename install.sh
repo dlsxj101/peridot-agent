@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-repo="${PERIDOT_REPO:-peridot-ai/peridot}"
+repo="${PERIDOT_REPO:-dlsxj101/peridot-agent}"
 version="${PERIDOT_VERSION:-latest}"
 bin_dir="${PERIDOT_BIN_DIR:-$HOME/.local/bin}"
 

@@ -115,5 +115,5 @@ CI runs formatting, Clippy, and the workspace test suite on pushes and pull requ
 Release publishing also attaches `SHA256SUMS`, a checksum-verifying `install.sh`, and a generated `peridot.rb` Homebrew formula with `peridot` plus the `peri` alias.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/peridot-ai/peridot/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/dlsxj101/peridot-agent/main/install.sh | sh
 ```

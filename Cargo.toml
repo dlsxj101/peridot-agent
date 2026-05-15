@@ -20,7 +20,7 @@ resolver = "3"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
-repository = "https://github.com/peridot-ai/peridot"
+repository = "https://github.com/dlsxj101/peridot-agent"
 rust-version = "1.95"
 
 [workspace.dependencies]
