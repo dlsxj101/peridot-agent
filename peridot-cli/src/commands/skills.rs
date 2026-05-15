@@ -198,6 +198,16 @@ pub(super) fn collect_skill_dir(
     for entry in fs::read_dir(root).with_context(|| format!("failed to read {}", root.display()))? {
         let path = entry?.path();
         if path.is_dir() {
+            let skill_path = path.join("SKILL.md");
+            if skill_path.is_file()
+                && let Some(name) = path.file_name().and_then(|name| name.to_str())
+            {
+                skills.push(SkillEntry {
+                    name: name.to_string(),
+                    scope,
+                    path: skill_path,
+                });
+            }
             if recursive {
                 collect_skill_dir(&path, scope, recursive, skills)?;
             }

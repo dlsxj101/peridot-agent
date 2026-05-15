@@ -10,10 +10,17 @@ fn collects_project_skills() {
     let skills_dir = root.join(".peridot/skills");
     fs::create_dir_all(&skills_dir).unwrap();
     fs::write(skills_dir.join("rust.md"), "Use cargo fmt.").unwrap();
+    fs::create_dir_all(skills_dir.join("release-ci-prep")).unwrap();
+    fs::write(
+        skills_dir.join("release-ci-prep/SKILL.md"),
+        "---\nname: release-ci-prep\ndescription: Release workflow.\n---\n",
+    )
+    .unwrap();
 
     let skills = collect_skills(&root).unwrap();
 
     assert!(skills.iter().any(|skill| skill.name == "rust"));
+    assert!(skills.iter().any(|skill| skill.name == "release-ci-prep"));
     fs::remove_dir_all(root).unwrap();
 }
 
