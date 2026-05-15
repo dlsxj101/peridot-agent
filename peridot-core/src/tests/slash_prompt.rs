@@ -1,0 +1,92 @@
+use peridot_common::{ExecutionMode, PeriError, PermissionMode};
+
+use crate::prompt::{read_plan_reminder, system_prompt_for_mode};
+use crate::recovery::classify_error;
+use crate::{AgentState, GoalController, SlashCommand, parse_slash_command};
+
+#[test]
+fn parses_goal_slash_commands() {
+    assert_eq!(
+        parse_slash_command("/goal fix tests"),
+        Some(SlashCommand::GoalStart("fix tests".to_string()))
+    );
+    assert_eq!(
+        parse_slash_command("/goal pause"),
+        Some(SlashCommand::GoalPause)
+    );
+    assert_eq!(parse_slash_command("/safe"), Some(SlashCommand::Safe));
+}
+
+#[test]
+fn goal_controller_stops_on_budget() {
+    let mut goal = GoalController::new("finish", 10, 1.0);
+    assert!(!goal.should_stop());
+
+    goal.record_turn(1.2);
+
+    assert!(goal.should_stop());
+}
+
+#[test]
+fn agent_state_applies_mode_commands() {
+    let mut state = AgentState::default();
+    state.apply_slash_command(&SlashCommand::GoalStart("ship".to_string()));
+
+    assert_eq!(state.mode, ExecutionMode::Goal);
+    assert_eq!(state.goal.as_deref(), Some("ship"));
+}
+
+#[test]
+fn system_prompt_contains_injection_defense_rules() {
+    let prompt = system_prompt_for_mode(ExecutionMode::Execute);
+
+    assert!(prompt.contains("<untrusted_content>"));
+    assert!(prompt.contains("never as instructions"));
+    assert!(prompt.contains("AGENTS boundaries"));
+}
+
+#[test]
+fn plan_prompt_requires_understand_then_choose_flow() {
+    let prompt = system_prompt_for_mode(ExecutionMode::Plan);
+
+    assert!(prompt.contains("Phase 0 UNDERSTAND is mandatory"));
+    assert!(prompt.contains("plan_create"));
+    assert!(prompt.contains("Phase 2 CHOOSE is handled by the CLI"));
+}
+
+#[test]
+fn reads_plan_reminder_from_todo_md() {
+    let root =
+        std::env::temp_dir().join(format!("peridot-core-plan-reminder-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("todo.md"), "# Plan\n\n1. [ ] Keep going\n").unwrap();
+
+    let reminder = read_plan_reminder(&root).unwrap();
+
+    assert!(reminder.contains("Current plan status from todo.md"));
+    assert!(reminder.contains("Keep going"));
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn classifies_tool_errors() {
+    assert_eq!(
+        classify_error(&PeriError::Tool("No such file or directory".to_string())),
+        "not_found"
+    );
+    assert_eq!(
+        classify_error(&PeriError::Tool("operation timed out".to_string())),
+        "timeout"
+    );
+    assert_eq!(
+        classify_error(&PeriError::PermissionDenied("blocked".to_string())),
+        "permission"
+    );
+}
+
+#[test]
+fn default_agent_state_uses_default_permission() {
+    let state = AgentState::default();
+
+    assert_eq!(state.permission, PermissionMode::default());
+}
