@@ -1,0 +1,339 @@
+use super::auth::*;
+use super::config::*;
+use super::skills::*;
+use super::update::*;
+use super::*;
+
+#[test]
+fn collects_project_skills() {
+    let root = std::env::temp_dir().join(format!("peridot-cli-skills-{}", std::process::id()));
+    let skills_dir = root.join(".peridot/skills");
+    fs::create_dir_all(&skills_dir).unwrap();
+    fs::write(skills_dir.join("rust.md"), "Use cargo fmt.").unwrap();
+
+    let skills = collect_skills(&root).unwrap();
+
+    assert!(skills.iter().any(|skill| skill.name == "rust"));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn loads_agents_preferences_into_effective_config() {
+    let root = std::env::temp_dir().join(format!(
+        "peridot-cli-agents-preferences-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    fs::write(
+        root.join("AGENTS.md"),
+        "## preferences\n\
+             default_mode: goal\n\
+             default_permission: safe\n\
+             ask_before_install: false\n\
+             ask_before_delete: false\n",
+    )
+    .unwrap();
+
+    let config = load_effective_config_inner(&root, None, false, false).unwrap();
+
+    assert_eq!(config.defaults.mode, peridot_common::ExecutionMode::Goal);
+    assert_eq!(
+        config.defaults.permission,
+        peridot_common::PermissionMode::Safe
+    );
+    assert!(!config.security.ask_before_install);
+    assert!(!config.security.ask_before_delete);
+    assert!(!config.git.auto_commit);
+    assert_eq!(config.git.branch_prefix, "peridot/");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn project_config_overrides_agents_preferences_selectively() {
+    let root =
+        std::env::temp_dir().join(format!("peridot-cli-config-merge-{}", std::process::id()));
+    fs::create_dir_all(root.join(".peridot")).unwrap();
+    fs::write(
+        root.join("AGENTS.md"),
+        "## preferences\n\
+             default_mode: goal\n\
+             default_permission: safe\n\
+             ask_before_install: false\n\
+             ask_before_delete: false\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join(".peridot/config.toml"),
+        "[defaults]\npermission = \"yolo\"\n\n[security]\nask_before_delete = true\n",
+    )
+    .unwrap();
+
+    let config = load_effective_config_inner(&root, None, false, false).unwrap();
+
+    assert_eq!(config.defaults.mode, peridot_common::ExecutionMode::Goal);
+    assert_eq!(
+        config.defaults.permission,
+        peridot_common::PermissionMode::Yolo
+    );
+    assert!(!config.security.ask_before_install);
+    assert!(config.security.ask_before_delete);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn project_config_merges_memory_and_tui_sections() {
+    let root = std::env::temp_dir().join(format!(
+        "peridot-cli-config-memory-tui-updates-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(root.join(".peridot")).unwrap();
+    fs::write(
+            root.join(".peridot/config.toml"),
+            "[memory]\nauto_skills = false\n\n[tui]\nshow_cost = false\nstream_speed = \"instant\"\n\n[updates]\nauto_check = false\nauto_check_interval = \"12h\"\n",
+        )
+        .unwrap();
+
+    let config = load_effective_config_inner(&root, None, false, false).unwrap();
+
+    assert!(!config.memory.auto_skills);
+    assert!(!config.tui.show_cost);
+    assert_eq!(config.tui.stream_speed, "instant");
+    assert!(!config.updates.auto_check);
+    assert_eq!(config.updates.auto_check_interval, "12h");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn agents_git_preferences_feed_effective_config() {
+    let root = std::env::temp_dir().join(format!(
+        "peridot-cli-git-preferences-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    fs::write(
+        root.join("AGENTS.md"),
+        "## preferences\n\
+             auto_commit: true\n\
+             commit_frequency: logical_unit\n\
+             branch_prefix: agent/\n",
+    )
+    .unwrap();
+
+    let config = load_effective_config_inner(&root, None, false, false).unwrap();
+
+    assert!(config.git.auto_commit);
+    assert_eq!(config.git.commit_frequency, "logical_unit");
+    assert_eq!(config.git.branch_prefix, "agent/");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn explicit_config_path_overrides_project_config_path() {
+    let root = std::env::temp_dir().join(format!(
+        "peridot-cli-explicit-config-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(root.join(".peridot")).unwrap();
+    let custom = root.join("custom-config.toml");
+    fs::write(
+        root.join(".peridot/config.toml"),
+        "[defaults]\nmode = \"plan\"\n",
+    )
+    .unwrap();
+    fs::write(&custom, "[defaults]\nmode = \"goal\"\n").unwrap();
+
+    let config = load_effective_config_inner(&root, Some(&custom), false, false).unwrap();
+
+    assert_eq!(config.defaults.mode, peridot_common::ExecutionMode::Goal);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn parses_env_override_values() {
+    assert_eq!(
+        parse_env_mode("PERIDOT_MODE", "goal").unwrap(),
+        peridot_common::ExecutionMode::Goal
+    );
+    assert_eq!(
+        parse_env_permission("PERIDOT_PERMISSION", "yolo").unwrap(),
+        peridot_common::PermissionMode::Yolo
+    );
+    assert!(parse_env_mode("PERIDOT_MODE", "wander").is_err());
+}
+
+#[tokio::test]
+async fn installs_local_skill_into_project_community_dir() {
+    let root =
+        std::env::temp_dir().join(format!("peridot-cli-install-skill-{}", std::process::id()));
+    fs::create_dir_all(&root).unwrap();
+    let source = root.join("My Skill.md");
+    fs::write(&source, "Prefer focused tests.").unwrap();
+
+    let installed = install_skill(&root, source.to_str().unwrap())
+        .await
+        .unwrap();
+    let skills = collect_skills(&root).unwrap();
+
+    assert_eq!(installed.name, "my-skill");
+    assert!(
+        installed
+            .path
+            .ends_with(".peridot/skills/community/my-skill.md")
+    );
+    assert!(
+        skills
+            .iter()
+            .any(|skill| skill.name == "my-skill" && skill.scope == "project-community")
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn sanitizes_skill_names() {
+    assert_eq!(
+        skill_name_from_source("https://example.test/Rust Tips.md"),
+        "rust-tips"
+    );
+    assert_eq!(sanitize_skill_name("..."), "skill");
+}
+
+#[test]
+fn parses_github_repository_urls() {
+    assert_eq!(
+        github_owner_repo("https://github.com/peridot-ai/peridot.git"),
+        Some(("peridot-ai".to_string(), "peridot".to_string()))
+    );
+    assert_eq!(
+        github_owner_repo("git@github.com:peridot-ai/peridot"),
+        Some(("peridot-ai".to_string(), "peridot".to_string()))
+    );
+}
+
+#[test]
+fn derives_pkce_challenge() {
+    assert_eq!(
+        pkce_challenge("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"),
+        "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+    );
+}
+
+#[test]
+fn parses_oauth_callback_query() {
+    let request = "GET /callback?code=abc%20123&state=state%2Bvalue HTTP/1.1\r\n\r\n";
+
+    let code = parse_oauth_callback(request, "state+value").unwrap();
+
+    assert_eq!(code, "abc 123");
+}
+
+#[test]
+fn detects_openai_oauth_token_expiry_window() {
+    let expiring = serde_json::json!({
+        "obtained_at_unix": unix_timestamp().saturating_sub(3500),
+        "expires_in": 3600
+    });
+    let fresh = serde_json::json!({
+        "obtained_at_unix": unix_timestamp(),
+        "expires_in": 3600
+    });
+
+    assert!(openai_oauth_token_expires_within(&expiring, 300));
+    assert!(!openai_oauth_token_expires_within(&fresh, 300));
+}
+
+#[test]
+fn builds_openai_authorize_url_with_escaped_values() {
+    let url = openai_oauth_authorize_url(
+        "client id",
+        "http://127.0.0.1:14552/callback",
+        "openid profile",
+        "state",
+        "challenge",
+    );
+
+    assert!(url.contains("client_id=client%20id"));
+    assert!(url.contains("redirect_uri=http%3A%2F%2F127.0.0.1%3A14552%2Fcallback"));
+    assert!(url.contains("scope=openid%20profile"));
+    assert!(url.contains("code_challenge_method=S256"));
+}
+
+#[test]
+fn finds_release_asset_url() {
+    let release = serde_json::json!({
+        "assets": [
+            {"name": "peridot-x86_64-unknown-linux-gnu.tar.gz", "browser_download_url": "https://example.test/peridot.tar.gz"}
+        ]
+    });
+
+    assert_eq!(
+        release_asset_url(&release, "peridot-x86_64-unknown-linux-gnu.tar.gz"),
+        Some("https://example.test/peridot.tar.gz".to_string())
+    );
+    assert_eq!(release_asset_url(&release, "missing.tar.gz"), None);
+}
+
+#[test]
+fn reads_release_checksum_for_asset() {
+    let checksums = "\
+1111111111111111111111111111111111111111111111111111111111111111  peridot-aarch64-apple-darwin.tar.gz\n\
+2222222222222222222222222222222222222222222222222222222222222222  *peridot-x86_64-unknown-linux-gnu.tar.gz\n";
+
+    assert_eq!(
+        checksum_for_asset(checksums, "peridot-x86_64-unknown-linux-gnu.tar.gz").unwrap(),
+        "2222222222222222222222222222222222222222222222222222222222222222"
+    );
+    assert!(checksum_for_asset(checksums, "missing.tar.gz").is_err());
+}
+
+#[test]
+fn verifies_sha256_digest() {
+    let expected = sha256_hex(b"peridot");
+
+    verify_sha256(b"peridot", &expected, "peridot-test.tar.gz").unwrap();
+    assert!(verify_sha256(b"other", &expected, "peridot-test.tar.gz").is_err());
+}
+
+#[test]
+fn parses_update_intervals() {
+    assert_eq!(parse_update_interval("30m"), Duration::from_secs(30 * 60));
+    assert_eq!(
+        parse_update_interval("12h"),
+        Duration::from_secs(12 * 60 * 60)
+    );
+    assert_eq!(
+        parse_update_interval("7d"),
+        Duration::from_secs(7 * 24 * 60 * 60)
+    );
+    assert_eq!(
+        parse_update_interval("bad"),
+        Duration::from_secs(24 * 60 * 60)
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn ensure_peri_alias_creates_unix_symlink() {
+    let root = std::env::temp_dir().join(format!("peridot-cli-alias-{}", std::process::id()));
+    fs::create_dir_all(&root).unwrap();
+    let binary = root.join("peridot");
+    fs::write(&binary, "binary").unwrap();
+
+    let alias = ensure_peri_alias(&binary, "x86_64-unknown-linux-gnu").unwrap();
+
+    assert_eq!(alias, root.join("peri"));
+    assert!(
+        fs::symlink_metadata(&alias)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn current_target_has_release_asset_name_shape() {
+    let target = current_release_target().unwrap();
+
+    assert!(target.contains('-'));
+    assert!(format!("peridot-{target}.tar.gz").starts_with("peridot-"));
+}
