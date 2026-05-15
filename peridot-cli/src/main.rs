@@ -9,10 +9,10 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use clap::{Parser, Subcommand, ValueEnum};
 use commands::{
-    AgentsCommand, AuthProvider, ConfigCommand, McpCommand, OutputFormat, SessionCommand,
-    SkillCommand, load_effective_config, maybe_print_update_notice, print_scan,
+    AgentsCommand, AuthProvider, ConfigCommand, EnvCommand, McpCommand, OutputFormat,
+    SessionCommand, SkillCommand, load_effective_config, maybe_print_update_notice, print_scan,
     read_stored_api_key, read_stored_openai_oauth_access_token, run_agents_command,
-    run_config_command, run_login_command, run_logout_command, run_mcp_command,
+    run_config_command, run_env_command, run_login_command, run_logout_command, run_mcp_command,
     run_session_command, run_setup_command, run_skill_command, run_update_command,
     run_verify_command,
 };
@@ -24,8 +24,8 @@ use peridot_context::{ContextLimits, ContextManager, project_context_limits};
 use peridot_core::{AgentRunRequest, AgentRunSummary, AgentState, HarnessAgent, StopReason};
 use peridot_git::GitManager;
 use peridot_llm::{
-    AuthMethod, ClaudeProvider, CompletionRequest, CompletionResponse, LlmProvider, OpenAiProvider,
-    PricingTable, Usage, parse_action,
+    AuthMethod, ClaudeProvider, CodexAppServerProvider, CompletionRequest, CompletionResponse,
+    LlmProvider, OpenAiProvider, PricingTable, Usage, parse_action,
 };
 use peridot_mcp::McpClient;
 use peridot_memory::{MemoryStore, SessionSummary, StoredSkill};
@@ -175,6 +175,12 @@ enum Command {
         #[command(subcommand)]
         command: McpCommand,
     },
+    /// Manage Peridot's user-local environment variable store.
+    Env {
+        /// Environment subcommand.
+        #[command(subcommand)]
+        command: EnvCommand,
+    },
     /// Store provider credentials from environment.
     Login {
         /// Provider to configure.
@@ -284,6 +290,10 @@ async fn main() -> Result<()> {
         }
         Some(Command::Mcp { command }) => {
             run_mcp_command(command, &config, cli.output).await?;
+            return Ok(());
+        }
+        Some(Command::Env { command }) => {
+            run_env_command(command, cli.output)?;
             return Ok(());
         }
         Some(Command::Login { provider }) => {

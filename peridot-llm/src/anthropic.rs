@@ -291,6 +291,7 @@ pub(crate) fn parse_anthropic_response(
             output_tokens,
             cache_read_tokens,
             cache_creation_tokens,
+            reasoning_output_tokens: 0,
             estimated_cost_usd,
         },
     })
@@ -371,6 +372,7 @@ pub(crate) fn parse_anthropic_stream(
             output_tokens,
             cache_read_tokens,
             cache_creation_tokens,
+            reasoning_output_tokens: 0,
             estimated_cost_usd,
         }),
     });

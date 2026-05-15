@@ -258,6 +258,39 @@ fn builds_openai_authorize_url_with_escaped_values() {
 }
 
 #[test]
+fn stores_openrouter_key_in_env_store_file() {
+    let root =
+        std::env::temp_dir().join(format!("peridot-cli-openrouter-env-{}", std::process::id()));
+    let path = root.join("env");
+
+    let stored = upsert_env_var_file(&path, "OPENROUTER_API_KEY", "sk-or-test value").unwrap();
+    let content = fs::read_to_string(&path).unwrap();
+
+    assert_eq!(stored, path);
+    assert_eq!(
+        parse_local_env_value(&content, "OPENROUTER_API_KEY").as_deref(),
+        Some("sk-or-test value")
+    );
+    assert!(content.contains("export OPENROUTER_API_KEY="));
+    assert_eq!(
+        parse_local_env_value(
+            "export OPENROUTER_API_KEY=sk-or-test\n",
+            "OPENROUTER_API_KEY"
+        )
+        .as_deref(),
+        Some("sk-or-test")
+    );
+    assert!(parse_local_env_value("OTHER=1\n", "OPENROUTER_API_KEY").is_none());
+
+    let removed = remove_env_var_file(&path, "OPENROUTER_API_KEY").unwrap();
+    let content = fs::read_to_string(&path).unwrap();
+
+    assert!(removed);
+    assert!(parse_local_env_value(&content, "OPENROUTER_API_KEY").is_none());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn finds_release_asset_url() {
     let release = serde_json::json!({
         "assets": [

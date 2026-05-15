@@ -1,6 +1,7 @@
 //! LLM provider contracts and live provider implementations.
 
 mod anthropic;
+mod codex;
 mod openai;
 mod parse;
 mod provider;
@@ -8,6 +9,7 @@ mod transport;
 mod types;
 
 pub use anthropic::ClaudeProvider;
+pub use codex::CodexAppServerProvider;
 pub use openai::OpenAiProvider;
 pub use parse::parse_action;
 pub use provider::{LlmProvider, PricingTable};
@@ -24,6 +26,7 @@ mod tests {
     use crate::transport::should_retry_status;
     use async_trait::async_trait;
     use peridot_common::PeriResult;
+    use std::io::{Read, Write};
 
     #[derive(Clone, Debug)]
     struct StaticProvider;
@@ -38,6 +41,7 @@ mod tests {
                     output_tokens: 2,
                     cache_read_tokens: 0,
                     cache_creation_tokens: 0,
+                    reasoning_output_tokens: 0,
                     estimated_cost_usd: 0.01,
                 },
             })
@@ -179,6 +183,56 @@ mod tests {
         assert_eq!(payload["input"][0]["role"], "user");
     }
 
+    #[tokio::test]
+    async fn openai_provider_posts_to_responses_endpoint() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                .unwrap();
+            let mut buffer = [0_u8; 8192];
+            let size = stream.read(&mut buffer).unwrap();
+            let request = String::from_utf8_lossy(&buffer[..size]);
+
+            assert!(request.starts_with("POST /v1/responses HTTP/1.1"));
+            assert!(request.contains("authorization: Bearer test-key"));
+            assert!(request.contains("\"model\":\"test-model\""));
+
+            let body = r#"{"output_text":"ok","usage":{"input_tokens":1,"output_tokens":2}}"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            stream.write_all(response.as_bytes()).unwrap();
+        });
+        let provider = OpenAiProvider::with_transport_options(
+            "test-model",
+            Some("test-key".to_string()),
+            format!("http://{address}"),
+            AuthMethod::ApiKey,
+            5,
+            0,
+        );
+
+        let response = provider
+            .complete(CompletionRequest {
+                model: "test-model".to_string(),
+                system: None,
+                messages: vec![LlmMessage::new(MessageRole::User, "hello")],
+                max_tokens: Some(16),
+                thinking: false,
+            })
+            .await
+            .unwrap();
+
+        server.join().unwrap();
+        assert_eq!(response.text, "ok");
+        assert_eq!(response.usage.output_tokens, 2);
+    }
+
     #[test]
     fn parses_anthropic_usage_and_text() {
         let response = parse_anthropic_response(
@@ -249,7 +303,8 @@ data: {"type":"message_stop"}
                 "usage": {
                     "input_tokens": 10,
                     "output_tokens": 5,
-                    "input_tokens_details": {"cached_tokens": 2}
+                    "input_tokens_details": {"cached_tokens": 2},
+                    "output_tokens_details": {"reasoning_tokens": 3}
                 }
             }"#,
             PricingTable::default(),
@@ -260,6 +315,7 @@ data: {"type":"message_stop"}
         assert_eq!(response.usage.input_tokens, 10);
         assert_eq!(response.usage.output_tokens, 5);
         assert_eq!(response.usage.cache_read_tokens, 2);
+        assert_eq!(response.usage.reasoning_output_tokens, 3);
     }
 
     #[test]
@@ -272,7 +328,7 @@ event: response.output_text.delta
 data: {"type":"response.output_text.delta","delta":"lo"}
 
 event: response.completed
-data: {"type":"response.completed","response":{"usage":{"input_tokens":10,"output_tokens":5,"input_tokens_details":{"cached_tokens":2}}}}
+data: {"type":"response.completed","response":{"usage":{"input_tokens":10,"output_tokens":5,"input_tokens_details":{"cached_tokens":2},"output_tokens_details":{"reasoning_tokens":3}}}}
 
 data: [DONE]
 "#,
@@ -287,6 +343,7 @@ data: [DONE]
         assert_eq!(usage.input_tokens, 10);
         assert_eq!(usage.output_tokens, 5);
         assert_eq!(usage.cache_read_tokens, 2);
+        assert_eq!(usage.reasoning_output_tokens, 3);
     }
 
     #[test]

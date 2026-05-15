@@ -8,6 +8,7 @@ pub(crate) fn accumulate_usage(total: &mut Usage, usage: Usage) {
     total.output_tokens += usage.output_tokens;
     total.cache_read_tokens += usage.cache_read_tokens;
     total.cache_creation_tokens += usage.cache_creation_tokens;
+    total.reasoning_output_tokens += usage.reasoning_output_tokens;
     total.estimated_cost_usd += usage.estimated_cost_usd;
 }
 

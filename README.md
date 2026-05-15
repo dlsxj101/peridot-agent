@@ -19,6 +19,7 @@ Implemented:
 - Deterministic verification pipeline and git worktree helpers.
 - Configured tool hooks with warn/block behavior and audit JSONL logging.
 - OpenAI API-key and OAuth PKCE login storage.
+- OpenRouter API-key execution with Peridot-managed user-local environment storage.
 - Headless CLI commands and Ratatui-backed interactive TUI shell.
 - GitHub Actions CI, six-target release packaging, `install.sh`, checksum-verified self-update, and startup update notices.
 
@@ -67,6 +68,40 @@ Live execution uses environment credentials or credentials stored with `peridot 
 ANTHROPIC_API_KEY=... cargo run -p peridot-cli -- run "inspect this project" --live
 OPENAI_API_KEY=... cargo run -p peridot-cli -- login openai-api
 OPENAI_OAUTH_CLIENT_ID=... cargo run -p peridot-cli -- login openai-oauth
+```
+
+OpenRouter keys can be managed by Peridot instead of exported in every shell. The value is stored in the user-local Peridot env store at `~/.peridot/env` with private file permissions:
+
+```bash
+cargo run -p peridot-cli -- env set OPENROUTER_API_KEY sk-or-...
+cargo run -p peridot-cli -- env list
+```
+
+Configure OpenRouter and run live:
+
+```toml
+[auth]
+primary = "openrouter-api"
+
+[api]
+base_url = "https://openrouter.ai/api"
+
+[models]
+main = "openai/gpt-5.2"
+```
+
+```bash
+cargo run -p peridot-cli -- run "inspect this project" --live --headless
+```
+
+For ChatGPT Pro through the local Codex app-server, log in with Codex first, then use the `codex` provider:
+
+```toml
+[auth]
+primary = "codex"
+
+[models]
+main = "gpt-5.5"
 ```
 
 Live model responses must currently follow Peridot's JSON action protocol:

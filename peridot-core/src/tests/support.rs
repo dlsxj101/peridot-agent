@@ -46,6 +46,7 @@ impl LlmProvider for StaticProvider {
                 output_tokens: 1,
                 cache_read_tokens: 0,
                 cache_creation_tokens: 0,
+                reasoning_output_tokens: 0,
                 estimated_cost_usd: self.cost_usd,
             },
         })
@@ -95,6 +96,7 @@ impl LlmProvider for StreamingOnlyProvider {
                     output_tokens: 3,
                     cache_read_tokens: 1,
                     cache_creation_tokens: 0,
+                    reasoning_output_tokens: 0,
                     estimated_cost_usd: 0.04,
                 }),
             },

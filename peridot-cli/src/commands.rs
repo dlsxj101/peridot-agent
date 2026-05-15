@@ -55,8 +55,8 @@ pub(crate) use agents::run_agents_command;
 use agents::{agents_draft, find_agents_instruction};
 use auth::unix_timestamp;
 pub(crate) use auth::{
-    read_stored_api_key, read_stored_openai_oauth_access_token, run_login_command,
-    run_logout_command,
+    read_managed_env_var, read_stored_api_key, read_stored_openai_oauth_access_token,
+    run_env_command, run_login_command, run_logout_command,
 };
 use config::init_project_config_value;
 pub(crate) use config::{load_effective_config, run_config_command};
@@ -85,8 +85,34 @@ pub(crate) enum AuthProvider {
     ClaudeApi,
     /// OpenAI API key.
     OpenaiApi,
+    /// OpenRouter API key.
+    OpenrouterApi,
     /// OpenAI OAuth PKCE flow.
     OpenaiOauth,
+}
+
+/// User-local environment variable store commands.
+#[derive(Debug, Subcommand)]
+pub(crate) enum EnvCommand {
+    /// Store an environment variable in Peridot's user-local env store.
+    Set {
+        /// Environment variable name.
+        key: String,
+        /// Value to store. If omitted, Peridot reads the value from stdin.
+        value: Option<String>,
+    },
+    /// Print a stored environment variable value.
+    Get {
+        /// Environment variable name.
+        key: String,
+    },
+    /// List stored environment variable names.
+    List,
+    /// Remove a stored environment variable.
+    Unset {
+        /// Environment variable name.
+        key: String,
+    },
 }
 
 impl AuthProvider {
@@ -94,6 +120,7 @@ impl AuthProvider {
         match self {
             Self::ClaudeApi => "claude-api",
             Self::OpenaiApi => "openai-api",
+            Self::OpenrouterApi => "openrouter-api",
             Self::OpenaiOauth => "openai-oauth",
         }
     }
@@ -102,6 +129,7 @@ impl AuthProvider {
         match self {
             Self::ClaudeApi => Some("ANTHROPIC_API_KEY"),
             Self::OpenaiApi => Some("OPENAI_API_KEY"),
+            Self::OpenrouterApi => Some("OPENROUTER_API_KEY"),
             Self::OpenaiOauth => None,
         }
     }

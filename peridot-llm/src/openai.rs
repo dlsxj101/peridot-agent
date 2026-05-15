@@ -260,6 +260,11 @@ pub(crate) fn parse_openai_response(
         .and_then(|details| details.get("cached_tokens"))
         .and_then(Value::as_u64)
         .unwrap_or(0);
+    let reasoning_output_tokens = usage_value
+        .get("output_tokens_details")
+        .and_then(|details| details.get("reasoning_tokens"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
     let estimated_cost_usd = estimate_cost(pricing, input_tokens, output_tokens, cache_read_tokens);
 
     Ok(CompletionResponse {
@@ -269,6 +274,7 @@ pub(crate) fn parse_openai_response(
             output_tokens,
             cache_read_tokens,
             cache_creation_tokens: 0,
+            reasoning_output_tokens,
             estimated_cost_usd,
         },
     })
@@ -282,6 +288,7 @@ pub(crate) fn parse_openai_stream(
     let mut input_tokens = 0;
     let mut output_tokens = 0;
     let mut cache_read_tokens = 0;
+    let mut reasoning_output_tokens = 0;
 
     for data in sse_data_events(body) {
         if data == "[DONE]" {
@@ -317,6 +324,11 @@ pub(crate) fn parse_openai_stream(
                         .and_then(|details| details.get("cached_tokens"))
                         .and_then(Value::as_u64)
                         .unwrap_or(cache_read_tokens);
+                    reasoning_output_tokens = usage
+                        .get("output_tokens_details")
+                        .and_then(|details| details.get("reasoning_tokens"))
+                        .and_then(Value::as_u64)
+                        .unwrap_or(reasoning_output_tokens);
                 }
             }
             _ => {}
@@ -332,6 +344,7 @@ pub(crate) fn parse_openai_stream(
             output_tokens,
             cache_read_tokens,
             cache_creation_tokens: 0,
+            reasoning_output_tokens,
             estimated_cost_usd,
         }),
     });

@@ -67,7 +67,7 @@ pub(super) async fn run_task(
     if cli.live {
         let profile = ProjectScanner::new().scan(project_root)?;
         let denied_paths = profile.boundaries.into_iter().map(PathBuf::from).collect();
-        let provider = live_provider(config, &model).await?;
+        let provider = live_provider(config, &model, project_root).await?;
         let summary = run_agent_loop(
             &mut agent,
             provider.as_ref(),

@@ -69,6 +69,9 @@ pub struct Usage {
     pub cache_read_tokens: u64,
     /// Cache creation input tokens.
     pub cache_creation_tokens: u64,
+    /// Reasoning output tokens when reported separately by the provider.
+    #[serde(default)]
+    pub reasoning_output_tokens: u64,
     /// Estimated cost in USD.
     pub estimated_cost_usd: f64,
 }

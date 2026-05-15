@@ -1,8 +1,10 @@
 use super::*;
+use crate::commands::read_managed_env_var;
 
 pub(super) async fn live_provider(
     config: &PeridotConfig,
     model: &str,
+    project_root: &Path,
 ) -> Result<Box<dyn LlmProvider>> {
     match config.auth.primary.as_str() {
         "claude-api" => {
@@ -41,6 +43,29 @@ pub(super) async fn live_provider(
                 config.api.max_retries,
             )))
         }
+        "openrouter-api" => {
+            let api_key = std::env::var("OPENROUTER_API_KEY")
+                .ok()
+                .or_else(|| read_managed_env_var("OPENROUTER_API_KEY").ok().flatten())
+                .with_context(
+                    || {
+                        "OPENROUTER_API_KEY, peridot env set OPENROUTER_API_KEY, or peridot login openrouter-api is required for --live"
+                    },
+                )?;
+            let base_url = if config.api.base_url == "https://api.anthropic.com" {
+                "https://openrouter.ai/api".to_string()
+            } else {
+                config.api.base_url.clone()
+            };
+            Ok(Box::new(OpenAiProvider::with_transport_options(
+                model.to_string(),
+                Some(api_key),
+                base_url,
+                AuthMethod::ApiKey,
+                config.api.timeout_seconds,
+                config.api.max_retries,
+            )))
+        }
         "openai-oauth" => {
             let access_token = match std::env::var("OPENAI_ACCESS_TOKEN").ok() {
                 Some(access_token) => Some(access_token),
@@ -63,8 +88,18 @@ pub(super) async fn live_provider(
                 config.api.max_retries,
             )))
         }
+        "codex" => {
+            let command =
+                std::env::var("PERIDOT_CODEX_COMMAND").unwrap_or_else(|_| "codex".to_string());
+            Ok(Box::new(CodexAppServerProvider::with_command(
+                model.to_string(),
+                project_root.to_path_buf(),
+                command,
+                config.api.timeout_seconds,
+            )))
+        }
         provider => anyhow::bail!(
-            "live provider {provider} is not implemented yet; use claude-api, openai-api, openai-oauth, or --mock-response-file"
+            "live provider {provider} is not implemented yet; use claude-api, openai-api, openrouter-api, codex, openai-oauth, or --mock-response-file"
         ),
     }
 }
