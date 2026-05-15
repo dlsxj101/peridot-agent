@@ -104,6 +104,40 @@ fn project_config_merges_memory_and_tui_sections() {
 }
 
 #[test]
+fn wizard_profile_writes_openrouter_config() {
+    let config = config_from_wizard_profile(ConfigWizardProfile {
+        auth_primary: "openrouter-api".to_string(),
+        api_base_url: "https://openrouter.ai/api".to_string(),
+        main_model: "openai/gpt-4o-mini".to_string(),
+        goal_checker_model: "openai/gpt-4o-mini".to_string(),
+    });
+
+    assert_eq!(config.auth.primary, "openrouter-api");
+    assert_eq!(config.api.base_url, "https://openrouter.ai/api");
+    assert_eq!(config.models.main, "openai/gpt-4o-mini");
+    assert_eq!(config.models.goal_checker, "openai/gpt-4o-mini");
+    assert_eq!(config.models.compaction, "openai/gpt-4o-mini");
+}
+
+#[test]
+fn config_set_updates_known_keys() {
+    let mut config = PeridotConfig::default();
+
+    set_config_key(&mut config, "auth.primary", "openrouter-api").unwrap();
+    set_config_key(&mut config, "models.main", "openai/gpt-4o-mini").unwrap();
+    set_config_key(&mut config, "api.base_url", "https://openrouter.ai/api").unwrap();
+    set_config_key(&mut config, "defaults.max_turns", "3").unwrap();
+    set_config_key(&mut config, "git.auto_commit", "true").unwrap();
+
+    assert_eq!(config.auth.primary, "openrouter-api");
+    assert_eq!(config.models.main, "openai/gpt-4o-mini");
+    assert_eq!(config.api.base_url, "https://openrouter.ai/api");
+    assert_eq!(config.defaults.max_turns, 3);
+    assert!(config.git.auto_commit);
+    assert!(set_config_key(&mut config, "unknown.key", "value").is_err());
+}
+
+#[test]
 fn agents_git_preferences_feed_effective_config() {
     let root = std::env::temp_dir().join(format!(
         "peridot-cli-git-preferences-{}",

@@ -77,7 +77,28 @@ cargo run -p peridot-cli -- env set OPENROUTER_API_KEY sk-or-...
 cargo run -p peridot-cli -- env list
 ```
 
-Configure OpenRouter and run live:
+Configure OpenRouter with the welcome wizard and run live:
+
+```bash
+cargo run -p peridot-cli -- config init
+```
+
+Run the wizard again at any time:
+
+```bash
+cargo run -p peridot-cli -- config wizard
+```
+
+Or update individual settings without opening an editor:
+
+```bash
+cargo run -p peridot-cli -- config set auth.primary openrouter-api
+cargo run -p peridot-cli -- config set api.base_url https://openrouter.ai/api
+cargo run -p peridot-cli -- config set models.main openai/gpt-4o-mini
+cargo run -p peridot-cli -- config set models.goal_checker openai/gpt-4o-mini
+```
+
+The resulting config uses the same values as:
 
 ```toml
 [auth]

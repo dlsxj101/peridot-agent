@@ -217,6 +217,10 @@ pub(crate) fn run_config_command(
 ) -> Result<()> {
     match command {
         ConfigCommand::Init => init_project_config(project_root, output),
+        ConfigCommand::Wizard => run_config_wizard_command(project_root, output),
+        ConfigCommand::Set { key, value } => {
+            set_project_config_value(project_root, key, value, output)
+        }
         ConfigCommand::Show => print_config(config, output),
         ConfigCommand::Edit => edit_project_config(project_root),
     }
@@ -224,18 +228,70 @@ pub(crate) fn run_config_command(
 
 pub(super) fn init_project_config(project_root: &Path, output: OutputFormat) -> Result<()> {
     let result = init_project_config_value(project_root)?;
+    let configured = if output == OutputFormat::Text && std::io::stdin().is_terminal() {
+        maybe_run_config_wizard(&result)?
+    } else {
+        false
+    };
     print_json_or_text_result(
         serde_json::json!({
             "config_path": result.config_path,
             "created_config": result.created_config,
-            "updated_gitignore": result.updated_gitignore
+            "updated_gitignore": result.updated_gitignore,
+            "configured": configured
         }),
-        format!(
-            "initialized {} (created_config={}, updated_gitignore={})",
-            result.peridot_dir.display(),
-            result.created_config,
-            result.updated_gitignore
-        ),
+        if configured {
+            format!(
+                "initialized {} (created_config={}, updated_gitignore={}, configured=true)",
+                result.peridot_dir.display(),
+                result.created_config,
+                result.updated_gitignore
+            )
+        } else {
+            format!(
+                "initialized {} (created_config={}, updated_gitignore={})",
+                result.peridot_dir.display(),
+                result.created_config,
+                result.updated_gitignore
+            )
+        },
+        output,
+    )
+}
+
+pub(super) fn run_config_wizard_command(project_root: &Path, output: OutputFormat) -> Result<()> {
+    if output == OutputFormat::Json || !std::io::stdin().is_terminal() {
+        anyhow::bail!("config wizard requires an interactive terminal");
+    }
+    let result = init_project_config_value(project_root)?;
+    run_config_wizard(&result)?;
+    print_json_or_text_result(
+        serde_json::json!({
+            "config_path": result.config_path,
+            "configured": true
+        }),
+        format!("configured {}", result.config_path.display()),
+        output,
+    )
+}
+
+pub(super) fn set_project_config_value(
+    project_root: &Path,
+    key: &str,
+    value: &str,
+    output: OutputFormat,
+) -> Result<()> {
+    let result = init_project_config_value(project_root)?;
+    let mut config = toml::from_str::<PeridotConfig>(&fs::read_to_string(&result.config_path)?)?;
+    set_config_key(&mut config, key, value)?;
+    fs::write(&result.config_path, toml::to_string_pretty(&config)?)?;
+    print_json_or_text_result(
+        serde_json::json!({
+            "config_path": result.config_path,
+            "key": key,
+            "value": value
+        }),
+        format!("set {key} = {value}"),
         output,
     )
 }
@@ -301,6 +357,295 @@ pub(super) fn init_project_config_value(project_root: &Path) -> Result<ConfigIni
         created_config,
         updated_gitignore: changed_gitignore,
     })
+}
+
+fn maybe_run_config_wizard(result: &ConfigInitResult) -> Result<bool> {
+    if !result.created_config
+        && !prompt_yes_no(
+            "A Peridot config already exists. Update provider and model settings?",
+            false,
+        )?
+    {
+        return Ok(false);
+    }
+    run_config_wizard(result)?;
+    Ok(true)
+}
+
+fn run_config_wizard(result: &ConfigInitResult) -> Result<()> {
+    println!();
+    println!("Welcome to Peridot.");
+    println!("Choose how this project should talk to models.");
+    println!();
+
+    let provider = prompt_choice(
+        "Provider",
+        &[
+            "OpenRouter API key",
+            "Codex app-server / ChatGPT login",
+            "Claude API key",
+            "OpenAI API key",
+        ],
+        default_provider_choice(),
+    )?;
+    let profile = match provider {
+        1 => {
+            if read_managed_env_var("OPENROUTER_API_KEY")?.is_none() {
+                println!();
+                println!(
+                    "OpenRouter is selected. Store a key with: peridot env set OPENROUTER_API_KEY sk-or-..."
+                );
+            }
+            let model = prompt_model_choice(
+                "OpenRouter main model",
+                &[
+                    "openai/gpt-4o-mini",
+                    "openai/gpt-5.2",
+                    "anthropic/claude-sonnet-4.5",
+                ],
+                "openai/gpt-4o-mini",
+            )?;
+            let goal_checker = prompt_goal_checker_model(&model)?;
+            ConfigWizardProfile {
+                auth_primary: "openrouter-api".to_string(),
+                api_base_url: "https://openrouter.ai/api".to_string(),
+                main_model: model,
+                goal_checker_model: goal_checker,
+            }
+        }
+        2 => {
+            let model = prompt_model_choice(
+                "Codex model",
+                &["gpt-5.5", "gpt-5.4", "gpt-5.4-mini"],
+                "gpt-5.5",
+            )?;
+            let goal_checker = prompt_goal_checker_model(&model)?;
+            ConfigWizardProfile {
+                auth_primary: "codex".to_string(),
+                api_base_url: PeridotConfig::default().api.base_url,
+                main_model: model,
+                goal_checker_model: goal_checker,
+            }
+        }
+        3 => {
+            let model = prompt_model_choice(
+                "Claude main model",
+                &["claude-sonnet-4-6", "claude-haiku-4-5"],
+                "claude-sonnet-4-6",
+            )?;
+            let goal_checker = prompt_goal_checker_model(&model)?;
+            ConfigWizardProfile {
+                auth_primary: "claude-api".to_string(),
+                api_base_url: "https://api.anthropic.com".to_string(),
+                main_model: model,
+                goal_checker_model: goal_checker,
+            }
+        }
+        4 => {
+            let model =
+                prompt_model_choice("OpenAI main model", &["gpt-5.2", "gpt-4o-mini"], "gpt-5.2")?;
+            let goal_checker = prompt_goal_checker_model(&model)?;
+            ConfigWizardProfile {
+                auth_primary: "openai-api".to_string(),
+                api_base_url: "https://api.openai.com".to_string(),
+                main_model: model,
+                goal_checker_model: goal_checker,
+            }
+        }
+        _ => unreachable!("prompt_choice only returns listed choices"),
+    };
+    let config = config_from_wizard_profile(profile);
+    fs::write(&result.config_path, toml::to_string_pretty(&config)?)?;
+    println!();
+    println!("Wrote {}", result.config_path.display());
+    Ok(())
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct ConfigWizardProfile {
+    pub(super) auth_primary: String,
+    pub(super) api_base_url: String,
+    pub(super) main_model: String,
+    pub(super) goal_checker_model: String,
+}
+
+pub(super) fn config_from_wizard_profile(profile: ConfigWizardProfile) -> PeridotConfig {
+    let mut config = PeridotConfig::default();
+    config.auth.primary = profile.auth_primary;
+    config.api.base_url = profile.api_base_url;
+    config.models.main = profile.main_model;
+    config.models.goal_checker = profile.goal_checker_model.clone();
+    config.models.compaction = profile.goal_checker_model;
+    config
+}
+
+pub(super) fn set_config_key(config: &mut PeridotConfig, key: &str, value: &str) -> Result<()> {
+    match key {
+        "auth.primary" => config.auth.primary = value.to_string(),
+        "api.base_url" => config.api.base_url = value.to_string(),
+        "api.timeout_seconds" => {
+            config.api.timeout_seconds = value
+                .parse()
+                .with_context(|| "api.timeout_seconds must be an integer")?;
+        }
+        "api.max_retries" => {
+            config.api.max_retries = value
+                .parse()
+                .with_context(|| "api.max_retries must be an integer")?;
+        }
+        "models.main" => config.models.main = value.to_string(),
+        "models.goal_checker" => config.models.goal_checker = value.to_string(),
+        "models.compaction" => config.models.compaction = value.to_string(),
+        "defaults.mode" => config.defaults.mode = parse_env_mode("defaults.mode", value)?,
+        "defaults.permission" => {
+            config.defaults.permission = parse_env_permission("defaults.permission", value)?;
+        }
+        "defaults.max_turns" => {
+            config.defaults.max_turns = value
+                .parse()
+                .with_context(|| "defaults.max_turns must be an integer")?;
+        }
+        "defaults.budget_usd" => {
+            config.defaults.budget_usd = value
+                .parse()
+                .with_context(|| "defaults.budget_usd must be a decimal number")?;
+        }
+        "security.sandbox" => config.security.sandbox = parse_sandbox_mode(value)?,
+        "git.auto_commit" => config.git.auto_commit = parse_bool_value("git.auto_commit", value)?,
+        "git.auto_branch" => config.git.auto_branch = parse_bool_value("git.auto_branch", value)?,
+        "git.branch_prefix" => config.git.branch_prefix = value.to_string(),
+        "updates.auto_check" => {
+            config.updates.auto_check = parse_bool_value("updates.auto_check", value)?;
+        }
+        "updates.auto_install" => {
+            config.updates.auto_install = parse_bool_value("updates.auto_install", value)?;
+        }
+        _ => anyhow::bail!(
+            "unsupported config key `{key}`; supported examples: auth.primary, api.base_url, models.main, models.goal_checker, defaults.mode"
+        ),
+    }
+    Ok(())
+}
+
+fn parse_bool_value(name: &str, value: &str) -> Result<bool> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "true" | "yes" | "1" | "on" => Ok(true),
+        "false" | "no" | "0" | "off" => Ok(false),
+        _ => anyhow::bail!("{name} must be true or false"),
+    }
+}
+
+fn parse_sandbox_mode(value: &str) -> Result<peridot_common::SandboxMode> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "none" => Ok(peridot_common::SandboxMode::None),
+        "docker" => Ok(peridot_common::SandboxMode::Docker),
+        "firejail" => Ok(peridot_common::SandboxMode::Firejail),
+        _ => anyhow::bail!("security.sandbox must be one of none, docker, or firejail"),
+    }
+}
+
+fn default_provider_choice() -> usize {
+    if read_managed_env_var("OPENROUTER_API_KEY")
+        .ok()
+        .flatten()
+        .is_some()
+    {
+        1
+    } else if command_exists("codex") {
+        2
+    } else {
+        1
+    }
+}
+
+fn command_exists(command: &str) -> bool {
+    Command::new(command)
+        .arg("--version")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+fn prompt_model_choice(label: &str, options: &[&str], default: &str) -> Result<String> {
+    let mut choices = options.to_vec();
+    choices.push("Custom");
+    let choice = prompt_choice(label, &choices, 1)?;
+    if choice == choices.len() {
+        prompt_text(&format!("{label} id"), default)
+    } else {
+        Ok(choices[choice - 1].to_string())
+    }
+}
+
+fn prompt_goal_checker_model(main_model: &str) -> Result<String> {
+    if prompt_yes_no("Use the same model for goal checking?", true)? {
+        return Ok(main_model.to_string());
+    }
+    prompt_text("Goal checker model id", main_model)
+}
+
+fn prompt_choice(label: &str, options: &[&str], default: usize) -> Result<usize> {
+    anyhow::ensure!(!options.is_empty(), "prompt options cannot be empty");
+    anyhow::ensure!(
+        (1..=options.len()).contains(&default),
+        "default prompt choice is out of range"
+    );
+    loop {
+        println!("{label}:");
+        for (index, option) in options.iter().enumerate() {
+            println!("  {}. {}", index + 1, option);
+        }
+        print!("Choose [{default}]: ");
+        std::io::stdout().flush()?;
+        let mut answer = String::new();
+        std::io::stdin().read_line(&mut answer)?;
+        let answer = answer.trim();
+        if answer.is_empty() {
+            return Ok(default);
+        }
+        if let Ok(choice) = answer.parse::<usize>()
+            && (1..=options.len()).contains(&choice)
+        {
+            return Ok(choice);
+        }
+        println!("Enter a number from 1 to {}.", options.len());
+    }
+}
+
+fn prompt_yes_no(question: &str, default: bool) -> Result<bool> {
+    let hint = if default { "Y/n" } else { "y/N" };
+    loop {
+        print!("{question} [{hint}]: ");
+        std::io::stdout().flush()?;
+        let mut answer = String::new();
+        std::io::stdin().read_line(&mut answer)?;
+        let answer = answer.trim().to_ascii_lowercase();
+        match answer.as_str() {
+            "" => return Ok(default),
+            "y" | "yes" => return Ok(true),
+            "n" | "no" => return Ok(false),
+            _ => println!("Enter y or n."),
+        }
+    }
+}
+
+fn prompt_text(question: &str, default: &str) -> Result<String> {
+    loop {
+        print!("{question} [{default}]: ");
+        std::io::stdout().flush()?;
+        let mut answer = String::new();
+        std::io::stdin().read_line(&mut answer)?;
+        let answer = answer.trim();
+        if answer.is_empty() {
+            return Ok(default.to_string());
+        }
+        if !answer.is_empty() {
+            return Ok(answer.to_string());
+        }
+    }
 }
 
 pub(super) fn print_config(config: &PeridotConfig, output: OutputFormat) -> Result<()> {

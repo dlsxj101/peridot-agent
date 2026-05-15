@@ -5,7 +5,7 @@ use std::collections::HashMap;
 #[allow(unused_imports)]
 use std::fs;
 #[allow(unused_imports)]
-use std::io::{Read, Write};
+use std::io::{IsTerminal, Read, Write};
 #[allow(unused_imports)]
 use std::net::TcpListener;
 #[allow(unused_imports)]
@@ -140,6 +140,15 @@ impl AuthProvider {
 pub(crate) enum ConfigCommand {
     /// Initialize project-local Peridot config.
     Init,
+    /// Run the interactive welcome setup wizard again.
+    Wizard,
+    /// Set one project config value, such as auth.primary or models.main.
+    Set {
+        /// Dot-separated config key.
+        key: String,
+        /// Value to write.
+        value: String,
+    },
     /// Print the effective config.
     Show,
     /// Open project-local config in $EDITOR.
