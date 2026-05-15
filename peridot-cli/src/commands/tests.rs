@@ -397,6 +397,29 @@ fn ensure_peri_alias_creates_unix_symlink() {
     fs::remove_dir_all(root).unwrap();
 }
 
+#[cfg(unix)]
+#[test]
+fn install_executable_update_replaces_with_rename() {
+    let root = std::env::temp_dir().join(format!("peridot-cli-update-{}", std::process::id()));
+    fs::create_dir_all(&root).unwrap();
+    let current = root.join("peridot");
+    let extracted = root.join("new-peridot");
+    fs::write(&current, "old").unwrap();
+    fs::write(&extracted, "new").unwrap();
+
+    install_executable_update(&extracted, &current).unwrap();
+
+    assert_eq!(fs::read_to_string(&current).unwrap(), "new");
+    assert!(fs::read_dir(&root).unwrap().all(|entry| {
+        !entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .contains(".new-")
+    }));
+    fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn current_target_has_release_asset_name_shape() {
     let target = current_release_target().unwrap();

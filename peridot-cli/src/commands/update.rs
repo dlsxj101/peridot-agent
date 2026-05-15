@@ -275,12 +275,43 @@ pub(super) async fn install_update(release: &Value) -> Result<PathBuf> {
             .unwrap_or("peridot")
     ));
     let _ = fs::copy(&current_exe, backup);
-    fs::copy(&extracted, &current_exe)
-        .with_context(|| format!("failed to replace {}", current_exe.display()))?;
-    set_executable_permissions(&current_exe)?;
+    install_executable_update(&extracted, &current_exe)?;
     ensure_peri_alias(&current_exe, target)?;
     let _ = fs::remove_dir_all(temp_dir);
     Ok(current_exe)
+}
+
+#[cfg(unix)]
+pub(super) fn install_executable_update(extracted: &Path, current_exe: &Path) -> Result<()> {
+    let parent = current_exe
+        .parent()
+        .with_context(|| format!("{} has no parent directory", current_exe.display()))?;
+    let file_name = current_exe
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("peridot");
+    let staged = parent.join(format!(
+        ".{file_name}.new-{}-{}",
+        std::process::id(),
+        unix_timestamp()
+    ));
+    let cleanup = || {
+        let _ = fs::remove_file(&staged);
+    };
+    cleanup();
+    fs::copy(extracted, &staged)
+        .with_context(|| format!("failed to stage update at {}", staged.display()))?;
+    set_executable_permissions(&staged)?;
+    fs::rename(&staged, current_exe)
+        .with_context(|| format!("failed to replace {}", current_exe.display()))?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+pub(super) fn install_executable_update(extracted: &Path, current_exe: &Path) -> Result<()> {
+    fs::copy(extracted, current_exe)
+        .with_context(|| format!("failed to replace {}", current_exe.display()))?;
+    set_executable_permissions(current_exe)
 }
 
 pub(super) fn checksum_for_asset(checksums: &str, asset_name: &str) -> Result<String> {
