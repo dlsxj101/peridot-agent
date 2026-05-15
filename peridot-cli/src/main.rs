@@ -1,7 +1,6 @@
 //! Peridot command-line entrypoint.
 
 use std::fs;
-use std::io::{IsTerminal, Read};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -10,22 +9,22 @@ use async_trait::async_trait;
 use clap::{Parser, Subcommand, ValueEnum};
 use commands::{
     AgentsCommand, AuthProvider, ConfigCommand, EnvCommand, McpCommand, OutputFormat,
-    SessionCommand, SkillCommand, load_effective_config, maybe_print_update_notice, print_scan,
-    read_stored_api_key, read_stored_openai_oauth_access_token, run_agents_command,
-    run_config_command, run_env_command, run_login_command, run_logout_command, run_mcp_command,
-    run_session_command, run_setup_command, run_skill_command, run_update_command,
-    run_verify_command,
+    SessionCommand, SkillCommand, load_effective_config, maybe_print_update_notice,
+    maybe_run_first_launch_wizard, print_scan, read_stored_api_key,
+    read_stored_openai_oauth_access_token, run_agents_command, run_config_command, run_env_command,
+    run_login_command, run_logout_command, run_mcp_command, run_session_command, run_setup_command,
+    run_skill_command, run_update_command, run_verify_command,
 };
 use peridot_common::{
     ContextConfig, ExecutionMode, MemoryConfig, PeriError, PeriResult, PeridotConfig,
-    PermissionMode, ToolCall,
+    PermissionMode,
 };
 use peridot_context::{ContextLimits, ContextManager, project_context_limits};
 use peridot_core::{AgentRunRequest, AgentRunSummary, AgentState, HarnessAgent, StopReason};
 use peridot_git::GitManager;
 use peridot_llm::{
     AuthMethod, ClaudeProvider, CodexAppServerProvider, CompletionRequest, CompletionResponse,
-    LlmProvider, OpenAiProvider, PricingTable, Usage, parse_action,
+    LlmProvider, OpenAiProvider, PricingTable, Usage,
 };
 use peridot_mcp::McpClient;
 use peridot_memory::{MemoryStore, SessionSummary, StoredSkill};
@@ -36,7 +35,6 @@ use peridot_tui::{HeaderState, TuiState, run_interactive};
 
 mod commands;
 mod context_limits;
-mod direct_tools;
 mod interactive_io;
 mod providers;
 mod run_loop;
@@ -46,13 +44,10 @@ mod run_state;
 mod tests;
 
 use context_limits::project_context_limits_from_config;
-use direct_tools::task_to_tool_call;
 use interactive_io::{read_piped_task, run_tui_lifecycle_hooks};
 use providers::{FileMockProvider, live_provider};
 use run_loop::run_task;
-use run_output::{
-    exit_for_summary, exit_for_tool_result, print_run_summary_text, run_summary_output,
-};
+use run_output::{exit_for_summary, print_run_summary_text, run_summary_output};
 use run_state::{apply_resume, auto_commit_run, save_run_session, unix_timestamp};
 
 /// Peridot autonomous coding agent.
@@ -91,7 +86,7 @@ struct Cli {
     #[arg(long, global = true)]
     mock_response_file: Option<PathBuf>,
 
-    /// Use the configured live provider instead of deterministic JSON/tool-only behavior.
+    /// Use the configured live provider. This is now the default unless --mock-response-file is set.
     #[arg(long, global = true)]
     live: bool,
 
@@ -118,6 +113,15 @@ struct Cli {
 impl Cli {
     fn effective_headless(&self) -> bool {
         self.headless || env_truthy("PERIDOT_HEADLESS")
+    }
+
+    fn starts_agent_session(&self) -> bool {
+        matches!(
+            &self.command,
+            None | Some(Command::Run { .. })
+                | Some(Command::Plan { .. })
+                | Some(Command::Goal { .. })
+        )
     }
 }
 
@@ -252,6 +256,14 @@ impl From<CliPermission> for PermissionMode {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     let project_root = cli.project.clone().unwrap_or(std::env::current_dir()?);
+    if cli.starts_agent_session() {
+        maybe_run_first_launch_wizard(
+            &project_root,
+            cli.config.as_deref(),
+            cli.effective_headless(),
+            cli.output,
+        )?;
+    }
     let config = load_effective_config(&project_root, cli.config.as_deref())?;
 
     match &cli.command {
@@ -393,6 +405,9 @@ async fn main() -> Result<()> {
                         TuiState::new(HeaderState::new(mode, permission, model.clone()))
                             .with_config(config.tui.clone());
                     state.push_transcript("Peridot ready. Type a task, /plan, /execute, /goal <objective>, /safe, /auto, /yolo, or Esc.");
+                    state.push_transcript(
+                        "Live provider is enabled by default for submitted tasks.",
+                    );
                     let exit = run_interactive(state)?;
                     run_tui_lifecycle_hooks(&exit.state, &config, &project_root)?;
                     if let Some(task) = exit.submitted {

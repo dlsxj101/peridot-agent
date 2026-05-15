@@ -282,32 +282,6 @@ fn headless_text_output_stays_text_for_agent_runs() {
 }
 
 #[test]
-fn headless_text_output_stays_text_for_direct_tools() {
-    let root = temp_project("headless-tool-text");
-    let output = Command::new(peridot())
-        .args([
-            "--project",
-            root.to_str().unwrap(),
-            "--headless",
-            r#"{"action":"file_write","parameters":{"path":"note.txt","content":"hello\n"}}"#,
-        ])
-        .output()
-        .unwrap();
-
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("wrote"));
-    assert!(stdout.contains("note.txt"));
-    assert!(!stdout.trim_start().starts_with('{'));
-
-    fs::remove_dir_all(root).unwrap();
-}
-
-#[test]
 fn headless_max_turns_exits_three() {
     let root = temp_project("max-turns");
     let response_file = root.join("responses.jsonl");
@@ -516,27 +490,6 @@ run = ".peridot/hooks/verify.sh {stage} {status}"
     );
     let log = fs::read_to_string(root.join("verify.log")).unwrap();
     assert!(log.contains("diff_review:passed"));
-
-    fs::remove_dir_all(root).unwrap();
-}
-
-#[test]
-fn headless_direct_tool_failure_exits_four() {
-    let root = temp_project("headless-failure");
-    let output = Command::new(peridot())
-        .args([
-            "--project",
-            root.to_str().unwrap(),
-            "--headless",
-            "--output",
-            "json",
-            r#"{"action":"verify_build","parameters":{"command":"exit 7"}}"#,
-        ])
-        .output()
-        .unwrap();
-
-    assert_eq!(output.status.code(), Some(4));
-    assert!(String::from_utf8_lossy(&output.stdout).contains("\"success\": false"));
 
     fs::remove_dir_all(root).unwrap();
 }

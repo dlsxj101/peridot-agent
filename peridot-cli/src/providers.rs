@@ -12,7 +12,7 @@ pub(super) async fn live_provider(
                 .ok()
                 .or_else(|| read_stored_api_key(AuthProvider::ClaudeApi).ok().flatten())
                 .with_context(
-                    || "ANTHROPIC_API_KEY or peridot login claude-api is required for --live",
+                    || "ANTHROPIC_API_KEY or peridot login claude-api is required for live runs",
                 )?;
             Ok(Box::new(ClaudeProvider::with_transport_options(
                 model.to_string(),
@@ -27,7 +27,7 @@ pub(super) async fn live_provider(
                 .ok()
                 .or_else(|| read_stored_api_key(AuthProvider::OpenaiApi).ok().flatten())
                 .with_context(
-                    || "OPENAI_API_KEY or peridot login openai-api is required for --live",
+                    || "OPENAI_API_KEY or peridot login openai-api is required for live runs",
                 )?;
             let base_url = if config.api.base_url == "https://api.anthropic.com" {
                 "https://api.openai.com".to_string()
@@ -49,7 +49,7 @@ pub(super) async fn live_provider(
                 .or_else(|| read_managed_env_var("OPENROUTER_API_KEY").ok().flatten())
                 .with_context(
                     || {
-                        "OPENROUTER_API_KEY, peridot env set OPENROUTER_API_KEY, or peridot login openrouter-api is required for --live"
+                        "OPENROUTER_API_KEY, peridot env set OPENROUTER_API_KEY, or peridot login openrouter-api is required for live runs"
                     },
                 )?;
             let base_url = if config.api.base_url == "https://api.anthropic.com" {
@@ -72,7 +72,7 @@ pub(super) async fn live_provider(
                 None => read_stored_openai_oauth_access_token().await?,
             }
             .with_context(
-                || "OPENAI_ACCESS_TOKEN or peridot login openai-oauth is required for --live",
+                || "OPENAI_ACCESS_TOKEN or peridot login openai-oauth is required for live runs",
             )?;
             let base_url = if config.api.base_url == "https://api.anthropic.com" {
                 "https://api.openai.com".to_string()
@@ -99,7 +99,7 @@ pub(super) async fn live_provider(
             )))
         }
         provider => anyhow::bail!(
-            "live provider {provider} is not implemented yet; use claude-api, openai-api, openrouter-api, codex, openai-oauth, or --mock-response-file"
+            "live provider {provider} is not implemented yet; use claude-api, openai-api, openrouter-api, codex, openai-oauth, or --mock-response-file for deterministic replay"
         ),
     }
 }

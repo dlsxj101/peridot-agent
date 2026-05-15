@@ -1,4 +1,5 @@
 use super::*;
+use std::io::{IsTerminal, Read};
 
 pub(super) fn run_tui_lifecycle_hooks(
     state: &TuiState,

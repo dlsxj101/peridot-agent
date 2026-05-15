@@ -11,12 +11,6 @@ pub(super) fn exit_for_summary(summary: &AgentRunSummary, headless: bool) {
     }
 }
 
-pub(super) fn exit_for_tool_result(result: &peridot_common::ToolResult, headless: bool) {
-    if headless && !result.success {
-        std::process::exit(4);
-    }
-}
-
 pub(super) fn run_summary_output(
     summary: &AgentRunSummary,
     mode: ExecutionMode,

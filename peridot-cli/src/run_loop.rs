@@ -32,7 +32,6 @@ pub(super) async fn run_task(
         &config.context,
     ));
     let mut agent = HarnessAgent::new(state, context, registry);
-    let call = task_to_tool_call(&task);
 
     if let Some(mock_response_file) = &cli.mock_response_file {
         let profile = ProjectScanner::new().scan(project_root)?;
@@ -64,82 +63,33 @@ pub(super) async fn run_task(
         return Ok(());
     }
 
-    if cli.live {
-        let profile = ProjectScanner::new().scan(project_root)?;
-        let denied_paths = profile.boundaries.into_iter().map(PathBuf::from).collect();
-        let provider = live_provider(config, &model, project_root).await?;
-        let summary = run_agent_loop(
-            &mut agent,
-            provider.as_ref(),
-            RunLoopOptions {
-                task,
-                model,
-                max_turns,
-                budget_usd,
-                config,
-                project_root,
-                denied_paths,
-            },
-        )
-        .await?;
-        if cli.output == OutputFormat::Json {
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&run_summary_output(&summary, mode))?
-            );
-        } else {
-            print_run_summary_text(&summary, mode);
-        }
-        exit_for_summary(&summary, cli.effective_headless());
-        return Ok(());
+    let _live_flag_kept_for_compatibility = cli.live;
+    let profile = ProjectScanner::new().scan(project_root)?;
+    let denied_paths = profile.boundaries.into_iter().map(PathBuf::from).collect();
+    let provider = live_provider(config, &model, project_root).await?;
+    let summary = run_agent_loop(
+        &mut agent,
+        provider.as_ref(),
+        RunLoopOptions {
+            task,
+            model,
+            max_turns,
+            budget_usd,
+            config,
+            project_root,
+            denied_paths,
+        },
+    )
+    .await?;
+    if cli.output == OutputFormat::Json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&run_summary_output(&summary, mode))?
+        );
+    } else {
+        print_run_summary_text(&summary, mode);
     }
-
-    match call {
-        Some(call) => {
-            let profile = ProjectScanner::new().scan(project_root)?;
-            let denied_paths = profile.boundaries.into_iter().map(PathBuf::from).collect();
-            let result = agent
-                .execute_tool_call_with_runtime(
-                    call,
-                    project_root,
-                    denied_paths,
-                    config.hooks.clone(),
-                    config.security.clone(),
-                )
-                .await?;
-            if cli.output == OutputFormat::Json {
-                println!("{}", serde_json::to_string_pretty(&result)?);
-            } else {
-                println!("{}", result.summary);
-            }
-            exit_for_tool_result(&result, cli.effective_headless());
-        }
-        None => {
-            if cli.output == OutputFormat::Json {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&serde_json::json!({
-                        "status": "needs_llm",
-                        "mode": agent.state().mode,
-                        "permission": agent.state().permission,
-                        "model": model,
-                        "task": task
-                    }))?
-                );
-            } else {
-                println!(
-                    "Hello Peridot: mode={} permission={} model={} task={}",
-                    agent.state().mode,
-                    agent.state().permission,
-                    model,
-                    task
-                );
-                println!(
-                    "Use --live for a model run, --mock-response-file for deterministic replay, or enter a JSON tool action."
-                );
-            }
-        }
-    }
+    exit_for_summary(&summary, cli.effective_headless());
     Ok(())
 }
 

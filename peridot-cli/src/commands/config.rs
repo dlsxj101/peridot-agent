@@ -7,6 +7,27 @@ pub(crate) fn load_effective_config(
     load_effective_config_inner(project_root, explicit_config, true, true)
 }
 
+pub(crate) fn maybe_run_first_launch_wizard(
+    project_root: &Path,
+    explicit_config: Option<&Path>,
+    headless: bool,
+    output: OutputFormat,
+) -> Result<bool> {
+    if headless || output == OutputFormat::Json || !std::io::stdin().is_terminal() {
+        return Ok(false);
+    }
+    let config_path = explicit_config
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| project_root.join(".peridot/config.toml"));
+    if config_path.exists() {
+        return Ok(false);
+    }
+    println!("No Peridot config found for this project. Let's set it up.");
+    let result = init_project_config_value(project_root)?;
+    run_config_wizard(&result)?;
+    Ok(true)
+}
+
 pub(super) fn load_effective_config_inner(
     project_root: &Path,
     explicit_config: Option<&Path>,

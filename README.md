@@ -62,10 +62,18 @@ cargo run -p peridot-cli -- run "create hello.py" \
 
 ## Live Providers
 
+Peridot runs with the configured live provider by default. Start the TUI with `peridot`, or pass a task directly:
+
+```bash
+peridot
+peridot "inspect this project"
+peridot run "inspect this project" --headless
+```
+
 Live execution uses environment credentials or credentials stored with `peridot login`:
 
 ```bash
-ANTHROPIC_API_KEY=... cargo run -p peridot-cli -- run "inspect this project" --live
+ANTHROPIC_API_KEY=... cargo run -p peridot-cli -- run "inspect this project"
 OPENAI_API_KEY=... cargo run -p peridot-cli -- login openai-api
 OPENAI_OAUTH_CLIENT_ID=... cargo run -p peridot-cli -- login openai-oauth
 ```
@@ -112,7 +120,7 @@ main = "openai/gpt-5.2"
 ```
 
 ```bash
-cargo run -p peridot-cli -- run "inspect this project" --live --headless
+cargo run -p peridot-cli -- run "inspect this project" --headless
 ```
 
 For ChatGPT Pro through the local Codex app-server, log in with Codex first, then use the `codex` provider:
