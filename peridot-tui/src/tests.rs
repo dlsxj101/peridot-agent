@@ -1686,6 +1686,19 @@ fn note_slash_queues_pending_note_and_records_transcript() {
 }
 
 #[test]
+fn status_metrics_show_turn_count_after_first_turn() {
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    state.current_turn = 3;
+
+    let snapshot = render_text_snapshot(&state);
+    assert!(snapshot.contains("turn 3"));
+}
+
+#[test]
 fn workspace_label_appears_in_status_metrics_when_set() {
     let mut state = TuiState::new(HeaderState::new(
         ExecutionMode::Execute,

@@ -75,6 +75,9 @@ its parent transcript (M4), and the attention notifier line (M5).
   the child with an empty context (silent no-op), matching the previous
   behaviour for that edge case.
 
+### M23 — Status bar carries turn count (landed)
+- `render_status_metrics` appends `turn N` once `state.current_turn` is greater than zero (i.e. the first `TurnStarted` event has fired). Idle sessions and freshly opened ones keep the metric hidden so the bar stays clean.
+
 ### M22 — `peridot session locate <id>` utility (landed)
 - Prints the absolute path of `<project_root>/.peridot/sessions/<id>` along with whether it currently exists on disk. JSON output exposes the same shape (`{ id, path, exists }`).
 - Useful for shell pipelines (`(peridot session locate id)/transcript.ndjson`) and for confirming where M16's export will source its files from before running.

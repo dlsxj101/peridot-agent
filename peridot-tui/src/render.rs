@@ -20,6 +20,9 @@ pub(super) fn render_status_metrics(state: &TuiState) -> String {
     if let Some(provider) = state.header.provider.as_deref() {
         parts.push(format!("provider {provider}"));
     }
+    if state.current_turn > 0 {
+        parts.push(format!("turn {}", state.current_turn));
+    }
     if state.config.show_token_count {
         parts.push(format!("{} tok", state.header.total_tokens));
     }
