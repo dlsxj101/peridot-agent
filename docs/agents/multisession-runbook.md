@@ -75,6 +75,11 @@ its parent transcript (M4), and the attention notifier line (M5).
   the child with an empty context (silent no-op), matching the previous
   behaviour for that edge case.
 
+### M11 — Live transcript tail (landed)
+- `peridot session tail <id> [--from-now] [--interval-ms N]` prints the existing `transcript.ndjson` and then polls the file at `interval_ms` (default 200 ms, floored to 50 ms), printing every new line as it arrives with the same five-marker vocabulary the TUI uses. Ctrl+C terminates the watcher; no special signal handling needed.
+- `--from-now` skips the existing journal and only prints entries written after the watch starts, useful when attaching mid-run.
+- File truncation (e.g. by an external tool rotating the journal) resets the offset to 0 instead of stalling, so a fresh journal still streams correctly.
+
 ### M10 — Replay ndjson fallback (landed)
 - `peridot session replay` now prefers the canonical `tui_state.json` snapshot but transparently falls back to `transcript.ndjson` when the snapshot is missing — which happens when a process was killed before the throttled `on_persist` could write but the per-tick M9 append already captured every entry. The result is that even uncleanly terminated sessions stay reviewable.
 - The fallback parses ndjson line-by-line via `serde_json::from_str`, skipping blank lines and reporting the offending line number on bad payloads so a corrupted file points the operator at the right spot.

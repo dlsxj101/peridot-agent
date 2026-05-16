@@ -71,8 +71,101 @@ pub(crate) fn run_session_command(
         SessionCommand::Replay { id, last, step } => {
             replay_session_transcript(project_root, id, *last, *step, output)?;
         }
+        SessionCommand::Tail {
+            id,
+            interval_ms,
+            from_now,
+        } => {
+            tail_session_transcript(project_root, id, *interval_ms, *from_now)?;
+        }
     }
     Ok(())
+}
+
+fn tail_session_transcript(
+    project_root: &Path,
+    id: &str,
+    interval_ms: u64,
+    from_now: bool,
+) -> Result<()> {
+    use std::io::{BufRead, BufReader, Seek, SeekFrom};
+    use std::thread::sleep;
+    use std::time::Duration;
+    let path = project_root
+        .join(".peridot")
+        .join("sessions")
+        .join(id)
+        .join("transcript.ndjson");
+    let interval = Duration::from_millis(interval_ms.max(50));
+    let mut offset: u64 = 0;
+    if from_now && let Ok(meta) = std::fs::metadata(&path) {
+        offset = meta.len();
+        println!("tail: starting from end of {}", path.display());
+    } else if path.exists() {
+        let file = std::fs::File::open(&path)?;
+        let reader = BufReader::new(file);
+        for line in reader.lines() {
+            let line = line?;
+            if line.trim().is_empty() {
+                continue;
+            }
+            print_transcript_ndjson_line(&line);
+        }
+        if let Ok(meta) = std::fs::metadata(&path) {
+            offset = meta.len();
+        }
+    } else {
+        println!("tail: {} does not exist yet; waiting...", path.display());
+    }
+    loop {
+        sleep(interval);
+        let Ok(meta) = std::fs::metadata(&path) else {
+            continue;
+        };
+        let len = meta.len();
+        if len <= offset {
+            if len < offset {
+                println!("tail: file truncated; restarting offset");
+                offset = 0;
+            }
+            continue;
+        }
+        let Ok(mut file) = std::fs::File::open(&path) else {
+            continue;
+        };
+        if file.seek(SeekFrom::Start(offset)).is_err() {
+            continue;
+        }
+        let mut reader = BufReader::new(file);
+        let mut buf = String::new();
+        loop {
+            buf.clear();
+            match reader.read_line(&mut buf) {
+                Ok(0) => break,
+                Ok(_) => {
+                    let line = buf.trim_end_matches(['\r', '\n']);
+                    if line.is_empty() {
+                        continue;
+                    }
+                    print_transcript_ndjson_line(line);
+                }
+                Err(_) => break,
+            }
+        }
+        offset = len;
+    }
+}
+
+fn print_transcript_ndjson_line(line: &str) {
+    match serde_json::from_str::<peridot_tui::TranscriptEntry>(line) {
+        Ok(entry) => {
+            let marker = transcript_marker(entry.kind);
+            println!("{marker} {}", entry.text);
+        }
+        Err(_) => {
+            println!("? <invalid ndjson line>");
+        }
+    }
 }
 
 fn replay_session_transcript(

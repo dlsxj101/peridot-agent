@@ -181,6 +181,17 @@ pub(crate) enum SessionCommand {
         #[arg(long)]
         step: bool,
     },
+    /// Follow a live session's transcript.ndjson journal (tail -f style).
+    Tail {
+        /// Session id.
+        id: String,
+        /// Polling interval in milliseconds.
+        #[arg(long, default_value_t = 200)]
+        interval_ms: u64,
+        /// Skip the existing entries and only print new ones.
+        #[arg(long)]
+        from_now: bool,
+    },
 }
 
 /// AGENTS.md subcommands.
