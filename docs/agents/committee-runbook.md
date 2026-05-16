@@ -142,12 +142,22 @@ Switchable per session via `/committee <mode>` slash (and by `[committee] mode =
 
 ## PR layout
 
-1. **M-COM1** — Foundation: enums + config + role-aware system prompt (behaviour off by default)
-2. **M-COM2** — Planner pre-flight + `PlannerPlanReady` event + context inject
-3. **M-COM3** — Reviewer in-loop + `Verdict` + `ReviewerVerdict` event + comment context inject
-4. **M-COM4** — `/committee` slash + status / side panel surface
-5. **M-COM5** — Cost split + max review pass guard + diff truncation
-6. **M-COM6** — Persistence (`committee.ndjson`) + `show --committee-tail` + replay weaving
-7. **M-COM7** — Docs + skill cross-links + ready-made config snippets
+1. **M-COM1** — Foundation: enums + config + role-aware system prompt (behaviour off by default) ✓ landed
+2. **M-COM2** — Planner pre-flight + `PlannerPlanReady` event + context inject ✓ landed
+3. **M-COM3** — Reviewer verdict types + `ContextSource::ReviewerComment` + transcript surface ✓ landed (part 1; part 2 absorbed into M-COM4b)
+4. **M-COM4a** — `/committee` slash + status bar surface ✓ landed
+5. **M-COM4b** — Turn-by-turn committee loop + in-loop reviewer pass + verdict apply + max_review_passes guard ✓ landed
+6. **M-COM5** — Per-role cost split (`CommitteeRoleUsage` event + `/cost` / `/info` surface) ✓ landed
+7. **M-COM6** — Persistence (`committee.ndjson`) + `session show --committee-tail` ✓ landed
+8. **M-COM7** — Docs (this runbook), skill cross-links (`committee-orchestration/SKILL.md`), `AGENTS.md` reference, ready-made config snippets ✓ landed
 
 Each PR is reviewable in isolation and leaves the workspace fmt/clippy/test green.
+
+## Outstanding (post-M-COM7)
+
+These items were called out during plan but deferred so the seven core PRs stay sized:
+
+- **Replay weaving** — `peridot session replay` interleaves committee events with transcript chronologically. The data is on disk (`committee.ndjson`, `transcript.ndjson`); the CLI just needs to merge-sort by `ts` before printing.
+- **Diff-signature duplicate guard** — orthogonal to consecutive `RequestChanges`: detect when reviewer rejects the *same* diff signature N times even with gaps between, and auto-Block. Hash-based.
+- **Block prompt** — when `Block` fires, drop an `AskUser` panel so the operator can override and continue. Today the run halts cleanly via cancel token; the operator restarts manually.
+- **`AgentRole` for `models.executor`** — the planner / reviewer respect their own `models.*` keys, but the executor still uses `models.main` / per-session `/model`. Adding `models.executor` would let one project's committee run on a different executor model than `models.main` without slash.

@@ -26,6 +26,7 @@ description: Design or verify Peridot Ratatui terminal UI behavior. Use for layo
 13. Multi-session tab bar (`session_directory`) compacts when narrow; pending-attention sessions surface a `!` suffix.
 14. Theme contrast: Peridot Night fg/bg pairs and mascot palette (`peridot_palette()`) must remain accessible.
 15. Approval flows must be visible and reversible at the UI boundary: show the blocked tool/action, accept approve/deny keys, and keep the current run context available after the decision.
+16. Committee surface (M-COM series): status bar shows `committee <mode>` when not `Off`; `/cost` and `/info` append per-role planner/reviewer totals when the mode is active; `ReviewerVerdict` events render with marker per outcome (approve = System, request_changes = Notice, block = Error). Read `.peridot/skills/committee-orchestration/SKILL.md` before touching any committee event surfaces.
 
 ## Testing
 - Prefer deterministic render tests for layout state. Use `peridot-tui/src/fixtures.rs` `TestScenario` enum to seed states.
