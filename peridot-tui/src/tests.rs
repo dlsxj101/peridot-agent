@@ -1614,6 +1614,47 @@ fn record_background_event_skips_subagent_monitor_when_parent_not_foreground() {
 }
 
 #[test]
+fn pending_attention_count_skips_foreground_session() {
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    state.current_session_id = "foreground".to_string();
+    let mut fg = SessionDirectoryItem::new("foreground", "main");
+    fg.pending_attention = true;
+    state.sessions.push(fg);
+    let mut bg = SessionDirectoryItem::new("bg", "background");
+    bg.pending_attention = true;
+    state.sessions.push(bg);
+
+    assert_eq!(state.pending_attention_count(), 1);
+}
+
+#[test]
+fn status_snapshot_surfaces_pending_attention_count_in_locale() {
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    state.current_session_id = "foreground".to_string();
+    state
+        .sessions
+        .push(SessionDirectoryItem::new("foreground", "main"));
+    let mut bg = SessionDirectoryItem::new("bg", "background");
+    bg.pending_attention = true;
+    state.sessions.push(bg);
+
+    let snapshot = render_text_snapshot(&state);
+    assert!(snapshot.contains("attention: 1 sessions need attention"));
+
+    state.config.language = Locale::Ko;
+    let snapshot_ko = render_text_snapshot(&state);
+    assert!(snapshot_ko.contains("attention: 1개 세션이 응답 대기 중"));
+}
+
+#[test]
 fn record_background_event_marks_finished_status_per_stop_reason() {
     let mut state = TuiState::new(HeaderState::new(
         ExecutionMode::Execute,

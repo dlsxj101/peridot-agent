@@ -435,6 +435,22 @@ fn render_status_bar(state: &TuiState) -> Line<'static> {
                 .add_modifier(Modifier::DIM),
         ));
     }
+    let pending_attention = state.pending_attention_count();
+    if pending_attention > 0 {
+        spans.push(Span::styled(
+            format!(
+                "  | \u{26A0} {}{}",
+                pending_attention,
+                tr(
+                    PhraseKey::StatusSessionsAttentionSuffix,
+                    state.config.language
+                ),
+            ),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
     spans.push(Span::styled(
         format!("  · {}", render_status_metrics(state)),
         Style::default()
@@ -451,6 +467,17 @@ pub fn render_text_snapshot(state: &TuiState) -> String {
     let _ = writeln!(output, "metrics: {}", render_status_metrics(state));
     if !state.sessions.is_empty() {
         let _ = writeln!(output, "tabs: {}", crate::render_tab_bar_text(state));
+    }
+    let pending_attention = state.pending_attention_count();
+    if pending_attention > 0 {
+        let _ = writeln!(
+            output,
+            "attention: {pending_attention}{}",
+            tr(
+                PhraseKey::StatusSessionsAttentionSuffix,
+                state.config.language
+            )
+        );
     }
     let _ = writeln!(output, "layout: {:?}", state.layout);
     let _ = writeln!(output);

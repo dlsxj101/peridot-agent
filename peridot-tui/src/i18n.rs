@@ -33,6 +33,10 @@ pub enum PhraseKey {
     NoticeRunning,
     /// Transcript notice: shown alongside the queued task when no last task is known.
     NoticeRunningGeneric,
+    /// Status-bar suffix appended after a background session-attention count
+    /// (e.g. " sessions need attention" in English, "개 세션이 응답 대기 중"
+    /// in Korean). Always rendered as `format!("{count}{suffix}")`.
+    StatusSessionsAttentionSuffix,
 }
 
 /// Looks up the rendered phrase for `key` in `locale`.
@@ -62,6 +66,8 @@ pub fn tr(key: PhraseKey, locale: Locale) -> &'static str {
         (PhraseKey::NoticeRunning, Locale::Ko) => "작업 중:",
         (PhraseKey::NoticeRunningGeneric, Locale::En) => "agent is busy",
         (PhraseKey::NoticeRunningGeneric, Locale::Ko) => "현재 작업 진행 중",
+        (PhraseKey::StatusSessionsAttentionSuffix, Locale::En) => " sessions need attention",
+        (PhraseKey::StatusSessionsAttentionSuffix, Locale::Ko) => "개 세션이 응답 대기 중",
     }
 }
 

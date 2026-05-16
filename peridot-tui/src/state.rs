@@ -693,6 +693,17 @@ impl TuiState {
         self.pending_session_commands.push(command);
     }
 
+    /// Counts background sessions (i.e. anything except the current foreground
+    /// session) that currently have a pending approval / ask_user flag set.
+    /// The status bar uses this to surface a `⚠ N sessions need attention`
+    /// indicator.
+    pub fn pending_attention_count(&self) -> usize {
+        self.sessions
+            .iter()
+            .filter(|item| item.id != self.current_session_id && item.pending_attention)
+            .count()
+    }
+
     /// Removes and returns every queued session-router intent in FIFO order.
     pub fn drain_pending_session_commands(&mut self) -> Vec<SessionCommandEvent> {
         std::mem::take(&mut self.pending_session_commands)

@@ -67,11 +67,18 @@ its parent transcript (M4), and the attention notifier line (M5).
   starts each child with an empty context. M5 covers the attention notifier;
   shared context propagation is a follow-up after that.
 
-### M5 — Attention notifier
-- `SessionDirectoryItem::pending_attention` toggles on `ApprovalRequested` or `AskUser*` for background sessions.
-- Status bar surfaces `🔔 N other sessions need attention` via a new `PhraseKey::SessionsNeedAttention` arm (En/Ko).
-- Foreground swap clears the flag.
-- Optional: opt-in `notify-rust` OS notification behind a feature flag.
+### M5 — Attention notifier (landed)
+- `TuiState::pending_attention_count()` reports how many non-foreground
+  sessions are flagged `pending_attention`. The status bar renders
+  `⚠ N{suffix}` using the new
+  `PhraseKey::StatusSessionsAttentionSuffix` (En: " sessions need attention",
+  Ko: "개 세션이 응답 대기 중") so the count flows through the existing
+  i18n table.
+- `render_text_snapshot` mirrors the indicator on a dedicated `attention:`
+  line so headless previews and tests assert the message.
+- Foreground swap from M1 already clears the `pending_attention` flag, so
+  the indicator self-resolves once the user reads the background session.
+- Outstanding: opt-in `notify-rust` integration for OS-level notification.
 
 ### M6 — Multi-session UX polish
 - Per-session history (input recall) when swapping foreground.
