@@ -75,6 +75,11 @@ its parent transcript (M4), and the attention notifier line (M5).
   the child with an empty context (silent no-op), matching the previous
   behaviour for that edge case.
 
+### M9 — Incremental transcript ndjson journal (landed)
+- The on_persist callback now appends every newly observed `TranscriptEntry` to `<sessions_root>/<id>/transcript.ndjson` on every tick (no throttle). Per-session counts live in a `HashMap<String, usize>` inside the closure, so foreground swaps pick up the right entries for the right session.
+- Append happens with `OpenOptions::append`; serde_json serialises each entry on its own line so external tools can `tail -f`/`jq` the live transcript without parsing JSON arrays.
+- Failures (missing directory, write error) silently no-op so the UI thread never blocks on disk. The throttled `tui_state.json` snapshot from M3 keeps the canonical "load entire state" path.
+
 ### M8 — Per-session LLM provider override (landed)
 - New `/provider <name>` slash command (also exposed in the slash picker / `/help`) records an explicit provider on `state.header.provider`. The status bar surfaces it as `provider <name>` in the metrics line.
 - `apply_session_command`, submit, and approve callbacks all clone the project config and replace `auth.primary` with the session's provider before calling `spawn_tui_agent_run`, so concurrent sessions can run on different providers (e.g. one on `claude-api`, another on `openai-api` or `openrouter-api`) without mutating shared state.

@@ -602,7 +602,16 @@ async fn main() -> Result<()> {
                             let project_template = run_project_root.clone();
                             let router = router.clone();
                             let mut last_persist_unix: u64 = 0;
+                            let mut last_transcript_count: std::collections::HashMap<
+                                String,
+                                usize,
+                            > = std::collections::HashMap::new();
                             move |state: &TuiState| {
+                                append_new_transcript_entries(
+                                    state,
+                                    &mut last_transcript_count,
+                                    &project_template,
+                                );
                                 let now = SystemTime::now()
                                     .duration_since(UNIX_EPOCH)
                                     .map(|d| d.as_secs())
@@ -1038,6 +1047,49 @@ fn inherit_parent_context(parent_id: &str, child_id: &str, project_root: &Path) 
 /// Returns a clone of `template` with `auth.primary` replaced by `provider`
 /// when one is set. Used to thread per-session `/provider` selections through
 /// to `live_provider` without mutating the project-wide config.
+/// Appends any transcript entries past `last_count` for the foreground
+/// session to `<sessions>/<id>/transcript.ndjson`. Each entry is one JSON line
+/// (newline-delimited). The append is best-effort: if the directory or file
+/// is unavailable, the call is a no-op so it can never block the UI thread.
+fn append_new_transcript_entries(
+    state: &TuiState,
+    last_counts: &mut std::collections::HashMap<String, usize>,
+    project_root: &Path,
+) {
+    if state.current_session_id.is_empty() {
+        return;
+    }
+    let id = state.current_session_id.clone();
+    let last = *last_counts.get(&id).unwrap_or(&0);
+    if state.transcript.len() <= last {
+        return;
+    }
+    let session_dir = project_root.join(".peridot").join("sessions").join(&id);
+    if std::fs::create_dir_all(&session_dir).is_err() {
+        return;
+    }
+    let path = session_dir.join("transcript.ndjson");
+    let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    else {
+        return;
+    };
+    use std::io::Write;
+    let mut written = last;
+    for entry in &state.transcript[last..] {
+        let Ok(line) = serde_json::to_string(entry) else {
+            continue;
+        };
+        if writeln!(file, "{line}").is_err() {
+            break;
+        }
+        written += 1;
+    }
+    last_counts.insert(id, written);
+}
+
 fn config_with_provider(template: &PeridotConfig, provider: Option<&str>) -> PeridotConfig {
     let mut cfg = template.clone();
     if let Some(value) = provider
