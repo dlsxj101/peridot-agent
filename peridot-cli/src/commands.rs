@@ -260,6 +260,8 @@ pub(crate) enum SessionCommand {
         /// Session id.
         id: String,
     },
+    /// Print a count of sessions grouped by lifecycle.
+    Count,
 }
 
 /// Subcommands of `peridot session note <id>`.
