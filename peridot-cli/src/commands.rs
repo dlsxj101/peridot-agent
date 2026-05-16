@@ -245,6 +245,11 @@ pub(crate) enum SessionCommand {
         #[command(subcommand)]
         action: SessionNoteAction,
     },
+    /// Print the on-disk directory for a session.
+    Locate {
+        /// Session id.
+        id: String,
+    },
 }
 
 /// Subcommands of `peridot session note <id>`.

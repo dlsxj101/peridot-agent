@@ -162,6 +162,29 @@ pub(crate) fn run_session_command(
         SessionCommand::Note { id, action } => {
             handle_session_note(project_root, id, action, output)?;
         }
+        SessionCommand::Locate { id } => {
+            let path = project_root.join(".peridot").join("sessions").join(id);
+            let exists = path.is_dir();
+            match output {
+                OutputFormat::Json => {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&serde_json::json!({
+                            "id": id,
+                            "path": path.display().to_string(),
+                            "exists": exists,
+                        }))?
+                    );
+                }
+                OutputFormat::Text => {
+                    if exists {
+                        println!("{}", path.display());
+                    } else {
+                        println!("{} (not present)", path.display());
+                    }
+                }
+            }
+        }
     }
     Ok(())
 }
