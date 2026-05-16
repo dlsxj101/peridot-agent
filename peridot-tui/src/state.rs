@@ -254,6 +254,49 @@ pub struct StreamState {
     pub done: bool,
 }
 
+/// Visual category for one transcript entry.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TranscriptKind {
+    /// A user-submitted input line.
+    User,
+    /// A user-facing assistant response.
+    Assistant,
+    /// A tool started running.
+    ToolStart,
+    /// A tool finished successfully.
+    ToolOk,
+    /// A tool finished with failure.
+    ToolFail,
+    /// A neutral system/info line (mode switch, task start, etc.).
+    System,
+    /// A soft notice or hint (queued input, etc.).
+    Notice,
+    /// An error line.
+    Error,
+    /// Debug content hidden in normal mode.
+    Debug,
+}
+
+/// One transcript line plus its style classification.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct TranscriptEntry {
+    /// Visual category.
+    pub kind: TranscriptKind,
+    /// Plain-text payload (no styling).
+    pub text: String,
+}
+
+impl TranscriptEntry {
+    /// Creates a transcript entry of the given kind.
+    pub fn new(kind: TranscriptKind, text: impl Into<String>) -> Self {
+        Self {
+            kind,
+            text: text.into(),
+        }
+    }
+}
+
 /// Lifecycle transition captured during an interactive TUI session.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct TuiLifecycleEvent {
@@ -275,13 +318,21 @@ pub struct TuiState {
     /// Header state.
     pub header: HeaderState,
     /// Transcript lines.
-    pub transcript: Vec<String>,
+    pub transcript: Vec<TranscriptEntry>,
     /// Active streaming model output.
     pub active_stream: Option<StreamState>,
     /// Recent tool, stream, and verification activity.
     pub activities: Vec<RuntimeActivity>,
     /// Recent delegated subagents.
     pub subagents: Vec<SubagentMonitorItem>,
+    /// Tool names currently executing in the background.
+    pub active_tools: Vec<String>,
+    /// Animation counter used for the running-tool spinner.
+    pub spinner_tick: u32,
+    /// Inputs queued while the agent is busy; flushed when it becomes idle.
+    pub input_queue: Vec<String>,
+    /// Whether internal/raw assistant output (JSON, thinking) is rendered.
+    pub debug_view: bool,
     /// Current background run status.
     pub agent_run_status: AgentRunStatus,
     /// Side panel state.
@@ -348,6 +399,10 @@ impl TuiState {
             active_stream: None,
             activities: Vec::new(),
             subagents: Vec::new(),
+            active_tools: Vec::new(),
+            spinner_tick: 0,
+            input_queue: Vec::new(),
+            debug_view: false,
             agent_run_status: AgentRunStatus::Idle,
             side_panel: SidePanelState::default(),
             goal_status: None,
@@ -374,9 +429,68 @@ impl TuiState {
         self.layout = select_layout(width, height);
     }
 
-    /// Appends a transcript line.
+    /// Appends a system-kind transcript line.
     pub fn push_transcript(&mut self, line: impl Into<String>) {
-        self.transcript.push(line.into());
+        self.push_transcript_entry(TranscriptKind::System, line);
+    }
+
+    /// Appends a transcript line of the given kind.
+    pub fn push_transcript_entry(&mut self, kind: TranscriptKind, line: impl Into<String>) {
+        self.transcript.push(TranscriptEntry::new(kind, line));
+    }
+
+    /// Appends a user input line.
+    pub fn push_user(&mut self, text: impl Into<String>) {
+        self.push_transcript_entry(TranscriptKind::User, text);
+    }
+
+    /// Appends a user-facing assistant response.
+    pub fn push_assistant(&mut self, text: impl Into<String>) {
+        self.push_transcript_entry(TranscriptKind::Assistant, text);
+    }
+
+    /// Appends a soft notice (queued input, hint, etc.).
+    pub fn push_notice(&mut self, text: impl Into<String>) {
+        self.push_transcript_entry(TranscriptKind::Notice, text);
+    }
+
+    /// Appends an error line.
+    pub fn push_error(&mut self, text: impl Into<String>) {
+        self.push_transcript_entry(TranscriptKind::Error, text);
+    }
+
+    /// Appends a debug-only line (hidden unless debug_view is enabled).
+    pub fn push_debug(&mut self, text: impl Into<String>) {
+        self.push_transcript_entry(TranscriptKind::Debug, text);
+    }
+
+    /// Advances the spinner animation by one frame.
+    pub fn tick_spinner(&mut self) {
+        self.spinner_tick = self.spinner_tick.wrapping_add(1);
+    }
+
+    /// Returns the current braille spinner glyph.
+    pub fn spinner_frame(&self) -> &'static str {
+        const FRAMES: [&str; 10] = [
+            "\u{280B}", "\u{2819}", "\u{2839}", "\u{2838}", "\u{283C}", "\u{2834}", "\u{2826}",
+            "\u{2827}", "\u{2807}", "\u{280F}",
+        ];
+        FRAMES[(self.spinner_tick as usize) % FRAMES.len()]
+    }
+
+    /// Returns true when the agent is in a non-idle state that blocks new input.
+    pub fn is_agent_busy(&self) -> bool {
+        matches!(
+            self.agent_run_status,
+            AgentRunStatus::Running | AgentRunStatus::WaitingApproval
+        )
+    }
+
+    /// Removes a tool name from the active list (matches the last occurrence).
+    fn finish_active_tool(&mut self, tool_name: &str) {
+        if let Some(pos) = self.active_tools.iter().rposition(|name| name == tool_name) {
+            self.active_tools.remove(pos);
+        }
     }
 
     /// Records a submitted input line for history navigation.
@@ -487,22 +601,24 @@ impl TuiState {
         self.last_task = Some(task.clone());
         self.begin_stream("assistant");
         self.push_activity(ActivityKind::Stream, "run", format!("running: {task}"));
-        self.push_transcript(format!("task: {task}"));
+        self.push_transcript_entry(TranscriptKind::System, format!("task: {task}"));
     }
 
     /// Marks the active agent task as completed.
     pub fn mark_agent_succeeded(&mut self, summary: impl Into<String>) {
         self.agent_run_status = AgentRunStatus::Succeeded;
+        self.active_tools.clear();
         self.push_activity(ActivityKind::Stream, "run", "done");
-        self.push_transcript(format!("run: {}", summary.into()));
+        self.push_transcript_entry(TranscriptKind::System, format!("run: {}", summary.into()));
     }
 
     /// Marks the active agent task as failed.
     pub fn mark_agent_failed(&mut self, message: impl Into<String>) {
         self.agent_run_status = AgentRunStatus::Failed;
+        self.active_tools.clear();
         self.side_panel.stats.errors += 1;
         self.push_activity(ActivityKind::Stream, "run", "failed");
-        self.push_transcript(format!("run failed: {}", message.into()));
+        self.push_transcript_entry(TranscriptKind::Error, format!("run failed: {}", message.into()));
     }
 
     /// Starts or replaces the active model stream.
@@ -534,9 +650,25 @@ impl TuiState {
         stream.done = true;
         let content = stream.content.trim();
         if content.is_empty() {
-            self.push_transcript(format!("{}: <empty>", stream.label));
+            self.push_transcript_entry(
+                TranscriptKind::Debug,
+                format!("{}: <empty>", stream.label),
+            );
         } else {
-            self.push_transcript(format!("{}: {content}", stream.label));
+            let parsed = parse_assistant_content(content);
+            if let Some(visible) = parsed.display.as_ref() {
+                self.push_transcript_entry(
+                    TranscriptKind::Assistant,
+                    format!("{}: {visible}", stream.label),
+                );
+            }
+            if self.debug_view {
+                self.push_transcript_entry(
+                    TranscriptKind::Debug,
+                    format!("{} raw: {content}", stream.label),
+                );
+            }
+            let _ = parsed;
         }
         self.push_activity(ActivityKind::Stream, stream.label, "done");
         self.side_panel.stats.steps += 1;
@@ -549,10 +681,14 @@ impl TuiState {
         parameters: serde_json::Value,
     ) {
         let tool_name = tool_name.into();
+        self.active_tools.push(tool_name.clone());
         self.push_activity(ActivityKind::Tool, tool_name.clone(), "running");
-        self.push_transcript(format!("tool {tool_name}: running"));
+        self.push_transcript_entry(
+            TranscriptKind::ToolStart,
+            format!("tool {tool_name}: running"),
+        );
         for line in tool_parameter_preview(&tool_name, &parameters) {
-            self.push_transcript(line);
+            self.push_transcript_entry(TranscriptKind::ToolStart, line);
         }
     }
 
@@ -585,11 +721,17 @@ impl TuiState {
     ) {
         let tool_name = tool_name.into();
         let summary = summary.into();
+        self.finish_active_tool(&tool_name);
         self.record_tool_activity(tool_name.clone(), success, summary.clone());
         let marker = if success { "ok" } else { "failed" };
-        self.push_transcript(format!("tool {tool_name}: {marker}: {summary}"));
+        let kind = if success {
+            TranscriptKind::ToolOk
+        } else {
+            TranscriptKind::ToolFail
+        };
+        self.push_transcript_entry(kind, format!("tool {tool_name}: {marker}: {summary}"));
         for line in tool_output_preview(&tool_name, &output) {
-            self.push_transcript(line);
+            self.push_transcript_entry(kind, line);
         }
     }
 
@@ -680,10 +822,14 @@ impl TuiState {
             ApprovalDecision::Deny => "denied",
         };
         self.push_activity(ActivityKind::Tool, panel.tool_name.clone(), label);
-        self.push_transcript(format!(
-            "approval: {} {label} ({})",
-            panel.tool_name, panel.reason
-        ));
+        let kind = match decision {
+            ApprovalDecision::Approve => TranscriptKind::Notice,
+            ApprovalDecision::Deny => TranscriptKind::Error,
+        };
+        self.push_transcript_entry(
+            kind,
+            format!("approval: {} {label} ({})", panel.tool_name, panel.reason),
+        );
         if self.agent_run_status == AgentRunStatus::WaitingApproval {
             self.agent_run_status = AgentRunStatus::Running;
         }
@@ -700,9 +846,9 @@ impl TuiState {
             TuiRuntimeEvent::AssistantDelta { delta } => self.push_stream_delta(&delta),
             TuiRuntimeEvent::AssistantFinished => self.finish_stream(),
             TuiRuntimeEvent::Thinking { text } => {
-                if self.config.show_thinking {
-                    self.push_activity(ActivityKind::Stream, "thinking", "parsed");
-                    self.push_transcript(format!("thinking: {text}"));
+                self.push_activity(ActivityKind::Stream, "thinking", "parsed");
+                if self.config.show_thinking || self.debug_view {
+                    self.push_transcript_entry(TranscriptKind::Debug, format!("thinking: {text}"));
                 }
             }
             TuiRuntimeEvent::ToolStarted { name, parameters } => {
@@ -736,7 +882,10 @@ impl TuiState {
                 success,
             } => {
                 if self.approval.is_some() {
-                    self.push_transcript(format!("run: stopped={stop_reason} turns={turns}"));
+                    self.push_transcript_entry(
+                        TranscriptKind::System,
+                        format!("run: stopped={stop_reason} turns={turns}"),
+                    );
                     self.agent_run_status = AgentRunStatus::WaitingApproval;
                     return;
                 }
@@ -752,7 +901,10 @@ impl TuiState {
                     "session",
                     format!("saved: {session_id}"),
                 );
-                self.push_transcript(format!("session: saved {session_id}"));
+                self.push_transcript_entry(
+                    TranscriptKind::Notice,
+                    format!("session: saved {session_id}"),
+                );
             }
             TuiRuntimeEvent::SessionSaveFailed {
                 session_id,
@@ -764,7 +916,10 @@ impl TuiState {
                     "session",
                     format!("save failed: {session_id}"),
                 );
-                self.push_transcript(format!("session: failed to save {session_id}: {message}"));
+                self.push_transcript_entry(
+                    TranscriptKind::Error,
+                    format!("session: failed to save {session_id}: {message}"),
+                );
             }
             TuiRuntimeEvent::Failed { message } => self.mark_agent_failed(message),
         }
@@ -824,6 +979,124 @@ impl TuiState {
             self.subagents.drain(0..overflow);
         }
     }
+}
+
+/// Parsed view of an assistant message split into a user-visible line and the raw payload.
+pub(super) struct ParsedAssistant {
+    pub display: Option<String>,
+}
+
+/// Extracts the user-visible portion of an assistant message.
+///
+/// If the message ends in a JSON action block, the action drives what (if anything) is shown:
+/// `agent_ask_user` surfaces the question, `agent_done` the summary, and tool-call actions
+/// produce no visible line because the tool events already report them. Free-form text without
+/// a JSON action is shown as-is.
+pub(super) fn parse_assistant_content(content: &str) -> ParsedAssistant {
+    if let Some(json_str) = last_balanced_json_object(content)
+        && let Ok(value) = serde_json::from_str::<serde_json::Value>(&json_str)
+        && let Some(action) = value.get("action").and_then(serde_json::Value::as_str)
+    {
+        let params = value.get("parameters");
+        let display = match action {
+            "agent_ask_user" => params
+                .and_then(|p| {
+                    p.get("question")
+                        .or_else(|| p.get("prompt"))
+                        .or_else(|| p.get("message"))
+                })
+                .and_then(serde_json::Value::as_str)
+                .map(|text| format!("ask: {text}")),
+            "agent_done" => Some(
+                params
+                    .and_then(|p| p.get("summary").or_else(|| p.get("message")))
+                    .and_then(serde_json::Value::as_str)
+                    .map(|text| format!("done: {text}"))
+                    .unwrap_or_else(|| "done".to_string()),
+            ),
+            "agent_message" | "respond" | "reply" => params
+                .and_then(|p| {
+                    p.get("message")
+                        .or_else(|| p.get("text"))
+                        .or_else(|| p.get("content"))
+                })
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string),
+            _ => None,
+        };
+        return ParsedAssistant { display };
+    }
+    ParsedAssistant {
+        display: Some(content.to_string()),
+    }
+}
+
+/// Returns the textual representation of the last balanced top-level JSON object in `text`.
+fn last_balanced_json_object(text: &str) -> Option<String> {
+    let bytes = text.as_bytes();
+    let mut end: Option<usize> = None;
+    let mut in_string = false;
+    let mut escaped = false;
+    for (idx, &byte) in bytes.iter().enumerate() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == b'"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match byte {
+            b'"' => in_string = true,
+            b'}' => end = Some(idx),
+            _ => {}
+        }
+    }
+    let end = end?;
+    let mut depth: usize = 0;
+    let mut in_string = false;
+    let mut start: Option<usize> = None;
+    for idx in (0..=end).rev() {
+        let byte = bytes[idx];
+        if in_string {
+            if byte == b'"' && !is_escaped_quote(bytes, idx) {
+                in_string = false;
+            }
+            continue;
+        }
+        if byte == b'"' && !is_escaped_quote(bytes, idx) {
+            in_string = true;
+            continue;
+        }
+        match byte {
+            b'}' => depth += 1,
+            b'{' => {
+                if depth == 0 {
+                    break;
+                }
+                depth -= 1;
+                if depth == 0 {
+                    start = Some(idx);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let start = start?;
+    Some(text[start..=end].to_string())
+}
+
+fn is_escaped_quote(bytes: &[u8], idx: usize) -> bool {
+    let mut backslashes = 0usize;
+    let mut cursor = idx;
+    while cursor > 0 && bytes[cursor - 1] == b'\\' {
+        backslashes += 1;
+        cursor -= 1;
+    }
+    backslashes % 2 == 1
 }
 
 fn input_byte_index(input: &str, char_index: usize) -> usize {

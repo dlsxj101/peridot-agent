@@ -1,4 +1,6 @@
 use super::*;
+use ratatui::style::Modifier;
+use state::{TranscriptEntry, TranscriptKind};
 
 pub(super) fn render_header_text(state: &TuiState) -> String {
     format!("PERIDOT | {}", render_header_status(state))
@@ -148,6 +150,193 @@ pub(super) fn theme_accent(config: &TuiConfig) -> Color {
     }
 }
 
+/// Returns true when the entry should be hidden in normal (non-debug) view.
+fn is_entry_hidden(state: &TuiState, entry: &TranscriptEntry) -> bool {
+    matches!(entry.kind, TranscriptKind::Debug) && !state.debug_view
+}
+
+/// Builds a styled line for one transcript entry.
+fn style_transcript_entry(state: &TuiState, entry: &TranscriptEntry) -> Line<'static> {
+    match entry.kind {
+        TranscriptKind::User => Line::from(vec![
+            Span::styled(
+                "> ",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                entry.text.clone(),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        TranscriptKind::Assistant => Line::from(vec![
+            Span::styled(
+                "\u{25C6} ",
+                Style::default().fg(theme_accent(&state.config)),
+            ),
+            Span::raw(entry.text.clone()),
+        ]),
+        TranscriptKind::ToolStart => {
+            let glyph = if state
+                .active_tools
+                .iter()
+                .any(|name| entry.text.starts_with(&format!("tool {name}:")))
+            {
+                state.spinner_frame().to_string()
+            } else {
+                "\u{2022}".to_string()
+            };
+            Line::from(vec![
+                Span::styled(
+                    format!("{glyph} "),
+                    Style::default().fg(Color::DarkGray),
+                ),
+                Span::styled(entry.text.clone(), Style::default().fg(Color::DarkGray)),
+            ])
+        }
+        TranscriptKind::ToolOk => Line::from(vec![
+            Span::styled(
+                "\u{2714} ",
+                Style::default().fg(Color::Green),
+            ),
+            Span::styled(entry.text.clone(), Style::default().fg(Color::Green)),
+        ]),
+        TranscriptKind::ToolFail => Line::from(vec![
+            Span::styled(
+                "\u{2718} ",
+                Style::default().fg(Color::Red),
+            ),
+            Span::styled(
+                entry.text.clone(),
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        TranscriptKind::System => Line::from(Span::styled(
+            entry.text.clone(),
+            Style::default().fg(Color::Yellow).add_modifier(Modifier::DIM),
+        )),
+        TranscriptKind::Notice => Line::from(vec![
+            Span::styled("\u{1F4CC} ", Style::default().fg(Color::Yellow)),
+            Span::styled(entry.text.clone(), Style::default().fg(Color::Yellow)),
+        ]),
+        TranscriptKind::Error => Line::from(vec![
+            Span::styled(
+                "! ",
+                Style::default()
+                    .fg(Color::Red)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                entry.text.clone(),
+                Style::default()
+                    .fg(Color::Red)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        TranscriptKind::Debug => Line::from(Span::styled(
+            entry.text.clone(),
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::DIM),
+        )),
+    }
+}
+
+/// Builds a styled line for the active assistant stream.
+fn style_active_stream(state: &TuiState, stream: &StreamState) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(
+            "\u{25C6} ",
+            Style::default()
+                .fg(theme_accent(&state.config))
+                .add_modifier(Modifier::DIM),
+        ),
+        Span::styled(
+            format!("{}: streaming...", stream.label),
+            Style::default()
+                .fg(Color::Gray)
+                .add_modifier(Modifier::DIM | Modifier::ITALIC),
+        ),
+    ])
+}
+
+/// Human-readable description of the current agent activity.
+pub(super) fn agent_status_summary(state: &TuiState) -> String {
+    if state.ask_user.is_some() {
+        return "사용자 응답 대기".to_string();
+    }
+    if state.approval.is_some() || state.agent_run_status == AgentRunStatus::WaitingApproval {
+        return "승인 대기 중".to_string();
+    }
+    if !state.active_tools.is_empty() {
+        let names = state.active_tools.join(", ");
+        return format!("도구 실행 중: {names}");
+    }
+    if state.active_stream.is_some() {
+        return "처리 중...".to_string();
+    }
+    match state.agent_run_status {
+        AgentRunStatus::Idle => "대기 중".to_string(),
+        AgentRunStatus::Running => "처리 중...".to_string(),
+        AgentRunStatus::Succeeded => "완료".to_string(),
+        AgentRunStatus::Failed => "실패".to_string(),
+        AgentRunStatus::WaitingApproval => "승인 대기 중".to_string(),
+    }
+}
+
+/// Renders a 1-line agent status bar (icon, label, queue depth).
+fn render_status_bar(state: &TuiState) -> Line<'static> {
+    let (icon, icon_style) = if state.ask_user.is_some() {
+        ("\u{25CF}", Style::default().fg(Color::Rgb(255, 165, 0)))
+    } else if state.approval.is_some()
+        || state.agent_run_status == AgentRunStatus::WaitingApproval
+    {
+        ("\u{25CF}", Style::default().fg(Color::Rgb(255, 165, 0)))
+    } else if !state.active_tools.is_empty() {
+        (
+            "\u{25CF}",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )
+    } else if state.active_stream.is_some()
+        || state.agent_run_status == AgentRunStatus::Running
+    {
+        (
+            "\u{25CF}",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )
+    } else if state.agent_run_status == AgentRunStatus::Failed {
+        ("\u{25CF}", Style::default().fg(Color::Red))
+    } else {
+        ("\u{25CF}", Style::default().fg(Color::Green))
+    };
+
+    let mut spans = vec![Span::styled(format!("{icon} "), icon_style)];
+    let busy = state.is_agent_busy() || !state.active_tools.is_empty();
+    if busy {
+        spans.push(Span::styled(
+            format!("{} ", state.spinner_frame()),
+            Style::default().fg(Color::Cyan),
+        ));
+    }
+    spans.push(Span::raw(agent_status_summary(state)));
+    if !state.input_queue.is_empty() {
+        spans.push(Span::styled(
+            format!("  | 대기열 {} 건", state.input_queue.len()),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::DIM),
+        ));
+    }
+    Line::from(spans)
+}
+
 /// Renders a deterministic text snapshot for tests and headless previews.
 pub fn render_text_snapshot(state: &TuiState) -> String {
     let mut output = String::new();
@@ -157,13 +346,19 @@ pub fn render_text_snapshot(state: &TuiState) -> String {
     if should_render_welcome(state) {
         let _ = writeln!(output, "{}", render_welcome(state));
     } else {
-        for line in state.transcript.iter().rev().take(20).rev() {
-            let _ = writeln!(output, "{line}");
+        let visible = state
+            .transcript
+            .iter()
+            .filter(|entry| !is_entry_hidden(state, entry))
+            .collect::<Vec<_>>();
+        for entry in visible.iter().rev().take(20).rev() {
+            let _ = writeln!(output, "{}", entry.text);
         }
     }
     if let Some(stream) = &state.active_stream {
         let _ = writeln!(output, "{}: {}", stream.label, stream.content);
     }
+    let _ = writeln!(output, "status: {}", agent_status_summary(state));
     if state.layout == LayoutMode::Full && state.config.show_subagent_panel {
         let done = state
             .side_panel
@@ -238,6 +433,7 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
         .constraints([
             Constraint::Length(3),
             Constraint::Min(1),
+            Constraint::Length(1),
             Constraint::Length(3),
         ])
         .split(area);
@@ -260,36 +456,50 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
             .constraints([Constraint::Percentage(100)])
             .split(chunks[1])
     };
-    let transcript = if let Some(menu) = &state.menu {
-        render_menu(menu)
+    let body_block = Block::default()
+        .title(body_title(state))
+        .borders(Borders::ALL);
+    if let Some(menu) = &state.menu {
+        frame.render_widget(
+            Paragraph::new(render_menu(menu)).block(body_block),
+            body_chunks[0],
+        );
     } else if let Some(panel) = &state.approval {
-        render_approval_panel(panel)
+        frame.render_widget(
+            Paragraph::new(render_approval_panel(panel)).block(body_block),
+            body_chunks[0],
+        );
     } else if let Some(panel) = &state.ask_user {
-        render_ask_user_panel(panel)
+        frame.render_widget(
+            Paragraph::new(render_ask_user_panel(panel)).block(body_block),
+            body_chunks[0],
+        );
     } else if should_render_welcome(state) {
-        render_welcome(state)
+        frame.render_widget(
+            Paragraph::new(render_welcome(state)).block(body_block),
+            body_chunks[0],
+        );
     } else {
-        let mut transcript = state
+        let capacity = body_chunks[0].height.saturating_sub(2) as usize;
+        let visible: Vec<&TranscriptEntry> = state
             .transcript
             .iter()
+            .filter(|entry| !is_entry_hidden(state, entry))
+            .collect();
+        let stream_lines = if state.active_stream.is_some() { 1 } else { 0 };
+        let take = capacity.saturating_sub(stream_lines);
+        let mut lines: Vec<Line<'static>> = visible
+            .iter()
             .rev()
-            .take(body_chunks[0].height.saturating_sub(2) as usize)
+            .take(take)
             .rev()
-            .cloned()
-            .collect::<Vec<_>>();
+            .map(|entry| style_transcript_entry(state, entry))
+            .collect();
         if let Some(stream) = &state.active_stream {
-            transcript.push(format!("{}: {}", stream.label, stream.content));
+            lines.push(style_active_stream(state, stream));
         }
-        transcript.join("\n")
-    };
-    frame.render_widget(
-        Paragraph::new(transcript).block(
-            Block::default()
-                .title(body_title(state))
-                .borders(Borders::ALL),
-        ),
-        body_chunks[0],
-    );
+        frame.render_widget(Paragraph::new(lines).block(body_block), body_chunks[0]);
+    }
 
     if state.layout == LayoutMode::Full && state.config.show_subagent_panel && body_chunks.len() > 1
     {
@@ -331,14 +541,26 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
         );
     }
 
+    frame.render_widget(Paragraph::new(render_status_bar(state)), chunks[2]);
+
+    let input_area = chunks[3];
+    let input_line = Line::from(vec![
+        Span::styled(
+            "> ",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(state.input.clone()),
+    ]);
     frame.render_widget(
-        Paragraph::new(format!("> {}", state.input))
+        Paragraph::new(input_line)
             .block(Block::default().title(input_title()).borders(Borders::ALL)),
-        chunks[2],
+        input_area,
     );
     let cursor_x =
-        chunks[2].x + 2 + (state.input_cursor as u16).min(chunks[2].width.saturating_sub(4));
-    frame.set_cursor_position(Position::new(cursor_x, chunks[2].y + 1));
+        input_area.x + 2 + (state.input_cursor as u16).min(input_area.width.saturating_sub(4));
+    frame.set_cursor_position(Position::new(cursor_x, input_area.y + 1));
 }
 
 pub(super) fn body_title(state: &TuiState) -> &'static str {

@@ -38,7 +38,7 @@ use render::goal_status_label;
 pub use render::{draw, render_text_snapshot, select_layout};
 pub use state::{
     ActivityKind, AgentRunStatus, HeaderState, LayoutMode, PlanStep, RuntimeActivity, SessionStats,
-    SidePanelState, StreamState, SubagentMonitorItem, TuiEventOutcome, TuiExit, TuiLifecycleEvent,
-    TuiRuntimeEvent, TuiState,
+    SidePanelState, StreamState, SubagentMonitorItem, TranscriptEntry, TranscriptKind,
+    TuiEventOutcome, TuiExit, TuiLifecycleEvent, TuiRuntimeEvent, TuiState,
 };
 use terminal::TerminalGuard;
