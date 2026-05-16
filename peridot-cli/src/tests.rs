@@ -6,13 +6,14 @@ use anyhow::Result;
 use peridot_common::{ExecutionMode, MemoryConfig, PeridotConfig, PermissionMode};
 use peridot_core::{AgentRunSummary, StopReason};
 use peridot_llm::Usage;
-use peridot_memory::MemoryStore;
+use peridot_memory::{MemoryStore, SessionLifecycle, SessionRecord};
 use peridot_tui::{HeaderState, TuiState};
 
 use super::interactive_io::*;
 use super::relax_security_for_approval;
 use super::run_output::*;
 use super::run_state::*;
+use super::{restore_tui_state_from_disk, scan_and_suspend_running_sessions};
 
 #[test]
 fn resume_text_wraps_current_task() {
@@ -256,4 +257,60 @@ fn run_git<const N: usize>(root: &Path, args: [&str; N]) -> Result<String> {
         anyhow::bail!("{}", String::from_utf8_lossy(&output.stderr).trim());
     }
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+#[test]
+fn restore_returns_serde_roundtrip_of_persisted_state() {
+    let root = std::env::temp_dir().join(format!("peridot-cli-restore-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).unwrap();
+    let id = "test-session";
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    state.current_session_id = id.to_string();
+    state.last_task = Some("rewrite README".to_string());
+
+    let sessions_root = root.join(".peridot").join("sessions");
+    let bytes = serde_json::to_vec(&state).unwrap();
+    peridot_memory::save_session_blob(&sessions_root, id, "tui_state.json", &bytes).unwrap();
+
+    let (restored_id, restored) = restore_tui_state_from_disk(id, &root).unwrap();
+    assert_eq!(restored_id, id);
+    assert_eq!(restored.last_task.as_deref(), Some("rewrite README"));
+    assert_eq!(restored.current_session_id, id);
+
+    fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn startup_scan_downgrades_running_sessions_to_suspended() {
+    let root = std::env::temp_dir().join(format!("peridot-cli-scan-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(root.join(".peridot")).unwrap();
+    let memory = MemoryStore::new(root.join(".peridot/memory.db"));
+    let record = SessionRecord {
+        id: "s-running".to_string(),
+        summary: "running session".to_string(),
+        status: SessionLifecycle::Running,
+        created_at_unix: 100,
+        updated_at_unix: 200,
+        workspace_root: root.clone(),
+        worktree_branch: None,
+        last_task: None,
+        total_tokens: 0,
+        total_cost_usd: 0.0,
+        turns_used: 0,
+    };
+    memory.save_session_record(&record).unwrap();
+
+    let suspended = scan_and_suspend_running_sessions(&root);
+    assert_eq!(suspended, vec!["s-running".to_string()]);
+
+    let after = memory.get_session_record("s-running").unwrap().unwrap();
+    assert_eq!(after.status, SessionLifecycle::Suspended);
+
+    fs::remove_dir_all(&root).ok();
 }

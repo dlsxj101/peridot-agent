@@ -35,6 +35,10 @@ pub fn run_interactive(mut state: TuiState) -> io::Result<TuiExit> {
 /// `on_session_command` is invoked whenever a slash command queues a
 /// [`SessionCommandEvent`]; the host translates it into a real
 /// `SessionRouter` mutation.
+///
+/// `on_persist` is called on every tick after state has been updated, giving
+/// the host a chance to throttle and serialise `TuiState` to disk so a crash
+/// or `Ctrl+C` does not lose the current session.
 #[allow(clippy::too_many_arguments)]
 pub fn run_interactive_with_events<F>(
     mut state: TuiState,
@@ -43,6 +47,7 @@ pub fn run_interactive_with_events<F>(
     mut on_approval: impl FnMut(ApprovalDecision, ApprovalScope, String, String, &mut TuiState),
     mut on_interrupt: impl FnMut(&mut TuiState),
     mut on_session_command: impl FnMut(SessionCommandEvent, &mut TuiState),
+    mut on_persist: impl FnMut(&TuiState),
 ) -> io::Result<TuiExit>
 where
     F: FnMut(String, &mut TuiState),
@@ -65,6 +70,7 @@ where
         drain_input_queue(&mut state, &mut on_submit);
         state.tick_spinner();
         terminal.terminal.draw(|frame| draw(frame, &state))?;
+        on_persist(&state);
         if event::poll(Duration::from_millis(100))? {
             match event::read()? {
                 Event::Key(key) => match handle_key_event(&mut state, key) {
@@ -84,6 +90,7 @@ where
             }
         }
     }
+    on_persist(&state);
     Ok(TuiExit {
         state,
         submitted: None,

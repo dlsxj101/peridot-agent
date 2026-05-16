@@ -44,11 +44,12 @@ its parent transcript (M4), and the attention notifier line (M5).
 - Two `Shared` sessions on the same cwd raise a transcript warning so silent file-write collisions are visible.
 - Outstanding for the next milestone: handle process crash mid-run so leftover worktrees are pruned on startup.
 
-### M3 — Persistence round-trip + crash recovery
-- Throttle `MemoryStore::save_session_blob` calls to ≥1s between snapshots per session.
-- `peridot session resume <id>` rebuilds `TuiState` + `peridot-context` from disk and continues the agent loop.
-- Add a startup scan: any `SessionRecord` with `status == Running` is downgraded to `Suspended` and surfaced for explicit resume.
-- Tests: persist mid-run → kill process → resume; verify transcript + plan + token totals match.
+### M3 — Persistence round-trip + crash recovery (landed)
+- TUI loop calls `on_persist(&TuiState)` every tick; the CLI host throttles to one snapshot per second per session and writes `tui_state.json` atomically under `<project_root>/.peridot/sessions/<id>/` via `save_session_blob`.
+- Every snapshot also updates `SessionRecord` (lifecycle / tokens / cost / turns / last_task) via `MemoryStore::save_session_record`.
+- `peridot --resume <id>` now rebuilds the full foreground `TuiState` from the persisted blob when the run starts interactively; headless `--resume` keeps the existing prompt-injection behaviour.
+- Startup scan downgrades any `SessionRecord` still marked `Running` to `Suspended` and surfaces the ids in the welcome transcript with the `peridot --resume <id>` hint.
+- Outstanding: `peridot-context` blob round-trip (the context manager itself is not yet serialised — TuiState alone covers the UI surface).
 
 ### M4 — Subagent fan-in (`/fork`, `/teammate`, `/worktree`)
 - Route `/fork <task>` through `LocalSubAgentRunner::fork` with `parent_id` set on the spawned `SessionHandle`.

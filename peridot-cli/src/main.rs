@@ -29,7 +29,9 @@ use peridot_llm::{
     LlmProvider, OpenAiProvider, PricingTable, Usage,
 };
 use peridot_mcp::McpClient;
-use peridot_memory::{MemoryStore, SessionSummary, StoredSkill};
+use peridot_memory::{
+    MemoryStore, SessionLifecycle, SessionRecord, SessionSummary, StoredSkill, save_session_blob,
+};
 use peridot_project::ProjectScanner;
 use peridot_tools::hooks::{HookRunner, HookVariables, lifecycle_hook_variables};
 use peridot_tools::{ToolRegistry, register_builtin_tools, register_mcp_tools};
@@ -376,7 +378,9 @@ async fn main() -> Result<()> {
         None => {
             if let Some(task) = read_piped_task()? {
                 run_task(task, mode, &cli, &config, &project_root).await?;
-            } else if cli.resume.is_some() {
+            } else if cli.resume.is_some()
+                && (cli.effective_headless() || cli.output == OutputFormat::Json)
+            {
                 run_task(
                     "Continue the resumed session.".to_string(),
                     mode,
@@ -408,26 +412,53 @@ async fn main() -> Result<()> {
                     }
                 } else {
                     maybe_print_update_notice(&config, cli.effective_headless(), cli.output).await;
-                    let mut state =
-                        TuiState::new(HeaderState::new(mode, permission, model.clone()))
-                            .with_config(config.tui.clone());
-                    state.push_transcript("Peridot ready. Type a task, /plan, /execute, /goal <objective>, /safe, /auto, /yolo, or Esc.");
-                    state.push_transcript(
-                        "Submitted tasks continue inside this TUI; tool activity and run status stream here.",
-                    );
+                    let restored_state = cli
+                        .resume
+                        .as_deref()
+                        .and_then(|id| restore_tui_state_from_disk(id, &project_root).ok());
+                    let mut state = match restored_state {
+                        Some((id, restored)) => {
+                            let mut state = restored.with_config(config.tui.clone());
+                            state.push_notice(format!("session: resumed {id} from disk"));
+                            state
+                        }
+                        None => {
+                            let mut state =
+                                TuiState::new(HeaderState::new(mode, permission, model.clone()))
+                                    .with_config(config.tui.clone());
+                            state.push_transcript("Peridot ready. Type a task, /plan, /execute, /goal <objective>, /safe, /auto, /yolo, or Esc.");
+                            state.push_transcript(
+                                "Submitted tasks continue inside this TUI; tool activity and run status stream here.",
+                            );
+                            state
+                        }
+                    };
+                    let suspended = scan_and_suspend_running_sessions(&project_root);
+                    if !suspended.is_empty() {
+                        state.push_notice(format!(
+                            "found {} stale session(s) marked Suspended: {}. \
+                             Resume with `peridot --resume <id>`.",
+                            suspended.len(),
+                            suspended.join(", ")
+                        ));
+                    }
                     let router: std::sync::Arc<std::sync::Mutex<SessionRouter>> =
                         std::sync::Arc::new(std::sync::Mutex::new(SessionRouter::new()));
-                    let initial_session_id =
-                        format!("session-{}-{}", std::process::id(), unix_timestamp());
+                    let initial_session_id = if state.current_session_id.is_empty() {
+                        let new_id = format!("session-{}-{}", std::process::id(), unix_timestamp());
+                        state.current_session_id = new_id.clone();
+                        state
+                            .sessions
+                            .push(SessionDirectoryItem::new(&new_id, "main"));
+                        new_id
+                    } else {
+                        state.current_session_id.clone()
+                    };
                     router.lock().unwrap().register(SessionHandle::new(
                         initial_session_id.clone(),
                         project_root.clone(),
                         WorkspaceIsolation::Shared,
                     ));
-                    state.current_session_id = initial_session_id.clone();
-                    state
-                        .sessions
-                        .push(SessionDirectoryItem::new(&initial_session_id, "main"));
                     let (event_tx, event_rx) =
                         std::sync::mpsc::channel::<(String, TuiRuntimeEvent)>();
                     let handle = tokio::runtime::Handle::current();
@@ -558,7 +589,24 @@ async fn main() -> Result<()> {
                                 );
                             }
                         },
+                        {
+                            let project_template = run_project_root.clone();
+                            let router = router.clone();
+                            let mut last_persist_unix: u64 = 0;
+                            move |state: &TuiState| {
+                                let now = SystemTime::now()
+                                    .duration_since(UNIX_EPOCH)
+                                    .map(|d| d.as_secs())
+                                    .unwrap_or_default();
+                                if now.saturating_sub(last_persist_unix) < 1 {
+                                    return;
+                                }
+                                last_persist_unix = now;
+                                persist_session_snapshot(state, &router, &project_template);
+                            }
+                        },
                     )?;
+                    persist_session_snapshot(&exit.state, &router, &run_project_root);
                     run_tui_lifecycle_hooks(&exit.state, &config, &project_root)?;
                 }
             }
@@ -861,6 +909,97 @@ fn warn_on_shared_workspace_collisions(
             project_template.display()
         ));
     }
+}
+
+fn persist_session_snapshot(
+    state: &TuiState,
+    router: &std::sync::Arc<std::sync::Mutex<SessionRouter>>,
+    project_root: &Path,
+) {
+    if state.current_session_id.is_empty() {
+        return;
+    }
+    let sessions_root = project_root.join(".peridot").join("sessions");
+    let id = state.current_session_id.as_str();
+    if let Ok(bytes) = serde_json::to_vec(state) {
+        let _ = save_session_blob(&sessions_root, id, "tui_state.json", &bytes);
+    }
+    let lifecycle = lifecycle_from_status(&state.agent_run_status);
+    let (workspace_root, worktree_branch, started_at_unix) = {
+        let mut router = router.lock().unwrap();
+        let Some(handle) = router.get_mut(id) else {
+            return;
+        };
+        handle.lifecycle = lifecycle;
+        (
+            handle.workspace_root.clone(),
+            handle.worktree_branch.clone(),
+            handle.started_at_unix,
+        )
+    };
+    let record = SessionRecord {
+        id: id.to_string(),
+        summary: state.last_task.clone().unwrap_or_default(),
+        status: lifecycle,
+        created_at_unix: started_at_unix,
+        updated_at_unix: unix_timestamp(),
+        workspace_root,
+        worktree_branch,
+        last_task: state.last_task.clone(),
+        total_tokens: state.header.total_tokens,
+        total_cost_usd: state.header.cost_usd,
+        turns_used: state.current_turn,
+    };
+    let memory = MemoryStore::new(project_root.join(".peridot/memory.db"));
+    let _ = memory.save_session_record(&record);
+}
+
+fn lifecycle_from_status(status: &peridot_tui::AgentRunStatus) -> SessionLifecycle {
+    use peridot_tui::AgentRunStatus;
+    match status {
+        AgentRunStatus::Running | AgentRunStatus::WaitingApproval => SessionLifecycle::Running,
+        AgentRunStatus::Succeeded => SessionLifecycle::Done,
+        AgentRunStatus::Failed => SessionLifecycle::Failed,
+        AgentRunStatus::Interrupted => SessionLifecycle::Suspended,
+        AgentRunStatus::Idle => SessionLifecycle::Idle,
+    }
+}
+
+/// Restores a previously persisted `TuiState` from
+/// `<project_root>/.peridot/sessions/<id>/tui_state.json`. Returns the
+/// session id alongside the deserialized state so the caller can prime its
+/// `current_session_id`.
+fn restore_tui_state_from_disk(
+    id: &str,
+    project_root: &Path,
+) -> anyhow::Result<(String, TuiState)> {
+    let sessions_root = project_root.join(".peridot").join("sessions");
+    let bytes = peridot_memory::load_session_blob(&sessions_root, id, "tui_state.json")?
+        .ok_or_else(|| anyhow::anyhow!("no persisted tui_state.json for session {id}"))?;
+    let state: TuiState = serde_json::from_slice(&bytes)
+        .with_context(|| format!("failed to parse persisted tui_state.json for session {id}"))?;
+    Ok((id.to_string(), state))
+}
+
+/// Downgrades any session record still marked `Running` to `Suspended` on
+/// startup. Returns the ids that were transitioned.
+fn scan_and_suspend_running_sessions(project_root: &Path) -> Vec<String> {
+    let memory = MemoryStore::new(project_root.join(".peridot/memory.db"));
+    let Ok(records) = memory.list_session_records() else {
+        return Vec::new();
+    };
+    let mut suspended = Vec::new();
+    for record in records {
+        if record.status != SessionLifecycle::Running {
+            continue;
+        }
+        let mut updated = record;
+        updated.status = SessionLifecycle::Suspended;
+        if memory.save_session_record(&updated).is_ok() {
+            suspended.push(updated.id);
+        }
+    }
+    suspended
 }
 
 #[allow(clippy::too_many_arguments)]
