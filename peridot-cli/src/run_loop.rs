@@ -122,6 +122,7 @@ pub(super) fn agent_task_options(cli: &Cli, config: &PeridotConfig) -> AgentTask
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn run_task_with_events<F>(
     task: String,
     mode: ExecutionMode,
@@ -129,6 +130,7 @@ pub(super) async fn run_task_with_events<F>(
     config: PeridotConfig,
     project_root: PathBuf,
     cancel: Option<peridot_core::CancelToken>,
+    context_snapshot_path: Option<PathBuf>,
     events: F,
 ) -> Result<peridot_core::AgentRunSummary>
 where
@@ -143,13 +145,22 @@ where
     let mut registry = ToolRegistry::new();
     register_builtin_tools(&mut registry)?;
     register_configured_mcp_tools(&mut registry, &config).await?;
-    let context = ContextManager::with_limits(project_context_limits_from_config(
+    let mut context = ContextManager::with_limits(project_context_limits_from_config(
         &project_root,
         &config.context,
     ));
+    if let Some(path) = context_snapshot_path.as_ref()
+        && let Ok(bytes) = std::fs::read(path)
+        && let Ok(entries) = serde_json::from_slice::<Vec<peridot_context::ContextEntry>>(&bytes)
+    {
+        context.restore_entries(entries);
+    }
     let mut agent = HarnessAgent::new(state, context, registry);
     if let Some(token) = cancel {
         agent.set_cancel_token(token);
+    }
+    if let Some(path) = context_snapshot_path {
+        agent.set_context_snapshot_path(path);
     }
     let profile = ProjectScanner::new().scan(&project_root)?;
     let denied_paths = profile.boundaries.into_iter().map(PathBuf::from).collect();

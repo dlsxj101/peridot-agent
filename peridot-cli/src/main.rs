@@ -628,6 +628,13 @@ fn spawn_tui_agent_run(
     project_root: PathBuf,
     cancel: Option<peridot_core::CancelToken>,
 ) {
+    let context_snapshot_path = Some(
+        project_root
+            .join(".peridot")
+            .join("sessions")
+            .join(&session_id)
+            .join("context.bin"),
+    );
     handle.spawn(async move {
         let event_sender = event_tx.clone();
         let session = session_id.clone();
@@ -638,6 +645,7 @@ fn spawn_tui_agent_run(
             config,
             project_root,
             cancel,
+            context_snapshot_path,
             move |event| {
                 let _ = event_sender.send((session.clone(), tui_runtime_event_from_agent(event)));
             },

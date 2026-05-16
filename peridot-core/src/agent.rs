@@ -30,6 +30,7 @@ pub struct HarnessAgent {
     context: ContextManager,
     tools: ToolRegistry,
     cancel: Option<CancelToken>,
+    context_snapshot_path: Option<PathBuf>,
 }
 
 impl HarnessAgent {
@@ -40,6 +41,7 @@ impl HarnessAgent {
             context,
             tools,
             cancel: None,
+            context_snapshot_path: None,
         }
     }
 
@@ -52,6 +54,14 @@ impl HarnessAgent {
     /// Replaces the cancellation token in place.
     pub fn set_cancel_token(&mut self, token: CancelToken) {
         self.cancel = Some(token);
+    }
+
+    /// Configures the on-disk path the agent loop should snapshot its
+    /// [`ContextManager`] entries into after every turn. The write happens
+    /// atomically via `tempfile + rename` so concurrent crashes never expose
+    /// half-written blobs.
+    pub fn set_context_snapshot_path(&mut self, path: PathBuf) {
+        self.context_snapshot_path = Some(path);
     }
 
     /// Returns the current agent state.
@@ -404,6 +414,9 @@ impl HarnessAgent {
                 turn_index,
                 success: turn_success,
             });
+            if let Some(path) = self.context_snapshot_path.as_ref() {
+                snapshot_context_to_disk(path, &self.context, &mut events);
+            }
             if should_emit_budget_warning(
                 request.budget_usd,
                 request.budget_warning_pct,
@@ -511,5 +524,48 @@ fn approval_required_error(err: &PeriError) -> bool {
     match err {
         PeriError::PermissionDenied(reason) => reason.contains("requires explicit user approval"),
         _ => false,
+    }
+}
+
+fn snapshot_context_to_disk<F>(path: &std::path::Path, context: &ContextManager, events: &mut F)
+where
+    F: FnMut(AgentRunEvent),
+{
+    let entries = context.snapshot_entries();
+    let bytes = match serde_json::to_vec(&entries) {
+        Ok(bytes) => bytes,
+        Err(err) => {
+            events(AgentRunEvent::Recovery {
+                message: format!("context snapshot serialize failed: {err}"),
+            });
+            return;
+        }
+    };
+    if let Some(parent) = path.parent()
+        && let Err(err) = std::fs::create_dir_all(parent)
+    {
+        events(AgentRunEvent::Recovery {
+            message: format!(
+                "context snapshot create_dir_all {} failed: {err}",
+                parent.display()
+            ),
+        });
+        return;
+    }
+    let temp = path.with_extension("tmp");
+    if let Err(err) = std::fs::write(&temp, &bytes) {
+        events(AgentRunEvent::Recovery {
+            message: format!("context snapshot write {} failed: {err}", temp.display()),
+        });
+        return;
+    }
+    if let Err(err) = std::fs::rename(&temp, path) {
+        events(AgentRunEvent::Recovery {
+            message: format!(
+                "context snapshot rename {} -> {} failed: {err}",
+                temp.display(),
+                path.display()
+            ),
+        });
     }
 }

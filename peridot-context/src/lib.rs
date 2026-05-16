@@ -145,6 +145,20 @@ impl ContextManager {
         &self.entries
     }
 
+    /// Returns a deep copy of the current entries, suitable for serialising as
+    /// a session snapshot.
+    pub fn snapshot_entries(&self) -> Vec<ContextEntry> {
+        self.entries.clone()
+    }
+
+    /// Replaces the internal entries with `entries`, dropping anything that was
+    /// already buffered. Used by session resume to reconstitute the context
+    /// from disk before the agent loop continues.
+    pub fn restore_entries(&mut self, entries: Vec<ContextEntry>) {
+        self.entries = entries;
+        self.offload_counter = 0;
+    }
+
     /// Estimates tokens with a conservative character heuristic.
     pub fn estimated_tokens(&self) -> usize {
         self.entries
@@ -319,6 +333,23 @@ mod tests {
         assert_eq!(manager.entries()[0].content, "hello");
         assert_eq!(manager.entries()[1].content, "world");
         assert!(manager.estimated_tokens() >= 2);
+    }
+
+    #[test]
+    fn snapshot_and_restore_round_trip_entries() {
+        let mut manager = ContextManager::new();
+        manager.append(ContextEntry::trusted(ContextSource::User, "alpha"));
+        manager.append(ContextEntry::trusted(ContextSource::Tool, "beta"));
+
+        let bytes = serde_json::to_vec(&manager.snapshot_entries()).unwrap();
+
+        let entries: Vec<ContextEntry> = serde_json::from_slice(&bytes).unwrap();
+        let mut restored = ContextManager::new();
+        restored.restore_entries(entries);
+
+        assert_eq!(restored.entries().len(), 2);
+        assert_eq!(restored.entries()[0].content, "alpha");
+        assert_eq!(restored.entries()[1].content, "beta");
     }
 
     #[test]

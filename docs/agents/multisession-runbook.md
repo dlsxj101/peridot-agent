@@ -49,7 +49,12 @@ its parent transcript (M4), and the attention notifier line (M5).
 - Every snapshot also updates `SessionRecord` (lifecycle / tokens / cost / turns / last_task) via `MemoryStore::save_session_record`.
 - `peridot --resume <id>` now rebuilds the full foreground `TuiState` from the persisted blob when the run starts interactively; headless `--resume` keeps the existing prompt-injection behaviour.
 - Startup scan downgrades any `SessionRecord` still marked `Running` to `Suspended` and surfaces the ids in the welcome transcript with the `peridot --resume <id>` hint.
-- Outstanding: `peridot-context` blob round-trip (the context manager itself is not yet serialised — TuiState alone covers the UI surface).
+- Context blob round-trip is wired end-to-end: the agent loop writes
+  `<sessions_root>/<id>/context.bin` atomically after every turn via
+  `ContextManager::snapshot_entries`, and `run_task_with_events` restores those
+  entries through `ContextManager::restore_entries` before the next loop starts.
+  `peridot --resume <id>` therefore reconstitutes both the TUI surface and the
+  underlying conversation context.
 
 ### M4 — Subagent fan-in (`/fork`, `/teammate`, `/worktree`) (landed)
 - `/fork`, `/teammate`, and `/worktree` register the new session with
