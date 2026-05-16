@@ -75,6 +75,11 @@ its parent transcript (M4), and the attention notifier line (M5).
   the child with an empty context (silent no-op), matching the previous
   behaviour for that edge case.
 
+### M20 — Operator notes per session (landed)
+- `peridot session note <id> add <text>` appends a `{ts, text}` JSON line to `<sessions>/<id>/notes.ndjson` (created on demand) so an operator can annotate sessions without touching the transcript.
+- `peridot session note <id> list` prints `[unix_ts] text` lines in chronological order (or returns `{ id, notes: [...] }` under `--output json`).
+- `peridot session note <id> clear` removes `notes.ndjson` if it exists. Each notes file is independent of `tui_state.json` / `transcript.ndjson`, so a session can be exported / imported / pruned without touching the notes.
+
 ### M19 — Workspace label in status bar (landed)
 - `HeaderState.workspace_label: Option<String>` (#[serde(default)]) carries the project root's basename. `peridot-cli` populates it from `project_root.file_name()` at TUI startup (and on resume) so the status bar reads `workspace <name>` next to mode/permission.
 - The label is per-session, so a `/teammate` worktree session that targets a different checkout will naturally show a different `workspace` label than the foreground session.

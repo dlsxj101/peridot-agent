@@ -237,6 +237,28 @@ pub(crate) enum SessionCommand {
         #[arg(long)]
         force: bool,
     },
+    /// Attach or read operator notes for one session.
+    Note {
+        /// Session id.
+        id: String,
+        /// Note subcommand.
+        #[command(subcommand)]
+        action: SessionNoteAction,
+    },
+}
+
+/// Subcommands of `peridot session note <id>`.
+#[derive(Debug, Subcommand)]
+pub(crate) enum SessionNoteAction {
+    /// Append a new note line.
+    Add {
+        /// Note text (joined with spaces).
+        text: Vec<String>,
+    },
+    /// Print all notes attached to the session.
+    List,
+    /// Remove every note attached to the session.
+    Clear,
 }
 
 /// AGENTS.md subcommands.
