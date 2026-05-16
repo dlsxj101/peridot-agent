@@ -67,10 +67,13 @@ its parent transcript (M4), and the attention notifier line (M5).
   parent transcript reflects child progress without forcing a tab swap.
 - `/session close <child>` reuses the M2 worktree cleanup flow so cancelling
   a teammate / worktree subagent leaves no orphan directories or branches.
-- Outstanding: `LocalSubAgentRunner::fork` integration for prompt-injection
-  parents — the wiring tracks parent/child here, but the agent loop still
-  starts each child with an empty context. M5 covers the attention notifier;
-  shared context propagation is a follow-up after that.
+- Child sessions now inherit their parent's conversation. When
+  `/fork`, `/teammate`, or `/worktree` spawns a child, `inherit_parent_context`
+  copies `<sessions>/<parent>/context.bin` to `<sessions>/<child>/context.bin`
+  before the agent loop starts, so `run_task_with_events` restores the parent's
+  context entries on the first turn. Parents with zero completed turns leave
+  the child with an empty context (silent no-op), matching the previous
+  behaviour for that edge case.
 
 ### M5 — Attention notifier (landed)
 - `TuiState::pending_attention_count()` reports how many non-foreground

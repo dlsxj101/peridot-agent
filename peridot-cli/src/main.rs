@@ -784,7 +784,8 @@ fn apply_session_command(
             }
             state
                 .sessions
-                .push(SessionDirectoryItem::new(&new_id, &title).with_parent(parent_id, "fork"));
+                .push(SessionDirectoryItem::new(&new_id, &title).with_parent(&parent_id, "fork"));
+            inherit_parent_context(&parent_id, &new_id, project_template);
             spawn_session_task(
                 handle,
                 event_tx,
@@ -891,11 +892,12 @@ fn spawn_worktree_session(
     }
     state
         .sessions
-        .push(SessionDirectoryItem::new(new_id, &title).with_parent(parent_id, kind));
+        .push(SessionDirectoryItem::new(new_id, &title).with_parent(&parent_id, kind));
     state.push_transcript(format!(
         "worktree: registered {new_id} on branch {branch} at {}",
         worktree_path.display()
     ));
+    inherit_parent_context(&parent_id, new_id, project_template);
     spawn_session_task(
         handle,
         event_tx,
@@ -975,6 +977,24 @@ fn persist_session_snapshot(
     };
     let memory = MemoryStore::new(project_root.join(".peridot/memory.db"));
     let _ = memory.save_session_record(&record);
+}
+
+/// Copies the parent session's `context.bin` to the child session's directory
+/// so the spawned agent loop starts with the same conversation history. The
+/// agent loop's restore_entries on the first turn picks the file up. Silently
+/// returns when the parent has no snapshot yet (a freshly opened parent with
+/// zero completed turns).
+fn inherit_parent_context(parent_id: &str, child_id: &str, project_root: &Path) {
+    let sessions = project_root.join(".peridot").join("sessions");
+    let parent = sessions.join(parent_id).join("context.bin");
+    if !parent.exists() {
+        return;
+    }
+    let child_dir = sessions.join(child_id);
+    if std::fs::create_dir_all(&child_dir).is_err() {
+        return;
+    }
+    let _ = std::fs::copy(&parent, child_dir.join("context.bin"));
 }
 
 fn lifecycle_from_status(status: &peridot_tui::AgentRunStatus) -> SessionLifecycle {
