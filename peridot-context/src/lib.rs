@@ -21,6 +21,8 @@ pub enum ContextSource {
     PlanReminder,
     /// External untrusted content.
     External,
+    /// Reviewer comment injected by the M-COM3 reviewer pass.
+    ReviewerComment,
 }
 
 /// One immutable entry in the append-only context log.
@@ -196,9 +198,10 @@ impl ContextManager {
                 let role = match entry.source {
                     ContextSource::User => MessageRole::User,
                     ContextSource::Assistant => MessageRole::Assistant,
-                    ContextSource::Tool | ContextSource::PlanReminder | ContextSource::External => {
-                        MessageRole::User
-                    }
+                    ContextSource::Tool
+                    | ContextSource::PlanReminder
+                    | ContextSource::ReviewerComment
+                    | ContextSource::External => MessageRole::User,
                 };
                 let content = if entry.untrusted {
                     render_untrusted_content(&entry.source, &entry.content)
@@ -220,6 +223,7 @@ fn summarize_entries(entries: &[ContextEntry]) -> String {
     let mut tool = 0;
     let mut plan = 0;
     let mut external = 0;
+    let mut reviewer = 0;
     let mut fragments = Vec::new();
     for entry in entries {
         match entry.source {
@@ -227,6 +231,7 @@ fn summarize_entries(entries: &[ContextEntry]) -> String {
             ContextSource::Assistant => assistant += 1,
             ContextSource::Tool => tool += 1,
             ContextSource::PlanReminder => plan += 1,
+            ContextSource::ReviewerComment => reviewer += 1,
             ContextSource::External => external += 1,
         }
         if fragments.len() < 6 {
@@ -238,12 +243,13 @@ fn summarize_entries(entries: &[ContextEntry]) -> String {
         }
     }
     format!(
-        "Compacted prior context: entries={} user={} assistant={} tool={} plan={} external={}.\nKey retained fragments:\n{}",
+        "Compacted prior context: entries={} user={} assistant={} tool={} plan={} reviewer={} external={}.\nKey retained fragments:\n{}",
         entries.len(),
         user,
         assistant,
         tool,
         plan,
+        reviewer,
         external,
         fragments.join("\n")
     )
@@ -280,6 +286,7 @@ fn source_name(source: &ContextSource) -> &'static str {
         ContextSource::Assistant => "assistant",
         ContextSource::Tool => "tool",
         ContextSource::PlanReminder => "plan_reminder",
+        ContextSource::ReviewerComment => "reviewer_comment",
         ContextSource::External => "external",
     }
 }

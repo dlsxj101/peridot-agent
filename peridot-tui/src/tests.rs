@@ -1615,6 +1615,40 @@ fn record_background_event_skips_subagent_monitor_when_parent_not_foreground() {
 }
 
 #[test]
+fn reviewer_verdict_event_renders_with_kind_per_outcome() {
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    state.apply_runtime_event(TuiRuntimeEvent::ReviewerVerdict {
+        turn_index: 0,
+        verdict: "approve".to_string(),
+        comments: String::new(),
+    });
+    state.apply_runtime_event(TuiRuntimeEvent::ReviewerVerdict {
+        turn_index: 1,
+        verdict: "request_changes".to_string(),
+        comments: "indent is off".to_string(),
+    });
+    state.apply_runtime_event(TuiRuntimeEvent::ReviewerVerdict {
+        turn_index: 2,
+        verdict: "block".to_string(),
+        comments: "writes outside workspace".to_string(),
+    });
+
+    let kinds: Vec<_> = state.transcript.iter().map(|e| e.kind).collect();
+    assert!(kinds.contains(&TranscriptKind::System));
+    assert!(kinds.contains(&TranscriptKind::Notice));
+    assert!(kinds.contains(&TranscriptKind::Error));
+
+    let snapshot = render_text_snapshot(&state);
+    assert!(snapshot.contains("approve"));
+    assert!(snapshot.contains("indent is off"));
+    assert!(snapshot.contains("writes outside workspace"));
+}
+
+#[test]
 fn planner_plan_ready_event_lands_in_transcript() {
     let mut state = TuiState::new(HeaderState::new(
         ExecutionMode::Execute,

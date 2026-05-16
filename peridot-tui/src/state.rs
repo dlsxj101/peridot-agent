@@ -366,6 +366,15 @@ pub enum TuiRuntimeEvent {
         /// Plan text dictated by the planner agent.
         plan_text: String,
     },
+    /// Committee reviewer returned a verdict after inspecting one executor turn.
+    ReviewerVerdict {
+        /// Zero-based executor turn index this verdict applies to.
+        turn_index: u32,
+        /// Verdict label: "approve" | "request_changes" | "block".
+        verdict: String,
+        /// Reviewer comments or blocking reason (empty on plain approve).
+        comments: String,
+    },
 }
 
 /// Plan step payload carried by [`TuiRuntimeEvent::PlanUpdated`].
@@ -1411,6 +1420,25 @@ impl TuiState {
                     format!("committee planner ready:\n{plan_text}"),
                 );
                 self.push_activity(ActivityKind::Stream, "committee planner", "plan ready");
+            }
+            TuiRuntimeEvent::ReviewerVerdict {
+                turn_index,
+                verdict,
+                comments,
+            } => {
+                let summary = if comments.is_empty() {
+                    format!("committee reviewer (turn {turn_index}): {verdict}")
+                } else {
+                    format!("committee reviewer (turn {turn_index}): {verdict} — {comments}")
+                };
+                let kind = match verdict.as_str() {
+                    "approve" => TranscriptKind::System,
+                    "request_changes" => TranscriptKind::Notice,
+                    "block" => TranscriptKind::Error,
+                    _ => TranscriptKind::Notice,
+                };
+                self.push_transcript_entry(kind, summary);
+                self.push_activity(ActivityKind::Stream, "committee reviewer", verdict);
             }
         }
     }

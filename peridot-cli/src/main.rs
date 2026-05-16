@@ -1380,6 +1380,23 @@ fn tui_runtime_event_from_agent(event: AgentRunEvent) -> TuiRuntimeEvent {
         AgentRunEvent::PlannerPlanReady { plan_text } => {
             TuiRuntimeEvent::PlannerPlanReady { plan_text }
         }
+        AgentRunEvent::ReviewerVerdict {
+            turn_index,
+            verdict,
+        } => {
+            let (label, comments) = match verdict {
+                peridot_core::ReviewerVerdict::Approve => ("approve".to_string(), String::new()),
+                peridot_core::ReviewerVerdict::RequestChanges { comments } => {
+                    ("request_changes".to_string(), comments)
+                }
+                peridot_core::ReviewerVerdict::Block { reason } => ("block".to_string(), reason),
+            };
+            TuiRuntimeEvent::ReviewerVerdict {
+                turn_index,
+                verdict: label,
+                comments,
+            }
+        }
     }
 }
 

@@ -20,7 +20,7 @@ pub use goal::{GoalController, GoalStatus};
 pub use permissions::allowed_tool_groups;
 pub use requests::{
     AgentRunEvent, AgentRunRequest, AgentRunSummary, AgentTurnOutcome, AgentTurnRequest,
-    McpStatusUpdate, PlanStepUpdate, StopReason,
+    McpStatusUpdate, PlanStepUpdate, ReviewerVerdict, StopReason,
 };
 pub use role::AgentRole;
 pub use slash::{SlashCommand, parse_slash_command};
