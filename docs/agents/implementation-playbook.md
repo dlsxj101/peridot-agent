@@ -107,3 +107,20 @@ Done when:
 - TUI tests cover input editing regressions, runtime events, tool previews/results, approval panels, slash commands, and render snapshots.
 - Headless mode is scriptable.
 - Release artifacts can be built by CI.
+
+## Session 8: Multi-Session Runtime
+Goal: turn the multi-session scaffolding (PR8–PR11) into a live runtime with concurrent agent loops, workspace isolation, subagent fan-in, and crash recovery.
+
+Key work:
+- Live `SessionRouter` spawning via `tokio::spawn`; per-session `CancelToken`; `(session_id, TuiRuntimeEvent)` multiplex.
+- Workspace isolation through `peridot_git::GitManager::add_worktree` for backgrounded sessions; warn on `Shared` cwd collisions.
+- Throttled atomic persistence of `TuiState`/`peridot-context` blobs under `.peridot/sessions/<id>/`; resume reconstitutes the full run.
+- Subagent fan-in: `/fork`, `/teammate`, `/worktree` route through `LocalSubAgentRunner` with `parent_id` correlation in the side panel tree.
+- Attention notifier surfaces background `ApprovalRequested`/`AskUser*` via tab badges and a status bar line backed by a new `PhraseKey`.
+
+Done when:
+- Two or more concurrent agent loops run with isolated events and budgets.
+- Foreground swap (`Ctrl+T`/`Ctrl+W`) hot-swaps `TuiState` without losing the running session.
+- `peridot session resume <id>` continues a previously suspended session in place.
+- Crash mid-run leaves the on-disk session loadable and lifecycle = `Suspended` until explicit resume.
+- See [Multi-Session Runbook](multisession-runbook.md) for the milestone-level breakdown.

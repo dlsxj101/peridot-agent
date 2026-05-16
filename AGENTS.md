@@ -54,9 +54,17 @@ license: MIT
 - Keep `on_failure = "block"` rare; use it only for checks that protect repository integrity.
 - Only turn repeated manual work into a skill. Delete or merge skills that stop earning their context cost.
 
+## TUI Multi-Session Notes
+- The TUI uses a five-marker vocabulary (`▸ ◆ ❯ ✔/✘ ⚠`); never reintroduce decorative icons.
+- All user-facing strings flow through `peridot_tui::tr(PhraseKey, Locale)` — adding a new visible string requires a new `PhraseKey` arm in both English and Korean tables.
+- `AgentRunEvent` variants must round-trip through `peridot-cli/src/main.rs` adapter into a matching `TuiRuntimeEvent` arm; adding one without updating the adapter silently drops data.
+- Multi-session work is gated by `peridot-cli/src/session_router.rs` — read `.peridot/skills/multisession-orchestration/SKILL.md` before changing its public surface.
+- Schema additions to `TuiState`, `SessionRecord`, or `AgentRunEvent` need `#[serde(default)]` (struct fields) or new enum tags (variants) so disk-resumed sessions keep loading.
+
 ## Reference Docs
 - [Implementation Playbook](docs/agents/implementation-playbook.md)
 - [Rust Workspace Guidelines](docs/agents/rust-workspace-guidelines.md)
 - [Security And Permissions](docs/agents/security-and-permissions.md)
 - [Verification](docs/agents/verification.md)
 - [Skill And Hook Maintenance](docs/agents/skill-hook-maintenance.md)
+- [Multi-Session Runbook](docs/agents/multisession-runbook.md)
