@@ -75,6 +75,11 @@ its parent transcript (M4), and the attention notifier line (M5).
   the child with an empty context (silent no-op), matching the previous
   behaviour for that edge case.
 
+### M17 — Session import (landed)
+- `peridot session import <dir> [--id <id>] [--force]` is the inverse of M16's export: it copies every file from the source directory into `<project_root>/.peridot/sessions/<id>/`. The id defaults to the source directory's base name unless `--id` is provided.
+- After the copy, the imported `tui_state.json` (if any) is deserialised once to register a `SessionSummary` carrying the session's `last_task` so `peridot session list` / `peridot session show` / `peridot --resume` see the imported session immediately.
+- `--force` clears the destination directory before importing; otherwise an existing session id is a hard error so the user never silently merges files from two different exports.
+
 ### M16 — Portable session export (landed)
 - `peridot session export <id> --out <dir> [--force]` copies every file inside `<sessions_root>/<id>/` (currently `tui_state.json`, `transcript.ndjson`, `context.bin`, plus any subdirectory the agent writes) into a fresh destination directory. Combine with `tar`/`zip` to ship a session to another machine.
 - `--force` clears the destination directory first; otherwise an existing path is a hard error so the user never accidentally overwrites a different export.

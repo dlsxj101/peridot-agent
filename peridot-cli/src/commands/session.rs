@@ -156,6 +156,108 @@ pub(crate) fn run_session_command(
         SessionCommand::Export { id, out, force } => {
             export_session(project_root, id, out, *force, output)?;
         }
+        SessionCommand::Import { from, id, force } => {
+            import_session(&store, project_root, from, id.as_deref(), *force, output)?;
+        }
+    }
+    Ok(())
+}
+
+fn import_session(
+    store: &MemoryStore,
+    project_root: &Path,
+    from: &Path,
+    id_override: Option<&str>,
+    force: bool,
+    output: OutputFormat,
+) -> Result<()> {
+    if !from.is_dir() {
+        anyhow::bail!("source {} is not a directory", from.display());
+    }
+    let derived_id = match id_override {
+        Some(id) => id.to_string(),
+        None => from
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(str::to_string)
+            .with_context(|| {
+                format!(
+                    "could not derive session id from {}; pass --id <id>",
+                    from.display()
+                )
+            })?,
+    };
+    let destination = project_root
+        .join(".peridot")
+        .join("sessions")
+        .join(&derived_id);
+    if destination.exists() {
+        if !force {
+            anyhow::bail!(
+                "session {derived_id} already exists at {}; pass --force to overwrite",
+                destination.display()
+            );
+        }
+        std::fs::remove_dir_all(&destination)
+            .with_context(|| format!("failed to clear {} before import", destination.display()))?;
+    }
+    std::fs::create_dir_all(&destination)
+        .with_context(|| format!("failed to create {}", destination.display()))?;
+    let mut copied: Vec<String> = Vec::new();
+    for entry in std::fs::read_dir(from)? {
+        let entry = entry?;
+        let file_name = entry.file_name();
+        let src = entry.path();
+        let dst = destination.join(&file_name);
+        if src.is_dir() {
+            copy_dir_recursive(&src, &dst)?;
+        } else {
+            std::fs::copy(&src, &dst).with_context(|| {
+                format!("failed to copy {} -> {}", src.display(), dst.display())
+            })?;
+        }
+        if let Some(name) = file_name.to_str() {
+            copied.push(name.to_string());
+        }
+    }
+    if let Some(bytes) = peridot_memory::load_session_blob(
+        &project_root.join(".peridot").join("sessions"),
+        &derived_id,
+        "tui_state.json",
+    )? && let Ok(state) = serde_json::from_slice::<peridot_tui::TuiState>(&bytes)
+    {
+        let summary_text = state
+            .last_task
+            .clone()
+            .unwrap_or_else(|| format!("imported session {derived_id}"));
+        let _ = store.save_session(&SessionSummary {
+            id: derived_id.clone(),
+            summary: summary_text,
+        });
+    }
+    match output {
+        OutputFormat::Json => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "id": derived_id,
+                    "source": from.display().to_string(),
+                    "destination": destination.display().to_string(),
+                    "files": copied,
+                }))?
+            );
+        }
+        OutputFormat::Text => {
+            println!(
+                "imported session {derived_id} from {} into {} ({} entries)",
+                from.display(),
+                destination.display(),
+                copied.len()
+            );
+            for name in &copied {
+                println!("  - {name}");
+            }
+        }
     }
     Ok(())
 }

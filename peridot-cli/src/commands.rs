@@ -226,6 +226,17 @@ pub(crate) enum SessionCommand {
         #[arg(long)]
         force: bool,
     },
+    /// Import a previously-exported session directory.
+    Import {
+        /// Source directory containing the exported session artifacts.
+        from: PathBuf,
+        /// Optional session id to register under (defaults to source dir basename).
+        #[arg(long)]
+        id: Option<String>,
+        /// Overwrite an existing session with the same id.
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 /// AGENTS.md subcommands.
