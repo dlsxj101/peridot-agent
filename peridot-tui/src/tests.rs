@@ -54,7 +54,8 @@ fn renders_text_snapshot() {
 
     let snapshot = render_text_snapshot(&state);
 
-    assert!(snapshot.contains("PERIDOT | execute.auto | mock"));
+    assert!(snapshot.contains("PERIDOT  mock"));
+    assert!(snapshot.contains("metrics: execute · auto"));
     assert!(snapshot.contains("[x] Implement hooks"));
     assert!(snapshot.contains("tool file_write ok"));
 }
@@ -90,13 +91,13 @@ fn streaming_state_renders_and_finishes_into_transcript() {
     state.push_stream_delta(" world");
 
     let snapshot = render_text_snapshot(&state);
-    assert!(snapshot.contains("assistant: hello world"));
+    assert!(snapshot.contains("stream: hello world"));
     assert!(snapshot.contains("stream assistant: streaming"));
 
     state.finish_stream();
 
     assert!(state.active_stream.is_none());
-    assert_eq!(state.transcript[0].text, "assistant: hello world");
+    assert_eq!(state.transcript[0].text, "hello world");
     assert!(render_text_snapshot(&state).contains("stream assistant: done"));
     assert_eq!(state.side_panel.stats.steps, 1);
 }
@@ -225,7 +226,8 @@ fn tui_config_hides_optional_metrics_and_side_panel() {
 
     let snapshot = render_text_snapshot(&state);
 
-    assert!(snapshot.contains("PERIDOT | execute.auto | mock"));
+    assert!(snapshot.contains("PERIDOT  mock"));
+    assert!(snapshot.contains("metrics: execute · auto"));
     assert!(!snapshot.contains("tok"));
     assert!(!snapshot.contains("$"));
     assert!(!snapshot.contains("cache"));
@@ -354,6 +356,74 @@ fn input_history_and_control_shortcuts_work() {
         KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL),
     );
     assert!(state.transcript.is_empty());
+}
+
+#[test]
+fn shift_enter_inserts_newline_without_submitting() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    for character in "line1".chars() {
+        handle_key_event(
+            &mut state,
+            KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE),
+        );
+    }
+    assert_eq!(
+        handle_key_event(
+            &mut state,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT)
+        ),
+        TuiEventOutcome::Continue
+    );
+    for character in "line2".chars() {
+        handle_key_event(
+            &mut state,
+            KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE),
+        );
+    }
+    assert_eq!(state.input, "line1\nline2");
+    assert_eq!(
+        handle_key_event(
+            &mut state,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)
+        ),
+        TuiEventOutcome::Submit("line1\nline2".to_string())
+    );
+}
+
+#[test]
+fn ctrl_p_opens_menu_and_ctrl_bracket_toggles_side_panel() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    assert!(state.menu.is_none());
+    handle_key_event(
+        &mut state,
+        KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL),
+    );
+    assert!(state.menu.is_some(), "Ctrl+P should open the menu");
+    state.menu = None;
+
+    let initial_panel = state.config.show_subagent_panel;
+    handle_key_event(
+        &mut state,
+        KeyEvent::new(KeyCode::Char(']'), KeyModifiers::CONTROL),
+    );
+    assert_eq!(state.config.show_subagent_panel, !initial_panel);
+    handle_key_event(
+        &mut state,
+        KeyEvent::new(KeyCode::Char(']'), KeyModifiers::CONTROL),
+    );
+    assert_eq!(state.config.show_subagent_panel, initial_panel);
 }
 
 #[test]
@@ -633,7 +703,12 @@ fn runtime_events_update_tui_without_exiting() {
     let snapshot = render_text_snapshot(&state);
     assert!(snapshot.contains("agent done"));
     assert!(snapshot.contains("task: fix tests"));
-    assert!(snapshot.contains("assistant: thinking"));
+    let assistant_text = state
+        .transcript
+        .iter()
+        .find(|entry| entry.kind == TranscriptKind::Assistant)
+        .expect("assistant entry");
+    assert_eq!(assistant_text.text, "thinking");
     assert!(
         !snapshot.contains("thinking: checking the failing test path"),
         "thinking text should be hidden in non-debug view"
@@ -676,7 +751,7 @@ fn assistant_json_action_renders_only_user_facing_text() {
         .filter(|entry| entry.kind == TranscriptKind::Assistant)
         .collect();
     assert_eq!(visible.len(), 1);
-    assert_eq!(visible[0].text, "assistant: ask: How can I help you?");
+    assert_eq!(visible[0].text, "ask: How can I help you?");
 
     let snapshot = render_text_snapshot(&state);
     assert!(snapshot.contains("ask: How can I help you?"));
@@ -776,10 +851,10 @@ fn tool_preview_lines_render_without_inheriting_parent_icon() {
     terminal.draw(|frame| draw(frame, &state)).unwrap();
     let rendered = format!("{:?}", terminal.backend().buffer());
     // Header lines keep their icon, indented preview lines must NOT.
-    assert!(rendered.contains("\u{2714} tool shell_exec: ok"));
+    assert!(rendered.contains("\u{2714} shell_exec  ok"));
     assert!(!rendered.contains("\u{2714}   status"));
     assert!(!rendered.contains("\u{2714}   stdout"));
-    assert!(!rendered.contains("\u{2022}   command"));
+    assert!(!rendered.contains("\u{276F}   command"));
 }
 
 #[test]

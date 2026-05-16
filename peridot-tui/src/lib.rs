@@ -20,7 +20,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Position},
     style::{Color, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
+    widgets::{Block, Borders, Paragraph, Wrap},
 };
 use serde::{Deserialize, Serialize};
 

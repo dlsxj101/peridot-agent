@@ -2,15 +2,17 @@ use super::*;
 use ratatui::style::Modifier;
 use state::{TranscriptEntry, TranscriptKind};
 
-pub(super) fn render_header_text(state: &TuiState) -> String {
-    format!("PERIDOT | {}", render_header_status(state))
+/// Minimal header text: `PERIDOT  <model>` — mode/permission/metrics go to the status bar.
+pub(super) fn render_header_brief(state: &TuiState) -> String {
+    format!("PERIDOT  {}", state.header.model)
 }
 
-pub(super) fn render_header_status(state: &TuiState) -> String {
-    let mut parts = vec![
-        format!("{}.{}", state.header.mode, state.header.permission),
-        state.header.model.clone(),
-    ];
+/// Status-bar metrics text: mode/permission + optional tok/cost/cache + goal + agent.
+pub(super) fn render_status_metrics(state: &TuiState) -> String {
+    let mut parts = vec![format!(
+        "{} · {}",
+        state.header.mode, state.header.permission
+    )];
     if state.config.show_token_count {
         parts.push(format!("{} tok", state.header.total_tokens));
     }
@@ -29,7 +31,7 @@ pub(super) fn render_header_status(state: &TuiState) -> String {
             agent_run_status_label(&state.agent_run_status)
         ));
     }
-    parts.join(" | ")
+    parts.join("  |  ")
 }
 
 pub(super) fn agent_run_status_label(status: &AgentRunStatus) -> &'static str {
@@ -172,7 +174,7 @@ fn style_transcript_entry(state: &TuiState, entry: &TranscriptEntry) -> Line<'st
     match entry.kind {
         TranscriptKind::User => Line::from(vec![
             Span::styled(
-                "> ",
+                "\u{25B8} ",
                 Style::default()
                     .fg(Color::Cyan)
                     .add_modifier(Modifier::BOLD),
@@ -191,21 +193,10 @@ fn style_transcript_entry(state: &TuiState, entry: &TranscriptEntry) -> Line<'st
             ),
             Span::raw(entry.text.clone()),
         ]),
-        TranscriptKind::ToolStart => {
-            let glyph = if state
-                .active_tools
-                .iter()
-                .any(|name| entry.text.starts_with(&format!("tool {name}:")))
-            {
-                state.spinner_frame().to_string()
-            } else {
-                "\u{2022}".to_string()
-            };
-            Line::from(vec![
-                Span::styled(format!("{glyph} "), Style::default().fg(Color::DarkGray)),
-                Span::styled(entry.text.clone(), Style::default().fg(Color::DarkGray)),
-            ])
-        }
+        TranscriptKind::ToolStart => Line::from(vec![
+            Span::styled("\u{276F} ", Style::default().fg(Color::DarkGray)),
+            Span::styled(entry.text.clone(), Style::default().fg(Color::DarkGray)),
+        ]),
         TranscriptKind::ToolOk => Line::from(vec![
             Span::styled("\u{2714} ", Style::default().fg(Color::Green)),
             Span::styled(entry.text.clone(), Style::default().fg(Color::Green)),
@@ -224,12 +215,12 @@ fn style_transcript_entry(state: &TuiState, entry: &TranscriptEntry) -> Line<'st
                 .add_modifier(Modifier::DIM),
         )),
         TranscriptKind::Notice => Line::from(vec![
-            Span::styled("\u{1F4CC} ", Style::default().fg(Color::Yellow)),
+            Span::styled("\u{26A0} ", Style::default().fg(Color::Yellow)),
             Span::styled(entry.text.clone(), Style::default().fg(Color::Yellow)),
         ]),
         TranscriptKind::Error => Line::from(vec![
             Span::styled(
-                "! ",
+                "\u{26A0} ",
                 Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
             ),
             Span::styled(
@@ -247,8 +238,12 @@ fn style_transcript_entry(state: &TuiState, entry: &TranscriptEntry) -> Line<'st
 }
 
 /// Builds a styled line for the active assistant stream.
-fn style_active_stream(state: &TuiState, stream: &StreamState) -> Line<'static> {
-    Line::from(vec![
+/// Returns None when no delta has arrived yet (avoids a noisy placeholder).
+fn style_active_stream(state: &TuiState, stream: &StreamState) -> Option<Line<'static>> {
+    if stream.content.is_empty() {
+        return None;
+    }
+    Some(Line::from(vec![
         Span::styled(
             "\u{25C6} ",
             Style::default()
@@ -256,12 +251,12 @@ fn style_active_stream(state: &TuiState, stream: &StreamState) -> Line<'static> 
                 .add_modifier(Modifier::DIM),
         ),
         Span::styled(
-            format!("{}: streaming...", stream.label),
+            "streaming...",
             Style::default()
                 .fg(Color::Gray)
                 .add_modifier(Modifier::DIM | Modifier::ITALIC),
         ),
-    ])
+    ]))
 }
 
 /// Human-readable description of the current agent activity.
@@ -288,7 +283,7 @@ pub(super) fn agent_status_summary(state: &TuiState) -> String {
     }
 }
 
-/// Renders a 1-line agent status bar (icon, label, queue depth).
+/// Renders a 1-line agent status bar (icon, label, queue depth, metrics).
 fn render_status_bar(state: &TuiState) -> Line<'static> {
     let waiting_user = state.ask_user.is_some()
         || state.approval.is_some()
@@ -332,13 +327,20 @@ fn render_status_bar(state: &TuiState) -> Line<'static> {
                 .add_modifier(Modifier::DIM),
         ));
     }
+    spans.push(Span::styled(
+        format!("  · {}", render_status_metrics(state)),
+        Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::DIM),
+    ));
     Line::from(spans)
 }
 
 /// Renders a deterministic text snapshot for tests and headless previews.
 pub fn render_text_snapshot(state: &TuiState) -> String {
     let mut output = String::new();
-    let _ = writeln!(output, "{}", render_header_text(state));
+    let _ = writeln!(output, "{}", render_header_brief(state));
+    let _ = writeln!(output, "metrics: {}", render_status_metrics(state));
     let _ = writeln!(output, "layout: {:?}", state.layout);
     let _ = writeln!(output);
     if should_render_welcome(state) {
@@ -353,8 +355,10 @@ pub fn render_text_snapshot(state: &TuiState) -> String {
             let _ = writeln!(output, "{}", entry.text);
         }
     }
-    if let Some(stream) = &state.active_stream {
-        let _ = writeln!(output, "{}: {}", stream.label, stream.content);
+    if let Some(stream) = &state.active_stream
+        && !stream.content.is_empty()
+    {
+        let _ = writeln!(output, "stream: {}", stream.content);
     }
     let _ = writeln!(output, "status: {}", agent_status_summary(state));
     if state.layout == LayoutMode::Full && state.config.show_subagent_panel {
@@ -429,7 +433,7 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),
+            Constraint::Length(1),
             Constraint::Min(1),
             Constraint::Length(1),
             Constraint::Length(3),
@@ -437,16 +441,21 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
         .split(area);
 
     let header = Paragraph::new(Line::from(vec![
-        Span::styled("PERIDOT", Style::default().fg(theme_accent(&state.config))),
-        Span::raw(format!(" | {}", render_header_status(state))),
-    ]))
-    .block(Block::default().borders(Borders::ALL));
+        Span::styled(
+            "PERIDOT",
+            Style::default()
+                .fg(theme_accent(&state.config))
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("  "),
+        Span::styled(state.header.model.clone(), Style::default().fg(Color::Gray)),
+    ]));
     frame.render_widget(header, chunks[0]);
 
     let body_chunks = if state.layout == LayoutMode::Full && state.config.show_subagent_panel {
         Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
+            .constraints([Constraint::Percentage(75), Constraint::Percentage(25)])
             .split(chunks[1])
     } else {
         Layout::default()
@@ -459,22 +468,30 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
         .borders(Borders::ALL);
     if let Some(menu) = &state.menu {
         frame.render_widget(
-            Paragraph::new(render_menu(menu)).block(body_block),
+            Paragraph::new(render_menu(menu))
+                .block(body_block)
+                .wrap(Wrap { trim: false }),
             body_chunks[0],
         );
     } else if let Some(panel) = &state.approval {
         frame.render_widget(
-            Paragraph::new(render_approval_panel(panel)).block(body_block),
+            Paragraph::new(render_approval_panel(panel))
+                .block(body_block)
+                .wrap(Wrap { trim: false }),
             body_chunks[0],
         );
     } else if let Some(panel) = &state.ask_user {
         frame.render_widget(
-            Paragraph::new(render_ask_user_panel(panel)).block(body_block),
+            Paragraph::new(render_ask_user_panel(panel))
+                .block(body_block)
+                .wrap(Wrap { trim: false }),
             body_chunks[0],
         );
     } else if should_render_welcome(state) {
         frame.render_widget(
-            Paragraph::new(render_welcome(state)).block(body_block),
+            Paragraph::new(render_welcome(state))
+                .block(body_block)
+                .wrap(Wrap { trim: false }),
             body_chunks[0],
         );
     } else {
@@ -484,8 +501,12 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
             .iter()
             .filter(|entry| !is_entry_hidden(state, entry))
             .collect();
-        let stream_lines = if state.active_stream.is_some() { 1 } else { 0 };
-        let take = capacity.saturating_sub(stream_lines);
+        let stream_line = state
+            .active_stream
+            .as_ref()
+            .and_then(|stream| style_active_stream(state, stream));
+        let stream_reserve = if stream_line.is_some() { 1 } else { 0 };
+        let take = capacity.saturating_sub(stream_reserve);
         let mut lines: Vec<Line<'static>> = visible
             .iter()
             .rev()
@@ -493,10 +514,15 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
             .rev()
             .map(|entry| style_transcript_entry(state, entry))
             .collect();
-        if let Some(stream) = &state.active_stream {
-            lines.push(style_active_stream(state, stream));
+        if let Some(line) = stream_line {
+            lines.push(line);
         }
-        frame.render_widget(Paragraph::new(lines).block(body_block), body_chunks[0]);
+        frame.render_widget(
+            Paragraph::new(lines)
+                .block(body_block)
+                .wrap(Wrap { trim: false }),
+            body_chunks[0],
+        );
     }
 
     if state.layout == LayoutMode::Full && state.config.show_subagent_panel && body_chunks.len() > 1
@@ -534,7 +560,9 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
             render_activity_list(&state.activities)
         );
         frame.render_widget(
-            Paragraph::new(side).block(Block::default().title("Status").borders(Borders::ALL)),
+            Paragraph::new(side)
+                .block(Block::default().title("Status").borders(Borders::ALL))
+                .wrap(Wrap { trim: false }),
             body_chunks[1],
         );
     }
@@ -544,7 +572,7 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
     let input_area = chunks[3];
     let input_line = Line::from(vec![
         Span::styled(
-            "> ",
+            "\u{276F} ",
             Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
@@ -552,8 +580,7 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
         Span::raw(state.input.clone()),
     ]);
     frame.render_widget(
-        Paragraph::new(input_line)
-            .block(Block::default().title(input_title()).borders(Borders::ALL)),
+        Paragraph::new(input_line).block(Block::default().borders(Borders::ALL)),
         input_area,
     );
     let cursor_x =
@@ -573,10 +600,6 @@ pub(super) fn body_title(state: &TuiState) -> &'static str {
     } else {
         "Transcript"
     }
-}
-
-pub(super) fn input_title() -> &'static str {
-    "Input - Enter sends | / commands | Esc menu | Ctrl-C quit"
 }
 
 pub(super) fn render_menu(menu: &MenuState) -> String {

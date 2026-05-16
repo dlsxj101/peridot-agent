@@ -106,6 +106,14 @@ pub fn handle_key_event(state: &mut TuiState, key: KeyEvent) -> TuiEventOutcome 
             state.transcript.clear();
             TuiEventOutcome::Continue
         }
+        KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            state.menu = Some(MenuState::default());
+            TuiEventOutcome::Continue
+        }
+        KeyCode::Char(']') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            state.config.show_subagent_panel = !state.config.show_subagent_panel;
+            TuiEventOutcome::Continue
+        }
         KeyCode::Esc => {
             state.menu = Some(MenuState::default());
             TuiEventOutcome::Continue
@@ -140,6 +148,10 @@ pub fn handle_key_event(state: &mut TuiState, key: KeyEvent) -> TuiEventOutcome 
         }
         KeyCode::Delete => {
             state.delete_input_char();
+            TuiEventOutcome::Continue
+        }
+        KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => {
+            state.insert_input_char('\n');
             TuiEventOutcome::Continue
         }
         KeyCode::Enter => submit_input(state),

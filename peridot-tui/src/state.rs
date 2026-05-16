@@ -657,10 +657,7 @@ impl TuiState {
         } else {
             let parsed = parse_assistant_content(content);
             if let Some(visible) = parsed.display.as_ref() {
-                self.push_transcript_entry(
-                    TranscriptKind::Assistant,
-                    format!("{}: {visible}", stream.label),
-                );
+                self.push_transcript_entry(TranscriptKind::Assistant, visible.clone());
             }
             if self.debug_view {
                 let summary = truncate_for_debug(content, 80);
@@ -683,10 +680,7 @@ impl TuiState {
         let tool_name = tool_name.into();
         self.active_tools.push(tool_name.clone());
         self.push_activity(ActivityKind::Tool, tool_name.clone(), "running");
-        self.push_transcript_entry(
-            TranscriptKind::ToolStart,
-            format!("tool {tool_name}: running"),
-        );
+        self.push_transcript_entry(TranscriptKind::ToolStart, format!("{tool_name}  running"));
         for line in tool_parameter_preview(&tool_name, &parameters) {
             self.push_transcript_entry(TranscriptKind::ToolStart, line);
         }
@@ -723,13 +717,12 @@ impl TuiState {
         let summary = summary.into();
         self.finish_active_tool(&tool_name);
         self.record_tool_activity(tool_name.clone(), success, summary.clone());
-        let marker = if success { "ok" } else { "failed" };
         let kind = if success {
             TranscriptKind::ToolOk
         } else {
             TranscriptKind::ToolFail
         };
-        self.push_transcript_entry(kind, format!("tool {tool_name}: {marker}: {summary}"));
+        self.push_transcript_entry(kind, format!("{tool_name}  {summary}"));
         for line in tool_output_preview(&tool_name, &output) {
             self.push_transcript_entry(kind, line);
         }
