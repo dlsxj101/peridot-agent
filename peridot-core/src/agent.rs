@@ -31,6 +31,8 @@ pub struct HarnessAgent {
     tools: ToolRegistry,
     cancel: Option<CancelToken>,
     context_snapshot_path: Option<PathBuf>,
+    agents_md_path: Option<PathBuf>,
+    agents_md_signature: Option<(u64, u64)>,
 }
 
 impl HarnessAgent {
@@ -42,7 +44,19 @@ impl HarnessAgent {
             tools,
             cancel: None,
             context_snapshot_path: None,
+            agents_md_path: None,
+            agents_md_signature: None,
         }
+    }
+
+    /// Configures the AGENTS.md file the agent loop watches for changes.
+    /// On every turn the loop compares the file's `(modified_unix, len)`
+    /// fingerprint to the last seen one and, if it changed, re-reads the
+    /// file and pushes its contents into context as a `PlanReminder` entry
+    /// while emitting `AgentRunEvent::AgentsMdLoaded`.
+    pub fn set_agents_md_path(&mut self, path: PathBuf) {
+        self.agents_md_path = Some(path);
+        self.agents_md_signature = None;
     }
 
     /// Attaches a cancellation token consulted between turns.
@@ -351,6 +365,7 @@ impl HarnessAgent {
                 });
                 return Ok(summary);
             }
+            self.refresh_agents_md(&mut events);
             events(AgentRunEvent::TurnStarted { turn_index });
             let outcome = match self
                 .run_turn_with_events(
@@ -517,6 +532,56 @@ impl HarnessAgent {
             summary: summary.clone(),
         });
         Ok(summary)
+    }
+}
+
+impl HarnessAgent {
+    /// Compares the configured AGENTS.md path's `(modified_unix, len)`
+    /// fingerprint against the last seen one and, when it changed, re-reads
+    /// the file, injects its contents into context as a `PlanReminder`
+    /// entry, and emits `AgentRunEvent::AgentsMdLoaded` with the rule count
+    /// and origin path. The first call after `set_agents_md_path` always
+    /// fires the inject because `agents_md_signature` starts as `None`.
+    fn refresh_agents_md<F>(&mut self, events: &mut F)
+    where
+        F: FnMut(AgentRunEvent),
+    {
+        let Some(path) = self.agents_md_path.clone() else {
+            return;
+        };
+        let Ok(meta) = std::fs::metadata(&path) else {
+            return;
+        };
+        let modified = meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let len = meta.len();
+        let signature = (modified, len);
+        if self.agents_md_signature == Some(signature) {
+            return;
+        }
+        let Ok(content) = std::fs::read_to_string(&path) else {
+            return;
+        };
+        let rule_count = content
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .count() as u32;
+        self.context.append(ContextEntry::trusted(
+            ContextSource::PlanReminder,
+            format!(
+                "AGENTS.md reloaded ({rule_count} lines) from {}:\n{content}",
+                path.display()
+            ),
+        ));
+        events(AgentRunEvent::AgentsMdLoaded {
+            rule_count,
+            paths: vec![path.display().to_string()],
+        });
+        self.agents_md_signature = Some(signature);
     }
 }
 

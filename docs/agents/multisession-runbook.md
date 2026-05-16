@@ -75,6 +75,11 @@ its parent transcript (M4), and the attention notifier line (M5).
   the child with an empty context (silent no-op), matching the previous
   behaviour for that edge case.
 
+### M18 — AGENTS.md hot reload (landed)
+- `HarnessAgent::set_agents_md_path` lets the host point the agent at the AGENTS-style instruction file the project resolves (`.peridot/AGENTS.md`, `AGENTS.md`, `CLAUDE.md`, or `.github/copilot-instructions.md`, in that priority order). `peridot_project::locate_agents_md` resolves this from the project root.
+- Every turn the agent loop calls `refresh_agents_md`: it compares `(modified_unix, len)` against the last-seen fingerprint and, when the file has been edited mid-run, re-reads the content, appends a trusted `ContextEntry::PlanReminder` carrying the new rules into the context, and emits `AgentRunEvent::AgentsMdLoaded` so the TUI side panel reflects the refresh. The first turn after `set_agents_md_path` always fires the inject because the signature starts as `None`.
+- The check no-ops silently when the file is missing or unreadable, so removing `AGENTS.md` mid-run never blocks the agent.
+
 ### M17 — Session import (landed)
 - `peridot session import <dir> [--id <id>] [--force]` is the inverse of M16's export: it copies every file from the source directory into `<project_root>/.peridot/sessions/<id>/`. The id defaults to the source directory's base name unless `--id` is provided.
 - After the copy, the imported `tui_state.json` (if any) is deserialised once to register a `SessionSummary` carrying the session's `last_task` so `peridot session list` / `peridot session show` / `peridot --resume` see the imported session immediately.

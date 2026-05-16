@@ -162,6 +162,9 @@ where
     if let Some(path) = context_snapshot_path {
         agent.set_context_snapshot_path(path);
     }
+    if let Some(path) = peridot_project::locate_agents_md(&project_root) {
+        agent.set_agents_md_path(path);
+    }
     let profile = ProjectScanner::new().scan(&project_root)?;
     let denied_paths = profile.boundaries.into_iter().map(PathBuf::from).collect();
 
