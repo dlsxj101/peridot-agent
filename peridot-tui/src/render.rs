@@ -797,8 +797,14 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
         ),
         Span::raw(state.input.clone()),
     ]);
+    let char_count = state.input.chars().count();
+    let title = if char_count == 0 {
+        String::new()
+    } else {
+        format!(" {char_count} chars ")
+    };
     frame.render_widget(
-        Paragraph::new(input_line).block(Block::default().borders(Borders::ALL)),
+        Paragraph::new(input_line).block(Block::default().borders(Borders::ALL).title(title)),
         input_area,
     );
     let cursor_x =

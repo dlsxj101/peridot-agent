@@ -75,6 +75,9 @@ its parent transcript (M4), and the attention notifier line (M5).
   the child with an empty context (silent no-op), matching the previous
   behaviour for that edge case.
 
+### M36 — Input box title carries character count (landed)
+- Once the user starts typing, the input box's border title reads `" N chars "` (using the Unicode character count, so emoji/multibyte input is counted correctly). An empty buffer keeps the box title blank so the idle state stays clean.
+
 ### M35 — `/help` regenerates from slash catalog (landed)
 - The `/help` slash now renders one line per `SlashCommandSpec` returned by `slash_command_catalog()`: `<name> <arg_hint>  ·  <description> [<category>]`. Newly registered slashes therefore appear in `/help` automatically — no more drift between the catalog and the help text.
 - Output remains a single `push_transcript` so the existing transcript-wrap logic handles long help lists.
