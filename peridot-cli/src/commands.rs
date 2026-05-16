@@ -171,6 +171,9 @@ pub(crate) enum SessionCommand {
         /// Also print the most recent N operator notes inline.
         #[arg(long)]
         notes_tail: Option<usize>,
+        /// Also print the most recent N transcript entries inline.
+        #[arg(long)]
+        transcript_tail: Option<usize>,
     },
     /// Delete one session summary.
     Delete {

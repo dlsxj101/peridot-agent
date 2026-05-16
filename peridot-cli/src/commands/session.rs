@@ -75,15 +75,37 @@ pub(crate) fn run_session_command(
                 output,
             )?;
         }
-        SessionCommand::Show { id, notes_tail } => {
+        SessionCommand::Show {
+            id,
+            notes_tail,
+            transcript_tail,
+        } => {
             let session = store.get_session(id)?;
             let record = store.get_session_record(id).unwrap_or_default();
             let (notes_count, last_note) = read_notes_summary(project_root, id);
             let notes_tail_entries = notes_tail
                 .filter(|n| *n > 0)
                 .map(|n| read_notes_tail(project_root, id, n));
+            let transcript_tail_entries = transcript_tail.filter(|n| *n > 0).and_then(|n| {
+                load_session_transcript(project_root, id).ok().map(|all| {
+                    let start = all.len().saturating_sub(n);
+                    all[start..].to_vec()
+                })
+            });
             match output {
                 OutputFormat::Json => {
+                    let tail_json: Option<Vec<_>> =
+                        transcript_tail_entries.as_ref().map(|entries| {
+                            entries
+                                .iter()
+                                .map(|entry| {
+                                    serde_json::json!({
+                                        "kind": format!("{:?}", entry.kind).to_ascii_lowercase(),
+                                        "text": entry.text,
+                                    })
+                                })
+                                .collect()
+                        });
                     println!(
                         "{}",
                         serde_json::to_string_pretty(&serde_json::json!({
@@ -92,6 +114,7 @@ pub(crate) fn run_session_command(
                             "notes_count": notes_count,
                             "last_note": last_note,
                             "notes_tail": notes_tail_entries,
+                            "transcript_tail": tail_json,
                         }))?
                     );
                 }
@@ -125,6 +148,13 @@ pub(crate) fn run_session_command(
                                 let ts = note["ts"].as_u64().unwrap_or_default();
                                 let text = note["text"].as_str().unwrap_or("");
                                 println!("    [{ts}] {text}");
+                            }
+                        }
+                        if let Some(entries) = transcript_tail_entries.as_ref() {
+                            println!("  transcript (last {}):", entries.len());
+                            for entry in entries {
+                                let marker = transcript_marker(entry.kind);
+                                println!("    {marker} {}", entry.text);
                             }
                         }
                     }

@@ -75,6 +75,10 @@ its parent transcript (M4), and the attention notifier line (M5).
   the child with an empty context (silent no-op), matching the previous
   behaviour for that edge case.
 
+### M33 — `peridot session show --transcript-tail N` (landed)
+- `peridot session show <id> --transcript-tail N` prints the most recent N transcript entries (kind marker + text) under a `transcript (last N):` header, reusing the M10 load-with-fallback helper so even sessions that only have `transcript.ndjson` render the tail. JSON output exposes them under `transcript_tail: [{ kind, text }]`.
+- Pairs with `--notes-tail N` (M30) so a single `show` invocation can answer "what happened recently in this session" without follow-up replay calls.
+
 ### M32 — Status bar carries active subagent count (landed)
 - `render_status_metrics` appends `subagents N` when one or more entries in `state.subagents` have status `running` or `starting`. Done / failed subagents are excluded so the count means "in-flight work" rather than "lifetime spawn count" — useful when a TUI has spawned several `/fork` or `/teammate` sessions and the operator wants a quick activity gauge from the bottom bar without opening the side panel.
 
