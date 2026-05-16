@@ -780,6 +780,105 @@ fn assistant_tool_call_action_emits_no_visible_assistant_line() {
 }
 
 #[test]
+fn turn_started_pushes_separator_after_first_transcript_entry() {
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    state.apply_runtime_event(TuiRuntimeEvent::TurnStarted { turn_index: 0 });
+    assert!(
+        state.transcript.is_empty(),
+        "first turn should not emit a separator on an empty transcript"
+    );
+    state.push_transcript("task: first");
+    state.apply_runtime_event(TuiRuntimeEvent::TurnStarted { turn_index: 1 });
+    let separator = state
+        .transcript
+        .iter()
+        .find(|entry| entry.kind == TranscriptKind::TurnSeparator);
+    assert!(
+        separator.is_some(),
+        "subsequent turns should push a TurnSeparator entry"
+    );
+    assert!(separator.unwrap().text.contains("turn 2"));
+    assert_eq!(state.current_turn, 1);
+}
+
+#[test]
+fn thinking_log_persists_regardless_of_debug_view() {
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    assert!(state.thinking_log.is_empty());
+    state.apply_runtime_event(TuiRuntimeEvent::Thinking {
+        text: "first thought".to_string(),
+    });
+    state.apply_runtime_event(TuiRuntimeEvent::Thinking {
+        text: "second thought".to_string(),
+    });
+    assert_eq!(state.thinking_log.len(), 2);
+
+    let snapshot = render_text_snapshot(&state);
+    assert!(!snapshot.contains("first thought"));
+
+    state.debug_view = true;
+    let snapshot = render_text_snapshot(&state);
+    assert!(snapshot.contains("first thought"));
+    assert!(snapshot.contains("second thought"));
+}
+
+#[test]
+fn interrupted_status_renders_with_dedicated_label() {
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    state.agent_run_status = AgentRunStatus::Interrupted;
+    let snapshot = render_text_snapshot(&state);
+    assert!(snapshot.contains("status: interrupted"));
+    assert!(snapshot.contains("agent interrupted"));
+}
+
+#[test]
+fn header_update_available_appears_in_buffer() {
+    use ratatui::{Terminal, backend::TestBackend};
+
+    let backend = TestBackend::new(120, 32);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    state.resize(120, 32);
+    state.header.update_available = Some("v0.2.0".to_string());
+    terminal.draw(|frame| draw(frame, &state)).unwrap();
+    let rendered = format!("{:?}", terminal.backend().buffer());
+    assert!(rendered.contains("update v0.2.0"));
+}
+
+#[test]
+fn tui_state_serde_round_trip_preserves_new_defaults() {
+    let state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    let json = serde_json::to_string(&state).expect("serialize");
+    let restored: TuiState = serde_json::from_str(&json).expect("round-trip");
+    assert_eq!(restored.scroll_offset, 0);
+    assert!(restored.slash_picker.is_none());
+    assert!(restored.thinking_log.is_empty());
+    assert_eq!(restored.last_session_save_unix, 0);
+    assert_eq!(restored.current_turn, 0);
+    assert_eq!(restored.header.update_available, None);
+}
+
+#[test]
 fn locale_switches_status_bar_strings() {
     let mut state = TuiState::new(HeaderState::new(
         ExecutionMode::Execute,

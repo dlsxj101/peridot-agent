@@ -17,6 +17,8 @@ pub enum PhraseKey {
     StatusDone,
     /// Status bar: agent run failed.
     StatusFailed,
+    /// Status bar: agent run was interrupted by the user.
+    StatusInterrupted,
     /// Status bar: waiting on an ask_user response.
     StatusWaitingUser,
     /// Status bar: waiting on a tool approval response.
@@ -44,6 +46,8 @@ pub fn tr(key: PhraseKey, locale: Locale) -> &'static str {
         (PhraseKey::StatusDone, Locale::Ko) => "완료",
         (PhraseKey::StatusFailed, Locale::En) => "failed",
         (PhraseKey::StatusFailed, Locale::Ko) => "실패",
+        (PhraseKey::StatusInterrupted, Locale::En) => "interrupted",
+        (PhraseKey::StatusInterrupted, Locale::Ko) => "사용자 중단",
         (PhraseKey::StatusWaitingUser, Locale::En) => "waiting on user response",
         (PhraseKey::StatusWaitingUser, Locale::Ko) => "사용자 응답 대기",
         (PhraseKey::StatusWaitingApproval, Locale::En) => "waiting for approval",

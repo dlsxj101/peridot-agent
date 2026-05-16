@@ -41,6 +41,7 @@ pub(super) fn agent_run_status_label(status: &AgentRunStatus) -> &'static str {
         AgentRunStatus::Succeeded => "done",
         AgentRunStatus::Failed => "failed",
         AgentRunStatus::WaitingApproval => "waiting-approval",
+        AgentRunStatus::Interrupted => "interrupted",
     }
 }
 
@@ -154,7 +155,10 @@ pub(super) fn theme_accent(config: &TuiConfig) -> Color {
 
 /// Returns true when the entry should be hidden in normal (non-debug) view.
 fn is_entry_hidden(state: &TuiState, entry: &TranscriptEntry) -> bool {
-    matches!(entry.kind, TranscriptKind::Debug) && !state.debug_view
+    match entry.kind {
+        TranscriptKind::Debug | TranscriptKind::Thinking => !state.debug_view,
+        _ => false,
+    }
 }
 
 /// Builds a styled line for one transcript entry.
@@ -234,6 +238,26 @@ fn style_transcript_entry(state: &TuiState, entry: &TranscriptEntry) -> Line<'st
                 .fg(Color::DarkGray)
                 .add_modifier(Modifier::DIM),
         )),
+        TranscriptKind::Thinking => Line::from(vec![
+            Span::styled(
+                "\u{2026} ",
+                Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::DIM | Modifier::ITALIC),
+            ),
+            Span::styled(
+                entry.text.clone(),
+                Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::DIM | Modifier::ITALIC),
+            ),
+        ]),
+        TranscriptKind::TurnSeparator => Line::from(Span::styled(
+            format!("── {} {}", entry.text, "─".repeat(40)),
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::DIM),
+        )),
     }
 }
 
@@ -281,6 +305,7 @@ pub(super) fn agent_status_summary(state: &TuiState) -> String {
         AgentRunStatus::Succeeded => tr(PhraseKey::StatusDone, locale).to_string(),
         AgentRunStatus::Failed => tr(PhraseKey::StatusFailed, locale).to_string(),
         AgentRunStatus::WaitingApproval => tr(PhraseKey::StatusWaitingApproval, locale).to_string(),
+        AgentRunStatus::Interrupted => tr(PhraseKey::StatusInterrupted, locale).to_string(),
     }
 }
 
@@ -307,6 +332,8 @@ fn render_status_bar(state: &TuiState) -> Line<'static> {
         )
     } else if state.agent_run_status == AgentRunStatus::Failed {
         ("\u{25CF}", Style::default().fg(Color::Red))
+    } else if state.agent_run_status == AgentRunStatus::Interrupted {
+        ("\u{25CF}", Style::default().fg(Color::Magenta))
     } else {
         ("\u{25CF}", Style::default().fg(Color::Green))
     };
@@ -445,7 +472,7 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
         ])
         .split(area);
 
-    let header = Paragraph::new(Line::from(vec![
+    let mut header_spans = vec![
         Span::styled(
             "PERIDOT",
             Style::default()
@@ -454,7 +481,17 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
         ),
         Span::raw("  "),
         Span::styled(state.header.model.clone(), Style::default().fg(Color::Gray)),
-    ]));
+    ];
+    if let Some(version) = state.header.update_available.as_ref() {
+        header_spans.push(Span::raw("  "));
+        header_spans.push(Span::styled(
+            format!("· update {version} :update"),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::DIM),
+        ));
+    }
+    let header = Paragraph::new(Line::from(header_spans));
     frame.render_widget(header, chunks[0]);
 
     let body_chunks = if state.layout == LayoutMode::Full && state.config.show_subagent_panel {

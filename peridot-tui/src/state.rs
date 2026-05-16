@@ -27,6 +27,9 @@ pub struct HeaderState {
     pub cache_hit_rate: f64,
     /// Estimated cost in USD.
     pub cost_usd: f64,
+    /// Optional update notice (semver string) surfaced on the right of the header.
+    #[serde(default)]
+    pub update_available: Option<String>,
 }
 
 impl HeaderState {
@@ -39,6 +42,7 @@ impl HeaderState {
             total_tokens: 0,
             cache_hit_rate: 0.0,
             cost_usd: 0.0,
+            update_available: None,
         }
     }
 
@@ -81,6 +85,39 @@ pub struct SessionStats {
     pub elapsed_seconds: u64,
 }
 
+/// One MCP server summary shown in the side panel.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct McpServerSummary {
+    /// Display name.
+    pub name: String,
+    /// Tool count exposed by the server.
+    pub tool_count: u32,
+    /// Whether the server is currently connected.
+    pub connected: bool,
+}
+
+/// Summary of AGENTS.md rules loaded at session start.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct AgentsSummary {
+    /// Total parsed rule count.
+    pub rule_count: u32,
+    /// Origin file paths in workspace order.
+    pub paths: Vec<String>,
+}
+
+/// Budget and turn guardrail gauge shown in the side panel.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct BudgetGauge {
+    /// Accumulated cost in USD.
+    pub cost_used: f64,
+    /// Configured cost limit in USD (None means unbounded).
+    pub cost_limit: Option<f64>,
+    /// Turns consumed so far.
+    pub turns_used: u32,
+    /// Maximum allowed turns (None means unbounded).
+    pub turns_limit: Option<u32>,
+}
+
 /// Right-side panel state.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct SidePanelState {
@@ -88,6 +125,18 @@ pub struct SidePanelState {
     pub plan: Vec<PlanStep>,
     /// Session statistics.
     pub stats: SessionStats,
+    /// Active MCP server summaries.
+    #[serde(default)]
+    pub mcp_status: Vec<McpServerSummary>,
+    /// AGENTS.md rule summary loaded at session start.
+    #[serde(default)]
+    pub agents_md: AgentsSummary,
+    /// Approximate context utilization in 0.0..=1.0 (1.0 means at threshold).
+    #[serde(default)]
+    pub context_pct: f32,
+    /// Budget and turn-count gauge.
+    #[serde(default)]
+    pub budget: BudgetGauge,
 }
 
 /// Kind of runtime activity displayed in the TUI side panel.
@@ -119,6 +168,8 @@ pub enum AgentRunStatus {
     Failed,
     /// The agent is waiting for explicit user approval.
     WaitingApproval,
+    /// The last task was interrupted by the user before completion.
+    Interrupted,
 }
 
 /// One recent runtime activity.
@@ -241,6 +292,21 @@ pub struct SubagentMonitorItem {
     pub status: String,
     /// Optional result summary or failure reason.
     pub summary: Option<String>,
+    /// Stable subagent identifier used for parent/child wiring.
+    #[serde(default)]
+    pub id: String,
+    /// Parent subagent or session id, when this subagent was spawned from another.
+    #[serde(default)]
+    pub parent_id: Option<String>,
+    /// Tree depth (0 = top-level under the root agent).
+    #[serde(default)]
+    pub depth: u32,
+    /// Wall-clock start time (unix seconds; 0 means unset).
+    #[serde(default)]
+    pub started_at_unix: u64,
+    /// Provider tokens consumed by this subagent so far.
+    #[serde(default)]
+    pub tokens: u64,
 }
 
 /// Active model stream displayed before it is committed to the transcript.
@@ -276,6 +342,10 @@ pub enum TranscriptKind {
     Error,
     /// Debug content hidden in normal mode.
     Debug,
+    /// A turn boundary separator (rendered as a horizontal rule).
+    TurnSeparator,
+    /// Parsed model thinking surfaced only when debug or show_thinking is on.
+    Thinking,
 }
 
 /// One transcript line plus its style classification.
@@ -285,6 +355,9 @@ pub struct TranscriptEntry {
     pub kind: TranscriptKind,
     /// Plain-text payload (no styling).
     pub text: String,
+    /// Optional turn index this entry belongs to (used for grouping).
+    #[serde(default)]
+    pub parent_turn: Option<u32>,
 }
 
 impl TranscriptEntry {
@@ -293,6 +366,7 @@ impl TranscriptEntry {
         Self {
             kind,
             text: text.into(),
+            parent_turn: None,
         }
     }
 }
@@ -306,6 +380,15 @@ pub struct TuiLifecycleEvent {
     pub from: String,
     /// New value.
     pub to: String,
+}
+
+/// Floating slash-command picker state (populated in PR4).
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SlashPicker {
+    /// Current query prefix.
+    pub query: String,
+    /// Highlighted suggestion index.
+    pub selected: usize,
 }
 
 /// Main TUI state independent from the terminal backend.
@@ -357,6 +440,21 @@ pub struct TuiState {
     pub menu: Option<MenuState>,
     /// Lifecycle events recorded from local TUI commands.
     pub lifecycle_events: Vec<TuiLifecycleEvent>,
+    /// Scrollback offset (entries skipped from the end). 0 means follow-tail.
+    #[serde(default)]
+    pub scroll_offset: usize,
+    /// Floating slash-command picker, when active.
+    #[serde(default)]
+    pub slash_picker: Option<SlashPicker>,
+    /// Append-only log of parsed thinking text (for debug toggle re-render).
+    #[serde(default)]
+    pub thinking_log: Vec<String>,
+    /// Last successful session save (unix seconds; 0 means unset).
+    #[serde(default)]
+    pub last_session_save_unix: u64,
+    /// Current turn index emitted by the agent loop (rolling counter).
+    #[serde(default)]
+    pub current_turn: u32,
 }
 
 /// Result produced when an interactive TUI session exits.
@@ -415,6 +513,11 @@ impl TuiState {
             approval: None,
             menu: None,
             lifecycle_events: Vec::new(),
+            scroll_offset: 0,
+            slash_picker: None,
+            thinking_log: Vec::new(),
+            last_session_save_unix: 0,
+            current_turn: 0,
         }
     }
 
@@ -756,6 +859,11 @@ impl TuiState {
             task: task.clone(),
             status: "running".to_string(),
             summary: None,
+            id: String::new(),
+            parent_id: None,
+            depth: 0,
+            started_at_unix: 0,
+            tokens: 0,
         });
         self.push_activity(ActivityKind::Subagent, kind, format!("running: {task}"));
         self.trim_subagents();
@@ -833,16 +941,22 @@ impl TuiState {
         match event {
             TuiRuntimeEvent::RunStarted { task } => self.mark_agent_running(task),
             TuiRuntimeEvent::TurnStarted { turn_index } => {
+                self.current_turn = turn_index;
                 self.push_activity(ActivityKind::Stream, "turn", format!("#{}", turn_index + 1));
+                if !self.transcript.is_empty() {
+                    self.push_transcript_entry(
+                        TranscriptKind::TurnSeparator,
+                        format!("turn {}", turn_index + 1),
+                    );
+                }
             }
             TuiRuntimeEvent::AssistantStarted { label } => self.begin_stream(label),
             TuiRuntimeEvent::AssistantDelta { delta } => self.push_stream_delta(&delta),
             TuiRuntimeEvent::AssistantFinished => self.finish_stream(),
             TuiRuntimeEvent::Thinking { text } => {
                 self.push_activity(ActivityKind::Stream, "thinking", "parsed");
-                if self.config.show_thinking || self.debug_view {
-                    self.push_transcript_entry(TranscriptKind::Debug, format!("thinking: {text}"));
-                }
+                self.thinking_log.push(text.clone());
+                self.push_transcript_entry(TranscriptKind::Thinking, format!("thinking: {text}"));
             }
             TuiRuntimeEvent::ToolStarted { name, parameters } => {
                 self.record_tool_started(name, parameters);
@@ -959,6 +1073,11 @@ impl TuiState {
                 task: task.clone(),
                 status: status.to_string(),
                 summary: Some(summary.clone()),
+                id: String::new(),
+                parent_id: None,
+                depth: 0,
+                started_at_unix: 0,
+                tokens: 0,
             });
         }
         self.side_panel.stats.steps += 1;
