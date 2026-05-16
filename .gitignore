@@ -13,3 +13,6 @@ target/
 .DS_Store
 *.swp
 *.swo
+
+# User-local Claude Code settings (per-machine, not part of the project)
+.claude/
