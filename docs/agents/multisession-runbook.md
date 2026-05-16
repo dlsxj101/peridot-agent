@@ -75,6 +75,10 @@ its parent transcript (M4), and the attention notifier line (M5).
   the child with an empty context (silent no-op), matching the previous
   behaviour for that edge case.
 
+### M24 — `peridot session show` carries notes summary (landed)
+- `peridot session show <id>` now reads `notes.ndjson` (when present) and reports the note count plus the most recent note's body inline. Text output: `  notes: <count>  (<last text>)`; JSON output: `notes_count`, `last_note`.
+- Sessions without a notes file render exactly as before, so the addition is backwards compatible.
+
 ### M23 — Status bar carries turn count (landed)
 - `render_status_metrics` appends `turn N` once `state.current_turn` is greater than zero (i.e. the first `TurnStarted` event has fired). Idle sessions and freshly opened ones keep the metric hidden so the bar stays clean.
 

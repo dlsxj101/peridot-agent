@@ -78,6 +78,7 @@ pub(crate) fn run_session_command(
         SessionCommand::Show { id } => {
             let session = store.get_session(id)?;
             let record = store.get_session_record(id).unwrap_or_default();
+            let (notes_count, last_note) = read_notes_summary(project_root, id);
             match output {
                 OutputFormat::Json => {
                     println!(
@@ -85,6 +86,8 @@ pub(crate) fn run_session_command(
                         serde_json::to_string_pretty(&serde_json::json!({
                             "session": session,
                             "record": record,
+                            "notes_count": notes_count,
+                            "last_note": last_note,
                         }))?
                     );
                 }
@@ -104,6 +107,14 @@ pub(crate) fn run_session_command(
                         }
                         if let Some(task) = record.last_task.as_deref() {
                             println!("  last task: {task}");
+                        }
+                        if notes_count > 0 {
+                            print!("  notes: {notes_count}");
+                            if let Some(text) = last_note.as_deref() {
+                                println!("  ({text})");
+                            } else {
+                                println!();
+                            }
                         }
                     }
                     (Some(session), None) => {
@@ -187,6 +198,34 @@ pub(crate) fn run_session_command(
         }
     }
     Ok(())
+}
+
+/// Returns the number of operator-written notes and the latest note's text
+/// for a session, by reading `<sessions>/<id>/notes.ndjson` once. Missing
+/// file is treated as zero notes.
+fn read_notes_summary(project_root: &Path, id: &str) -> (usize, Option<String>) {
+    let path = project_root
+        .join(".peridot")
+        .join("sessions")
+        .join(id)
+        .join("notes.ndjson");
+    let Ok(raw) = std::fs::read_to_string(&path) else {
+        return (0, None);
+    };
+    let mut count = 0usize;
+    let mut last: Option<String> = None;
+    for line in raw.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(line)
+            && let Some(text) = value.get("text").and_then(|v| v.as_str())
+        {
+            count += 1;
+            last = Some(text.to_string());
+        }
+    }
+    (count, last)
 }
 
 fn handle_session_note(
