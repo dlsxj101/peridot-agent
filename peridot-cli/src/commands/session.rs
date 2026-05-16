@@ -7,14 +7,23 @@ pub(crate) fn run_session_command(
 ) -> Result<()> {
     let store = memory_store(project_root);
     match command {
-        SessionCommand::List => {
+        SessionCommand::List { status } => {
             let sessions = store.list_sessions()?;
             let records = store.list_session_records().unwrap_or_default();
             let record_for = |id: &str| records.iter().find(|r| r.id == id).cloned();
+            let status_filter = match status.as_deref() {
+                Some(value) => Some(parse_lifecycle_filter(value)?),
+                None => None,
+            };
+            let keep = |id: &str| match status_filter {
+                Some(target) => record_for(id).map(|r| r.status == target).unwrap_or(false),
+                None => true,
+            };
             match output {
                 OutputFormat::Json => {
                     let payload: Vec<_> = sessions
                         .iter()
+                        .filter(|session| keep(&session.id))
                         .map(|session| {
                             let record = record_for(&session.id);
                             serde_json::json!({
@@ -28,6 +37,9 @@ pub(crate) fn run_session_command(
                 }
                 OutputFormat::Text => {
                     for session in sessions {
+                        if !keep(&session.id) {
+                            continue;
+                        }
                         let record = record_for(&session.id);
                         let suffix = record
                             .as_ref()
@@ -281,6 +293,24 @@ pub(crate) fn run_session_command(
         }
     }
     Ok(())
+}
+
+/// Parses a `--status <value>` CLI flag into a `SessionLifecycle` enum.
+/// Lower-cases the input so `done`, `Done`, `DONE` all map to the same
+/// variant. Returns an `anyhow::Error` for unknown labels so the user sees
+/// the expected vocabulary instead of a silent zero-result list.
+fn parse_lifecycle_filter(value: &str) -> Result<peridot_memory::SessionLifecycle> {
+    use peridot_memory::SessionLifecycle;
+    match value.to_ascii_lowercase().as_str() {
+        "idle" => Ok(SessionLifecycle::Idle),
+        "running" => Ok(SessionLifecycle::Running),
+        "suspended" => Ok(SessionLifecycle::Suspended),
+        "done" => Ok(SessionLifecycle::Done),
+        "failed" => Ok(SessionLifecycle::Failed),
+        other => anyhow::bail!(
+            "unknown --status '{other}'; expected one of idle|running|suspended|done|failed",
+        ),
+    }
 }
 
 /// Returns the most recent `n` operator notes for a session as raw JSON

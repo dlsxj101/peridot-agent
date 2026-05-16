@@ -151,7 +151,11 @@ pub(crate) enum ConfigCommand {
 #[derive(Debug, Subcommand)]
 pub(crate) enum SessionCommand {
     /// List saved sessions.
-    List,
+    List {
+        /// Filter by lifecycle (idle, running, suspended, done, failed).
+        #[arg(long)]
+        status: Option<String>,
+    },
     /// Print a resume prompt for one saved session.
     Resume {
         /// Session id.

@@ -75,6 +75,10 @@ its parent transcript (M4), and the attention notifier line (M5).
   the child with an empty context (silent no-op), matching the previous
   behaviour for that edge case.
 
+### M38 — `peridot session list --status <state>` filter (landed)
+- `peridot session list` now accepts `--status idle|running|suspended|done|failed` (case-insensitive). The match uses `SessionRecord.status` so sessions without a record are dropped from the filtered view (they would not match any lifecycle anyway).
+- An unknown value is a hard error so the operator never sees a silently empty list because of a typo.
+
 ### M37 — `peridot session count` lifecycle breakdown (landed)
 - One-shot tally of `SessionRecord`s grouped by `SessionLifecycle`: total / idle / running / suspended / done / failed. Useful for "is anything still in flight" or "do I have stale Running records the startup scan missed" without paging through `peridot session list`.
 
