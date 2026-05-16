@@ -59,7 +59,14 @@ impl AgentState {
             | SlashCommand::SessionSave
             | SlashCommand::Diff
             | SlashCommand::Undo
-            | SlashCommand::Lang(_) => {}
+            | SlashCommand::Lang(_)
+            | SlashCommand::Fork(_)
+            | SlashCommand::Teammate(_)
+            | SlashCommand::Worktree { .. }
+            | SlashCommand::SessionNew(_)
+            | SlashCommand::SessionSwitch(_)
+            | SlashCommand::SessionClose(_)
+            | SlashCommand::SessionList => {}
         }
     }
 }

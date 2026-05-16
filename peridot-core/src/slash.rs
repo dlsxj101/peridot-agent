@@ -46,6 +46,25 @@ pub enum SlashCommand {
     Undo,
     /// Change the display locale for TUI strings.
     Lang(Locale),
+    /// Spawn a Fork subagent in the same workspace (single-turn, inline result).
+    Fork(String),
+    /// Spawn a long-running Teammate subagent into a worktree-isolated session.
+    Teammate(String),
+    /// Spawn an explicit worktree-isolated fork on the named branch.
+    Worktree {
+        /// Git branch to materialize as a worktree.
+        branch: String,
+        /// Task text to dispatch to the new session.
+        task: String,
+    },
+    /// Open a new session, optionally with an initial task.
+    SessionNew(Option<String>),
+    /// Switch the foreground session by id or 1-based index.
+    SessionSwitch(String),
+    /// Close a session by id or 1-based index.
+    SessionClose(String),
+    /// List all known sessions in the transcript.
+    SessionList,
 }
 
 /// Parses a user slash command.
@@ -70,7 +89,47 @@ pub fn parse_slash_command(input: &str) -> Option<SlashCommand> {
         "undo" if rest.is_empty() => Some(SlashCommand::Undo),
         "model" if !rest.is_empty() => Some(SlashCommand::Model(rest.to_string())),
         "lang" if !rest.is_empty() => Locale::from_str(rest).ok().map(SlashCommand::Lang),
+        "fork" if !rest.is_empty() => Some(SlashCommand::Fork(rest.to_string())),
+        "teammate" if !rest.is_empty() => Some(SlashCommand::Teammate(rest.to_string())),
+        "worktree" if !rest.is_empty() => {
+            let mut parts = rest.splitn(2, char::is_whitespace);
+            let branch = parts.next().unwrap_or("").trim();
+            let task = parts.next().unwrap_or("").trim();
+            if branch.is_empty() || task.is_empty() {
+                None
+            } else {
+                Some(SlashCommand::Worktree {
+                    branch: branch.to_string(),
+                    task: task.to_string(),
+                })
+            }
+        }
         "session" if rest == "save" => Some(SlashCommand::SessionSave),
+        "session" if rest == "list" => Some(SlashCommand::SessionList),
+        "session" if rest.starts_with("new") => {
+            let task = rest.strip_prefix("new").unwrap_or("").trim();
+            Some(SlashCommand::SessionNew(if task.is_empty() {
+                None
+            } else {
+                Some(task.to_string())
+            }))
+        }
+        "session" if rest.starts_with("switch") => {
+            let target = rest.strip_prefix("switch").unwrap_or("").trim();
+            if target.is_empty() {
+                None
+            } else {
+                Some(SlashCommand::SessionSwitch(target.to_string()))
+            }
+        }
+        "session" if rest.starts_with("close") => {
+            let target = rest.strip_prefix("close").unwrap_or("").trim();
+            if target.is_empty() {
+                None
+            } else {
+                Some(SlashCommand::SessionClose(target.to_string()))
+            }
+        }
         "plan" if rest == "show" => Some(SlashCommand::PlanShow),
         "goal" => match rest {
             "pause" => Some(SlashCommand::GoalPause),

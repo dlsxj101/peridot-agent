@@ -116,6 +116,48 @@ pub fn slash_command_catalog() -> &'static [SlashCommandSpec] {
             arg_hint: None,
             category: "tui",
         },
+        SlashCommandSpec {
+            name: "/fork",
+            description: "spawn a Fork subagent inline (single-turn)",
+            arg_hint: Some("<task>"),
+            category: "subagent",
+        },
+        SlashCommandSpec {
+            name: "/teammate",
+            description: "spawn a long-running Teammate subagent in a worktree",
+            arg_hint: Some("<task>"),
+            category: "subagent",
+        },
+        SlashCommandSpec {
+            name: "/worktree",
+            description: "explicit worktree-isolated fork",
+            arg_hint: Some("<branch> <task>"),
+            category: "subagent",
+        },
+        SlashCommandSpec {
+            name: "/session new",
+            description: "open a new session, optionally with an initial task",
+            arg_hint: Some("[task]"),
+            category: "session",
+        },
+        SlashCommandSpec {
+            name: "/session switch",
+            description: "switch the foreground session",
+            arg_hint: Some("<id|title>"),
+            category: "session",
+        },
+        SlashCommandSpec {
+            name: "/session close",
+            description: "close a session",
+            arg_hint: Some("<id|title>"),
+            category: "session",
+        },
+        SlashCommandSpec {
+            name: "/session list",
+            description: "list all sessions",
+            arg_hint: None,
+            category: "session",
+        },
     ]
 }
 

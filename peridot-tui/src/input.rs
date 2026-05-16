@@ -524,6 +524,74 @@ pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
                 "undo: requires tool approval in a run; ask Peridot to undo the last change",
             );
         }
+        SlashCommand::Fork(task) => {
+            state.push_transcript(format!("fork queued: {task} (router wiring pending)"));
+        }
+        SlashCommand::Teammate(task) => {
+            state.push_transcript(format!("teammate queued: {task} (worktree spawn pending)"));
+        }
+        SlashCommand::Worktree { branch, task } => {
+            state.push_transcript(format!(
+                "worktree queued: {task} on branch {branch} (spawn pending)"
+            ));
+        }
+        SlashCommand::SessionNew(task) => {
+            let suffix = task
+                .as_deref()
+                .map(|task| format!(" with task '{task}'"))
+                .unwrap_or_default();
+            state.push_transcript(format!("session new requested{suffix} (router pending)"));
+        }
+        SlashCommand::SessionSwitch(target) => {
+            if let Some(item) = state
+                .sessions
+                .iter()
+                .find(|item| item.id == target || item.title == target)
+            {
+                state.current_session_id = item.id.clone();
+                state.push_transcript(format!("session: switched to {}", item.id));
+            } else {
+                state.push_error(format!("session: no session matching '{target}'"));
+            }
+        }
+        SlashCommand::SessionClose(target) => {
+            let before = state.sessions.len();
+            state
+                .sessions
+                .retain(|item| item.id != target && item.title != target);
+            if state.sessions.len() < before {
+                if state.current_session_id == target {
+                    state.current_session_id = state
+                        .sessions
+                        .first()
+                        .map(|item| item.id.clone())
+                        .unwrap_or_default();
+                }
+                state.push_transcript(format!("session closed: {target}"));
+            } else {
+                state.push_error(format!("session: nothing to close for '{target}'"));
+            }
+        }
+        SlashCommand::SessionList => {
+            if state.sessions.is_empty() {
+                state.push_transcript("sessions: <none>");
+            } else {
+                let summary = state
+                    .sessions
+                    .iter()
+                    .map(|item| {
+                        let marker = if item.id == state.current_session_id {
+                            "*"
+                        } else {
+                            " "
+                        };
+                        format!("{marker} {} ({})", item.title, item.id)
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                state.push_transcript(format!("sessions:\n{summary}"));
+            }
+        }
     }
 }
 
