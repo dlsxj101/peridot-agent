@@ -449,6 +449,9 @@ pub fn render_text_snapshot(state: &TuiState) -> String {
     let mut output = String::new();
     let _ = writeln!(output, "{}", render_header_brief(state));
     let _ = writeln!(output, "metrics: {}", render_status_metrics(state));
+    if !state.sessions.is_empty() {
+        let _ = writeln!(output, "tabs: {}", crate::render_tab_bar_text(state));
+    }
     let _ = writeln!(output, "layout: {:?}", state.layout);
     let _ = writeln!(output);
     if should_render_welcome(state) {
@@ -558,10 +561,12 @@ pub fn render_text_snapshot(state: &TuiState) -> String {
 /// Draws the TUI state with Ratatui.
 pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
     let area = frame.area();
+    let tab_height = crate::tab_bar_height(state);
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1),
+            Constraint::Length(tab_height),
             Constraint::Min(1),
             Constraint::Length(1),
             Constraint::Length(3),
@@ -590,16 +595,20 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
     let header = Paragraph::new(Line::from(header_spans));
     frame.render_widget(header, chunks[0]);
 
+    if tab_height > 0 {
+        frame.render_widget(Paragraph::new(crate::render_tab_bar(state)), chunks[1]);
+    }
+
     let body_chunks = if state.layout == LayoutMode::Full && state.config.show_subagent_panel {
         Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(75), Constraint::Percentage(25)])
-            .split(chunks[1])
+            .split(chunks[2])
     } else {
         Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(100)])
-            .split(chunks[1])
+            .split(chunks[2])
     };
     let body_block = Block::default()
         .title(body_title(state))
@@ -732,9 +741,9 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
         frame.render_widget(Paragraph::new(side).wrap(Wrap { trim: false }), info_area);
     }
 
-    frame.render_widget(Paragraph::new(render_status_bar(state)), chunks[2]);
+    frame.render_widget(Paragraph::new(render_status_bar(state)), chunks[3]);
 
-    let input_area = chunks[3];
+    let input_area = chunks[4];
     let input_line = Line::from(vec![
         Span::styled(
             "\u{276F} ",

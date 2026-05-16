@@ -29,6 +29,7 @@ mod i18n;
 mod input;
 mod mascot;
 mod render;
+mod session_directory;
 mod slash_picker;
 mod state;
 mod terminal;
@@ -38,6 +39,10 @@ mod tests;
 pub use i18n::{PhraseKey, tr};
 pub use mascot::{
     MascotFrame, MascotState, Pixel, mascot_state_from, peridot_palette, render_mascot,
+};
+pub use session_directory::{
+    SessionDirectoryItem, cycle_foreground, foreground_index, render_tab_bar, render_tab_bar_text,
+    tab_bar_height, trim_directory,
 };
 pub use slash_picker::{SlashCommandSpec, filtered_specs, first_match, slash_command_catalog};
 

@@ -525,6 +525,12 @@ pub struct TuiState {
     /// Current turn index emitted by the agent loop (rolling counter).
     #[serde(default)]
     pub current_turn: u32,
+    /// Multi-session directory: one entry per concurrent agent run.
+    #[serde(default)]
+    pub sessions: Vec<crate::session_directory::SessionDirectoryItem>,
+    /// Id of the session currently in the foreground of the TUI.
+    #[serde(default)]
+    pub current_session_id: String,
 }
 
 /// Result produced when an interactive TUI session exits.
@@ -592,6 +598,8 @@ impl TuiState {
             thinking_log: Vec::new(),
             last_session_save_unix: 0,
             current_turn: 0,
+            sessions: Vec::new(),
+            current_session_id: String::new(),
         }
     }
 

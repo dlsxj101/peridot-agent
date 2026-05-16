@@ -117,6 +117,14 @@ pub fn handle_key_event(state: &mut TuiState, key: KeyEvent) -> TuiEventOutcome 
             state.config.show_subagent_panel = !state.config.show_subagent_panel;
             TuiEventOutcome::Continue
         }
+        KeyCode::Char('t') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            crate::cycle_foreground(state);
+            TuiEventOutcome::Continue
+        }
+        KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            crate::cycle_foreground(state);
+            TuiEventOutcome::Continue
+        }
         KeyCode::Esc => {
             if state.is_agent_busy() {
                 TuiEventOutcome::Interrupt
