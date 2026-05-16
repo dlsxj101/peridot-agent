@@ -587,6 +587,11 @@ pub struct TuiState {
     /// landed.
     #[serde(default, skip)]
     pub pending_notes: Vec<String>,
+    /// Committee events (planner / reviewer / role-usage) queued by
+    /// `apply_runtime_event`. The host drains the queue every tick and
+    /// appends each entry to `<sessions>/<id>/committee.ndjson`.
+    #[serde(default, skip)]
+    pub pending_committee_events: Vec<serde_json::Value>,
     /// Active committee mode for the foreground session (M-COM4). Mirrors
     /// `[committee].mode` from project config, with `/committee <mode>`
     /// switching it per-session at runtime.
@@ -704,7 +709,15 @@ impl TuiState {
             committee_planner_tokens: 0,
             committee_reviewer_cost: 0.0,
             committee_reviewer_tokens: 0,
+            pending_committee_events: Vec::new(),
         }
+    }
+
+    /// Removes and returns every queued committee event in FIFO order. The
+    /// host loop drains these and appends them to the session's
+    /// `committee.ndjson` journal.
+    pub fn drain_pending_committee_events(&mut self) -> Vec<serde_json::Value> {
+        std::mem::take(&mut self.pending_committee_events)
     }
 
     /// Applies configured TUI display settings.
@@ -1451,6 +1464,12 @@ impl TuiState {
                     format!("committee planner ready:\n{plan_text}"),
                 );
                 self.push_activity(ActivityKind::Stream, "committee planner", "plan ready");
+                let ts = current_unix_seconds();
+                self.pending_committee_events.push(serde_json::json!({
+                    "ts": ts,
+                    "kind": "planner_plan_ready",
+                    "plan_text": plan_text,
+                }));
             }
             TuiRuntimeEvent::CommitteeRoleUsage {
                 role,
@@ -1473,6 +1492,14 @@ impl TuiState {
                     format!("committee {role}"),
                     format!("+${cost_usd:.4} / +{tokens} tok"),
                 );
+                let ts = current_unix_seconds();
+                self.pending_committee_events.push(serde_json::json!({
+                    "ts": ts,
+                    "kind": "role_usage",
+                    "role": role,
+                    "cost_usd": cost_usd,
+                    "tokens": tokens,
+                }));
             }
             TuiRuntimeEvent::ReviewerVerdict {
                 turn_index,
@@ -1491,7 +1518,15 @@ impl TuiState {
                     _ => TranscriptKind::Notice,
                 };
                 self.push_transcript_entry(kind, summary);
-                self.push_activity(ActivityKind::Stream, "committee reviewer", verdict);
+                self.push_activity(ActivityKind::Stream, "committee reviewer", &verdict);
+                let ts = current_unix_seconds();
+                self.pending_committee_events.push(serde_json::json!({
+                    "ts": ts,
+                    "kind": "reviewer_verdict",
+                    "turn_index": turn_index,
+                    "verdict": verdict,
+                    "comments": comments,
+                }));
             }
         }
     }

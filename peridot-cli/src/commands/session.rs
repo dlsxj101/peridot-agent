@@ -91,6 +91,7 @@ pub(crate) fn run_session_command(
             id,
             notes_tail,
             transcript_tail,
+            committee_tail,
         } => {
             let session = store.get_session(id)?;
             let record = store.get_session_record(id).unwrap_or_default();
@@ -104,6 +105,9 @@ pub(crate) fn run_session_command(
                     all[start..].to_vec()
                 })
             });
+            let committee_tail_entries = committee_tail
+                .filter(|n| *n > 0)
+                .map(|n| read_committee_tail(project_root, id, n));
             match output {
                 OutputFormat::Json => {
                     let tail_json: Option<Vec<_>> =
@@ -127,6 +131,7 @@ pub(crate) fn run_session_command(
                             "last_note": last_note,
                             "notes_tail": notes_tail_entries,
                             "transcript_tail": tail_json,
+                            "committee_tail": committee_tail_entries,
                         }))?
                     );
                 }
@@ -167,6 +172,32 @@ pub(crate) fn run_session_command(
                             for entry in entries {
                                 let marker = transcript_marker(entry.kind);
                                 println!("    {marker} {}", entry.text);
+                            }
+                        }
+                        if let Some(entries) = committee_tail_entries.as_ref() {
+                            println!("  committee (last {}):", entries.len());
+                            for event in entries {
+                                let ts = event["ts"].as_u64().unwrap_or_default();
+                                let kind = event["kind"].as_str().unwrap_or("?");
+                                let body = match kind {
+                                    "planner_plan_ready" => {
+                                        event["plan_text"].as_str().unwrap_or("").to_string()
+                                    }
+                                    "reviewer_verdict" => format!(
+                                        "turn {} -> {} {}",
+                                        event["turn_index"].as_u64().unwrap_or_default(),
+                                        event["verdict"].as_str().unwrap_or(""),
+                                        event["comments"].as_str().unwrap_or(""),
+                                    ),
+                                    "role_usage" => format!(
+                                        "{} +${:.4} / +{} tok",
+                                        event["role"].as_str().unwrap_or(""),
+                                        event["cost_usd"].as_f64().unwrap_or_default(),
+                                        event["tokens"].as_u64().unwrap_or_default(),
+                                    ),
+                                    _ => event.to_string(),
+                                };
+                                println!("    [{ts}] {kind}: {body}");
                             }
                         }
                     }
@@ -311,6 +342,31 @@ fn parse_lifecycle_filter(value: &str) -> Result<peridot_memory::SessionLifecycl
             "unknown --status '{other}'; expected one of idle|running|suspended|done|failed",
         ),
     }
+}
+
+/// Returns the most recent `n` committee events for a session by reading
+/// `<sessions>/<id>/committee.ndjson` once. Missing file returns an empty
+/// vector. Parse failures on individual lines are silently skipped.
+fn read_committee_tail(project_root: &Path, id: &str, n: usize) -> Vec<serde_json::Value> {
+    let path = project_root
+        .join(".peridot")
+        .join("sessions")
+        .join(id)
+        .join("committee.ndjson");
+    let Ok(raw) = std::fs::read_to_string(&path) else {
+        return Vec::new();
+    };
+    let mut events: Vec<serde_json::Value> = Vec::new();
+    for line in raw.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(line) {
+            events.push(value);
+        }
+    }
+    let start = events.len().saturating_sub(n);
+    events.split_off(start)
 }
 
 /// Returns the most recent `n` operator notes for a session as raw JSON

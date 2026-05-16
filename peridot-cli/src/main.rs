@@ -633,6 +633,7 @@ async fn main() -> Result<()> {
                                     &project_template,
                                 );
                                 flush_pending_notes(state, &project_template);
+                                flush_pending_committee_events(state, &project_template);
                                 let now = SystemTime::now()
                                     .duration_since(UNIX_EPOCH)
                                     .map(|d| d.as_secs())
@@ -1068,6 +1069,43 @@ fn inherit_parent_context(parent_id: &str, child_id: &str, project_root: &Path) 
 /// Returns a clone of `template` with `auth.primary` replaced by `provider`
 /// when one is set. Used to thread per-session `/provider` selections through
 /// to `live_provider` without mutating the project-wide config.
+/// Drains the foreground session's queued committee events and appends one
+/// JSON line per event to `<sessions>/<id>/committee.ndjson`. Mirrors
+/// `flush_pending_notes`. Errors are silent so it can never block the UI.
+fn flush_pending_committee_events(state: &mut TuiState, project_root: &Path) {
+    if state.current_session_id.is_empty() {
+        return;
+    }
+    let pending = state.drain_pending_committee_events();
+    if pending.is_empty() {
+        return;
+    }
+    let session_dir = project_root
+        .join(".peridot")
+        .join("sessions")
+        .join(&state.current_session_id);
+    if std::fs::create_dir_all(&session_dir).is_err() {
+        return;
+    }
+    let path = session_dir.join("committee.ndjson");
+    let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    else {
+        return;
+    };
+    use std::io::Write;
+    for event in pending {
+        let Ok(line) = serde_json::to_string(&event) else {
+            continue;
+        };
+        if writeln!(file, "{line}").is_err() {
+            break;
+        }
+    }
+}
+
 /// Drains the foreground session's queued `/note` slash commands and appends
 /// one `{ "ts", "text" }` line per note to `<sessions>/<id>/notes.ndjson`.
 /// Errors are silent: this runs from the UI thread and must never block.

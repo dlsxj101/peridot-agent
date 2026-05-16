@@ -1658,6 +1658,38 @@ fn parse_slash_committee_recognises_all_modes() {
 }
 
 #[test]
+fn committee_events_drain_into_pending_journal_queue() {
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    state.committee_mode = peridot_common::CommitteeMode::Full;
+
+    state.apply_runtime_event(TuiRuntimeEvent::PlannerPlanReady {
+        plan_text: "1. read 2. edit".to_string(),
+    });
+    state.apply_runtime_event(TuiRuntimeEvent::ReviewerVerdict {
+        turn_index: 1,
+        verdict: "request_changes".to_string(),
+        comments: "indent off".to_string(),
+    });
+    state.apply_runtime_event(TuiRuntimeEvent::CommitteeRoleUsage {
+        role: "reviewer".to_string(),
+        cost_usd: 0.0042,
+        tokens: 120,
+    });
+
+    let drained = state.drain_pending_committee_events();
+    assert_eq!(drained.len(), 3);
+    assert_eq!(drained[0]["kind"].as_str(), Some("planner_plan_ready"));
+    assert_eq!(drained[1]["kind"].as_str(), Some("reviewer_verdict"));
+    assert_eq!(drained[1]["verdict"].as_str(), Some("request_changes"));
+    assert_eq!(drained[2]["kind"].as_str(), Some("role_usage"));
+    assert!(state.pending_committee_events.is_empty());
+}
+
+#[test]
 fn committee_role_usage_event_accumulates_into_per_role_totals() {
     use peridot_common::CommitteeMode;
 
