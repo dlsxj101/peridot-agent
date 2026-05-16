@@ -42,8 +42,9 @@ pub use input::{handle_key_event, run_interactive, run_interactive_with_events};
 use render::goal_status_label;
 pub use render::{draw, render_text_snapshot, select_layout};
 pub use state::{
-    ActivityKind, AgentRunStatus, HeaderState, LayoutMode, PlanStep, RuntimeActivity, SessionStats,
-    SidePanelState, StreamState, SubagentMonitorItem, TranscriptEntry, TranscriptKind,
+    ActivityKind, AgentRunStatus, AgentsSummary, BudgetGauge, HeaderState, LayoutMode,
+    McpServerSummary, PlanStep, PlanStepUpdate, RuntimeActivity, SessionStats, SidePanelState,
+    SlashPicker, StreamState, SubagentMonitorItem, TranscriptEntry, TranscriptKind,
     TuiEventOutcome, TuiExit, TuiLifecycleEvent, TuiRuntimeEvent, TuiState,
 };
 use terminal::TerminalGuard;

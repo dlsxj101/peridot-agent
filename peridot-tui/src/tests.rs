@@ -879,6 +879,98 @@ fn tui_state_serde_round_trip_preserves_new_defaults() {
 }
 
 #[test]
+fn plan_updated_event_replaces_plan_and_shows_banner() {
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    state.push_transcript("first task");
+    state.apply_runtime_event(TuiRuntimeEvent::PlanUpdated {
+        steps: vec![
+            PlanStepUpdate {
+                label: "Audit lib.rs".to_string(),
+                done: true,
+            },
+            PlanStepUpdate {
+                label: "Patch loop.rs".to_string(),
+                done: false,
+            },
+            PlanStepUpdate {
+                label: "Run tests".to_string(),
+                done: false,
+            },
+        ],
+        current: Some(1),
+    });
+    assert_eq!(state.side_panel.plan.len(), 3);
+    assert!(state.side_panel.plan[0].done);
+    let snapshot = render_text_snapshot(&state);
+    assert!(snapshot.contains("banner: Plan (1/3) > Patch loop.rs"));
+}
+
+#[test]
+fn cross_crate_events_update_side_panel_state() {
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    state.apply_runtime_event(TuiRuntimeEvent::BudgetUpdated {
+        cost_used: 0.05,
+        cost_limit: Some(1.0),
+        turns_used: 2,
+        turns_limit: Some(10),
+    });
+    assert!((state.side_panel.budget.cost_used - 0.05).abs() < f64::EPSILON);
+    assert_eq!(state.side_panel.budget.turns_used, 2);
+
+    state.apply_runtime_event(TuiRuntimeEvent::ContextUtilizationChanged {
+        tokens_used: 5_000,
+        threshold: 10_000,
+    });
+    assert!((state.side_panel.context_pct - 0.5).abs() < 1e-6);
+
+    state.apply_runtime_event(TuiRuntimeEvent::McpStatusChanged {
+        servers: vec![McpServerSummary {
+            name: "fs".to_string(),
+            tool_count: 4,
+            connected: true,
+        }],
+    });
+    assert_eq!(state.side_panel.mcp_status.len(), 1);
+
+    state.apply_runtime_event(TuiRuntimeEvent::AgentsMdLoaded {
+        rule_count: 12,
+        paths: vec!["AGENTS.md".to_string()],
+    });
+    assert_eq!(state.side_panel.agents_md.rule_count, 12);
+
+    state.apply_runtime_event(TuiRuntimeEvent::HookFired {
+        name: "pre-git-commit".to_string(),
+        category: "lifecycle".to_string(),
+        outcome: "allow".to_string(),
+    });
+    assert!(
+        state
+            .activities
+            .iter()
+            .any(|activity| activity.label.contains("pre-git-commit"))
+    );
+
+    state.apply_runtime_event(TuiRuntimeEvent::Interrupted {
+        stage: "tool_call".to_string(),
+    });
+    assert_eq!(state.agent_run_status, AgentRunStatus::Interrupted);
+    assert!(
+        state
+            .transcript
+            .iter()
+            .any(|entry| entry.text.contains("interrupted during tool_call"))
+    );
+}
+
+#[test]
 fn locale_switches_status_bar_strings() {
     let mut state = TuiState::new(HeaderState::new(
         ExecutionMode::Execute,

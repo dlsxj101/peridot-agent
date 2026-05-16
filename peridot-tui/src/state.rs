@@ -282,6 +282,73 @@ pub enum TuiRuntimeEvent {
         /// Failure message.
         message: String,
     },
+    /// A model/tool turn finished.
+    TurnEnded {
+        /// Zero-based turn index that completed.
+        turn_index: u32,
+        /// Whether the turn succeeded.
+        success: bool,
+    },
+    /// The active plan was updated.
+    PlanUpdated {
+        /// Plan step labels with done flags.
+        steps: Vec<PlanStepUpdate>,
+        /// Current step index, when applicable.
+        current: Option<u32>,
+    },
+    /// Run-level budget guardrail changed.
+    BudgetUpdated {
+        /// Cost spent.
+        cost_used: f64,
+        /// Cost ceiling.
+        cost_limit: Option<f64>,
+        /// Turns used.
+        turns_used: u32,
+        /// Turn ceiling.
+        turns_limit: Option<u32>,
+    },
+    /// Context window utilization changed.
+    ContextUtilizationChanged {
+        /// Tokens used.
+        tokens_used: u64,
+        /// Compaction threshold.
+        threshold: u64,
+    },
+    /// MCP server status snapshot.
+    McpStatusChanged {
+        /// Server entries.
+        servers: Vec<McpServerSummary>,
+    },
+    /// AGENTS.md summary loaded.
+    AgentsMdLoaded {
+        /// Total rule count.
+        rule_count: u32,
+        /// Origin paths.
+        paths: Vec<String>,
+    },
+    /// One hook fired.
+    HookFired {
+        /// Hook name.
+        name: String,
+        /// Hook category.
+        category: String,
+        /// Outcome label.
+        outcome: String,
+    },
+    /// External interrupt signal received.
+    Interrupted {
+        /// Stage name.
+        stage: String,
+    },
+}
+
+/// Plan step payload carried by [`TuiRuntimeEvent::PlanUpdated`].
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct PlanStepUpdate {
+    /// Step label.
+    pub label: String,
+    /// Whether the step is marked done.
+    pub done: bool,
 }
 
 /// One delegated subagent shown in the monitoring panel.
@@ -1048,6 +1115,79 @@ impl TuiState {
                 );
             }
             TuiRuntimeEvent::Failed { message } => self.mark_agent_failed(message),
+            TuiRuntimeEvent::TurnEnded {
+                turn_index,
+                success,
+            } => {
+                let status = if success { "done" } else { "failed" };
+                self.push_activity(
+                    ActivityKind::Stream,
+                    "turn",
+                    format!("end #{} ({status})", turn_index + 1),
+                );
+            }
+            TuiRuntimeEvent::PlanUpdated { steps, current } => {
+                self.side_panel.plan = steps
+                    .into_iter()
+                    .map(|step| PlanStep {
+                        label: step.label,
+                        done: step.done,
+                    })
+                    .collect();
+                if let Some(idx) = current {
+                    self.push_activity(ActivityKind::Stream, "plan", format!("step {}", idx + 1));
+                } else {
+                    self.push_activity(ActivityKind::Stream, "plan", "updated");
+                }
+            }
+            TuiRuntimeEvent::BudgetUpdated {
+                cost_used,
+                cost_limit,
+                turns_used,
+                turns_limit,
+            } => {
+                self.side_panel.budget = BudgetGauge {
+                    cost_used,
+                    cost_limit,
+                    turns_used,
+                    turns_limit,
+                };
+            }
+            TuiRuntimeEvent::ContextUtilizationChanged {
+                tokens_used,
+                threshold,
+            } => {
+                if threshold > 0 {
+                    self.side_panel.context_pct =
+                        (tokens_used as f32 / threshold as f32).clamp(0.0, 1.0);
+                }
+            }
+            TuiRuntimeEvent::McpStatusChanged { servers } => {
+                self.side_panel.mcp_status = servers;
+            }
+            TuiRuntimeEvent::AgentsMdLoaded { rule_count, paths } => {
+                self.side_panel.agents_md = AgentsSummary { rule_count, paths };
+            }
+            TuiRuntimeEvent::HookFired {
+                name,
+                category,
+                outcome,
+            } => {
+                self.push_activity(
+                    ActivityKind::Stream,
+                    format!("hook:{name}"),
+                    format!("{category}: {outcome}"),
+                );
+            }
+            TuiRuntimeEvent::Interrupted { stage } => {
+                self.agent_run_status = AgentRunStatus::Interrupted;
+                self.active_tools.clear();
+                self.push_transcript_entry(
+                    TranscriptKind::Notice,
+                    format!("interrupted during {stage}"),
+                );
+                self.push_activity(ActivityKind::Stream, "run", "interrupted");
+            }
         }
     }
 

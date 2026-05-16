@@ -89,6 +89,84 @@ pub enum AgentRunEvent {
         /// Failure message.
         message: String,
     },
+    /// A model/tool turn finished (paired with [`AgentRunEvent::TurnStarted`]).
+    TurnEnded {
+        /// Zero-based turn index that just completed.
+        turn_index: u32,
+        /// Whether the turn's tool call reported success.
+        success: bool,
+    },
+    /// The active plan was updated by a tool (e.g., the plan tool).
+    PlanUpdated {
+        /// Current ordered plan steps.
+        steps: Vec<PlanStepUpdate>,
+        /// Optional zero-based index of the currently active step.
+        current: Option<u32>,
+    },
+    /// Run-level budget or turn-count guardrail changed.
+    BudgetUpdated {
+        /// Cost spent so far, in USD.
+        cost_used: f64,
+        /// Configured cost ceiling (None means unbounded).
+        cost_limit: Option<f64>,
+        /// Turns consumed so far.
+        turns_used: u32,
+        /// Configured turn ceiling (None means unbounded).
+        turns_limit: Option<u32>,
+    },
+    /// Context-manager utilization changed.
+    ContextUtilizationChanged {
+        /// Tokens already in the context window.
+        tokens_used: u64,
+        /// Compaction threshold.
+        threshold: u64,
+    },
+    /// MCP server status changed (one or more servers connected / disconnected).
+    McpStatusChanged {
+        /// Current server snapshot.
+        servers: Vec<McpStatusUpdate>,
+    },
+    /// AGENTS.md rules loaded at session start.
+    AgentsMdLoaded {
+        /// Total parsed rule count.
+        rule_count: u32,
+        /// Origin file paths.
+        paths: Vec<String>,
+    },
+    /// A hook fired with the carried outcome label.
+    HookFired {
+        /// Hook name.
+        name: String,
+        /// Hook category (lifecycle, tool, event, ...).
+        category: String,
+        /// Outcome label such as `allow`, `block`, or `ok`.
+        outcome: String,
+    },
+    /// The active run was interrupted by an external cancellation signal.
+    Interrupted {
+        /// Stage name (model_call, tool_call, verification, ...).
+        stage: String,
+    },
+}
+
+/// One plan step update payload accompanying [`AgentRunEvent::PlanUpdated`].
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct PlanStepUpdate {
+    /// Step label.
+    pub label: String,
+    /// Whether the step is marked done.
+    pub done: bool,
+}
+
+/// One MCP server snapshot accompanying [`AgentRunEvent::McpStatusChanged`].
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct McpStatusUpdate {
+    /// Server display name.
+    pub name: String,
+    /// Exposed tool count.
+    pub tool_count: u32,
+    /// Whether the server is currently connected.
+    pub connected: bool,
 }
 
 /// Request for one agent turn.

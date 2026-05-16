@@ -579,6 +579,64 @@ fn tui_runtime_event_from_agent(event: AgentRunEvent) -> TuiRuntimeEvent {
             session_id,
             message,
         },
+        AgentRunEvent::TurnEnded {
+            turn_index,
+            success,
+        } => TuiRuntimeEvent::TurnEnded {
+            turn_index,
+            success,
+        },
+        AgentRunEvent::PlanUpdated { steps, current } => TuiRuntimeEvent::PlanUpdated {
+            steps: steps
+                .into_iter()
+                .map(|step| peridot_tui::PlanStepUpdate {
+                    label: step.label,
+                    done: step.done,
+                })
+                .collect(),
+            current,
+        },
+        AgentRunEvent::BudgetUpdated {
+            cost_used,
+            cost_limit,
+            turns_used,
+            turns_limit,
+        } => TuiRuntimeEvent::BudgetUpdated {
+            cost_used,
+            cost_limit,
+            turns_used,
+            turns_limit,
+        },
+        AgentRunEvent::ContextUtilizationChanged {
+            tokens_used,
+            threshold,
+        } => TuiRuntimeEvent::ContextUtilizationChanged {
+            tokens_used,
+            threshold,
+        },
+        AgentRunEvent::McpStatusChanged { servers } => TuiRuntimeEvent::McpStatusChanged {
+            servers: servers
+                .into_iter()
+                .map(|server| peridot_tui::McpServerSummary {
+                    name: server.name,
+                    tool_count: server.tool_count,
+                    connected: server.connected,
+                })
+                .collect(),
+        },
+        AgentRunEvent::AgentsMdLoaded { rule_count, paths } => {
+            TuiRuntimeEvent::AgentsMdLoaded { rule_count, paths }
+        }
+        AgentRunEvent::HookFired {
+            name,
+            category,
+            outcome,
+        } => TuiRuntimeEvent::HookFired {
+            name,
+            category,
+            outcome,
+        },
+        AgentRunEvent::Interrupted { stage } => TuiRuntimeEvent::Interrupted { stage },
     }
 }
 

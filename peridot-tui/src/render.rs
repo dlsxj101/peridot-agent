@@ -153,6 +153,62 @@ pub(super) fn theme_accent(config: &TuiConfig) -> Color {
     }
 }
 
+/// Renders a sticky one-to-three-line plan banner shown above the transcript.
+/// Returns an empty vector when no plan is active.
+fn sticky_plan_banner(state: &TuiState) -> Vec<Line<'static>> {
+    if state.side_panel.plan.is_empty() {
+        return Vec::new();
+    }
+    let total = state.side_panel.plan.len();
+    let done = state
+        .side_panel
+        .plan
+        .iter()
+        .filter(|step| step.done)
+        .count();
+    let current = state
+        .side_panel
+        .plan
+        .iter()
+        .find(|step| !step.done)
+        .map(|step| step.label.as_str())
+        .unwrap_or("complete");
+    let upcoming = state
+        .side_panel
+        .plan
+        .iter()
+        .filter(|step| !step.done)
+        .nth(1)
+        .map(|step| step.label.as_str());
+
+    let mut lines = vec![Line::from(vec![
+        Span::styled(
+            format!("Plan ({done}/{total})  "),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("\u{25B6} {current}"),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ])];
+    if let Some(next) = upcoming
+        && state.layout != LayoutMode::Minimal
+    {
+        lines.push(Line::from(Span::styled(
+            format!("    next  {next}"),
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::DIM),
+        )));
+    }
+    lines.push(Line::from(""));
+    lines
+}
+
 /// Returns true when the entry should be hidden in normal (non-debug) view.
 fn is_entry_hidden(state: &TuiState, entry: &TranscriptEntry) -> bool {
     match entry.kind {
@@ -378,6 +434,23 @@ pub fn render_text_snapshot(state: &TuiState) -> String {
     if should_render_welcome(state) {
         let _ = writeln!(output, "{}", render_welcome(state));
     } else {
+        if !state.side_panel.plan.is_empty() {
+            let total = state.side_panel.plan.len();
+            let done = state
+                .side_panel
+                .plan
+                .iter()
+                .filter(|step| step.done)
+                .count();
+            let current = state
+                .side_panel
+                .plan
+                .iter()
+                .find(|step| !step.done)
+                .map(|step| step.label.as_str())
+                .unwrap_or("complete");
+            let _ = writeln!(output, "banner: Plan ({done}/{total}) > {current}");
+        }
         let visible = state
             .transcript
             .iter()
@@ -537,6 +610,7 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
             body_chunks[0],
         );
     } else {
+        let banner_lines = sticky_plan_banner(state);
         let capacity = body_chunks[0].height.saturating_sub(2) as usize;
         let visible: Vec<&TranscriptEntry> = state
             .transcript
@@ -548,14 +622,18 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
             .as_ref()
             .and_then(|stream| style_active_stream(state, stream));
         let stream_reserve = if stream_line.is_some() { 1 } else { 0 };
-        let take = capacity.saturating_sub(stream_reserve);
-        let mut lines: Vec<Line<'static>> = visible
-            .iter()
-            .rev()
-            .take(take)
-            .rev()
-            .map(|entry| style_transcript_entry(state, entry))
-            .collect();
+        let take = capacity
+            .saturating_sub(stream_reserve)
+            .saturating_sub(banner_lines.len());
+        let mut lines: Vec<Line<'static>> = banner_lines;
+        lines.extend(
+            visible
+                .iter()
+                .rev()
+                .take(take)
+                .rev()
+                .map(|entry| style_transcript_entry(state, entry)),
+        );
         if let Some(line) = stream_line {
             lines.push(line);
         }

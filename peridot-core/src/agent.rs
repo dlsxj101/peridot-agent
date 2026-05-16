@@ -364,8 +364,13 @@ impl HarnessAgent {
                     continue;
                 }
             };
+            let turn_success = outcome.tool_result.success;
             accumulate_usage(&mut total_usage, outcome.usage);
             events(AgentRunEvent::UsageUpdated { usage: total_usage });
+            events(AgentRunEvent::TurnEnded {
+                turn_index,
+                success: turn_success,
+            });
             if should_emit_budget_warning(
                 request.budget_usd,
                 request.budget_warning_pct,
