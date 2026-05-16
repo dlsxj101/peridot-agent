@@ -666,13 +666,34 @@ fn apply_session_command(
         SessionCommandEvent::SessionClose(target) => {
             let resolved = resolve_session_id(state, &target);
             if let Some(id) = resolved {
-                let removed = {
+                let (removed, worktree_cleanup) = {
                     let mut router = router.lock().unwrap();
+                    let cleanup = router.get(&id).and_then(|handle| {
+                        if matches!(handle.isolation, WorkspaceIsolation::Worktree { .. }) {
+                            Some(handle.workspace_root.clone())
+                        } else {
+                            None
+                        }
+                    });
                     if let Some(handle) = router.get(&id) {
                         handle.cancel.cancel();
                     }
-                    router.close(&id)
+                    (router.close(&id), cleanup)
                 };
+                if let Some(worktree_path) = worktree_cleanup {
+                    let git = GitManager::new(project_template);
+                    if let Err(err) = git.remove_worktree(&worktree_path) {
+                        state.push_error(format!(
+                            "worktree cleanup failed for {}: {err}",
+                            worktree_path.display()
+                        ));
+                    } else {
+                        state.push_transcript(format!(
+                            "worktree: removed {}",
+                            worktree_path.display()
+                        ));
+                    }
+                }
                 if removed {
                     state.sessions.retain(|item| item.id != id);
                     if state.current_session_id == id {
@@ -717,36 +738,128 @@ fn apply_session_command(
             );
             state.push_transcript(format!("fork: registered {new_id}"));
         }
-        SessionCommandEvent::Teammate(task) | SessionCommandEvent::Worktree { task, .. } => {
-            // Worktree isolation lands in milestone M2; for now the session is
-            // registered as Shared so the agent loop still runs end-to-end.
+        SessionCommandEvent::Teammate(task) => {
             let new_id = format!("teammate-{}-{}", std::process::id(), unix_timestamp());
-            let title = task.clone();
-            router.lock().unwrap().register(SessionHandle::new(
-                new_id.clone(),
-                project_template.to_path_buf(),
-                WorkspaceIsolation::Shared,
-            ));
-            state
-                .sessions
-                .push(SessionDirectoryItem::new(&new_id, &title));
-            spawn_session_task(
+            let branch = format!("peridot/teammate-{new_id}");
+            spawn_worktree_session(
+                &new_id,
+                &branch,
+                task,
+                state,
+                router,
                 handle,
                 event_tx,
-                router,
-                new_id.clone(),
-                task,
-                state.header.mode,
-                state.header.permission,
-                state.header.model.clone(),
                 options_template,
                 config_template,
                 project_template,
             );
-            state.push_transcript(format!(
-                "teammate: registered {new_id} (worktree isolation pending)"
-            ));
         }
+        SessionCommandEvent::Worktree { branch, task } => {
+            let new_id = format!("worktree-{}-{}", std::process::id(), unix_timestamp());
+            spawn_worktree_session(
+                &new_id,
+                &branch,
+                task,
+                state,
+                router,
+                handle,
+                event_tx,
+                options_template,
+                config_template,
+                project_template,
+            );
+        }
+    }
+    warn_on_shared_workspace_collisions(state, router, project_template);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn spawn_worktree_session(
+    new_id: &str,
+    branch: &str,
+    task: String,
+    state: &mut TuiState,
+    router: &std::sync::Arc<std::sync::Mutex<SessionRouter>>,
+    handle: &tokio::runtime::Handle,
+    event_tx: &std::sync::mpsc::Sender<(String, TuiRuntimeEvent)>,
+    options_template: &run_loop::AgentTaskOptions,
+    config_template: &PeridotConfig,
+    project_template: &Path,
+) {
+    let worktree_path = project_template
+        .join(".peridot")
+        .join("worktrees")
+        .join(new_id);
+    if let Some(parent) = worktree_path.parent()
+        && let Err(err) = std::fs::create_dir_all(parent)
+    {
+        state.push_error(format!(
+            "worktree: failed to create parent directory {}: {err}",
+            parent.display()
+        ));
+        return;
+    }
+    let git = GitManager::new(project_template);
+    match git.add_worktree(&worktree_path, branch) {
+        Ok(_) => {}
+        Err(err) => {
+            state.push_error(format!(
+                "worktree: failed to create branch {branch} at {}: {err}",
+                worktree_path.display()
+            ));
+            return;
+        }
+    }
+    let title = task.clone();
+    router.lock().unwrap().register(SessionHandle::new(
+        new_id.to_string(),
+        worktree_path.clone(),
+        WorkspaceIsolation::Worktree {
+            branch: branch.to_string(),
+        },
+    ));
+    state
+        .sessions
+        .push(SessionDirectoryItem::new(new_id, &title));
+    state.push_transcript(format!(
+        "worktree: registered {new_id} on branch {branch} at {}",
+        worktree_path.display()
+    ));
+    spawn_session_task(
+        handle,
+        event_tx,
+        router,
+        new_id.to_string(),
+        task,
+        state.header.mode,
+        state.header.permission,
+        state.header.model.clone(),
+        options_template,
+        config_template,
+        &worktree_path,
+    );
+}
+
+fn warn_on_shared_workspace_collisions(
+    state: &mut TuiState,
+    router: &std::sync::Arc<std::sync::Mutex<SessionRouter>>,
+    project_template: &Path,
+) {
+    let active_shared = router
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|handle| {
+            matches!(handle.isolation, WorkspaceIsolation::Shared)
+                && handle.workspace_root == project_template
+        })
+        .count();
+    if active_shared > 1 {
+        state.push_error(format!(
+            "warning: {active_shared} sessions share {} — concurrent file writes may collide. \
+             Use /teammate or /worktree for isolated runs.",
+            project_template.display()
+        ));
     }
 }
 

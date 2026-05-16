@@ -307,6 +307,26 @@ mod tests {
     }
 
     #[test]
+    fn worktree_isolation_records_branch_on_handle() {
+        let handle = SessionHandle::new(
+            "wt1",
+            PathBuf::from("/tmp/wt1"),
+            WorkspaceIsolation::Worktree {
+                branch: "peridot/teammate-wt1".to_string(),
+            },
+        );
+        assert_eq!(
+            handle.worktree_branch.as_deref(),
+            Some("peridot/teammate-wt1")
+        );
+        assert_eq!(handle.workspace_root, PathBuf::from("/tmp/wt1"));
+        assert!(matches!(
+            handle.isolation,
+            WorkspaceIsolation::Worktree { .. }
+        ));
+    }
+
+    #[test]
     fn handle_to_record_carries_workspace_and_totals() {
         let mut handle = handle("s1");
         handle.lifecycle = SessionLifecycle::Running;
