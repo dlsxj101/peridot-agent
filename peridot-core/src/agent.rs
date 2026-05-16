@@ -12,7 +12,7 @@ use peridot_tools::{ToolContext, ToolRegistry};
 use crate::cancel::CancelToken;
 use crate::goal::check_goal_satisfied;
 use crate::permissions::ensure_tool_allowed;
-use crate::prompt::{read_plan_reminder, system_prompt_for_mode};
+use crate::prompt::{read_plan_reminder, system_prompt_for_role};
 use crate::recovery::{
     StuckDetector, budget_exceeded_message, budget_warning_message, classify_error,
     format_reminder_message, recovery_message, run_budget_warning_hook, run_context_compacted_hook,
@@ -21,6 +21,7 @@ use crate::recovery::{
 use crate::requests::{
     AgentRunEvent, AgentRunRequest, AgentRunSummary, AgentTurnOutcome, AgentTurnRequest, StopReason,
 };
+use crate::role::AgentRole;
 use crate::state::AgentState;
 use crate::usage::{accumulate_usage, stream_completion_with_chunks};
 
@@ -33,6 +34,7 @@ pub struct HarnessAgent {
     context_snapshot_path: Option<PathBuf>,
     agents_md_path: Option<PathBuf>,
     agents_md_signature: Option<(u64, u64)>,
+    role: AgentRole,
 }
 
 impl HarnessAgent {
@@ -46,7 +48,19 @@ impl HarnessAgent {
             context_snapshot_path: None,
             agents_md_path: None,
             agents_md_signature: None,
+            role: AgentRole::default(),
         }
+    }
+
+    /// Assigns the committee role this agent plays. Defaults to
+    /// `AgentRole::Executor`, which keeps the legacy single-agent behaviour.
+    pub fn set_role(&mut self, role: AgentRole) {
+        self.role = role;
+    }
+
+    /// Returns the committee role this agent is configured to play.
+    pub fn role(&self) -> AgentRole {
+        self.role
     }
 
     /// Configures the AGENTS.md file the agent loop watches for changes.
@@ -231,7 +245,7 @@ impl HarnessAgent {
             provider,
             CompletionRequest {
                 model: request.model,
-                system: Some(system_prompt_for_mode(self.state.mode)),
+                system: Some(system_prompt_for_role(self.state.mode, self.role)),
                 messages: self.context.to_messages(),
                 max_tokens: Some(request.max_tokens),
                 thinking: self.state.mode == ExecutionMode::Goal,

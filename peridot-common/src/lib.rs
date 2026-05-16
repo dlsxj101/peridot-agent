@@ -269,6 +269,89 @@ pub struct PeridotConfig {
     /// User hook definitions.
     #[serde(default)]
     pub hooks: HooksConfig,
+    /// Multi-LLM committee settings (Planner / Reviewer / Executor roles).
+    #[serde(default)]
+    pub committee: CommitteeConfig,
+}
+
+/// Activation mode for the multi-role committee. `Off` keeps the legacy
+/// single-agent loop; `Planner` runs a one-shot planner pre-flight before the
+/// executor loop; `Full` adds an in-loop reviewer after every mutating turn.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CommitteeMode {
+    /// Legacy single-agent behaviour (default).
+    #[default]
+    Off,
+    /// Planner pre-flight + single executor loop (no per-turn reviewer).
+    Planner,
+    /// Planner pre-flight + executor loop with reviewer-after-each-turn.
+    Full,
+}
+
+impl std::fmt::Display for CommitteeMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let label = match self {
+            CommitteeMode::Off => "off",
+            CommitteeMode::Planner => "planner",
+            CommitteeMode::Full => "full",
+        };
+        write!(f, "{label}")
+    }
+}
+
+impl std::str::FromStr for CommitteeMode {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "off" => Ok(CommitteeMode::Off),
+            "planner" => Ok(CommitteeMode::Planner),
+            "full" => Ok(CommitteeMode::Full),
+            other => Err(format!(
+                "unknown committee mode '{other}' (expected off|planner|full)"
+            )),
+        }
+    }
+}
+
+/// Configuration for the multi-LLM committee. When `mode == Off` (default),
+/// the harness behaves exactly like the single-agent baseline. When enabled,
+/// each role can use an independent model — empty strings fall back to
+/// `models.main`, so a project can opt in by setting only `mode = "full"`.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CommitteeConfig {
+    /// Activation mode.
+    #[serde(default)]
+    pub mode: CommitteeMode,
+    /// Model used by the Planner role. Empty falls back to `models.main`.
+    #[serde(default)]
+    pub planner_model: String,
+    /// Model used by the Reviewer role. Empty falls back to `models.main`.
+    #[serde(default)]
+    pub reviewer_model: String,
+    /// Model used by the Executor role. Empty falls back to `models.main`.
+    #[serde(default)]
+    pub executor_model: String,
+    /// Maximum number of reviewer re-passes before auto-`Block` fires.
+    #[serde(default = "default_max_review_passes")]
+    pub max_review_passes: u32,
+}
+
+impl Default for CommitteeConfig {
+    fn default() -> Self {
+        Self {
+            mode: CommitteeMode::Off,
+            planner_model: String::new(),
+            reviewer_model: String::new(),
+            executor_model: String::new(),
+            max_review_passes: default_max_review_passes(),
+        }
+    }
+}
+
+fn default_max_review_passes() -> u32 {
+    3
 }
 
 /// Display locale for user-facing strings in the TUI.
@@ -986,5 +1069,51 @@ mod tests {
         assert!(!config.memory.auto_skills);
         assert!(!config.memory.skills_review);
         assert_eq!(config.memory.max_sessions_stored, 12);
+    }
+
+    #[test]
+    fn committee_defaults_to_off_with_empty_role_models() {
+        let config = PeridotConfig::default();
+        assert_eq!(config.committee.mode, CommitteeMode::Off);
+        assert!(config.committee.planner_model.is_empty());
+        assert!(config.committee.reviewer_model.is_empty());
+        assert!(config.committee.executor_model.is_empty());
+        assert_eq!(config.committee.max_review_passes, 3);
+    }
+
+    #[test]
+    fn parses_committee_config_from_toml() {
+        let config = toml::from_str::<PeridotConfig>(
+            r#"
+            [committee]
+            mode = "full"
+            planner_model = "claude-haiku-4-5"
+            reviewer_model = "openai-gpt-4o-mini"
+            executor_model = "claude-opus-4-7"
+            max_review_passes = 5
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(config.committee.mode, CommitteeMode::Full);
+        assert_eq!(config.committee.planner_model, "claude-haiku-4-5");
+        assert_eq!(config.committee.reviewer_model, "openai-gpt-4o-mini");
+        assert_eq!(config.committee.executor_model, "claude-opus-4-7");
+        assert_eq!(config.committee.max_review_passes, 5);
+    }
+
+    #[test]
+    fn committee_mode_round_trips_through_from_str_and_display() {
+        use std::str::FromStr;
+        for mode in [
+            CommitteeMode::Off,
+            CommitteeMode::Planner,
+            CommitteeMode::Full,
+        ] {
+            let rendered = mode.to_string();
+            let parsed = CommitteeMode::from_str(&rendered).unwrap();
+            assert_eq!(parsed, mode);
+        }
+        assert!(CommitteeMode::from_str("nope").is_err());
     }
 }

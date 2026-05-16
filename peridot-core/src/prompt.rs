@@ -3,6 +3,17 @@ use std::path::Path;
 
 use peridot_common::ExecutionMode;
 
+use crate::role::AgentRole;
+
+pub(crate) fn system_prompt_for_role(mode: ExecutionMode, role: AgentRole) -> String {
+    let mut prompt = system_prompt_for_mode(mode);
+    let suffix = role.system_prompt_suffix();
+    if !suffix.is_empty() {
+        prompt.push_str(suffix);
+    }
+    prompt
+}
+
 pub(crate) fn system_prompt_for_mode(mode: ExecutionMode) -> String {
     let mode_rules = match mode {
         ExecutionMode::Plan => {

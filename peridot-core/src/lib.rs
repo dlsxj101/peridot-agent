@@ -7,6 +7,7 @@ mod permissions;
 mod prompt;
 mod recovery;
 mod requests;
+mod role;
 mod slash;
 mod state;
 #[cfg(test)]
@@ -21,5 +22,6 @@ pub use requests::{
     AgentRunEvent, AgentRunRequest, AgentRunSummary, AgentTurnOutcome, AgentTurnRequest,
     McpStatusUpdate, PlanStepUpdate, StopReason,
 };
+pub use role::AgentRole;
 pub use slash::{SlashCommand, parse_slash_command};
 pub use state::AgentState;
