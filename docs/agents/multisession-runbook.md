@@ -75,6 +75,12 @@ its parent transcript (M4), and the attention notifier line (M5).
   the child with an empty context (silent no-op), matching the previous
   behaviour for that edge case.
 
+### M14 — Bulk prune of finished sessions (landed)
+- `peridot session prune [--status <state>] [--older-than-days N] [--dry-run]` walks every `SessionRecord` and removes the ones matching all filters: `delete_session` (SQLite summary), `delete_session_record` (SQLite record), and `remove_session_dir` (on-disk blobs / ndjson).
+- `--status` accepts `idle | running | suspended | done | failed`. Unknown values fail loudly so a typo never accidentally targets the wrong cohort.
+- `--older-than-days N` skips sessions whose `updated_at_unix` is newer than `N * 86_400` seconds before now.
+- `--dry-run` prints what *would* be removed and returns; combine with `--status` / `--older-than-days` to audit before sweeping.
+
 ### M13 — Cross-session transcript search (landed)
 - `peridot session search <query> [--session <id>] [--limit N]` walks every persisted session under `<sessions_root>` (or just the one named by `--session`), loads its transcript via the M10 helper, and prints every entry whose text contains the substring (case-insensitive).
 - Text output lists each hit as `<session>[<index>] <kind> <text>`; JSON output returns `{ "query", "total", "hits": [...] }` so downstream tooling can paginate or filter further. `--limit` short-circuits the walk after N matches to keep large workspaces responsive.

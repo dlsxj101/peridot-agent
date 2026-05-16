@@ -203,6 +203,18 @@ pub(crate) enum SessionCommand {
         #[arg(long)]
         limit: Option<usize>,
     },
+    /// Remove finished / stale sessions from disk and the memory store.
+    Prune {
+        /// Only prune sessions whose lifecycle matches (done, failed, interrupted, suspended).
+        #[arg(long)]
+        status: Option<String>,
+        /// Only prune sessions whose `updated_at` is older than N days.
+        #[arg(long)]
+        older_than_days: Option<u64>,
+        /// Print which sessions would be removed without touching anything.
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 /// AGENTS.md subcommands.

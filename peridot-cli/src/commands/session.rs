@@ -139,6 +139,111 @@ pub(crate) fn run_session_command(
         } => {
             search_session_transcripts(project_root, query, session.as_deref(), *limit, output)?;
         }
+        SessionCommand::Prune {
+            status,
+            older_than_days,
+            dry_run,
+        } => {
+            prune_sessions(
+                &store,
+                project_root,
+                status.as_deref(),
+                *older_than_days,
+                *dry_run,
+                output,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn prune_sessions(
+    store: &MemoryStore,
+    project_root: &Path,
+    status_filter: Option<&str>,
+    older_than_days: Option<u64>,
+    dry_run: bool,
+    output: OutputFormat,
+) -> Result<()> {
+    use peridot_memory::SessionLifecycle;
+    let want_status: Option<SessionLifecycle> = match status_filter {
+        Some(value) => match value.to_ascii_lowercase().as_str() {
+            "idle" => Some(SessionLifecycle::Idle),
+            "running" => Some(SessionLifecycle::Running),
+            "suspended" => Some(SessionLifecycle::Suspended),
+            "done" => Some(SessionLifecycle::Done),
+            "failed" => Some(SessionLifecycle::Failed),
+            other => anyhow::bail!(
+                "unknown --status '{other}'; expected one of idle|running|suspended|done|failed",
+            ),
+        },
+        None => None,
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or_default();
+    let threshold = older_than_days.map(|days| now.saturating_sub(days.saturating_mul(86_400)));
+    let records = store.list_session_records().unwrap_or_default();
+    let mut removed: Vec<String> = Vec::new();
+    let mut considered: Vec<String> = Vec::new();
+    for record in records {
+        if let Some(target) = want_status
+            && record.status != target
+        {
+            continue;
+        }
+        if let Some(limit) = threshold
+            && record.updated_at_unix > limit
+        {
+            continue;
+        }
+        considered.push(record.id.clone());
+        if dry_run {
+            continue;
+        }
+        let sessions_root = project_root.join(".peridot").join("sessions");
+        let _ = peridot_memory::remove_session_dir(&sessions_root, &record.id);
+        let _ = store.delete_session(&record.id);
+        if store.delete_session_record(&record.id).is_ok() {
+            removed.push(record.id);
+        }
+    }
+    match output {
+        OutputFormat::Json => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "dry_run": dry_run,
+                    "considered": considered,
+                    "removed": removed,
+                    "status_filter": status_filter,
+                    "older_than_days": older_than_days,
+                }))?
+            );
+        }
+        OutputFormat::Text => {
+            if dry_run {
+                if considered.is_empty() {
+                    println!("prune (dry-run): no matching sessions");
+                } else {
+                    println!(
+                        "prune (dry-run): would remove {} session(s):",
+                        considered.len()
+                    );
+                    for id in &considered {
+                        println!("  - {id}");
+                    }
+                }
+            } else if removed.is_empty() {
+                println!("prune: no matching sessions");
+            } else {
+                println!("prune: removed {} session(s):", removed.len());
+                for id in &removed {
+                    println!("  - {id}");
+                }
+            }
+        }
     }
     Ok(())
 }
