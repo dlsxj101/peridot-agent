@@ -3,6 +3,7 @@ use peridot_core::{GoalStatus, SlashCommand};
 
 use super::input::*;
 use super::render::*;
+use super::state::{TranscriptEntry, TranscriptKind};
 use super::*;
 
 #[test]
@@ -95,7 +96,7 @@ fn streaming_state_renders_and_finishes_into_transcript() {
     state.finish_stream();
 
     assert!(state.active_stream.is_none());
-    assert_eq!(state.transcript[0], "assistant: hello world");
+    assert_eq!(state.transcript[0].text, "assistant: hello world");
     assert!(render_text_snapshot(&state).contains("stream assistant: done"));
     assert_eq!(state.side_panel.stats.steps, 1);
 }
@@ -430,7 +431,7 @@ fn slash_commands_update_tui_state() {
     apply_slash_command(&mut state, SlashCommand::GoalPause);
     assert_eq!(state.goal_status, Some(GoalStatus::Paused));
     apply_slash_command(&mut state, SlashCommand::GoalStatus);
-    assert!(state.transcript.last().unwrap().contains("goal: paused"));
+    assert!(state.transcript.last().unwrap().text.contains("goal: paused"));
     assert!(render_text_snapshot(&state).contains("goal paused"));
 }
 
@@ -449,14 +450,14 @@ fn utility_slash_commands_update_tui_surface() {
     });
 
     apply_slash_command(&mut state, SlashCommand::Help);
-    assert!(state.transcript.last().unwrap().contains("/model <name>"));
+    assert!(state.transcript.last().unwrap().text.contains("/model <name>"));
 
     apply_slash_command(&mut state, SlashCommand::PlanShow);
     assert!(
         state
             .transcript
             .iter()
-            .any(|line| line.contains("[ ] 1. write tests"))
+            .any(|line| line.text.contains("[ ] 1. write tests"))
     );
 
     apply_slash_command(&mut state, SlashCommand::Model("next-model".to_string()));
@@ -470,7 +471,7 @@ fn utility_slash_commands_update_tui_surface() {
         ),
         TuiEventOutcome::Continue
     );
-    assert!(state.transcript.last().unwrap().contains("/help"));
+    assert!(state.transcript.last().unwrap().text.contains("/help"));
 
     apply_slash_command(&mut state, SlashCommand::Clear);
     assert!(state.transcript.is_empty());
@@ -507,7 +508,7 @@ fn ask_user_panel_renders_and_accepts_choice() {
     );
 
     assert!(state.ask_user.is_none());
-    assert!(state.transcript[0].contains("Proceed? -> no"));
+    assert!(state.transcript[0].text.contains("Proceed? -> no"));
 }
 
 #[test]
@@ -619,15 +620,148 @@ fn runtime_events_update_tui_without_exiting() {
     assert!(snapshot.contains("agent done"));
     assert!(snapshot.contains("task: fix tests"));
     assert!(snapshot.contains("assistant: thinking"));
-    assert!(snapshot.contains("thinking: checking the failing test path"));
+    assert!(
+        !snapshot.contains("thinking: checking the failing test path"),
+        "thinking text should be hidden in non-debug view"
+    );
     assert!(snapshot.contains("tool verify_test: ok: passed"));
     assert!(snapshot.contains("run: stopped=Done turns=1"));
+
+    state.debug_view = true;
+    let debug_snapshot = render_text_snapshot(&state);
+    assert!(debug_snapshot.contains("thinking: checking the failing test path"));
+    state.debug_view = false;
 
     state.apply_runtime_event(TuiRuntimeEvent::SessionSaved {
         session_id: "session-test".to_string(),
     });
     let snapshot = render_text_snapshot(&state);
     assert!(snapshot.contains("session: saved session-test"));
+}
+
+#[test]
+fn assistant_json_action_renders_only_user_facing_text() {
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+
+    let raw = "The user's previous message...\n\
+        Analysis: I should ask.\n\
+        Decision: ask.\n\
+        {\"action\": \"agent_ask_user\", \"parameters\": {\"question\": \"How can I help you?\"}}";
+    state.apply_runtime_event(TuiRuntimeEvent::AssistantDelta {
+        delta: raw.to_string(),
+    });
+    state.apply_runtime_event(TuiRuntimeEvent::AssistantFinished);
+
+    let visible: Vec<&TranscriptEntry> = state
+        .transcript
+        .iter()
+        .filter(|entry| entry.kind == TranscriptKind::Assistant)
+        .collect();
+    assert_eq!(visible.len(), 1);
+    assert_eq!(visible[0].text, "assistant: ask: How can I help you?");
+
+    let snapshot = render_text_snapshot(&state);
+    assert!(snapshot.contains("ask: How can I help you?"));
+    assert!(!snapshot.contains("Analysis:"));
+    assert!(!snapshot.contains("\"action\""));
+}
+
+#[test]
+fn assistant_tool_call_action_emits_no_visible_assistant_line() {
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    let raw = "{\"action\": \"file_read\", \"parameters\": {\"path\": \"src/lib.rs\"}}";
+    state.apply_runtime_event(TuiRuntimeEvent::AssistantDelta {
+        delta: raw.to_string(),
+    });
+    state.apply_runtime_event(TuiRuntimeEvent::AssistantFinished);
+    assert!(
+        !state
+            .transcript
+            .iter()
+            .any(|entry| entry.kind == TranscriptKind::Assistant)
+    );
+}
+
+#[test]
+fn busy_agent_queues_input_and_drains_when_idle() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    state.apply_runtime_event(TuiRuntimeEvent::RunStarted {
+        task: "first task".to_string(),
+    });
+    assert_eq!(state.agent_run_status, AgentRunStatus::Running);
+
+    for character in "second".chars() {
+        handle_key_event(
+            &mut state,
+            KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE),
+        );
+    }
+    let outcome = handle_key_event(
+        &mut state,
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+    );
+    assert_eq!(outcome, TuiEventOutcome::Continue);
+    assert_eq!(state.input_queue, vec!["second".to_string()]);
+    assert!(
+        state
+            .transcript
+            .iter()
+            .any(|entry| entry.kind == TranscriptKind::Notice
+                && entry.text.contains("대기열에 추가됨"))
+    );
+
+    state.apply_runtime_event(TuiRuntimeEvent::Finished {
+        stop_reason: "Done".to_string(),
+        turns: 1,
+        success: true,
+    });
+    let mut submitted: Vec<String> = Vec::new();
+    let mut on_submit = |task: String, state: &mut TuiState| {
+        submitted.push(task);
+        state.last_task = Some("second".to_string());
+    };
+    drain_input_queue(&mut state, &mut on_submit);
+
+    assert_eq!(submitted, vec!["second".to_string()]);
+    assert!(state.input_queue.is_empty());
+    assert_eq!(state.agent_run_status, AgentRunStatus::Running);
+}
+
+#[test]
+fn status_bar_reflects_active_tool_and_spinner() {
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    state.apply_runtime_event(TuiRuntimeEvent::ToolStarted {
+        name: "shell_exec".to_string(),
+        parameters: serde_json::json!({}),
+    });
+    let snapshot = render_text_snapshot(&state);
+    assert!(snapshot.contains("status: 도구 실행 중: shell_exec"));
+
+    state.apply_runtime_event(TuiRuntimeEvent::ToolFinished {
+        name: "shell_exec".to_string(),
+        success: true,
+        summary: "ok".to_string(),
+        output: serde_json::json!({}),
+    });
+    assert!(state.active_tools.is_empty());
 }
 
 #[test]
@@ -663,6 +797,7 @@ fn approval_runtime_event_opens_panel_and_records_decision() {
             .transcript
             .last()
             .unwrap()
+            .text
             .contains("stopped=ApprovalRequired")
     );
 
@@ -678,6 +813,7 @@ fn approval_runtime_event_opens_panel_and_records_decision() {
             .transcript
             .last()
             .unwrap()
+            .text
             .contains("approval: shell_exec approved")
     );
 }

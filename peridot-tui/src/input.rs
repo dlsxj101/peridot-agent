@@ -1,4 +1,5 @@
 use super::*;
+use state::{AgentRunStatus, TranscriptKind};
 
 /// Runs the interactive terminal UI until the user quits or submits a task.
 pub fn run_interactive(mut state: TuiState) -> io::Result<TuiExit> {
@@ -6,6 +7,7 @@ pub fn run_interactive(mut state: TuiState) -> io::Result<TuiExit> {
     let (width, height) = terminal_size()?;
     state.resize(width, height);
     let submitted = loop {
+        state.tick_spinner();
         terminal.terminal.draw(|frame| draw(frame, &state))?;
         if event::poll(Duration::from_millis(250))? {
             match event::read()? {
@@ -40,6 +42,8 @@ where
         for event in runtime_events.try_iter() {
             state.apply_runtime_event(event);
         }
+        drain_input_queue(&mut state, &mut on_submit);
+        state.tick_spinner();
         terminal.terminal.draw(|frame| draw(frame, &state))?;
         if event::poll(Duration::from_millis(100))? {
             match event::read()? {
@@ -177,8 +181,19 @@ pub(super) fn handle_menu_key_event(state: &mut TuiState, key: KeyEvent) -> TuiE
             state.menu = None;
             if selected == "Quit" {
                 TuiEventOutcome::Quit
+            } else if selected == "Debug" {
+                state.debug_view = !state.debug_view;
+                let label = if state.debug_view { "on" } else { "off" };
+                state.push_transcript_entry(
+                    TranscriptKind::Notice,
+                    format!("debug: {label}"),
+                );
+                TuiEventOutcome::Continue
             } else {
-                state.push_transcript(format!("menu: {selected}"));
+                state.push_transcript_entry(
+                    TranscriptKind::Notice,
+                    format!("menu: {selected}"),
+                );
                 TuiEventOutcome::Continue
             }
         }
@@ -235,7 +250,10 @@ pub(super) fn handle_ask_user_key_event(state: &mut TuiState, key: KeyEvent) -> 
             let question = panel.question.clone();
             let answer = panel.selected_answer();
             state.ask_user = None;
-            state.push_transcript(format!("ask_user: {question} -> {answer}"));
+            state.push_transcript_entry(
+                TranscriptKind::Assistant,
+                format!("ask_user: {question} -> {answer}"),
+            );
             TuiEventOutcome::Continue
         }
         _ => TuiEventOutcome::Continue,
@@ -300,21 +318,47 @@ pub(super) fn submit_input(state: &mut TuiState) -> TuiEventOutcome {
     if input == "/quit" || input == "/exit" {
         return TuiEventOutcome::Quit;
     }
-    state.push_transcript(format!("> {input}"));
+    state.push_user(input.clone());
     if let Some(command) = parse_slash_command(&input) {
         apply_slash_command(state, command);
         return TuiEventOutcome::Continue;
     }
     if input.starts_with('/') {
-        state.push_transcript(format!("unknown command: {input}"));
-        state.push_transcript("type /help for available commands");
+        state.push_error(format!("unknown command: {input}"));
+        state.push_notice("type /help for available commands");
         return TuiEventOutcome::Continue;
     }
-    if state.agent_run_status == AgentRunStatus::Running {
-        state.push_transcript("agent: already running; wait for the current task to finish");
+    if state.is_agent_busy() {
+        let current = state
+            .last_task
+            .as_deref()
+            .map(|task| format!("작업 중: {task}"))
+            .unwrap_or_else(|| "현재 작업 진행 중".to_string());
+        state.input_queue.push(input);
+        let queued = state.input_queue.len();
+        state.push_transcript_entry(
+            TranscriptKind::Notice,
+            format!("대기열에 추가됨 (#{queued}) — {current}"),
+        );
         return TuiEventOutcome::Continue;
     }
     TuiEventOutcome::Submit(input)
+}
+
+/// Dispatches the next queued input when the agent is idle.
+pub(super) fn drain_input_queue<F>(state: &mut TuiState, on_submit: &mut F)
+where
+    F: FnMut(String, &mut TuiState),
+{
+    if state.input_queue.is_empty() {
+        return;
+    }
+    if state.is_agent_busy() {
+        return;
+    }
+    let task = state.input_queue.remove(0);
+    state.agent_run_status = AgentRunStatus::Running;
+    on_submit(task, state);
 }
 
 pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
@@ -322,12 +366,12 @@ pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
         SlashCommand::Plan => {
             record_mode_switch(state, ExecutionMode::Plan);
             state.header.mode = ExecutionMode::Plan;
-            state.push_transcript("mode: plan");
+            state.push_transcript_entry(TranscriptKind::Notice, "mode: plan");
         }
         SlashCommand::Execute => {
             record_mode_switch(state, ExecutionMode::Execute);
             state.header.mode = ExecutionMode::Execute;
-            state.push_transcript("mode: execute");
+            state.push_transcript_entry(TranscriptKind::Notice, "mode: execute");
         }
         SlashCommand::GoalStart(goal) => {
             record_mode_switch(state, ExecutionMode::Goal);
