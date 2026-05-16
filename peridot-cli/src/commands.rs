@@ -215,6 +215,17 @@ pub(crate) enum SessionCommand {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Copy one session's persisted artifacts to a portable directory.
+    Export {
+        /// Session id to export.
+        id: String,
+        /// Destination directory. Created if missing.
+        #[arg(long)]
+        out: PathBuf,
+        /// Overwrite an existing destination directory.
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 /// AGENTS.md subcommands.

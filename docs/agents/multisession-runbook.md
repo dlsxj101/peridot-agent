@@ -75,6 +75,11 @@ its parent transcript (M4), and the attention notifier line (M5).
   the child with an empty context (silent no-op), matching the previous
   behaviour for that edge case.
 
+### M16 — Portable session export (landed)
+- `peridot session export <id> --out <dir> [--force]` copies every file inside `<sessions_root>/<id>/` (currently `tui_state.json`, `transcript.ndjson`, `context.bin`, plus any subdirectory the agent writes) into a fresh destination directory. Combine with `tar`/`zip` to ship a session to another machine.
+- `--force` clears the destination directory first; otherwise an existing path is a hard error so the user never accidentally overwrites a different export.
+- Text output prints the file list; JSON output returns `{ id, source, destination, files: [...] }` for tooling that wants to verify the copy.
+
 ### M15 — AskUser freeform multi-line input (landed)
 - `Shift+Enter` while answering an `AskUser::FreeForm` prompt now inserts a literal newline instead of submitting. `Ctrl+J` does the same (some terminals deliver `Shift+Enter` as bare Enter, so the chord is the cross-terminal fallback). `Enter` without modifiers still submits.
 - Existing `Backspace` / `Ctrl+H` deletion logic stays unchanged; rendering of the freeform value already wraps long lines because `ask_user` panels use the same `Wrap { trim: false }` policy as the transcript.

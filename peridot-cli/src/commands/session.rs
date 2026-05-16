@@ -153,6 +153,96 @@ pub(crate) fn run_session_command(
                 output,
             )?;
         }
+        SessionCommand::Export { id, out, force } => {
+            export_session(project_root, id, out, *force, output)?;
+        }
+    }
+    Ok(())
+}
+
+fn export_session(
+    project_root: &Path,
+    id: &str,
+    out_dir: &Path,
+    force: bool,
+    output: OutputFormat,
+) -> Result<()> {
+    let source = project_root.join(".peridot").join("sessions").join(id);
+    if !source.is_dir() {
+        anyhow::bail!(
+            "session {id} has no on-disk directory at {}",
+            source.display()
+        );
+    }
+    if out_dir.exists() {
+        if !force {
+            anyhow::bail!(
+                "{} already exists; pass --force to overwrite",
+                out_dir.display()
+            );
+        }
+        std::fs::remove_dir_all(out_dir)
+            .with_context(|| format!("failed to clear {} before export", out_dir.display()))?;
+    }
+    std::fs::create_dir_all(out_dir)
+        .with_context(|| format!("failed to create export directory {}", out_dir.display()))?;
+    let mut copied: Vec<String> = Vec::new();
+    for entry in std::fs::read_dir(&source)? {
+        let entry = entry?;
+        let file_name = entry.file_name();
+        let from = entry.path();
+        let to = out_dir.join(&file_name);
+        if from.is_dir() {
+            copy_dir_recursive(&from, &to)?;
+        } else {
+            std::fs::copy(&from, &to).with_context(|| {
+                format!("failed to copy {} -> {}", from.display(), to.display())
+            })?;
+        }
+        if let Some(name) = file_name.to_str() {
+            copied.push(name.to_string());
+        }
+    }
+    match output {
+        OutputFormat::Json => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "id": id,
+                    "source": source.display().to_string(),
+                    "destination": out_dir.display().to_string(),
+                    "files": copied,
+                }))?
+            );
+        }
+        OutputFormat::Text => {
+            println!(
+                "exported session {id} from {} to {} ({} entries)",
+                source.display(),
+                out_dir.display(),
+                copied.len()
+            );
+            for name in &copied {
+                println!("  - {name}");
+            }
+        }
+    }
+    Ok(())
+}
+
+fn copy_dir_recursive(from: &Path, to: &Path) -> Result<()> {
+    std::fs::create_dir_all(to).with_context(|| format!("failed to create {}", to.display()))?;
+    for entry in std::fs::read_dir(from)? {
+        let entry = entry?;
+        let src = entry.path();
+        let dst = to.join(entry.file_name());
+        if src.is_dir() {
+            copy_dir_recursive(&src, &dst)?;
+        } else {
+            std::fs::copy(&src, &dst).with_context(|| {
+                format!("failed to copy {} -> {}", src.display(), dst.display())
+            })?;
+        }
     }
     Ok(())
 }
