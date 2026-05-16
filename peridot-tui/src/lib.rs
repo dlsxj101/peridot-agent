@@ -27,6 +27,7 @@ use serde::{Deserialize, Serialize};
 mod ask_user;
 mod i18n;
 mod input;
+mod mascot;
 mod render;
 mod slash_picker;
 mod state;
@@ -35,6 +36,9 @@ mod terminal;
 mod tests;
 
 pub use i18n::{PhraseKey, tr};
+pub use mascot::{
+    MascotFrame, MascotState, Pixel, mascot_state_from, peridot_palette, render_mascot,
+};
 pub use slash_picker::{SlashCommandSpec, filtered_specs, first_match, slash_command_catalog};
 
 pub use ask_user::{ApprovalDecision, ApprovalPanel, ApprovalScope, AskUserPanel, MenuState};

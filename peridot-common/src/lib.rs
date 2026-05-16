@@ -330,6 +330,9 @@ pub struct TuiConfig {
     /// Streaming presentation speed: realtime, fast, or instant.
     #[serde(default = "default_stream_speed")]
     pub stream_speed: String,
+    /// Whether the Peridot deer mascot should be rendered in the side panel.
+    #[serde(default = "default_true")]
+    pub show_mascot: bool,
 }
 
 impl Default for TuiConfig {
@@ -343,6 +346,7 @@ impl Default for TuiConfig {
             show_cache_rate: true,
             show_subagent_panel: true,
             stream_speed: default_stream_speed(),
+            show_mascot: true,
         }
     }
 }

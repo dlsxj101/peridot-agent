@@ -1,4 +1,5 @@
 use super::*;
+use crate::mascot;
 use ratatui::style::Modifier;
 use state::{TranscriptEntry, TranscriptKind};
 
@@ -485,6 +486,9 @@ pub fn render_text_snapshot(state: &TuiState) -> String {
         let _ = writeln!(output, "stream: {}", stream.content);
     }
     let _ = writeln!(output, "status: {}", agent_status_summary(state));
+    if state.config.show_mascot {
+        let _ = writeln!(output, "mascot: {}", mascot::mascot_text_summary(state));
+    }
     if state.layout == LayoutMode::Full && state.config.show_subagent_panel {
         let done = state
             .side_panel
@@ -666,6 +670,33 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
 
     if state.layout == LayoutMode::Full && state.config.show_subagent_panel && body_chunks.len() > 1
     {
+        let side_block = Block::default().title("Status").borders(Borders::ALL);
+        let side_area = body_chunks[1];
+        frame.render_widget(side_block, side_area);
+        let inner = Rect {
+            x: side_area.x + 1,
+            y: side_area.y + 1,
+            width: side_area.width.saturating_sub(2),
+            height: side_area.height.saturating_sub(2),
+        };
+        let mascot_height = if state.config.show_mascot && inner.height >= 6 && inner.width >= 8 {
+            let mascot_area = Rect {
+                x: inner.x,
+                y: inner.y,
+                width: inner.width.min(8),
+                height: 4,
+            };
+            render_mascot(state, mascot_area, frame.buffer_mut());
+            5
+        } else {
+            0
+        };
+        let info_area = Rect {
+            x: inner.x,
+            y: inner.y + mascot_height,
+            width: inner.width,
+            height: inner.height.saturating_sub(mascot_height),
+        };
         let done = state
             .side_panel
             .plan
@@ -698,12 +729,7 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
             render_subagent_monitor(&state.subagents),
             render_activity_list(&state.activities)
         );
-        frame.render_widget(
-            Paragraph::new(side)
-                .block(Block::default().title("Status").borders(Borders::ALL))
-                .wrap(Wrap { trim: false }),
-            body_chunks[1],
-        );
+        frame.render_widget(Paragraph::new(side).wrap(Wrap { trim: false }), info_area);
     }
 
     frame.render_widget(Paragraph::new(render_status_bar(state)), chunks[2]);
