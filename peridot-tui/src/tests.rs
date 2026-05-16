@@ -1615,6 +1615,51 @@ fn record_background_event_skips_subagent_monitor_when_parent_not_foreground() {
 }
 
 #[test]
+fn ask_user_freeform_accepts_shift_enter_and_ctrl_j_newline() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    state.open_ask_user(AskUserRequest::FreeForm {
+        question: "summary?".to_string(),
+        hint: None,
+        default: None,
+    });
+    for character in "line1".chars() {
+        handle_key_event(
+            &mut state,
+            KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE),
+        );
+    }
+    handle_key_event(
+        &mut state,
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT),
+    );
+    for character in "line2".chars() {
+        handle_key_event(
+            &mut state,
+            KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE),
+        );
+    }
+    handle_key_event(
+        &mut state,
+        KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL),
+    );
+    for character in "line3".chars() {
+        handle_key_event(
+            &mut state,
+            KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE),
+        );
+    }
+
+    let panel = state.ask_user.as_ref().expect("ask_user panel");
+    assert_eq!(panel.freeform, "line1\nline2\nline3");
+}
+
+#[test]
 fn provider_slash_command_updates_header_and_status_metrics() {
     let mut state = TuiState::new(HeaderState::new(
         ExecutionMode::Execute,

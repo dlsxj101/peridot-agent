@@ -334,6 +334,18 @@ pub(super) fn handle_ask_user_key_event(state: &mut TuiState, key: KeyEvent) -> 
             panel.freeform.pop();
             TuiEventOutcome::Continue
         }
+        KeyCode::Enter
+            if key.modifiers.contains(KeyModifiers::SHIFT) && panel.choices.is_empty() =>
+        {
+            panel.freeform.push('\n');
+            TuiEventOutcome::Continue
+        }
+        KeyCode::Char('j')
+            if key.modifiers.contains(KeyModifiers::CONTROL) && panel.choices.is_empty() =>
+        {
+            panel.freeform.push('\n');
+            TuiEventOutcome::Continue
+        }
         KeyCode::Char(character) if panel.choices.is_empty() => {
             panel.freeform.push(character);
             TuiEventOutcome::Continue

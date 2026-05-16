@@ -75,6 +75,10 @@ its parent transcript (M4), and the attention notifier line (M5).
   the child with an empty context (silent no-op), matching the previous
   behaviour for that edge case.
 
+### M15 — AskUser freeform multi-line input (landed)
+- `Shift+Enter` while answering an `AskUser::FreeForm` prompt now inserts a literal newline instead of submitting. `Ctrl+J` does the same (some terminals deliver `Shift+Enter` as bare Enter, so the chord is the cross-terminal fallback). `Enter` without modifiers still submits.
+- Existing `Backspace` / `Ctrl+H` deletion logic stays unchanged; rendering of the freeform value already wraps long lines because `ask_user` panels use the same `Wrap { trim: false }` policy as the transcript.
+
 ### M14 — Bulk prune of finished sessions (landed)
 - `peridot session prune [--status <state>] [--older-than-days N] [--dry-run]` walks every `SessionRecord` and removes the ones matching all filters: `delete_session` (SQLite summary), `delete_session_record` (SQLite record), and `remove_session_dir` (on-disk blobs / ndjson).
 - `--status` accepts `idle | running | suspended | done | failed`. Unknown values fail loudly so a typo never accidentally targets the wrong cohort.
