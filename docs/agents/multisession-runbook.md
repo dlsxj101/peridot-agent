@@ -86,7 +86,12 @@ its parent transcript (M4), and the attention notifier line (M5).
   line so headless previews and tests assert the message.
 - Foreground swap from M1 already clears the `pending_attention` flag, so
   the indicator self-resolves once the user reads the background session.
-- Outstanding: opt-in `notify-rust` integration for OS-level notification.
+- An optional `os-notify` cargo feature enables OS-level desktop notifications
+  via `notify-rust`. When the feature is on, every background-session
+  `ApprovalRequested` event fires a `Peridot: session needs attention` desktop
+  notification carrying the gated tool's reason. The feature is off by default
+  so the bare workspace build stays free of D-Bus / dbus / zbus link
+  dependencies; `cargo build -p peridot-cli --features os-notify` opts in.
 
 ### M6 — Multi-session UX polish
 - Per-session history (input recall) when swapping foreground.

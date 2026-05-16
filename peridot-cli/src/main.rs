@@ -490,6 +490,7 @@ async fn main() -> Result<()> {
                                 spawn_tui_agent_run(
                                     handle.clone(),
                                     event_tx.clone(),
+                                    router.clone(),
                                     foreground,
                                     task,
                                     state.header.mode,
@@ -538,6 +539,7 @@ async fn main() -> Result<()> {
                                 spawn_tui_agent_run(
                                     handle.clone(),
                                     event_tx.clone(),
+                                    router.clone(),
                                     foreground,
                                     task,
                                     state.header.mode,
@@ -620,6 +622,7 @@ async fn main() -> Result<()> {
 fn spawn_tui_agent_run(
     handle: tokio::runtime::Handle,
     event_tx: std::sync::mpsc::Sender<(String, TuiRuntimeEvent)>,
+    router: std::sync::Arc<std::sync::Mutex<SessionRouter>>,
     session_id: String,
     task: String,
     mode: ExecutionMode,
@@ -638,6 +641,7 @@ fn spawn_tui_agent_run(
     handle.spawn(async move {
         let event_sender = event_tx.clone();
         let session = session_id.clone();
+        let router_for_events = router.clone();
         let result = run_task_with_events(
             task,
             mode,
@@ -647,7 +651,18 @@ fn spawn_tui_agent_run(
             cancel,
             context_snapshot_path,
             move |event| {
-                let _ = event_sender.send((session.clone(), tui_runtime_event_from_agent(event)));
+                let evt = tui_runtime_event_from_agent(event);
+                if let TuiRuntimeEvent::ApprovalRequested { reason, .. } = &evt {
+                    let foreground = router_for_events
+                        .lock()
+                        .unwrap()
+                        .foreground()
+                        .map(|s| s.to_string());
+                    if foreground.as_deref() != Some(session.as_str()) {
+                        notify_os_attention(&session, reason);
+                    }
+                }
+                let _ = event_sender.send((session.clone(), evt));
             },
         )
         .await;
@@ -661,6 +676,20 @@ fn spawn_tui_agent_run(
         }
     });
 }
+
+#[cfg(feature = "os-notify")]
+fn notify_os_attention(session_id: &str, reason: &str) {
+    if let Err(err) = notify_rust::Notification::new()
+        .summary("Peridot: session needs attention")
+        .body(&format!("Session {session_id}: {reason}"))
+        .show()
+    {
+        eprintln!("warning: notify-rust failed for session {session_id}: {err}");
+    }
+}
+
+#[cfg(not(feature = "os-notify"))]
+fn notify_os_attention(_session_id: &str, _reason: &str) {}
 
 #[allow(clippy::too_many_arguments)]
 fn apply_session_command(
@@ -1069,6 +1098,7 @@ fn spawn_session_task(
     spawn_tui_agent_run(
         handle.clone(),
         event_tx.clone(),
+        router.clone(),
         session_id,
         task,
         mode,

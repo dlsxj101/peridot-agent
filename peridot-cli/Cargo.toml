@@ -12,6 +12,10 @@ path = "src/main.rs"
 
 [features]
 e2e = []
+# Surface a desktop notification when a background session asks for
+# attention. Opt-in because it adds a system D-Bus / notification
+# dependency on Linux.
+os-notify = ["dep:notify-rust"]
 
 [dependencies]
 anyhow.workspace = true
@@ -34,4 +38,5 @@ toml = "0.9.9"
 base64 = "0.22.1"
 sha2 = "0.11.0"
 rand = "0.10.1"
+notify-rust = { version = "4", optional = true }
 peridot-tui = { version = "0.1.9", path = "../peridot-tui" }
