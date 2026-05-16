@@ -81,6 +81,40 @@ pub(super) fn render_activity_list(activities: &[RuntimeActivity]) -> String {
     format!("Activity\n{rendered}")
 }
 
+pub(super) fn should_render_welcome(state: &TuiState) -> bool {
+    state.transcript.is_empty()
+        && state.active_stream.is_none()
+        && state.menu.is_none()
+        && state.approval.is_none()
+        && state.ask_user.is_none()
+}
+
+pub(super) fn render_welcome(state: &TuiState) -> String {
+    let workspace = std::env::current_dir()
+        .ok()
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| "<unknown workspace>".to_string());
+    let user = std::env::var("USER")
+        .or_else(|_| std::env::var("USERNAME"))
+        .unwrap_or_else(|_| "there".to_string());
+    format!(
+        "Welcome back {user}!\n\n\
+         Peridot is ready for an agent run.\n\
+         model      {}\n\
+         mode       {}.{}\n\
+         workspace  {}\n\n\
+         Type a task in the input line below and press Enter.\n\n\
+         Try\n\
+         - fix the failing tests and explain the change\n\
+         - create a small utility and add focused tests\n\n\
+         Slash commands\n\
+         /plan  /execute  /goal <objective>  /safe  /auto  /yolo  /help\n\n\
+         Keys\n\
+         Enter sends  |  Esc opens/closes menu  |  Up/Down history  |  Ctrl-C quits",
+        state.header.model, state.header.mode, state.header.permission, workspace
+    )
+}
+
 pub(super) fn render_subagent_monitor(subagents: &[SubagentMonitorItem]) -> String {
     if subagents.is_empty() {
         return "Subagents\n<none>".to_string();
@@ -120,8 +154,12 @@ pub fn render_text_snapshot(state: &TuiState) -> String {
     let _ = writeln!(output, "{}", render_header_text(state));
     let _ = writeln!(output, "layout: {:?}", state.layout);
     let _ = writeln!(output);
-    for line in state.transcript.iter().rev().take(20).rev() {
-        let _ = writeln!(output, "{line}");
+    if should_render_welcome(state) {
+        let _ = writeln!(output, "{}", render_welcome(state));
+    } else {
+        for line in state.transcript.iter().rev().take(20).rev() {
+            let _ = writeln!(output, "{line}");
+        }
     }
     if let Some(stream) = &state.active_stream {
         let _ = writeln!(output, "{}: {}", stream.label, stream.content);
@@ -228,6 +266,8 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
         render_approval_panel(panel)
     } else if let Some(panel) = &state.ask_user {
         render_ask_user_panel(panel)
+    } else if should_render_welcome(state) {
+        render_welcome(state)
     } else {
         let mut transcript = state
             .transcript
@@ -293,7 +333,7 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
 
     frame.render_widget(
         Paragraph::new(format!("> {}", state.input))
-            .block(Block::default().title("Input").borders(Borders::ALL)),
+            .block(Block::default().title(input_title()).borders(Borders::ALL)),
         chunks[2],
     );
     let cursor_x =
@@ -308,9 +348,15 @@ pub(super) fn body_title(state: &TuiState) -> &'static str {
         "Approval"
     } else if state.ask_user.is_some() {
         "Ask User"
+    } else if should_render_welcome(state) {
+        "Welcome"
     } else {
         "Transcript"
     }
+}
+
+pub(super) fn input_title() -> &'static str {
+    "Input - Enter sends | / commands | Esc menu | Ctrl-C quit"
 }
 
 pub(super) fn render_menu(menu: &MenuState) -> String {
@@ -328,7 +374,11 @@ pub(super) fn render_menu(menu: &MenuState) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n");
-    format!("Peridot Menu\n\n{options}")
+    format!(
+        "Peridot Menu\n\n\
+         Enter selects a menu item. Esc or q closes this menu and returns to chat input.\n\n\
+         {options}"
+    )
 }
 
 pub(super) fn render_ask_user_panel(panel: &AskUserPanel) -> String {

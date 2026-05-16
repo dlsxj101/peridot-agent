@@ -59,6 +59,24 @@ fn renders_text_snapshot() {
 }
 
 #[test]
+fn empty_tui_renders_welcome_and_usage_hints() {
+    let state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+
+    let snapshot = render_text_snapshot(&state);
+
+    assert!(state.menu.is_none());
+    assert!(snapshot.contains("Welcome back"));
+    assert!(snapshot.contains("Type a task in the input line below and press Enter."));
+    assert!(snapshot.contains("/plan  /execute  /goal <objective>"));
+    assert!(snapshot.contains("Enter sends"));
+    assert!(!snapshot.contains("Peridot Menu"));
+}
+
+#[test]
 fn streaming_state_renders_and_finishes_into_transcript() {
     let mut state = TuiState::new(HeaderState::new(
         ExecutionMode::Execute,
@@ -549,7 +567,9 @@ fn escape_opens_menu_and_q_closes_it() {
         TuiEventOutcome::Continue
     );
     assert!(state.menu.is_some());
-    assert!(render_menu(state.menu.as_ref().unwrap()).contains("Peridot Menu"));
+    let menu = render_menu(state.menu.as_ref().unwrap());
+    assert!(menu.contains("Peridot Menu"));
+    assert!(menu.contains("Esc or q closes this menu and returns to chat input."));
 
     assert_eq!(
         handle_key_event(
