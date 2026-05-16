@@ -168,6 +168,9 @@ pub(crate) enum SessionCommand {
     Show {
         /// Session id.
         id: String,
+        /// Also print the most recent N operator notes inline.
+        #[arg(long)]
+        notes_tail: Option<usize>,
     },
     /// Delete one session summary.
     Delete {

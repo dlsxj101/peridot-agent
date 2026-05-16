@@ -75,6 +75,9 @@ its parent transcript (M4), and the attention notifier line (M5).
   the child with an empty context (silent no-op), matching the previous
   behaviour for that edge case.
 
+### M30 — `peridot session show --notes-tail N` (landed)
+- `peridot session show <id> --notes-tail N` prints the most recent N notes from `notes.ndjson` inline beneath the existing session/record block (text output) or under a `notes_tail` array (JSON output). Pairs with M24's `notes_count` so the operator sees both "how many notes exist" and "what were the latest ones" in a single call.
+
 ### M29 — `peridot config models` catalog (landed)
 - Prints the two configured model names from `PeridotConfig.models`: `main` (used by `HarnessAgent`) and `goal_checker` (used by goal mode). JSON output mirrors the same fields. Pairs with M27's `peridot config providers` so an operator can introspect both halves of "what runs where" without `peridot config show`'s full dump.
 

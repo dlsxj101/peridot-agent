@@ -75,10 +75,13 @@ pub(crate) fn run_session_command(
                 output,
             )?;
         }
-        SessionCommand::Show { id } => {
+        SessionCommand::Show { id, notes_tail } => {
             let session = store.get_session(id)?;
             let record = store.get_session_record(id).unwrap_or_default();
             let (notes_count, last_note) = read_notes_summary(project_root, id);
+            let notes_tail_entries = notes_tail
+                .filter(|n| *n > 0)
+                .map(|n| read_notes_tail(project_root, id, n));
             match output {
                 OutputFormat::Json => {
                     println!(
@@ -88,6 +91,7 @@ pub(crate) fn run_session_command(
                             "record": record,
                             "notes_count": notes_count,
                             "last_note": last_note,
+                            "notes_tail": notes_tail_entries,
                         }))?
                     );
                 }
@@ -114,6 +118,13 @@ pub(crate) fn run_session_command(
                                 println!("  ({text})");
                             } else {
                                 println!();
+                            }
+                        }
+                        if let Some(entries) = notes_tail_entries.as_ref() {
+                            for note in entries {
+                                let ts = note["ts"].as_u64().unwrap_or_default();
+                                let text = note["text"].as_str().unwrap_or("");
+                                println!("    [{ts}] {text}");
                             }
                         }
                     }
@@ -198,6 +209,31 @@ pub(crate) fn run_session_command(
         }
     }
     Ok(())
+}
+
+/// Returns the most recent `n` operator notes for a session as raw JSON
+/// objects (kept as Value so `Show --notes-tail N` can pass them through
+/// to either the text or JSON output path).
+fn read_notes_tail(project_root: &Path, id: &str, n: usize) -> Vec<serde_json::Value> {
+    let path = project_root
+        .join(".peridot")
+        .join("sessions")
+        .join(id)
+        .join("notes.ndjson");
+    let Ok(raw) = std::fs::read_to_string(&path) else {
+        return Vec::new();
+    };
+    let mut notes: Vec<serde_json::Value> = Vec::new();
+    for line in raw.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(line) {
+            notes.push(value);
+        }
+    }
+    let start = notes.len().saturating_sub(n);
+    notes.split_off(start)
 }
 
 /// Returns the number of operator-written notes and the latest note's text
