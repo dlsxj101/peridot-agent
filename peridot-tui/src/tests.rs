@@ -903,6 +903,82 @@ fn locale_switches_status_bar_strings() {
 }
 
 #[test]
+fn approval_panel_offers_four_scopes_and_returns_scope() {
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    state.apply_runtime_event(TuiRuntimeEvent::ApprovalRequested {
+        tool_name: "file_patch".to_string(),
+        reason: "writes outside workspace".to_string(),
+        parameters: serde_json::json!({
+            "path": "src/lib.rs",
+            "old_text": "fn old() {}\n",
+            "new_text": "fn old() { 1 }\n"
+        }),
+    });
+
+    let panel = state.approval.as_ref().expect("approval panel");
+    assert_eq!(panel.choices().len(), 4);
+    let panel_text = render_approval_panel(panel);
+    assert!(panel_text.contains("Approve once"));
+    assert!(panel_text.contains("Approve for session"));
+    assert!(panel_text.contains("Approve always"));
+    assert!(panel_text.contains("Deny"));
+    assert!(panel_text.contains("Params:"));
+    assert!(panel_text.contains("Diff:"));
+    assert!(panel_text.contains("- fn old() {}"));
+    assert!(panel_text.contains("+ fn old() { 1 }"));
+
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    handle_key_event(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    handle_key_event(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    let outcome = handle_key_event(
+        &mut state,
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+    );
+    match outcome {
+        TuiEventOutcome::Approval {
+            decision, scope, ..
+        } => {
+            assert_eq!(decision, ApprovalDecision::Approve);
+            assert_eq!(scope, ApprovalScope::Always);
+        }
+        other => panic!("unexpected outcome: {other:?}"),
+    }
+}
+
+#[test]
+fn tab_autocompletes_slash_command_prefix() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    for character in "/go".chars() {
+        handle_key_event(
+            &mut state,
+            KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE),
+        );
+    }
+    handle_key_event(&mut state, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    assert_eq!(state.input, "/goal <objective>");
+
+    state.clear_input();
+    for character in "/com".chars() {
+        handle_key_event(
+            &mut state,
+            KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE),
+        );
+    }
+    handle_key_event(&mut state, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    assert_eq!(state.input, "/compact");
+}
+
+#[test]
 fn lang_slash_command_changes_locale() {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -1078,6 +1154,7 @@ fn approval_runtime_event_opens_panel_and_records_decision() {
     state.apply_runtime_event(TuiRuntimeEvent::ApprovalRequested {
         tool_name: "shell_exec".to_string(),
         reason: "dependency installation requires explicit user approval".to_string(),
+        parameters: serde_json::json!({"command": "apt-get install"}),
     });
 
     assert_eq!(state.agent_run_status, AgentRunStatus::WaitingApproval);

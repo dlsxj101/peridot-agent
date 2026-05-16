@@ -447,7 +447,7 @@ async fn main() -> Result<()> {
                         {
                             let event_tx = event_tx.clone();
                             let handle = handle.clone();
-                            move |decision, _tool_name, reason, state| {
+                            move |decision, scope, _tool_name, reason, state| {
                                 if decision != ApprovalDecision::Approve {
                                     return;
                                 }
@@ -462,6 +462,11 @@ async fn main() -> Result<()> {
                                 options.model = state.header.model.clone();
                                 let mut config = approve_config.clone();
                                 relax_security_for_approval(&mut config, &reason);
+                                if scope != peridot_tui::ApprovalScope::Once {
+                                    state.push_transcript(format!(
+                                        "approval: scope {scope:?} noted (persistence TBD)"
+                                    ));
+                                }
                                 spawn_tui_agent_run(
                                     handle.clone(),
                                     event_tx.clone(),
@@ -533,9 +538,15 @@ fn tui_runtime_event_from_agent(event: AgentRunEvent) -> TuiRuntimeEvent {
             summary: result.summary,
             output: result.output,
         },
-        AgentRunEvent::ApprovalRequested { tool_name, reason } => {
-            TuiRuntimeEvent::ApprovalRequested { tool_name, reason }
-        }
+        AgentRunEvent::ApprovalRequested {
+            tool_name,
+            reason,
+            parameters,
+        } => TuiRuntimeEvent::ApprovalRequested {
+            tool_name,
+            reason,
+            parameters,
+        },
         AgentRunEvent::UsageUpdated { usage } => {
             let prompt_tokens =
                 usage.input_tokens + usage.cache_read_tokens + usage.cache_creation_tokens;

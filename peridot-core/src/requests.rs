@@ -58,6 +58,9 @@ pub enum AgentRunEvent {
         tool_name: String,
         /// Human-readable reason.
         reason: String,
+        /// Parameters the tool was about to execute with.
+        #[serde(default)]
+        parameters: serde_json::Value,
     },
     /// Usage totals changed.
     UsageUpdated {

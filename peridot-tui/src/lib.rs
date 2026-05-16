@@ -17,7 +17,7 @@ use peridot_core::{GoalStatus, SlashCommand, parse_slash_command};
 use ratatui::{
     Frame, Terminal,
     backend::CrosstermBackend,
-    layout::{Constraint, Direction, Layout, Position},
+    layout::{Constraint, Direction, Layout, Position, Rect},
     style::{Color, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Wrap},
@@ -28,14 +28,16 @@ mod ask_user;
 mod i18n;
 mod input;
 mod render;
+mod slash_picker;
 mod state;
 mod terminal;
 #[cfg(test)]
 mod tests;
 
 pub use i18n::{PhraseKey, tr};
+pub use slash_picker::{SlashCommandSpec, filtered_specs, first_match, slash_command_catalog};
 
-pub use ask_user::{ApprovalDecision, ApprovalPanel, AskUserPanel, MenuState};
+pub use ask_user::{ApprovalDecision, ApprovalPanel, ApprovalScope, AskUserPanel, MenuState};
 pub use input::{handle_key_event, run_interactive, run_interactive_with_events};
 use render::goal_status_label;
 pub use render::{draw, render_text_snapshot, select_layout};

@@ -185,7 +185,7 @@ async fn permission_denied_tool_emits_approval_event() {
     assert!(events.iter().any(|event| {
         matches!(
             event,
-            AgentRunEvent::ApprovalRequested { tool_name, reason }
+            AgentRunEvent::ApprovalRequested { tool_name, reason, .. }
                 if tool_name == "shell_exec" && reason.contains("dependency installation")
         )
     }));

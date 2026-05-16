@@ -30,7 +30,7 @@ pub fn run_interactive_with_events<F>(
     mut state: TuiState,
     runtime_events: std::sync::mpsc::Receiver<TuiRuntimeEvent>,
     mut on_submit: F,
-    mut on_approval: impl FnMut(ApprovalDecision, String, String, &mut TuiState),
+    mut on_approval: impl FnMut(ApprovalDecision, ApprovalScope, String, String, &mut TuiState),
 ) -> io::Result<TuiExit>
 where
     F: FnMut(String, &mut TuiState),
@@ -53,9 +53,10 @@ where
                     TuiEventOutcome::Submit(task) => on_submit(task, &mut state),
                     TuiEventOutcome::Approval {
                         decision,
+                        scope,
                         tool_name,
                         reason,
-                    } => on_approval(decision, tool_name, reason, &mut state),
+                    } => on_approval(decision, scope, tool_name, reason, &mut state),
                 },
                 Event::Resize(width, height) => state.resize(width, height),
                 _ => {}
@@ -152,6 +153,18 @@ pub fn handle_key_event(state: &mut TuiState, key: KeyEvent) -> TuiEventOutcome 
         }
         KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => {
             state.insert_input_char('\n');
+            TuiEventOutcome::Continue
+        }
+        KeyCode::Tab if state.input.starts_with('/') => {
+            if let Some(spec) = crate::first_match(&state.input) {
+                let target = if let Some(arg) = spec.arg_hint {
+                    format!("{} {arg}", spec.name)
+                } else {
+                    spec.name.to_string()
+                };
+                state.input = target;
+                state.input_cursor = state.input.chars().count();
+            }
             TuiEventOutcome::Continue
         }
         KeyCode::Enter => submit_input(state),
@@ -277,6 +290,7 @@ pub(super) fn handle_approval_key_event(state: &mut TuiState, key: KeyEvent) -> 
             state.record_approval_decision(ApprovalDecision::Deny);
             TuiEventOutcome::Approval {
                 decision: ApprovalDecision::Deny,
+                scope: ApprovalScope::Once,
                 tool_name,
                 reason,
             }
@@ -287,6 +301,7 @@ pub(super) fn handle_approval_key_event(state: &mut TuiState, key: KeyEvent) -> 
             state.record_approval_decision(ApprovalDecision::Approve);
             TuiEventOutcome::Approval {
                 decision: ApprovalDecision::Approve,
+                scope: ApprovalScope::Once,
                 tool_name,
                 reason,
             }
@@ -300,12 +315,13 @@ pub(super) fn handle_approval_key_event(state: &mut TuiState, key: KeyEvent) -> 
             TuiEventOutcome::Continue
         }
         KeyCode::Enter => {
-            let decision = panel.selected_decision();
+            let (decision, scope) = panel.selected_decision();
             let tool_name = panel.tool_name.clone();
             let reason = panel.reason.clone();
             state.record_approval_decision(decision.clone());
             TuiEventOutcome::Approval {
                 decision,
+                scope,
                 tool_name,
                 reason,
             }

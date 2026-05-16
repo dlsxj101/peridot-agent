@@ -228,7 +228,7 @@ impl HarnessAgent {
         self.state.phase = AgentPhase::Executing;
         events(AgentRunEvent::ToolStarted {
             name: tool_name.clone(),
-            parameters: tool_parameters,
+            parameters: tool_parameters.clone(),
         });
         let tool_result = match self
             .execute_tool_call_with_runtime(
@@ -246,6 +246,7 @@ impl HarnessAgent {
                     events(AgentRunEvent::ApprovalRequested {
                         tool_name,
                         reason: reason.clone(),
+                        parameters: tool_parameters,
                     });
                 }
                 return Err(err);

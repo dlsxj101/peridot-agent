@@ -1,0 +1,165 @@
+//! Floating slash-command suggestions.
+//!
+//! Provides static metadata (`SlashCommandSpec`) for every slash command, plus
+//! prefix-matching helpers used by the input handler and the autocompletion
+//! overlay.
+
+/// Stable description of one slash command surfaced in the picker / help.
+#[derive(Clone, Copy, Debug)]
+pub struct SlashCommandSpec {
+    /// Command keyword including the leading slash.
+    pub name: &'static str,
+    /// One-line description shown in the picker.
+    pub description: &'static str,
+    /// Optional argument hint (e.g., `<name>`).
+    pub arg_hint: Option<&'static str>,
+    /// Category for grouping / filtering.
+    pub category: &'static str,
+}
+
+/// Returns the catalog of every slash command the TUI accepts.
+pub fn slash_command_catalog() -> &'static [SlashCommandSpec] {
+    &[
+        SlashCommandSpec {
+            name: "/plan",
+            description: "switch to plan mode",
+            arg_hint: None,
+            category: "mode",
+        },
+        SlashCommandSpec {
+            name: "/execute",
+            description: "switch to execute mode",
+            arg_hint: None,
+            category: "mode",
+        },
+        SlashCommandSpec {
+            name: "/goal",
+            description: "start a durable goal (or pause/resume/clear/status)",
+            arg_hint: Some("<objective>"),
+            category: "mode",
+        },
+        SlashCommandSpec {
+            name: "/safe",
+            description: "switch to safe permission mode",
+            arg_hint: None,
+            category: "permission",
+        },
+        SlashCommandSpec {
+            name: "/auto",
+            description: "switch to auto permission mode",
+            arg_hint: None,
+            category: "permission",
+        },
+        SlashCommandSpec {
+            name: "/yolo",
+            description: "switch to yolo permission mode",
+            arg_hint: None,
+            category: "permission",
+        },
+        SlashCommandSpec {
+            name: "/model",
+            description: "switch the active model",
+            arg_hint: Some("<name>"),
+            category: "session",
+        },
+        SlashCommandSpec {
+            name: "/cost",
+            description: "show cost / token / cache totals",
+            arg_hint: None,
+            category: "session",
+        },
+        SlashCommandSpec {
+            name: "/compact",
+            description: "queue a context compaction at the next turn",
+            arg_hint: None,
+            category: "session",
+        },
+        SlashCommandSpec {
+            name: "/session save",
+            description: "save the current session for later resume",
+            arg_hint: None,
+            category: "session",
+        },
+        SlashCommandSpec {
+            name: "/plan show",
+            description: "show the current plan steps",
+            arg_hint: None,
+            category: "plan",
+        },
+        SlashCommandSpec {
+            name: "/diff",
+            description: "show working-tree diff (tool-backed)",
+            arg_hint: None,
+            category: "git",
+        },
+        SlashCommandSpec {
+            name: "/undo",
+            description: "undo the last change (requires tool approval)",
+            arg_hint: None,
+            category: "git",
+        },
+        SlashCommandSpec {
+            name: "/lang",
+            description: "switch display locale",
+            arg_hint: Some("en|ko"),
+            category: "tui",
+        },
+        SlashCommandSpec {
+            name: "/clear",
+            description: "clear the transcript",
+            arg_hint: None,
+            category: "tui",
+        },
+        SlashCommandSpec {
+            name: "/help",
+            description: "show this help",
+            arg_hint: None,
+            category: "tui",
+        },
+    ]
+}
+
+/// Filters the catalog by prefix. Empty query returns the whole catalog.
+pub fn filtered_specs(query: &str) -> Vec<&'static SlashCommandSpec> {
+    let needle = query.trim().trim_start_matches('/').to_ascii_lowercase();
+    if needle.is_empty() {
+        return slash_command_catalog().iter().collect();
+    }
+    slash_command_catalog()
+        .iter()
+        .filter(|spec| {
+            spec.name
+                .trim_start_matches('/')
+                .to_ascii_lowercase()
+                .starts_with(&needle)
+        })
+        .collect()
+}
+
+/// Returns the first match for `query`, if any.
+pub fn first_match(query: &str) -> Option<&'static SlashCommandSpec> {
+    filtered_specs(query).into_iter().next()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_query_returns_full_catalog() {
+        assert_eq!(filtered_specs("").len(), slash_command_catalog().len());
+    }
+
+    #[test]
+    fn prefix_filters_to_matching_commands() {
+        let matches = filtered_specs("/go");
+        assert!(matches.iter().any(|spec| spec.name == "/goal"));
+        assert!(!matches.iter().any(|spec| spec.name == "/plan"));
+    }
+
+    #[test]
+    fn first_match_returns_some_for_prefix() {
+        assert_eq!(first_match("/com").map(|spec| spec.name), Some("/compact"));
+        assert!(first_match("/does-not-exist").is_none());
+    }
+}

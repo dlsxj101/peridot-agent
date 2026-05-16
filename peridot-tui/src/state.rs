@@ -238,6 +238,9 @@ pub enum TuiRuntimeEvent {
         tool_name: String,
         /// Reason the tool is gated.
         reason: String,
+        /// Parameters the tool was about to execute with.
+        #[serde(default)]
+        parameters: serde_json::Value,
     },
     /// Provider usage changed.
     UsageUpdated {
@@ -479,6 +482,8 @@ pub enum TuiEventOutcome {
     Approval {
         /// Decision.
         decision: ApprovalDecision,
+        /// Scope at which the approval should be remembered.
+        scope: ApprovalScope,
         /// Tool name.
         tool_name: String,
         /// Approval reason.
@@ -901,7 +906,12 @@ impl TuiState {
     }
 
     /// Opens a tool approval panel.
-    pub fn open_approval(&mut self, tool_name: impl Into<String>, reason: impl Into<String>) {
+    pub fn open_approval(
+        &mut self,
+        tool_name: impl Into<String>,
+        reason: impl Into<String>,
+        parameters: serde_json::Value,
+    ) {
         let tool_name = tool_name.into();
         let reason = reason.into();
         self.agent_run_status = AgentRunStatus::WaitingApproval;
@@ -910,7 +920,12 @@ impl TuiState {
             tool_name.clone(),
             format!("approval required: {reason}"),
         );
-        self.approval = Some(ApprovalPanel::new(tool_name, reason));
+        let diff = compute_approval_diff_preview(&tool_name, &parameters);
+        self.approval = Some(
+            ApprovalPanel::new(tool_name, reason)
+                .with_parameters(parameters)
+                .with_diff_preview(diff),
+        );
     }
 
     /// Records a user approval decision and closes the approval panel.
@@ -967,8 +982,12 @@ impl TuiState {
                 summary,
                 output,
             } => self.record_tool_result(name, success, summary, output),
-            TuiRuntimeEvent::ApprovalRequested { tool_name, reason } => {
-                self.open_approval(tool_name, reason);
+            TuiRuntimeEvent::ApprovalRequested {
+                tool_name,
+                reason,
+                parameters,
+            } => {
+                self.open_approval(tool_name, reason, parameters);
             }
             TuiRuntimeEvent::UsageUpdated {
                 total_tokens,
@@ -1090,6 +1109,30 @@ impl TuiState {
             let overflow = self.subagents.len() - 6;
             self.subagents.drain(0..overflow);
         }
+    }
+}
+
+/// Builds a short diff preview for tools whose approval payload contains old/new text.
+pub(super) fn compute_approval_diff_preview(
+    tool_name: &str,
+    parameters: &serde_json::Value,
+) -> Option<String> {
+    if tool_name != "file_patch" {
+        return None;
+    }
+    let old_text = parameters.get("old_text").and_then(|v| v.as_str())?;
+    let new_text = parameters.get("new_text").and_then(|v| v.as_str())?;
+    let mut lines = Vec::new();
+    for line in old_text.lines().take(6) {
+        lines.push(format!("- {line}"));
+    }
+    for line in new_text.lines().take(6) {
+        lines.push(format!("+ {line}"));
+    }
+    if lines.is_empty() {
+        None
+    } else {
+        Some(lines.join("\n"))
     }
 }
 

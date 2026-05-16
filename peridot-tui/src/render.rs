@@ -628,6 +628,64 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
     let cursor_x =
         input_area.x + 2 + (state.input_cursor as u16).min(input_area.width.saturating_sub(4));
     frame.set_cursor_position(Position::new(cursor_x, input_area.y + 1));
+
+    render_slash_picker(frame, state, input_area);
+}
+
+/// Floats a small autocomplete overlay above the input box when the buffer
+/// starts with `/`. Hidden when other modal panels are active.
+fn render_slash_picker(frame: &mut Frame<'_>, state: &TuiState, input_area: Rect) {
+    if !state.input.starts_with('/') {
+        return;
+    }
+    if state.menu.is_some() || state.approval.is_some() || state.ask_user.is_some() {
+        return;
+    }
+    let suggestions = filtered_specs(&state.input);
+    if suggestions.is_empty() {
+        return;
+    }
+    let lines: Vec<Line<'static>> = suggestions
+        .iter()
+        .take(6)
+        .map(|spec| {
+            let label = if let Some(arg) = spec.arg_hint {
+                format!("{}  {arg}", spec.name)
+            } else {
+                spec.name.to_string()
+            };
+            Line::from(vec![
+                Span::styled(
+                    label,
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("  "),
+                Span::styled(
+                    spec.description.to_string(),
+                    Style::default()
+                        .fg(Color::DarkGray)
+                        .add_modifier(Modifier::DIM),
+                ),
+            ])
+        })
+        .collect();
+    let height = (lines.len() as u16).min(6).saturating_add(2);
+    let width = input_area.width;
+    if input_area.y < height {
+        return;
+    }
+    let area = Rect {
+        x: input_area.x,
+        y: input_area.y.saturating_sub(height),
+        width,
+        height,
+    };
+    frame.render_widget(
+        Paragraph::new(lines).block(Block::default().title("commands").borders(Borders::ALL)),
+        area,
+    );
 }
 
 pub(super) fn body_title(state: &TuiState) -> &'static str {
@@ -710,10 +768,44 @@ pub(super) fn render_approval_panel(panel: &ApprovalPanel) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n");
-    format!(
-        "Approval required\n\nTool: {}\nReason: {}\n\n{}",
-        panel.tool_name, panel.reason, choices
-    )
+
+    let mut sections = vec![
+        "Approval required".to_string(),
+        String::new(),
+        format!("Tool: {}", panel.tool_name),
+        format!("Reason: {}", panel.reason),
+    ];
+
+    if !panel.tool_params.is_null() {
+        let pretty = serde_json::to_string_pretty(&panel.tool_params)
+            .unwrap_or_else(|_| panel.tool_params.to_string());
+        let preview: String = pretty
+            .lines()
+            .take(8)
+            .map(|line| format!("  {line}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        if !preview.is_empty() {
+            sections.push(String::new());
+            sections.push("Params:".to_string());
+            sections.push(preview);
+        }
+    }
+
+    if let Some(diff) = panel.diff_preview.as_ref() {
+        sections.push(String::new());
+        sections.push("Diff:".to_string());
+        sections.push(
+            diff.lines()
+                .map(|line| format!("  {line}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        );
+    }
+
+    sections.push(String::new());
+    sections.push(choices);
+    sections.join("\n")
 }
 
 /// Selects a layout mode from terminal dimensions.

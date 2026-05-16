@@ -31,7 +31,7 @@ pub struct MenuState {
 }
 
 /// Approval prompt shown when a tool needs explicit user confirmation.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ApprovalPanel {
     /// Tool requesting approval.
     pub tool_name: String,
@@ -39,6 +39,12 @@ pub struct ApprovalPanel {
     pub reason: String,
     /// Currently highlighted choice.
     pub selected_index: usize,
+    /// Parameters the tool was about to run with (rendered as a JSON preview).
+    #[serde(default)]
+    pub tool_params: serde_json::Value,
+    /// Optional pre-computed diff preview (file_patch / file_write).
+    #[serde(default)]
+    pub diff_preview: Option<String>,
 }
 
 /// User decision from an approval prompt.
@@ -50,6 +56,19 @@ pub enum ApprovalDecision {
     Deny,
 }
 
+/// Scope at which the user's approval should be remembered.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ApprovalScope {
+    /// Only the current invocation.
+    #[default]
+    Once,
+    /// Remember for the rest of this session.
+    Session,
+    /// Persist to the workspace config for future sessions.
+    Always,
+}
+
 impl ApprovalPanel {
     /// Creates a tool approval panel.
     pub fn new(tool_name: impl Into<String>, reason: impl Into<String>) -> Self {
@@ -57,18 +76,38 @@ impl ApprovalPanel {
             tool_name: tool_name.into(),
             reason: reason.into(),
             selected_index: 0,
+            tool_params: serde_json::Value::Null,
+            diff_preview: None,
         }
     }
 
-    pub(super) fn choices(&self) -> [&'static str; 2] {
-        ["Approve once", "Deny"]
+    /// Attaches the tool parameters that were about to execute.
+    pub fn with_parameters(mut self, parameters: serde_json::Value) -> Self {
+        self.tool_params = parameters;
+        self
     }
 
-    pub(super) fn selected_decision(&self) -> ApprovalDecision {
-        if self.selected_index == 0 {
-            ApprovalDecision::Approve
-        } else {
-            ApprovalDecision::Deny
+    /// Attaches an optional diff preview string.
+    pub fn with_diff_preview(mut self, preview: Option<String>) -> Self {
+        self.diff_preview = preview;
+        self
+    }
+
+    pub(super) fn choices(&self) -> [&'static str; 4] {
+        [
+            "Approve once",
+            "Approve for session",
+            "Approve always",
+            "Deny",
+        ]
+    }
+
+    pub(super) fn selected_decision(&self) -> (ApprovalDecision, ApprovalScope) {
+        match self.selected_index {
+            0 => (ApprovalDecision::Approve, ApprovalScope::Once),
+            1 => (ApprovalDecision::Approve, ApprovalScope::Session),
+            2 => (ApprovalDecision::Approve, ApprovalScope::Always),
+            _ => (ApprovalDecision::Deny, ApprovalScope::Once),
         }
     }
 }
