@@ -75,6 +75,10 @@ its parent transcript (M4), and the attention notifier line (M5).
   the child with an empty context (silent no-op), matching the previous
   behaviour for that edge case.
 
+### M28 — `/info` slash one-shot session summary (landed)
+- New `SlashCommand::Info` (no argument). When typed inside the TUI, prints a single transcript line that bundles `session id · workspace · model · provider · mode · permission · turn · tokens · cost` so an operator can confirm the entire session context without combining `/cost`, status bar, and tab bar.
+- Picker advertises the command in the same `session` category as `/cost`, `/note`, and `/provider`.
+
 ### M27 — `peridot config providers` catalog (landed)
 - Lists the five live provider keys the CLI accepts (`claude-api`, `openai-api`, `openrouter-api`, `openai-oauth`, `codex`) with short descriptions and marks the one currently set as `auth.primary` in the project config.
 - JSON output mirrors the same shape (`{ active, providers: [{ name, description, active }] }`) so tooling can pick a sensible value before calling `peridot config set auth.primary <name>`.

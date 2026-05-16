@@ -609,6 +609,31 @@ pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
                 state.push_transcript(format!("note: {body}"));
             }
         }
+        SlashCommand::Info => {
+            let session_id = if state.current_session_id.is_empty() {
+                "<none>".to_string()
+            } else {
+                state.current_session_id.clone()
+            };
+            let workspace = state
+                .header
+                .workspace_label
+                .as_deref()
+                .unwrap_or("<unknown>");
+            let provider = state.header.provider.as_deref().unwrap_or("default");
+            state.push_transcript(format!(
+                "info: session {} · workspace {} · model {} · provider {} · mode {} · permission {} · turn {} · tokens {} · cost ${:.4}",
+                session_id,
+                workspace,
+                state.header.model,
+                provider,
+                state.header.mode,
+                state.header.permission,
+                state.current_turn,
+                state.header.total_tokens,
+                state.header.cost_usd,
+            ));
+        }
         SlashCommand::Lang(locale) => {
             state.config.language = locale;
             state.push_transcript(format!("lang: {locale}"));

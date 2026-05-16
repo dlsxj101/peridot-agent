@@ -75,6 +75,12 @@ pub fn slash_command_catalog() -> &'static [SlashCommandSpec] {
             category: "session",
         },
         SlashCommandSpec {
+            name: "/info",
+            description: "print a one-shot summary of the current session",
+            arg_hint: None,
+            category: "session",
+        },
+        SlashCommandSpec {
             name: "/cost",
             description: "show cost / token / cache totals",
             arg_hint: None,

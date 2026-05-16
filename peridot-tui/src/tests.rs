@@ -1686,6 +1686,28 @@ fn note_slash_queues_pending_note_and_records_transcript() {
 }
 
 #[test]
+fn info_slash_command_summarises_session_metadata() {
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "claude-sonnet-4-6",
+    ));
+    state.current_session_id = "sess-abc".to_string();
+    state.header.workspace_label = Some("peridot-agent".to_string());
+    state.header.provider = Some("openai-api".to_string());
+    state.current_turn = 5;
+
+    apply_slash_command(&mut state, SlashCommand::Info);
+
+    let line = state.transcript.last().unwrap().text.clone();
+    assert!(line.contains("session sess-abc"));
+    assert!(line.contains("workspace peridot-agent"));
+    assert!(line.contains("model claude-sonnet-4-6"));
+    assert!(line.contains("provider openai-api"));
+    assert!(line.contains("turn 5"));
+}
+
+#[test]
 fn status_metrics_show_turn_count_after_first_turn() {
     let mut state = TuiState::new(HeaderState::new(
         ExecutionMode::Execute,
