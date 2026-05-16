@@ -3,7 +3,10 @@ use peridot_llm::{
     CompletionRequest, CompletionResponse, CompletionStreamChunk, LlmProvider, Usage,
 };
 
-pub(crate) fn accumulate_usage(total: &mut Usage, usage: Usage) {
+/// Accumulates one turn's [`Usage`] into a running total. Public so the
+/// committee loop in `peridot-cli` can reuse the same arithmetic as the
+/// standard agent loop.
+pub fn accumulate_usage(total: &mut Usage, usage: Usage) {
     total.input_tokens += usage.input_tokens;
     total.output_tokens += usage.output_tokens;
     total.cache_read_tokens += usage.cache_read_tokens;

@@ -84,6 +84,13 @@ impl HarnessAgent {
         self.cancel = Some(token);
     }
 
+    /// Returns a clone of the attached cancellation token, if any. Used by
+    /// the committee loop in `peridot-cli` to check cancellation between
+    /// executor turns and reviewer passes.
+    pub fn cancel_token(&self) -> Option<CancelToken> {
+        self.cancel.clone()
+    }
+
     /// Configures the on-disk path the agent loop should snapshot its
     /// [`ContextManager`] entries into after every turn. The write happens
     /// atomically via `tempfile + rename` so concurrent crashes never expose

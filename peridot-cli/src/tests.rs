@@ -11,9 +11,45 @@ use peridot_tui::{HeaderState, TuiState};
 
 use super::interactive_io::*;
 use super::relax_security_for_approval;
+use super::run_loop::parse_reviewer_verdict;
 use super::run_output::*;
 use super::run_state::*;
 use super::{restore_tui_state_from_disk, scan_and_suspend_running_sessions};
+
+#[test]
+fn parse_reviewer_verdict_handles_each_outcome() {
+    use peridot_core::ReviewerVerdict;
+    assert_eq!(
+        parse_reviewer_verdict(r#"{"verdict":"approve","comments":""}"#),
+        Some(ReviewerVerdict::Approve),
+    );
+    assert_eq!(
+        parse_reviewer_verdict(r#"{"verdict":"request_changes","comments":"indent"}"#),
+        Some(ReviewerVerdict::RequestChanges {
+            comments: "indent".to_string(),
+        }),
+    );
+    assert_eq!(
+        parse_reviewer_verdict(r#"{"verdict":"block","comments":"writes outside workspace"}"#),
+        Some(ReviewerVerdict::Block {
+            reason: "writes outside workspace".to_string(),
+        }),
+    );
+    assert!(parse_reviewer_verdict("not json at all").is_none());
+    assert!(parse_reviewer_verdict(r#"{"unrelated":1}"#).is_none());
+}
+
+#[test]
+fn parse_reviewer_verdict_strips_json_code_fence() {
+    use peridot_core::ReviewerVerdict;
+    let raw = "```json\n{\"verdict\":\"approve\",\"comments\":\"ok\"}\n```";
+    assert_eq!(parse_reviewer_verdict(raw), Some(ReviewerVerdict::Approve));
+    let raw_bare_fence = "```\n{\"verdict\":\"approve\",\"comments\":\"\"}\n```";
+    assert_eq!(
+        parse_reviewer_verdict(raw_bare_fence),
+        Some(ReviewerVerdict::Approve),
+    );
+}
 
 #[test]
 fn resume_text_wraps_current_task() {

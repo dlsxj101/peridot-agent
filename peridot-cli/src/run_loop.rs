@@ -182,6 +182,23 @@ where
             &mut events,
         )
         .await?;
+        if config.committee.mode == peridot_common::CommitteeMode::Full {
+            return run_committee_loop_with_events(
+                &mut agent,
+                &provider,
+                RunLoopOptions {
+                    task,
+                    model: options.model,
+                    max_turns: options.max_turns,
+                    budget_usd: options.budget_usd,
+                    config: &config,
+                    project_root: &project_root,
+                    denied_paths,
+                },
+                events,
+            )
+            .await;
+        }
         return run_agent_loop_with_events(
             &mut agent,
             &provider,
@@ -212,6 +229,23 @@ where
         &mut events,
     )
     .await?;
+    if config.committee.mode == peridot_common::CommitteeMode::Full {
+        return run_committee_loop_with_events(
+            &mut agent,
+            provider.as_ref(),
+            RunLoopOptions {
+                task,
+                model: options.model,
+                max_turns: options.max_turns,
+                budget_usd: options.budget_usd,
+                config: &config,
+                project_root: &project_root,
+                denied_paths,
+            },
+            events,
+        )
+        .await;
+    }
     run_agent_loop_with_events(
         &mut agent,
         provider.as_ref(),
@@ -425,6 +459,312 @@ where
         eprintln!("warning: failed to auto-commit session {session_id}: {err}");
     }
     Ok(summary)
+}
+
+pub(super) async fn run_committee_loop_with_events<P, F>(
+    executor: &mut HarnessAgent,
+    provider: &P,
+    options: RunLoopOptions<'_>,
+    mut events: F,
+) -> Result<peridot_core::AgentRunSummary>
+where
+    P: LlmProvider + ?Sized,
+    F: FnMut(AgentRunEvent),
+{
+    use peridot_context::ContextEntry as Entry;
+    use peridot_context::ContextSource as Source;
+    use peridot_core::{AgentRunSummary, AgentTurnRequest, ReviewerVerdict as Verdict, StopReason};
+
+    let session_id = format!("session-{}-{}", std::process::id(), unix_timestamp());
+    run_lifecycle_hook(
+        executor,
+        &options,
+        &session_id,
+        "session_start",
+        "running",
+        "",
+    )?;
+    events(AgentRunEvent::RunStarted {
+        task: options.task.clone(),
+    });
+
+    let reviewer_model = if options.config.committee.reviewer_model.is_empty() {
+        options.model.clone()
+    } else {
+        options.config.committee.reviewer_model.clone()
+    };
+    let max_review_passes = options.config.committee.max_review_passes.max(1);
+
+    let mut total_usage = peridot_llm::Usage::default();
+    let accumulate_usage = peridot_core::accumulate_usage;
+    let mut outcomes: Vec<peridot_core::AgentTurnOutcome> = Vec::new();
+    let mut review_pass_counter: u32 = 0;
+    let mut user_input_for_next: Option<String> = Some(options.task.clone());
+    let mut stop_reason = StopReason::MaxTurns;
+    let cancel_token = executor.cancel_token();
+
+    for turn_index in 0..options.max_turns {
+        if let Some(token) = cancel_token.as_ref()
+            && token.is_cancelled()
+        {
+            stop_reason = StopReason::Interrupted;
+            events(AgentRunEvent::Interrupted {
+                stage: "committee_turn_start".to_string(),
+            });
+            break;
+        }
+        events(AgentRunEvent::TurnStarted { turn_index });
+        let turn_request = AgentTurnRequest {
+            user_input: user_input_for_next.take(),
+            model: options.model.clone(),
+            max_tokens: 4096,
+            project_root: options.project_root.to_path_buf(),
+            denied_paths: options.denied_paths.clone(),
+            hooks: options.config.hooks.clone(),
+            security: options.config.security.clone(),
+        };
+        let outcome = match executor
+            .run_turn_with_events(provider, turn_request, &mut events)
+            .await
+        {
+            Ok(outcome) => outcome,
+            Err(err) => {
+                events(AgentRunEvent::Recovery {
+                    message: format!("committee turn {turn_index} failed: {err}"),
+                });
+                stop_reason = StopReason::ApprovalRequired;
+                break;
+            }
+        };
+        let turn_success = outcome.tool_result.success;
+        accumulate_usage(&mut total_usage, outcome.usage);
+        events(AgentRunEvent::UsageUpdated { usage: total_usage });
+        events(AgentRunEvent::TurnEnded {
+            turn_index,
+            success: turn_success,
+        });
+
+        let mutating = turn_success && is_mutating_tool(&outcome.tool_name);
+        let done = outcome.tool_name == "agent_done" && turn_success;
+        outcomes.push(outcome);
+
+        if mutating {
+            let diff = collect_diff_for_review(options.project_root);
+            match run_reviewer_pass(
+                provider,
+                &reviewer_model,
+                &options.task,
+                &diff,
+                &options.config.security,
+            )
+            .await
+            {
+                Ok(verdict) => {
+                    events(AgentRunEvent::ReviewerVerdict {
+                        turn_index,
+                        verdict: verdict.clone(),
+                    });
+                    match verdict {
+                        Verdict::Approve => {
+                            review_pass_counter = 0;
+                        }
+                        Verdict::RequestChanges { comments } => {
+                            executor.context_mut().append(Entry::trusted(
+                                Source::ReviewerComment,
+                                format!(
+                                    "Reviewer feedback for turn {turn_index}:\n{comments}\n\nAddress the feedback before declaring agent_done."
+                                ),
+                            ));
+                            review_pass_counter += 1;
+                            if review_pass_counter >= max_review_passes {
+                                events(AgentRunEvent::Recovery {
+                                    message: format!(
+                                        "committee: reviewer requested changes {max_review_passes} consecutive turns; auto-blocking"
+                                    ),
+                                });
+                                if let Some(token) = cancel_token.as_ref() {
+                                    token.cancel();
+                                }
+                                stop_reason = StopReason::Interrupted;
+                                events(AgentRunEvent::Interrupted {
+                                    stage: "committee_review_loop".to_string(),
+                                });
+                                break;
+                            }
+                        }
+                        Verdict::Block { reason } => {
+                            events(AgentRunEvent::Recovery {
+                                message: format!("committee reviewer blocked: {reason}"),
+                            });
+                            if let Some(token) = cancel_token.as_ref() {
+                                token.cancel();
+                            }
+                            stop_reason = StopReason::Interrupted;
+                            events(AgentRunEvent::Interrupted {
+                                stage: "committee_review_block".to_string(),
+                            });
+                            break;
+                        }
+                    }
+                }
+                Err(err) => {
+                    events(AgentRunEvent::Recovery {
+                        message: format!(
+                            "committee reviewer pass failed: {err}; continuing without verdict"
+                        ),
+                    });
+                }
+            }
+        } else {
+            review_pass_counter = 0;
+        }
+
+        if done {
+            stop_reason = StopReason::Done;
+            break;
+        }
+        if options.budget_usd > 0.0 && total_usage.estimated_cost_usd >= options.budget_usd {
+            stop_reason = StopReason::Budget;
+            break;
+        }
+    }
+
+    let summary = AgentRunSummary {
+        turns: outcomes,
+        usage: total_usage,
+        stopped_reason: stop_reason,
+    };
+    events(AgentRunEvent::Finished {
+        summary: summary.clone(),
+    });
+    run_lifecycle_hook(
+        executor,
+        &options,
+        &session_id,
+        "session_end",
+        &format!("{:?}", summary.stopped_reason),
+        &format!("turns={}", summary.turns.len()),
+    )?;
+    run_completion_lifecycle_hooks(executor, &options, &session_id, &summary)?;
+    if let Err(err) = save_run_session(
+        options.project_root,
+        &session_id,
+        &summary,
+        &options.task,
+        &options.config.memory,
+    ) {
+        events(AgentRunEvent::SessionSaveFailed {
+            session_id: session_id.clone(),
+            message: err.to_string(),
+        });
+    } else {
+        events(AgentRunEvent::SessionSaved {
+            session_id: session_id.clone(),
+        });
+    }
+    if let Err(err) = auto_commit_run(
+        options.project_root,
+        options.config,
+        &summary,
+        &options.task,
+    ) {
+        eprintln!("warning: committee auto-commit failed for session {session_id}: {err}");
+    }
+    Ok(summary)
+}
+
+fn is_mutating_tool(name: &str) -> bool {
+    matches!(name, "file_write" | "file_patch" | "shell_exec")
+}
+
+fn collect_diff_for_review(project_root: &Path) -> String {
+    let manager = peridot_git::GitManager::new(project_root);
+    if !manager.is_repository() {
+        return "(workspace is not a git repository; reviewer received no diff)".to_string();
+    }
+    let raw = manager
+        .diff()
+        .unwrap_or_else(|err| format!("(git diff unavailable: {err})"));
+    if raw.trim().is_empty() {
+        "(no uncommitted changes detected)".to_string()
+    } else {
+        truncate_diff(&raw, 8_000)
+    }
+}
+
+fn truncate_diff(raw: &str, max_chars: usize) -> String {
+    if raw.chars().count() <= max_chars {
+        return raw.to_string();
+    }
+    let mut out: String = raw.chars().take(max_chars.saturating_sub(80)).collect();
+    out.push_str("\n... <diff truncated for reviewer context>");
+    out
+}
+
+async fn run_reviewer_pass<P>(
+    provider: &P,
+    reviewer_model: &str,
+    task: &str,
+    diff: &str,
+    _security: &peridot_common::SecurityConfig,
+) -> Result<peridot_core::ReviewerVerdict>
+where
+    P: LlmProvider + ?Sized,
+{
+    use peridot_core::AgentRole;
+    use peridot_llm::{CompletionRequest, LlmMessage, MessageRole};
+    let system = AgentRole::Reviewer
+        .system_prompt_suffix()
+        .trim_start_matches('\n')
+        .to_string();
+    let user_prompt = format!(
+        "Original task:\n{task}\n\nDiff produced by Executor:\n```\n{diff}\n```\n\nReturn the verdict JSON now."
+    );
+    let request = CompletionRequest {
+        model: reviewer_model.to_string(),
+        system: Some(system),
+        messages: vec![LlmMessage::new(MessageRole::User, user_prompt)],
+        max_tokens: Some(512),
+        thinking: false,
+    };
+    let completion = provider.complete(request).await?;
+    parse_reviewer_verdict(&completion.text).ok_or_else(|| {
+        anyhow::anyhow!(
+            "reviewer returned a non-verdict response (could not parse JSON): {}",
+            completion.text.trim()
+        )
+    })
+}
+
+pub(super) fn parse_reviewer_verdict(raw: &str) -> Option<peridot_core::ReviewerVerdict> {
+    let trimmed = strip_code_fence(raw.trim());
+    let json: serde_json::Value = serde_json::from_str(trimmed).ok()?;
+    let verdict_kind = json.get("verdict")?.as_str()?;
+    let comments = json
+        .get("comments")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    match verdict_kind {
+        "approve" => Some(peridot_core::ReviewerVerdict::Approve),
+        "request_changes" => Some(peridot_core::ReviewerVerdict::RequestChanges { comments }),
+        "block" => Some(peridot_core::ReviewerVerdict::Block { reason: comments }),
+        _ => None,
+    }
+}
+
+fn strip_code_fence(raw: &str) -> &str {
+    let trimmed = raw.trim();
+    if let Some(body) = trimmed
+        .strip_prefix("```json")
+        .or_else(|| trimmed.strip_prefix("```"))
+    {
+        let body = body.trim_start_matches('\n');
+        if let Some(end) = body.rfind("```") {
+            return body[..end].trim();
+        }
+    }
+    trimmed
 }
 
 pub(super) fn run_lifecycle_hook(

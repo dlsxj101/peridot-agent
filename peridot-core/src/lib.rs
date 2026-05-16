@@ -25,3 +25,4 @@ pub use requests::{
 pub use role::AgentRole;
 pub use slash::{SlashCommand, parse_slash_command};
 pub use state::AgentState;
+pub use usage::accumulate_usage;
