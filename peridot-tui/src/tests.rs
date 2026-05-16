@@ -879,6 +879,69 @@ fn tui_state_serde_round_trip_preserves_new_defaults() {
 }
 
 #[test]
+fn esc_during_busy_run_returns_interrupt_outcome() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    state.apply_runtime_event(TuiRuntimeEvent::RunStarted {
+        task: "long task".to_string(),
+    });
+    assert_eq!(state.agent_run_status, AgentRunStatus::Running);
+
+    let outcome = handle_key_event(&mut state, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    assert_eq!(outcome, TuiEventOutcome::Interrupt);
+    assert!(state.menu.is_none(), "Esc must not open menu while busy");
+}
+
+#[test]
+fn esc_with_nonempty_input_clears_buffer() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    state.input = "draft message".to_string();
+    state.input_cursor = state.input.chars().count();
+    let outcome = handle_key_event(&mut state, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    assert_eq!(outcome, TuiEventOutcome::Continue);
+    assert!(state.input.is_empty());
+    assert!(state.menu.is_none());
+}
+
+#[test]
+fn interrupted_status_survives_finished_event() {
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    state.apply_runtime_event(TuiRuntimeEvent::Interrupted {
+        stage: "turn_start".to_string(),
+    });
+    assert_eq!(state.agent_run_status, AgentRunStatus::Interrupted);
+
+    state.apply_runtime_event(TuiRuntimeEvent::Finished {
+        stop_reason: "Interrupted".to_string(),
+        turns: 1,
+        success: false,
+    });
+    assert_eq!(
+        state.agent_run_status,
+        AgentRunStatus::Interrupted,
+        "Finished should not downgrade an interrupted run to Failed"
+    );
+    let snapshot = render_text_snapshot(&state);
+    assert!(snapshot.contains("status: interrupted"));
+    assert!(snapshot.contains("run: stopped=Interrupted turns=1"));
+}
+
+#[test]
 fn plan_updated_event_replaces_plan_and_shows_banner() {
     let mut state = TuiState::new(HeaderState::new(
         ExecutionMode::Execute,

@@ -128,6 +128,7 @@ pub(super) async fn run_task_with_events<F>(
     options: AgentTaskOptions,
     config: PeridotConfig,
     project_root: PathBuf,
+    cancel: Option<peridot_core::CancelToken>,
     events: F,
 ) -> Result<peridot_core::AgentRunSummary>
 where
@@ -147,6 +148,9 @@ where
         &config.context,
     ));
     let mut agent = HarnessAgent::new(state, context, registry);
+    if let Some(token) = cancel {
+        agent.set_cancel_token(token);
+    }
     let profile = ProjectScanner::new().scan(&project_root)?;
     let denied_paths = profile.boundaries.into_iter().map(PathBuf::from).collect();
 

@@ -556,6 +556,8 @@ pub enum TuiEventOutcome {
         /// Approval reason.
         reason: String,
     },
+    /// The user pressed Esc while the agent was busy; the run should be cancelled.
+    Interrupt,
 }
 
 impl TuiState {
@@ -1080,6 +1082,13 @@ impl TuiState {
                         format!("run: stopped={stop_reason} turns={turns}"),
                     );
                     self.agent_run_status = AgentRunStatus::WaitingApproval;
+                    return;
+                }
+                if self.agent_run_status == AgentRunStatus::Interrupted {
+                    self.push_transcript_entry(
+                        TranscriptKind::System,
+                        format!("run: stopped={stop_reason} turns={turns}"),
+                    );
                     return;
                 }
                 if success {

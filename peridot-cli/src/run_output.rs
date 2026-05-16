@@ -9,6 +9,7 @@ pub(super) fn exit_for_summary(summary: &AgentRunSummary, headless: bool) {
         StopReason::ApprovalRequired => std::process::exit(4),
         StopReason::Budget => std::process::exit(2),
         StopReason::MaxTurns => std::process::exit(3),
+        StopReason::Interrupted => std::process::exit(130),
     }
 }
 

@@ -239,6 +239,8 @@ pub enum StopReason {
     MaxTurns,
     /// The run hit its configured cost budget.
     Budget,
+    /// The run was cancelled by an external interrupt.
+    Interrupted,
 }
 
 /// Summary of a bounded agent run.

@@ -423,6 +423,12 @@ async fn main() -> Result<()> {
                     let approve_config = run_config.clone();
                     let submit_project_root = run_project_root.clone();
                     let approve_project_root = run_project_root.clone();
+                    let active_cancel: std::sync::Arc<
+                        std::sync::Mutex<Option<peridot_core::CancelToken>>,
+                    > = std::sync::Arc::new(std::sync::Mutex::new(None));
+                    let submit_cancel = active_cancel.clone();
+                    let approve_cancel = active_cancel.clone();
+                    let interrupt_cancel = active_cancel.clone();
                     let exit = run_interactive_with_events(
                         state,
                         event_rx,
@@ -433,6 +439,8 @@ async fn main() -> Result<()> {
                                 let mut options = submit_options.clone();
                                 options.permission = state.header.permission;
                                 options.model = state.header.model.clone();
+                                let token = peridot_core::CancelToken::new();
+                                *submit_cancel.lock().unwrap() = Some(token.clone());
                                 spawn_tui_agent_run(
                                     handle.clone(),
                                     event_tx.clone(),
@@ -441,6 +449,7 @@ async fn main() -> Result<()> {
                                     options,
                                     submit_config.clone(),
                                     submit_project_root.clone(),
+                                    Some(token),
                                 );
                             }
                         },
@@ -467,6 +476,8 @@ async fn main() -> Result<()> {
                                         "approval: scope {scope:?} noted (persistence TBD)"
                                     ));
                                 }
+                                let token = peridot_core::CancelToken::new();
+                                *approve_cancel.lock().unwrap() = Some(token.clone());
                                 spawn_tui_agent_run(
                                     handle.clone(),
                                     event_tx.clone(),
@@ -475,7 +486,14 @@ async fn main() -> Result<()> {
                                     options,
                                     config,
                                     approve_project_root.clone(),
+                                    Some(token),
                                 );
+                            }
+                        },
+                        move |state| {
+                            if let Some(token) = interrupt_cancel.lock().unwrap().take() {
+                                token.cancel();
+                                state.push_transcript("interrupting current run...");
                             }
                         },
                     )?;
@@ -488,6 +506,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_tui_agent_run(
     handle: tokio::runtime::Handle,
     event_tx: std::sync::mpsc::Sender<TuiRuntimeEvent>,
@@ -496,14 +515,22 @@ fn spawn_tui_agent_run(
     options: run_loop::AgentTaskOptions,
     config: PeridotConfig,
     project_root: PathBuf,
+    cancel: Option<peridot_core::CancelToken>,
 ) {
     handle.spawn(async move {
         let event_sender = event_tx.clone();
-        let result =
-            run_task_with_events(task, mode, options, config, project_root, move |event| {
+        let result = run_task_with_events(
+            task,
+            mode,
+            options,
+            config,
+            project_root,
+            cancel,
+            move |event| {
                 let _ = event_sender.send(tui_runtime_event_from_agent(event));
-            })
-            .await;
+            },
+        )
+        .await;
         if let Err(err) = result {
             let _ = event_tx.send(TuiRuntimeEvent::Failed {
                 message: err.to_string(),

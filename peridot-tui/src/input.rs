@@ -15,7 +15,7 @@ pub fn run_interactive(mut state: TuiState) -> io::Result<TuiExit> {
                     TuiEventOutcome::Continue => {}
                     TuiEventOutcome::Quit => break None,
                     TuiEventOutcome::Submit(task) => break Some(task),
-                    TuiEventOutcome::Approval { .. } => {}
+                    TuiEventOutcome::Approval { .. } | TuiEventOutcome::Interrupt => {}
                 },
                 Event::Resize(width, height) => state.resize(width, height),
                 _ => {}
@@ -31,6 +31,7 @@ pub fn run_interactive_with_events<F>(
     runtime_events: std::sync::mpsc::Receiver<TuiRuntimeEvent>,
     mut on_submit: F,
     mut on_approval: impl FnMut(ApprovalDecision, ApprovalScope, String, String, &mut TuiState),
+    mut on_interrupt: impl FnMut(&mut TuiState),
 ) -> io::Result<TuiExit>
 where
     F: FnMut(String, &mut TuiState),
@@ -57,6 +58,7 @@ where
                         tool_name,
                         reason,
                     } => on_approval(decision, scope, tool_name, reason, &mut state),
+                    TuiEventOutcome::Interrupt => on_interrupt(&mut state),
                 },
                 Event::Resize(width, height) => state.resize(width, height),
                 _ => {}
@@ -116,8 +118,15 @@ pub fn handle_key_event(state: &mut TuiState, key: KeyEvent) -> TuiEventOutcome 
             TuiEventOutcome::Continue
         }
         KeyCode::Esc => {
-            state.menu = Some(MenuState::default());
-            TuiEventOutcome::Continue
+            if state.is_agent_busy() {
+                TuiEventOutcome::Interrupt
+            } else if !state.input.is_empty() {
+                state.clear_input();
+                TuiEventOutcome::Continue
+            } else {
+                state.menu = Some(MenuState::default());
+                TuiEventOutcome::Continue
+            }
         }
         KeyCode::Up => {
             state.previous_input_history();

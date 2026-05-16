@@ -9,6 +9,7 @@ use peridot_tools::audit::{AuditEvent, append_audit_event};
 use peridot_tools::hooks::{HookRunner, tool_hook_variables};
 use peridot_tools::{ToolContext, ToolRegistry};
 
+use crate::cancel::CancelToken;
 use crate::goal::check_goal_satisfied;
 use crate::permissions::ensure_tool_allowed;
 use crate::prompt::{read_plan_reminder, system_prompt_for_mode};
@@ -28,6 +29,7 @@ pub struct HarnessAgent {
     state: AgentState,
     context: ContextManager,
     tools: ToolRegistry,
+    cancel: Option<CancelToken>,
 }
 
 impl HarnessAgent {
@@ -37,7 +39,19 @@ impl HarnessAgent {
             state,
             context,
             tools,
+            cancel: None,
         }
+    }
+
+    /// Attaches a cancellation token consulted between turns.
+    pub fn with_cancel_token(mut self, token: CancelToken) -> Self {
+        self.cancel = Some(token);
+        self
+    }
+
+    /// Replaces the cancellation token in place.
+    pub fn set_cancel_token(&mut self, token: CancelToken) {
+        self.cancel = Some(token);
     }
 
     /// Returns the current agent state.
@@ -308,6 +322,25 @@ impl HarnessAgent {
         let mut budget_warning_sent = false;
         let mut consecutive_parse_failures = 0usize;
         for turn_index in 0..request.max_turns {
+            if self
+                .cancel
+                .as_ref()
+                .map(|token| token.is_cancelled())
+                .unwrap_or(false)
+            {
+                events(AgentRunEvent::Interrupted {
+                    stage: "turn_start".to_string(),
+                });
+                let summary = AgentRunSummary {
+                    turns: outcomes,
+                    usage: total_usage,
+                    stopped_reason: StopReason::Interrupted,
+                };
+                events(AgentRunEvent::Finished {
+                    summary: summary.clone(),
+                });
+                return Ok(summary);
+            }
             events(AgentRunEvent::TurnStarted { turn_index });
             let outcome = match self
                 .run_turn_with_events(
