@@ -170,6 +170,14 @@ pub(crate) enum SessionCommand {
         /// Session id.
         id: String,
     },
+    /// Replay the persisted transcript for one session.
+    Replay {
+        /// Session id.
+        id: String,
+        /// Limit output to the most recent N transcript entries.
+        #[arg(long)]
+        last: Option<usize>,
+    },
 }
 
 /// AGENTS.md subcommands.
