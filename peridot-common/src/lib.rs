@@ -771,7 +771,10 @@ fn default_hard_limit() -> usize {
 }
 
 fn default_offload_threshold_chars() -> usize {
-    3_000
+    // Effectively disabled. See peridot_context::ContextLimits::default() for the
+    // rationale: modern models support large enough contexts that disk offload causes
+    // more harm (recursive re-reads on smaller models) than memory benefit.
+    usize::MAX
 }
 
 fn default_observation_max_chars() -> usize {

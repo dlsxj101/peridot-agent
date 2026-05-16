@@ -1,5 +1,5 @@
 use peridot_common::PeriResult;
-use peridot_llm::{CompletionRequest, LlmMessage, LlmProvider, MessageRole, Usage};
+use peridot_llm::{CompletionRequest, LlmMessage, LlmProvider, MessageRole, ToolChoice, Usage};
 use serde::{Deserialize, Serialize};
 
 use crate::requests::AgentTurnOutcome;
@@ -34,6 +34,8 @@ where
             )],
             max_tokens: Some(512),
             thinking: false,
+            tools: Vec::new(),
+            tool_choice: ToolChoice::Auto,
         })
         .await?;
     let (satisfied, reason) = parse_goal_checker_response(&response.text);

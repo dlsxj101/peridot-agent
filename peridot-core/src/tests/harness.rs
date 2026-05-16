@@ -115,12 +115,12 @@ async fn run_until_done_emits_ui_events() {
     assert!(
         events
             .iter()
-            .any(|event| matches!(event, AgentRunEvent::AssistantDelta { .. }))
+            .any(|event| matches!(event, AgentRunEvent::AssistantStarted { .. }))
     );
     assert!(events.iter().any(|event| {
         matches!(
             event,
-            AgentRunEvent::Thinking { text } if text == "ready to finish"
+            AgentRunEvent::ToolStarted { name, .. } if name == "agent_done"
         )
     }));
     assert!(events.iter().any(|event| {
@@ -134,6 +134,143 @@ async fn run_until_done_emits_ui_events() {
         events.last().unwrap(),
         AgentRunEvent::Finished { .. }
     ));
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+/// A plain-text reply with no tool calls (e.g. "hi -> 안녕하세요!") must finish
+/// the turn through a synthesized `agent_done` WITHOUT surfacing
+/// `ToolStarted` / `ToolFinished` events — the assistant text is already
+/// rendered by `AssistantFinished`, so re-emitting it under a tool prefix
+/// produces a duplicated green echo in the transcript. The audit log still
+/// records the synthetic call internally; only the user-visible event stream
+/// is silenced.
+#[tokio::test]
+async fn text_only_completion_does_not_emit_synthetic_tool_events() {
+    let root = std::env::temp_dir().join(format!(
+        "peridot-core-text-only-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let mut registry = ToolRegistry::new();
+    register_builtin_tools(&mut registry).unwrap();
+    let mut agent = HarnessAgent::new(
+        AgentState::new(ExecutionMode::Execute, PermissionMode::Auto),
+        ContextManager::new(),
+        registry,
+    );
+    let provider = StaticProvider::new(vec!["안녕하세요! 무엇을 도와드릴까요?".to_string()]);
+    let mut events = Vec::new();
+
+    let summary = agent
+        .run_until_done_with_events(
+            &provider,
+            AgentRunRequest {
+                task: "hi".to_string(),
+                model: "mock".to_string(),
+                goal_checker_model: None,
+                max_turns: 2,
+                max_tokens: 512,
+                budget_usd: 5.0,
+                budget_warning_pct: 50,
+                project_root: root.clone(),
+                denied_paths: Vec::new(),
+                hooks: HooksConfig::default(),
+                security: SecurityConfig::default(),
+            },
+            |event| events.push(event),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(summary.stopped_reason, StopReason::Done);
+    assert!(matches!(events[0], AgentRunEvent::RunStarted { .. }));
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, AgentRunEvent::AssistantFinished { .. })),
+        "expected AssistantFinished to render the chat reply"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, AgentRunEvent::ToolStarted { .. })),
+        "synthetic agent_done from plain text must not emit ToolStarted: {events:?}"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, AgentRunEvent::ToolFinished { .. })),
+        "synthetic agent_done from plain text must not emit ToolFinished: {events:?}"
+    );
+    assert!(matches!(
+        events.last().unwrap(),
+        AgentRunEvent::Finished { .. }
+    ));
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+/// When the model both streams a reply AND explicitly calls `agent_done`, the
+/// summary parameter usually duplicates the assistant text the user already
+/// read. To keep the transcript clean we suppress the `ToolStarted` /
+/// `ToolFinished` events in that case; the assistant text already covers the
+/// answer. The tool still runs (audit + phase transition), so we only assert
+/// the UI events stay quiet.
+#[tokio::test]
+async fn text_plus_agent_done_suppresses_redundant_tool_events() {
+    let root = std::env::temp_dir().join(format!(
+        "peridot-core-done-dedup-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let mut registry = ToolRegistry::new();
+    register_builtin_tools(&mut registry).unwrap();
+    let mut agent = HarnessAgent::new(
+        AgentState::new(ExecutionMode::Execute, PermissionMode::Auto),
+        ContextManager::new(),
+        registry,
+    );
+    // The StaticProvider helper splits the JSON `action` envelope into a tool
+    // call, leaving `text` empty. Bypass it by stashing a custom provider that
+    // returns both `text` and a tool_calls entry for `agent_done`.
+    let provider = super::support::StaticProvider::new_text_with_tool_call(
+        "여기 본문 답변이 있어.".to_string(),
+        "agent_done".to_string(),
+        json!({"summary": "여기 본문 답변이 있어."}),
+    );
+    let mut events = Vec::new();
+    let summary = agent
+        .run_until_done_with_events(
+            &provider,
+            AgentRunRequest {
+                task: "explain".to_string(),
+                model: "mock".to_string(),
+                goal_checker_model: None,
+                max_turns: 2,
+                max_tokens: 512,
+                budget_usd: 5.0,
+                budget_warning_pct: 50,
+                project_root: root.clone(),
+                denied_paths: Vec::new(),
+                hooks: HooksConfig::default(),
+                security: SecurityConfig::default(),
+            },
+            |event| events.push(event),
+        )
+        .await
+        .unwrap();
+    assert_eq!(summary.stopped_reason, StopReason::Done);
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, AgentRunEvent::ToolStarted { name, .. } if name == "agent_done")),
+        "text + agent_done should suppress ToolStarted: {events:?}"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, AgentRunEvent::ToolFinished { name, .. } if name == "agent_done")),
+        "text + agent_done should suppress ToolFinished: {events:?}"
+    );
     std::fs::remove_dir_all(root).unwrap();
 }
 

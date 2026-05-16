@@ -248,7 +248,10 @@ fn draws_with_ratatui_backend() {
         "mock",
     ));
     state.resize(100, 30);
-    state.push_transcript("hello tui");
+    // The chat view hides System/Notice/TurnSeparator entries — use an
+    // Assistant entry so the smoke test actually exercises the user-visible
+    // rendering path.
+    state.push_assistant("hello tui");
 
     terminal.draw(|frame| draw(frame, &state)).unwrap();
 
@@ -700,6 +703,7 @@ fn runtime_events_update_tui_without_exiting() {
         stop_reason: "Done".to_string(),
         turns: 1,
         success: true,
+    duration_ms: 0,
     });
 
     let snapshot = render_text_snapshot(&state);
@@ -864,6 +868,78 @@ fn header_update_available_appears_in_buffer() {
 }
 
 #[test]
+fn scroll_offset_anchors_view_when_content_arrives_above_tail() {
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    // Seed a long history then scroll the view back five rows.
+    for i in 0..20 {
+        state.push_transcript_entry(TranscriptKind::System, format!("line {i}"));
+    }
+    state.scroll_up(5);
+    assert_eq!(state.scroll_offset, 5);
+    assert!(state.is_scrolled_back());
+
+    // New agent output must NOT shift the user's view forward — `scroll_offset`
+    // grows by the new entry's row count so the same rows stay visible.
+    state.push_transcript_entry(TranscriptKind::Assistant, "new agent reply"); // 1 row
+    state.push_transcript_entry(TranscriptKind::Assistant, "line a\nline b"); // 2 rows
+    assert_eq!(state.scroll_offset, 8);
+
+    // Scroll-down clamps at the tail.
+    state.scroll_down(100);
+    assert_eq!(state.scroll_offset, 0);
+    assert!(!state.is_scrolled_back());
+}
+
+#[test]
+fn submit_input_resets_scroll_to_tail() {
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    for i in 0..10 {
+        state.push_transcript_entry(TranscriptKind::System, format!("line {i}"));
+    }
+    state.scroll_up(4);
+    assert!(state.is_scrolled_back());
+
+    state.input = "hello".to_string();
+    state.input_cursor = state.input.chars().count();
+    let outcome = submit_input(&mut state);
+
+    assert!(matches!(outcome, TuiEventOutcome::Submit(_)));
+    assert_eq!(state.scroll_offset, 0, "submit must snap back to the tail");
+}
+
+#[test]
+fn page_up_and_down_keys_drive_scroll_offset() {
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    for i in 0..40 {
+        state.push_transcript_entry(TranscriptKind::System, format!("line {i}"));
+    }
+
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    let page_up = KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE);
+    let page_down = KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE);
+
+    handle_key_event(&mut state, page_up);
+    let one_page = state.scroll_offset;
+    assert!(one_page > 0);
+    handle_key_event(&mut state, page_up);
+    assert_eq!(state.scroll_offset, one_page * 2);
+    handle_key_event(&mut state, page_down);
+    assert_eq!(state.scroll_offset, one_page);
+}
+
+#[test]
 fn tui_state_serde_round_trip_preserves_new_defaults() {
     let state = TuiState::new(HeaderState::new(
         ExecutionMode::Execute,
@@ -996,6 +1072,7 @@ fn interrupted_status_survives_finished_event() {
         stop_reason: "Interrupted".to_string(),
         turns: 1,
         success: false,
+    duration_ms: 0,
     });
     assert_eq!(
         state.agent_run_status,
@@ -1271,6 +1348,7 @@ fn busy_agent_queues_input_and_drains_when_idle() {
         stop_reason: "Done".to_string(),
         turns: 1,
         success: true,
+    duration_ms: 0,
     });
     let mut submitted: Vec<String> = Vec::new();
     let mut on_submit = |task: String, state: &mut TuiState| {
@@ -1388,6 +1466,7 @@ fn approval_runtime_event_opens_panel_and_records_decision() {
         stop_reason: "ApprovalRequired".to_string(),
         turns: 0,
         success: false,
+    duration_ms: 0,
     });
     assert_eq!(state.agent_run_status, AgentRunStatus::WaitingApproval);
     assert!(state.approval.is_some());
@@ -2082,6 +2161,7 @@ fn record_background_event_marks_finished_status_per_stop_reason() {
             stop_reason: "Done".to_string(),
             turns: 1,
             success: true,
+        duration_ms: 0,
         },
     );
     state.record_background_event(
@@ -2090,6 +2170,7 @@ fn record_background_event_marks_finished_status_per_stop_reason() {
             stop_reason: "Interrupted".to_string(),
             turns: 1,
             success: false,
+        duration_ms: 0,
         },
     );
     state.record_background_event(

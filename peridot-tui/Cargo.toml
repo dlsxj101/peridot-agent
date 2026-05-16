@@ -13,6 +13,6 @@ e2e = []
 crossterm = "0.29.0"
 peridot-common = { path = "../peridot-common" }
 peridot-core = { path = "../peridot-core" }
-ratatui = "0.30.0"
+ratatui = { version = "0.30.0", features = ["unstable-rendered-line-info"] }
 serde.workspace = true
 serde_json.workspace = true

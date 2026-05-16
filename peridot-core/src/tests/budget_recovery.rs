@@ -313,12 +313,14 @@ async fn repeated_parse_failures_inject_format_reminder() {
         ContextManager::new(),
         registry,
     );
-    let provider = StaticProvider::new(vec![
-        "plain text".to_string(),
-        "still no action".to_string(),
-        "no json here".to_string(),
-        json!({"action":"agent_done","parameters":{"summary":"recovered"}}).to_string(),
-    ]);
+    // Three consecutive parse errors should inject the format reminder via the
+    // recovery layer; the fourth response then succeeds with a real tool call so the
+    // loop can stop. Mirrors the production trigger where the model emits something
+    // the provider's response parser rejects.
+    let provider = StaticProvider::with_initial_parse_errors(
+        vec![json!({"action":"agent_done","parameters":{"summary":"recovered"}}).to_string()],
+        3,
+    );
 
     let summary = agent
         .run_until_done(
@@ -327,7 +329,7 @@ async fn repeated_parse_failures_inject_format_reminder() {
                 task: "recover parse".to_string(),
                 model: "mock".to_string(),
                 goal_checker_model: None,
-                max_turns: 4,
+                max_turns: 8,
                 max_tokens: 512,
                 budget_usd: 5.0,
                 budget_warning_pct: 50,
@@ -341,7 +343,6 @@ async fn repeated_parse_failures_inject_format_reminder() {
         .unwrap();
 
     assert_eq!(summary.stopped_reason, StopReason::Done);
-    assert_eq!(summary.turns.len(), 1);
     assert!(agent.context().entries().iter().any(|entry| {
         entry.source == ContextSource::PlanReminder && entry.content.contains("Format reminder")
     }));

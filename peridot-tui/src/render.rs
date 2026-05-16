@@ -52,6 +52,16 @@ pub(super) fn render_status_metrics(state: &TuiState) -> String {
             agent_run_status_label(&state.agent_run_status)
         ));
     }
+    // Surface the elapsed counter once a task has started running. We render
+    // it from the same `side_panel.stats.elapsed_seconds` that `tick_spinner`
+    // refreshes every frame, so the status bar advances second by second
+    // without the host loop having to broadcast tick events.
+    if state.task_started_at_unix.is_some() || state.side_panel.stats.elapsed_seconds > 0 {
+        parts.push(format!(
+            "\u{23F1} {}",
+            state::format_duration_ms(state.side_panel.stats.elapsed_seconds * 1000)
+        ));
+    }
     parts.join("  |  ")
 }
 
@@ -85,26 +95,13 @@ pub(super) fn activity_kind_label(kind: &ActivityKind) -> &'static str {
     }
 }
 
-pub(super) fn render_activity_list(activities: &[RuntimeActivity]) -> String {
-    if activities.is_empty() {
-        return "Activity\n<none>".to_string();
-    }
-    let rendered = activities
-        .iter()
-        .rev()
-        .take(5)
-        .rev()
-        .map(|activity| {
-            format!(
-                "{} {}: {}",
-                activity_kind_label(&activity.kind),
-                activity.label,
-                activity.status
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    format!("Activity\n{rendered}")
+/// Trims a long session id (`session-628850-1778945666`) down to its trailing
+/// timestamp chunk for the compact `Status` panel. The full id is still saved
+/// to disk and surfaced in `/info`; this is purely cosmetic.
+fn short_session_id(id: &str) -> String {
+    id.rsplit_once('-')
+        .map(|(_, tail)| tail.to_string())
+        .unwrap_or_else(|| id.to_string())
 }
 
 pub(super) fn should_render_welcome(state: &TuiState) -> bool {
@@ -257,126 +254,320 @@ fn is_entry_hidden(state: &TuiState, entry: &TranscriptEntry) -> bool {
     }
 }
 
-/// Builds a styled line for one transcript entry.
-fn style_transcript_entry(state: &TuiState, entry: &TranscriptEntry) -> Line<'static> {
+/// Returns true when the entry should be hidden from the live TUI transcript
+/// pane. The chat view is intentionally minimal — only the back-and-forth
+/// conversation belongs there: `User` and `Assistant` text for the message
+/// itself, `ToolOk` / `ToolFail` for the tool actions taken between turns,
+/// and `Error` for real failures the operator must see. Everything else
+/// (system bookkeeping, queue notices, turn separators, pre-tool-run
+/// preambles, thinking/debug toggles) is meta-information and would just
+/// clutter the chat. The text snapshot used by tests keeps the looser
+/// [`is_entry_hidden`] filter so existing assertions on those entries stay
+/// valid.
+fn is_entry_hidden_in_chat(state: &TuiState, entry: &TranscriptEntry) -> bool {
+    if is_entry_hidden(state, entry) {
+        return true;
+    }
+    // Indented tool preview lines (`  path: ...`, `  preview: ...`, file
+    // contents, diff bodies) are pushed alongside the tool's main summary
+    // line by `record_tool_started` / `record_tool_result`. Claude Code and
+    // Codex CLI both collapse this detail by default — the chat shows
+    // `✔ file_read  read 1234 bytes` and the model still sees the full body
+    // through its tool-result context, so the preview lines are pure noise
+    // in the visible transcript. Keep them in the underlying transcript so
+    // the text snapshot used by tests stays unchanged.
+    let is_indented_tool_detail = matches!(
+        entry.kind,
+        TranscriptKind::ToolStart | TranscriptKind::ToolOk | TranscriptKind::ToolFail
+    ) && entry.text.starts_with("  ");
+    if is_indented_tool_detail && !state.debug_view {
+        return true;
+    }
+    match entry.kind {
+        // Run-lifecycle bookkeeping ("task: foo", "run: stopped=Done", "session: saved")
+        // and turn separators are pure noise in the chat view. Tool-start
+        // preambles are likewise hidden — the spinner + the matching
+        // ToolOk/ToolFail line already convey what's happening. System and
+        // Notice entries DO show, because that's where slash-command output
+        // (`/help`, `/info`, `/cost`, approvals, queued tasks) lands and the
+        // operator explicitly asked for it.
+        TranscriptKind::Meta
+        | TranscriptKind::TurnSeparator
+        | TranscriptKind::ToolStart => !state.debug_view,
+        _ => false,
+    }
+}
+
+/// Builds styled lines for one transcript entry. The transcript is rendered as
+/// a flat inline chat (Claude Code / Codex CLI style): assistant text has no
+/// prefix, user input carries a subtle `> ` quote, and tool results compress
+/// to a single colored glyph followed by their summary. Multi-line entries
+/// expand on `\n` so every line wraps independently in the outer `Paragraph`.
+fn style_transcript_entry(state: &TuiState, entry: &TranscriptEntry) -> Vec<Line<'static>> {
     let is_indented_detail = matches!(
         entry.kind,
         TranscriptKind::ToolStart | TranscriptKind::ToolOk | TranscriptKind::ToolFail
     ) && entry.text.starts_with("  ");
     if is_indented_detail {
-        return Line::from(Span::styled(
-            entry.text.clone(),
+        let style = Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::DIM);
+        return entry
+            .text
+            .lines()
+            .map(|line| Line::from(Span::styled(line.to_string(), style)))
+            .collect();
+    }
+    match entry.kind {
+        TranscriptKind::User => render_user_block(&entry.text),
+        TranscriptKind::Assistant => render_assistant_block(&entry.text, &state.config),
+        TranscriptKind::ToolStart => render_prefixed_block(
+            &entry.text,
+            "\u{276F} ",
+            Style::default().fg(Color::DarkGray),
+            Style::default().fg(Color::DarkGray),
+        ),
+        TranscriptKind::ToolOk => render_prefixed_block(
+            &entry.text,
+            "\u{2714} ",
+            Style::default().fg(Color::Green),
             Style::default()
                 .fg(Color::DarkGray)
                 .add_modifier(Modifier::DIM),
-        ));
-    }
-    match entry.kind {
-        TranscriptKind::User => Line::from(vec![
-            Span::styled(
-                "\u{25B8} ",
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                entry.text.clone(),
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ]),
-        TranscriptKind::Assistant => Line::from(vec![
-            Span::styled(
-                "\u{25C6} ",
-                Style::default().fg(theme_accent(&state.config)),
-            ),
-            Span::raw(entry.text.clone()),
-        ]),
-        TranscriptKind::ToolStart => Line::from(vec![
-            Span::styled("\u{276F} ", Style::default().fg(Color::DarkGray)),
-            Span::styled(entry.text.clone(), Style::default().fg(Color::DarkGray)),
-        ]),
-        TranscriptKind::ToolOk => Line::from(vec![
-            Span::styled("\u{2714} ", Style::default().fg(Color::Green)),
-            Span::styled(entry.text.clone(), Style::default().fg(Color::Green)),
-        ]),
-        TranscriptKind::ToolFail => Line::from(vec![
-            Span::styled("\u{2718} ", Style::default().fg(Color::Red)),
-            Span::styled(
-                entry.text.clone(),
-                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-            ),
-        ]),
-        TranscriptKind::System => Line::from(Span::styled(
-            entry.text.clone(),
+        ),
+        TranscriptKind::ToolFail => render_prefixed_block(
+            &entry.text,
+            "\u{2718} ",
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            Style::default().fg(Color::Red),
+        ),
+        TranscriptKind::System => entry
+            .text
+            .lines()
+            .map(|line| {
+                Line::from(Span::styled(
+                    line.to_string(),
+                    Style::default()
+                        .fg(Color::DarkGray)
+                        .add_modifier(Modifier::DIM),
+                ))
+            })
+            .collect(),
+        TranscriptKind::Notice => render_prefixed_block(
+            &entry.text,
+            "\u{26A0} ",
+            Style::default().fg(Color::Yellow),
             Style::default()
                 .fg(Color::Yellow)
                 .add_modifier(Modifier::DIM),
-        )),
-        TranscriptKind::Notice => Line::from(vec![
-            Span::styled("\u{26A0} ", Style::default().fg(Color::Yellow)),
-            Span::styled(entry.text.clone(), Style::default().fg(Color::Yellow)),
-        ]),
-        TranscriptKind::Error => Line::from(vec![
-            Span::styled(
-                "\u{26A0} ",
-                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                entry.text.clone(),
-                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-            ),
-        ]),
-        TranscriptKind::Debug => Line::from(Span::styled(
-            entry.text.clone(),
+        ),
+        TranscriptKind::Error => render_prefixed_block(
+            &entry.text,
+            "\u{26A0} ",
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        ),
+        TranscriptKind::Debug => entry
+            .text
+            .lines()
+            .map(|line| {
+                Line::from(Span::styled(
+                    line.to_string(),
+                    Style::default()
+                        .fg(Color::DarkGray)
+                        .add_modifier(Modifier::DIM),
+                ))
+            })
+            .collect(),
+        TranscriptKind::Thinking => render_prefixed_block(
+            &entry.text,
+            "\u{2026} ",
             Style::default()
                 .fg(Color::DarkGray)
-                .add_modifier(Modifier::DIM),
-        )),
-        TranscriptKind::Thinking => Line::from(vec![
-            Span::styled(
-                "\u{2026} ",
-                Style::default()
-                    .fg(Color::DarkGray)
-                    .add_modifier(Modifier::DIM | Modifier::ITALIC),
-            ),
-            Span::styled(
-                entry.text.clone(),
-                Style::default()
-                    .fg(Color::DarkGray)
-                    .add_modifier(Modifier::DIM | Modifier::ITALIC),
-            ),
-        ]),
-        TranscriptKind::TurnSeparator => Line::from(Span::styled(
-            format!("── {} {}", entry.text, "─".repeat(40)),
+                .add_modifier(Modifier::DIM | Modifier::ITALIC),
             Style::default()
                 .fg(Color::DarkGray)
-                .add_modifier(Modifier::DIM),
-        )),
+                .add_modifier(Modifier::DIM | Modifier::ITALIC),
+        ),
+        TranscriptKind::TurnSeparator => vec![Line::from("")],
+        TranscriptKind::Meta => entry
+            .text
+            .lines()
+            .map(|line| {
+                Line::from(Span::styled(
+                    line.to_string(),
+                    Style::default()
+                        .fg(Color::DarkGray)
+                        .add_modifier(Modifier::DIM),
+                ))
+            })
+            .collect(),
     }
 }
 
-/// Builds a styled line for the active assistant stream.
-/// Returns None when no delta has arrived yet (avoids a noisy placeholder).
-fn style_active_stream(state: &TuiState, stream: &StreamState) -> Option<Line<'static>> {
-    if stream.content.is_empty() {
+/// User input: subtle `> ` quote prefix in cyan, content in white. Multi-line
+/// quotes keep the prefix only on the first row and indent continuation lines
+/// underneath the glyph so the quote reads as one block.
+fn render_user_block(text: &str) -> Vec<Line<'static>> {
+    let prefix_style = Style::default()
+        .fg(Color::Cyan)
+        .add_modifier(Modifier::BOLD);
+    let body_style = Style::default().fg(Color::Cyan);
+    let indent = "  "; // two spaces, matching `> `'s width
+    let mut lines = Vec::new();
+    let mut iter = text.lines();
+    if let Some(first) = iter.next() {
+        let mut spans = vec![Span::styled("> ".to_string(), prefix_style)];
+        spans.extend(style_markdown_inline(first, body_style));
+        lines.push(Line::from(spans));
+    }
+    for rest in iter {
+        let mut spans = vec![Span::raw(indent.to_string())];
+        spans.extend(style_markdown_inline(rest, body_style));
+        lines.push(Line::from(spans));
+    }
+    lines
+}
+
+/// Assistant message: no glyph or label, plain wrapped text in the default
+/// foreground colour. Inline markdown (`**bold**`, `` `code` ``) is styled so
+/// chat replies read naturally without dragging in a heavyweight markdown
+/// renderer.
+fn render_assistant_block(text: &str, _config: &TuiConfig) -> Vec<Line<'static>> {
+    let body_style = Style::default().fg(Color::White);
+    text.lines()
+        .map(|line| Line::from(style_markdown_inline(line, body_style)))
+        .collect()
+}
+
+/// Lightweight inline markdown styling for one line of text. Recognises
+/// `**bold**` and `` `code` `` segments and applies appropriate emphasis on top of
+/// the supplied base style. Anything we do not recognise is passed through verbatim
+/// using the base style, so unsupported markdown is never lost — it just renders
+/// flat. The parser is intentionally simple (no nesting, no escapes) so it stays
+/// predictable on streaming partial content.
+fn style_markdown_inline(text: &str, base_style: Style) -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
+    let bytes = text.as_bytes();
+    let mut idx = 0;
+    let mut plain_start = 0;
+    let flush_plain = |start: usize, end: usize, out: &mut Vec<Span<'static>>| {
+        if end > start {
+            out.push(Span::styled(text[start..end].to_string(), base_style));
+        }
+    };
+    while idx < bytes.len() {
+        if bytes[idx] == b'*'
+            && idx + 1 < bytes.len()
+            && bytes[idx + 1] == b'*'
+            && let Some(close) = find_marker(text, idx + 2, "**")
+        {
+            flush_plain(plain_start, idx, &mut spans);
+            let segment = &text[idx + 2..close];
+            spans.push(Span::styled(
+                segment.to_string(),
+                base_style.add_modifier(Modifier::BOLD),
+            ));
+            idx = close + 2;
+            plain_start = idx;
+            continue;
+        }
+        if bytes[idx] == b'`'
+            && let Some(close) = find_marker(text, idx + 1, "`")
+        {
+            flush_plain(plain_start, idx, &mut spans);
+            let segment = &text[idx + 1..close];
+            spans.push(Span::styled(
+                segment.to_string(),
+                Style::default()
+                    .fg(Color::Rgb(180, 220, 255))
+                    .add_modifier(Modifier::BOLD),
+            ));
+            idx = close + 1;
+            plain_start = idx;
+            continue;
+        }
+        idx += 1;
+    }
+    flush_plain(plain_start, bytes.len(), &mut spans);
+    if spans.is_empty() {
+        spans.push(Span::styled(String::new(), base_style));
+    }
+    spans
+}
+
+/// Returns the byte index where `marker` next appears in `text` starting at
+/// `from`, or `None` if the marker is not found. Used by the markdown inline
+/// styler to close `**bold**` / `` `code` `` segments.
+fn find_marker(text: &str, from: usize, marker: &str) -> Option<usize> {
+    if from > text.len() {
         return None;
     }
-    Some(Line::from(vec![
-        Span::styled(
-            "\u{25C6} ",
-            Style::default()
-                .fg(theme_accent(&state.config))
-                .add_modifier(Modifier::DIM),
-        ),
-        Span::styled(
-            "streaming...",
-            Style::default()
-                .fg(Color::Gray)
-                .add_modifier(Modifier::DIM | Modifier::ITALIC),
-        ),
-    ]))
+    text[from..].find(marker).map(|offset| from + offset)
+}
+
+/// Renders a glyph-prefixed block where every line carries the prefix's column and
+/// continuation lines are indented to match the leading glyph. Used for tool, notice,
+/// error, and thinking entries.
+fn render_prefixed_block(
+    text: &str,
+    glyph: &str,
+    glyph_style: Style,
+    body_style: Style,
+) -> Vec<Line<'static>> {
+    let indent = " ".repeat(glyph.chars().count());
+    let mut lines = Vec::new();
+    let mut iter = text.lines();
+    if let Some(first) = iter.next() {
+        lines.push(Line::from(vec![
+            Span::styled(glyph.to_string(), glyph_style),
+            Span::styled(first.to_string(), body_style),
+        ]));
+    } else {
+        lines.push(Line::from(Span::styled(glyph.to_string(), glyph_style)));
+    }
+    for rest in iter {
+        lines.push(Line::from(vec![
+            Span::raw(indent.clone()),
+            Span::styled(rest.to_string(), body_style),
+        ]));
+    }
+    lines
+}
+
+/// Builds the live in-progress agent reply as inline lines. The braille
+/// spinner sits on the first line so the user can see the model is still
+/// generating; subsequent lines render plain. When nothing has streamed yet
+/// the body collapses to a single dim `thinking...` line.
+fn render_streaming_inline(state: &TuiState, stream: &StreamState) -> Vec<Line<'static>> {
+    let body_style = Style::default().fg(Color::White);
+    let spinner_style = Style::default().fg(Color::Cyan);
+    let content = stream.content.trim();
+    if content.is_empty() {
+        return vec![Line::from(vec![
+            Span::styled(format!("{} ", state.spinner_frame()), spinner_style),
+            Span::styled(
+                "thinking...".to_string(),
+                Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::ITALIC | Modifier::DIM),
+            ),
+        ])];
+    }
+    let mut lines = Vec::new();
+    let mut iter = content.lines();
+    if let Some(first) = iter.next() {
+        let mut spans = vec![Span::styled(
+            format!("{} ", state.spinner_frame()),
+            spinner_style,
+        )];
+        spans.extend(style_markdown_inline(first, body_style));
+        lines.push(Line::from(spans));
+    }
+    for rest in iter {
+        lines.push(Line::from(style_markdown_inline(rest, body_style)));
+    }
+    lines
 }
 
 /// Human-readable description of the current agent activity.
@@ -393,6 +584,9 @@ pub(super) fn agent_status_summary(state: &TuiState) -> String {
         return format!("{} {names}", tr(PhraseKey::StatusToolRunning, locale));
     }
     if state.active_stream.is_some() {
+        // Don't prepend a spinner here — `render_status_bar` already inserts one
+        // before this string for any busy state, so duplicating would render
+        // `● ⠴ ⠴ processing...`.
         return tr(PhraseKey::StatusProcessing, locale).to_string();
     }
     match state.agent_run_status {
@@ -689,39 +883,71 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
             body_chunks[0],
         );
     } else {
+        // Inline chat transcript (Claude Code / Codex CLI style): every visible
+        // entry is rendered as a flat line stream — no bordered bubbles, no
+        // speaker columns, just a top-to-bottom flow with subtle glyph cues.
+        // Wrapping is handled by `Wrap { trim: false }`, and the viewport
+        // window is computed wrap-aware via `Paragraph::line_count` + `.scroll`
+        // so the tail of the agent's last reply never gets clipped just
+        // because a line wrapped one row beyond our naive line-count estimate.
         let banner_lines = sticky_plan_banner(state);
-        let capacity = body_chunks[0].height.saturating_sub(2) as usize;
-        let visible: Vec<&TranscriptEntry> = state
-            .transcript
-            .iter()
-            .filter(|entry| !is_entry_hidden(state, entry))
-            .collect();
-        let stream_line = state
-            .active_stream
-            .as_ref()
-            .and_then(|stream| style_active_stream(state, stream));
-        let stream_reserve = if stream_line.is_some() { 1 } else { 0 };
-        let take = capacity
-            .saturating_sub(stream_reserve)
-            .saturating_sub(banner_lines.len());
-        let mut lines: Vec<Line<'static>> = banner_lines;
-        lines.extend(
-            visible
-                .iter()
-                .rev()
-                .take(take)
-                .rev()
-                .map(|entry| style_transcript_entry(state, entry)),
-        );
-        if let Some(line) = stream_line {
-            lines.push(line);
+        let inner_width = body_chunks[0].width.saturating_sub(2);
+        let inner_height = body_chunks[0].height.saturating_sub(2);
+        let following_tail = !state.is_scrolled_back();
+        let mut all_lines: Vec<Line<'static>> = banner_lines;
+        for entry in state.transcript.iter() {
+            if is_entry_hidden_in_chat(state, entry) {
+                continue;
+            }
+            let mut entry_lines = style_transcript_entry(state, entry);
+            // A blank line after each User message acts as a visual breath
+            // between the user's prompt and the agent's reply, matching the
+            // turn separation Claude Code uses. Other kinds flow tight.
+            if entry.kind == TranscriptKind::User {
+                entry_lines.push(Line::from(""));
+            }
+            all_lines.extend(entry_lines);
         }
-        frame.render_widget(
-            Paragraph::new(lines)
-                .block(body_block)
-                .wrap(Wrap { trim: false }),
-            body_chunks[0],
-        );
+        if following_tail
+            && let Some(stream) = state.active_stream.as_ref()
+        {
+            all_lines.extend(render_streaming_inline(state, stream));
+        }
+        // Build once; we use it for both line counting and rendering.
+        let paragraph = Paragraph::new(all_lines)
+            .block(body_block)
+            .wrap(Wrap { trim: false });
+        let total_rows = paragraph.line_count(inner_width) as u16;
+        let max_scroll = total_rows.saturating_sub(inner_height);
+        let scroll_rows = state.scroll_offset.min(max_scroll as usize) as u16;
+        let scroll = max_scroll.saturating_sub(scroll_rows);
+        frame.render_widget(paragraph.scroll((scroll, 0)), body_chunks[0]);
+        if !following_tail {
+            // Floating hint pinned to the top of the transcript pane so the
+            // user always knows they're behind the tail. Painted last so it
+            // overlays the top border without nuking it: we keep the border
+            // row and write the hint on the row below.
+            let area = body_chunks[0];
+            if area.height >= 3 {
+                let hint_area = Rect {
+                    x: area.x + 1,
+                    y: area.y + 1,
+                    width: area.width.saturating_sub(2),
+                    height: 1,
+                };
+                let hint = Line::from(Span::styled(
+                    format!(
+                        "\u{2191} scrolled back {} row{} · PageDown or Shift+\u{2193} to follow",
+                        state.scroll_offset,
+                        if state.scroll_offset == 1 { "" } else { "s" }
+                    ),
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::DIM),
+                ));
+                frame.render_widget(Paragraph::new(hint), hint_area);
+            }
+        }
     }
 
     if state.layout == LayoutMode::Full && state.config.show_subagent_panel && body_chunks.len() > 1
@@ -774,8 +1000,19 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
             .as_ref()
             .map(|status| format!("Goal: {}\n\n", goal_status_label(Some(status))))
             .unwrap_or_default();
+        // Session id is rendered as a short suffix when it fits; the directory
+        // entries use long ids like `session-628850-1778945666`, so we keep
+        // the last numeric chunk for compactness. The Activity feed and
+        // streaming-event spam used to live below this block — those were
+        // noisy, mostly duplicated the status bar metrics, and pushed the
+        // useful counters off-screen, so they are intentionally omitted.
+        let session_id_line = if state.current_session_id.is_empty() {
+            String::new()
+        } else {
+            format!("id: {}\n", short_session_id(&state.current_session_id))
+        };
         let side = format!(
-            "{goal}Plan {done}/{}\n{}\n\nSession\nagent: {}\nsteps: {}\nerrors: {}\nelapsed: {}s\n\n{}\n\n{}",
+            "{goal}Plan {done}/{}\n{}\n\nSession\n{session_id_line}agent: {}\nsteps: {}\nerrors: {}\nelapsed: {}s\n\n{}",
             state.side_panel.plan.len(),
             plan,
             agent_run_status_label(&state.agent_run_status),
@@ -783,7 +1020,6 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
             state.side_panel.stats.errors,
             state.side_panel.stats.elapsed_seconds,
             render_subagent_monitor(&state.subagents),
-            render_activity_list(&state.activities)
         );
         frame.render_widget(Paragraph::new(side).wrap(Wrap { trim: false }), info_area);
     }

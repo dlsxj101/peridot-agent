@@ -26,6 +26,20 @@ impl Tool for ShellExecTool {
         "Execute a shell command from the project root after deterministic safety checks"
     }
 
+    fn parameters_schema(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "command": {
+                    "type": "string",
+                    "description": "Shell command line executed from the project root"
+                }
+            },
+            "required": ["command"],
+            "additionalProperties": false,
+        })
+    }
+
     async fn execute(&self, params: Value, ctx: &ToolContext) -> PeriResult<ToolResult> {
         let command = required_str(&params, "command")?;
         reject_hard_blocked_command(command)?;

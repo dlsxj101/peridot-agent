@@ -129,18 +129,21 @@ pub(super) fn parse_mock_completion_response(line: String) -> PeriResult<Complet
     let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
         return Ok(CompletionResponse {
             text: line,
+            tool_calls: Vec::new(),
             usage: Usage::default(),
         });
     };
     let Some(object) = value.as_object() else {
         return Ok(CompletionResponse {
             text: line,
+            tool_calls: Vec::new(),
             usage: Usage::default(),
         });
     };
     let Some(text) = object.get("text").and_then(serde_json::Value::as_str) else {
         return Ok(CompletionResponse {
             text: line,
+            tool_calls: Vec::new(),
             usage: Usage::default(),
         });
     };
@@ -153,6 +156,7 @@ pub(super) fn parse_mock_completion_response(line: String) -> PeriResult<Complet
         .unwrap_or_default();
     Ok(CompletionResponse {
         text: text.to_string(),
+        tool_calls: Vec::new(),
         usage,
     })
 }

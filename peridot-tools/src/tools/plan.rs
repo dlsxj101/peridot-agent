@@ -41,6 +41,31 @@ impl Tool for PlanCreateTool {
         "Create a todo.md plan in the project root"
     }
 
+    fn parameters_schema(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "objective": {"type": "string", "description": "High-level objective for the plan"},
+                "steps": {
+                    "type": "array",
+                    "items": {
+                        "oneOf": [
+                            {"type": "string"},
+                            {
+                                "type": "object",
+                                "properties": {"text": {"type": "string"}},
+                                "required": ["text"]
+                            }
+                        ]
+                    },
+                    "description": "Ordered list of plan steps"
+                }
+            },
+            "required": ["objective", "steps"],
+            "additionalProperties": false,
+        })
+    }
+
     async fn execute(&self, params: Value, ctx: &ToolContext) -> PeriResult<ToolResult> {
         let objective = params
             .get("objective")
@@ -106,6 +131,22 @@ impl Tool for PlanUpdateTool {
 
     fn description(&self) -> &str {
         "Append a short progress update to todo.md"
+    }
+
+    fn parameters_schema(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "update": {"type": "string", "description": "Short progress note appended to the plan"},
+                "step": {"type": "integer", "minimum": 1, "description": "1-based step index to mark"},
+                "status": {
+                    "type": "string",
+                    "enum": ["pending", "in_progress", "done"],
+                    "description": "Status to set on the named step"
+                }
+            },
+            "additionalProperties": false,
+        })
     }
 
     async fn execute(&self, params: Value, ctx: &ToolContext) -> PeriResult<ToolResult> {

@@ -24,6 +24,10 @@ impl Tool for VerifyBuildTool {
         "Run a build verification command"
     }
 
+    fn parameters_schema(&self) -> Value {
+        verify_command_schema("cargo build --workspace")
+    }
+
     async fn execute(&self, params: Value, ctx: &ToolContext) -> PeriResult<ToolResult> {
         let command = params
             .get("command")
@@ -53,6 +57,10 @@ impl Tool for VerifyTestTool {
 
     fn description(&self) -> &str {
         "Run a test verification command"
+    }
+
+    fn parameters_schema(&self) -> Value {
+        verify_command_schema("cargo test --workspace")
     }
 
     async fn execute(&self, params: Value, ctx: &ToolContext) -> PeriResult<ToolResult> {
@@ -86,6 +94,10 @@ impl Tool for VerifyLintTool {
         "Run a lint verification command"
     }
 
+    fn parameters_schema(&self) -> Value {
+        verify_command_schema("cargo clippy --workspace -- -D warnings")
+    }
+
     async fn execute(&self, params: Value, ctx: &ToolContext) -> PeriResult<ToolResult> {
         let command = params
             .get("command")
@@ -97,6 +109,19 @@ impl Tool for VerifyLintTool {
     fn permission_level(&self) -> PermissionLevel {
         PermissionLevel::Read
     }
+}
+
+fn verify_command_schema(default: &str) -> Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "command": {
+                "type": "string",
+                "description": format!("Verification command line (default \"{default}\")")
+            }
+        },
+        "additionalProperties": false,
+    })
 }
 
 fn run_verification_command(

@@ -1,6 +1,13 @@
 use super::*;
 use state::{AgentRunStatus, SessionCommandEvent, TranscriptKind};
 
+/// PageUp / PageDown jump distance, measured in transcript rows. Small enough
+/// to avoid skipping past important context, large enough to traverse a long
+/// transcript without dozens of keypresses. Mouse-wheel scrolling is
+/// intentionally not supported: we leave mouse capture off so the operator
+/// can drag-select transcript text to copy.
+const PAGE_SCROLL_STEP: usize = 10;
+
 /// Runs the interactive terminal UI until the user quits or submits a task.
 pub fn run_interactive(mut state: TuiState) -> io::Result<TuiExit> {
     let mut terminal = TerminalGuard::enter()?;
@@ -205,6 +212,20 @@ pub fn handle_key_event(state: &mut TuiState, key: KeyEvent) -> TuiEventOutcome 
                 TuiEventOutcome::Continue
             }
         }
+        // Shift+Up/Down scrolls the transcript. We need this fallback because
+        // some terminals (notably Windows Terminal in certain WSL configs)
+        // translate the mouse wheel into bare Up/Down arrow sequences even
+        // with mouse capture enabled, which would otherwise cycle the input
+        // history every time the user scrolls. Shift+arrow gives the operator
+        // a way to navigate the transcript without fighting the terminal.
+        KeyCode::Up if key.modifiers.contains(KeyModifiers::SHIFT) => {
+            state.scroll_up(1);
+            TuiEventOutcome::Continue
+        }
+        KeyCode::Down if key.modifiers.contains(KeyModifiers::SHIFT) => {
+            state.scroll_down(1);
+            TuiEventOutcome::Continue
+        }
         KeyCode::Up => {
             state.previous_input_history();
             TuiEventOutcome::Continue
@@ -227,6 +248,14 @@ pub fn handle_key_event(state: &mut TuiState, key: KeyEvent) -> TuiEventOutcome 
         }
         KeyCode::End => {
             state.move_input_cursor_end();
+            TuiEventOutcome::Continue
+        }
+        KeyCode::PageUp => {
+            state.scroll_up(PAGE_SCROLL_STEP);
+            TuiEventOutcome::Continue
+        }
+        KeyCode::PageDown => {
+            state.scroll_down(PAGE_SCROLL_STEP);
             TuiEventOutcome::Continue
         }
         KeyCode::Backspace => {
@@ -434,6 +463,10 @@ pub(super) fn submit_input(state: &mut TuiState) -> TuiEventOutcome {
     if input.is_empty() {
         return TuiEventOutcome::Continue;
     }
+    // Snap the view back to the tail before recording the message so the user
+    // actually sees their own input — submitting from a scrolled-up state
+    // would otherwise hide the new entry below the visible window.
+    state.scroll_to_tail();
     state.record_input_history(&input);
     if input == "/quit" || input == "/exit" {
         return TuiEventOutcome::Quit;

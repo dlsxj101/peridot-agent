@@ -1350,6 +1350,7 @@ fn tui_runtime_event_from_agent(event: AgentRunEvent) -> TuiRuntimeEvent {
             success: summary.stopped_reason == StopReason::Done,
             stop_reason: format!("{:?}", summary.stopped_reason),
             turns: summary.turns.len(),
+            duration_ms: summary.duration_ms,
         },
         AgentRunEvent::SessionSaved { session_id } => TuiRuntimeEvent::SessionSaved { session_id },
         AgentRunEvent::SessionSaveFailed {

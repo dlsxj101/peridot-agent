@@ -9,7 +9,7 @@ mod tools;
 
 pub use mcp_adapter::{McpToolAdapter, register_mcp_tools};
 pub use path::ensure_within_project;
-pub use registry::{Tool, ToolContext, ToolRegistry};
+pub use registry::{Tool, ToolContext, ToolDescriptor, ToolRegistry};
 pub use tools::{
     AgentAskUserTool, AgentDelegateTool, AgentDoneTool, AgentMemorySearchTool, AgentScratchpadTool,
     FileListTool, FilePatchTool, FileReadTool, FileSearchTool, FileWriteTool, GitDiffTool,

@@ -4,7 +4,9 @@ use peridot_common::{
     AgentPhase, ExecutionMode, PeriError, PeriResult, SecurityConfig, ToolCall, ToolResult,
 };
 use peridot_context::{ContextEntry, ContextManager, ContextSource};
-use peridot_llm::{CompletionRequest, LlmProvider, Usage, parse_action};
+use peridot_llm::{
+    CompletionRequest, LlmProvider, ToolChoice, ToolDefinition, ToolInvocation, Usage,
+};
 use peridot_tools::audit::{AuditEvent, append_audit_event};
 use peridot_tools::hooks::{HookRunner, tool_hook_variables};
 use peridot_tools::{ToolContext, ToolRegistry};
@@ -14,7 +16,7 @@ use crate::goal::check_goal_satisfied;
 use crate::permissions::ensure_tool_allowed;
 use crate::prompt::{read_plan_reminder, system_prompt_for_role};
 use crate::recovery::{
-    StuckDetector, budget_exceeded_message, budget_warning_message, classify_error,
+    StuckAction, StuckDetector, budget_exceeded_message, budget_warning_message, classify_error,
     format_reminder_message, recovery_message, run_budget_warning_hook, run_context_compacted_hook,
     run_error_event_hooks, run_recovery_event_hook, should_emit_budget_warning,
 };
@@ -248,6 +250,7 @@ impl HarnessAgent {
         events(AgentRunEvent::AssistantStarted {
             label: "assistant".to_string(),
         });
+        let tool_definitions = registry_tool_definitions(&self.tools);
         let completion = stream_completion_with_chunks(
             provider,
             CompletionRequest {
@@ -256,6 +259,8 @@ impl HarnessAgent {
                 messages: self.context.to_messages(),
                 max_tokens: Some(request.max_tokens),
                 thinking: self.state.mode == ExecutionMode::Goal,
+                tools: tool_definitions,
+                tool_choice: ToolChoice::Auto,
             },
             |chunk| {
                 if !chunk.delta.is_empty() {
@@ -269,29 +274,102 @@ impl HarnessAgent {
         events(AgentRunEvent::AssistantFinished {
             text: completion.text.clone(),
         });
-        self.context.append(ContextEntry::trusted(
-            ContextSource::Assistant,
-            completion.text.clone(),
-        ));
 
-        let parsed = parse_action(&completion.text)?;
-        if let Some(thinking) = parsed.thinking.as_ref()
-            && !thinking.trim().is_empty()
-        {
+        // We only honour the first tool call per turn. Parallel calls are surfaced
+        // as a thinking event so the operator sees them, but the loop keeps its
+        // single-tool-per-turn invariant; future work can fan them out.
+        let first_tool_call = completion.tool_calls.first().cloned();
+        if completion.tool_calls.len() > 1 {
             events(AgentRunEvent::Thinking {
-                text: thinking.clone(),
+                text: format!(
+                    "ignoring {} additional parallel tool call(s)",
+                    completion.tool_calls.len() - 1
+                ),
             });
         }
-        let tool_name = parsed.tool_call.name.clone();
-        let tool_parameters = parsed.tool_call.parameters.clone();
+
+        // No tool call → treat the assistant's text as a chat-style reply and finish
+        // the turn synthetically through `agent_done`. Push the assistant text into
+        // context so future turns see the reply, then execute `agent_done` for the
+        // audit trail and phase transition. We deliberately do NOT emit
+        // `ToolStarted`/`ToolFinished` events: the chat text is already on screen as
+        // an `Assistant` transcript entry, and re-rendering it as
+        // `❯ agent_done running` + `✔ agent_done <text>` produces a duplicated reply
+        // in green. The outer `TurnEnded` / `Finished` events still fire from
+        // `run_until_done_with_events`, so the loop stays observable without the
+        // visual noise.
+        let Some(invocation) = first_tool_call else {
+            if !completion.text.trim().is_empty() {
+                self.context.append(ContextEntry::trusted(
+                    ContextSource::Assistant,
+                    completion.text.clone(),
+                ));
+            }
+            let summary = if completion.text.trim().is_empty() {
+                "no response".to_string()
+            } else {
+                completion.text.clone()
+            };
+            let tool_call = ToolCall {
+                name: "agent_done".to_string(),
+                parameters: serde_json::json!({ "summary": summary }),
+            };
+            self.state.phase = AgentPhase::Executing;
+            let tool_result = self
+                .execute_tool_call_with_runtime(
+                    tool_call,
+                    request.project_root,
+                    request.denied_paths,
+                    request.hooks,
+                    request.security,
+                )
+                .await?;
+            self.state.phase = AgentPhase::Done;
+            return Ok(AgentTurnOutcome {
+                tool_name: "agent_done".to_string(),
+                tool_result,
+                usage: completion.usage,
+                done: true,
+            });
+        };
+
+        // Native tool-call protocol path. Record the assistant turn carrying the
+        // structured `tool_calls` so the next request to the provider replays the
+        // exact wire shape the model was trained on (assistant message + tool_calls
+        // → tool message with matching tool_call_id → next assistant turn).
+        self.context.append(ContextEntry::assistant_with_tool_calls(
+            completion.text.clone(),
+            completion.tool_calls.clone(),
+        ));
+
+        let tool_call_id = invocation.id.clone();
+        let tool_call = ToolCall {
+            name: invocation.name.clone(),
+            parameters: tool_invocation_parameters(&invocation),
+        };
+        let tool_name = tool_call.name.clone();
+        let tool_parameters = tool_call.parameters.clone();
         self.state.phase = AgentPhase::Executing;
-        events(AgentRunEvent::ToolStarted {
-            name: tool_name.clone(),
-            parameters: tool_parameters.clone(),
-        });
+        // When the model both streams a reply AND closes the turn with
+        // `agent_done`, the `agent_done` summary almost always duplicates the
+        // text the user just read (qwen does this consistently). Suppress the
+        // tool UI events in that case so the transcript shows the reply once.
+        // The tool still runs internally for audit / phase transition; we
+        // simply don't surface the redundant `❯ agent_done` / `✔ agent_done
+        // <summary>` lines. When the model used `agent_done` AS the response
+        // channel (no preceding text), the events DO fire so the summary
+        // reaches the user — that's the only signal they'd otherwise see.
+        let suppress_done_ui =
+            tool_name == "agent_done" && !completion.text.trim().is_empty();
+        if !suppress_done_ui {
+            events(AgentRunEvent::ToolStarted {
+                name: tool_name.clone(),
+                parameters: tool_parameters.clone(),
+            });
+        }
         let tool_result = match self
             .execute_tool_call_with_runtime(
-                parsed.tool_call,
+                tool_call,
                 request.project_root,
                 request.denied_paths,
                 request.hooks,
@@ -311,14 +389,24 @@ impl HarnessAgent {
                 return Err(err);
             }
         };
-        events(AgentRunEvent::ToolFinished {
-            name: tool_name.clone(),
-            result: tool_result.clone(),
-        });
-        self.context
-            .append_observation(serde_json::to_string(&tool_result).map_err(|err| {
-                PeriError::Parse(format!("failed to serialize tool result: {err}"))
-            })?)?;
+        if !suppress_done_ui {
+            events(AgentRunEvent::ToolFinished {
+                name: tool_name.clone(),
+                result: tool_result.clone(),
+            });
+        }
+        // The tool result is a tool-role message paired with the assistant's
+        // `tool_call_id`. We bypass `append_observation` because it stamps every
+        // entry as untrusted and offload-eligible; here we want the provider to
+        // receive it through the native tool message channel instead, so the
+        // model sees its own past action and result without re-running them.
+        let observation = serde_json::to_string(&tool_result).map_err(|err| {
+            PeriError::Parse(format!("failed to serialize tool result: {err}"))
+        })?;
+        self.context.append(
+            ContextEntry::trusted(ContextSource::Tool, observation)
+                .with_tool_call_id(tool_call_id),
+        );
 
         if tool_name == "agent_done" && tool_result.success {
             self.state.phase = AgentPhase::Done;
@@ -361,6 +449,10 @@ impl HarnessAgent {
         events(AgentRunEvent::RunStarted {
             task: request.task.clone(),
         });
+        // Stamp the run's wall-clock start so the final `AgentRunSummary` can
+        // report how long the task took. Using `Instant` instead of
+        // `SystemTime` keeps the measurement monotonic across NTP jumps.
+        let started_at = std::time::Instant::now();
         let mut outcomes = Vec::new();
         let mut total_usage = Usage::default();
         let mut stuck_detector = StuckDetector::new(3);
@@ -380,6 +472,7 @@ impl HarnessAgent {
                     turns: outcomes,
                     usage: total_usage,
                     stopped_reason: StopReason::Interrupted,
+                duration_ms: started_at.elapsed().as_millis() as u64,
                 };
                 events(AgentRunEvent::Finished {
                     summary: summary.clone(),
@@ -414,6 +507,7 @@ impl HarnessAgent {
                             turns: outcomes,
                             usage: total_usage,
                             stopped_reason: StopReason::ApprovalRequired,
+                        duration_ms: started_at.elapsed().as_millis() as u64,
                         };
                         events(AgentRunEvent::Finished {
                             summary: summary.clone(),
@@ -474,16 +568,50 @@ impl HarnessAgent {
                 }
             }
             let done = outcome.done;
-            let recovery = stuck_detector.record(&outcome);
+            let stuck_action = stuck_detector.record(&outcome);
             outcomes.push(outcome);
-            if let Some(message) = recovery {
-                self.state.phase = AgentPhase::Recovering;
-                run_recovery_event_hook(&request.project_root, &request.hooks, "stuck", &message)?;
-                self.context
-                    .append(ContextEntry::trusted(ContextSource::PlanReminder, message));
-                events(AgentRunEvent::Recovery {
-                    message: "stuck detector requested a new strategy".to_string(),
-                });
+            match stuck_action {
+                StuckAction::Continue => {}
+                StuckAction::Recover(message) => {
+                    self.state.phase = AgentPhase::Recovering;
+                    run_recovery_event_hook(
+                        &request.project_root,
+                        &request.hooks,
+                        "stuck",
+                        &message,
+                    )?;
+                    self.context
+                        .append(ContextEntry::trusted(ContextSource::PlanReminder, message));
+                    events(AgentRunEvent::Recovery {
+                        message: "stuck detector requested a new strategy".to_string(),
+                    });
+                }
+                StuckAction::Abort(message) => {
+                    // Hard circuit-breaker. The model has ignored the recovery
+                    // directive for too many turns; stop the run before we burn
+                    // more tokens. Surface a Recovery event so the TUI's
+                    // activity panel records what happened.
+                    self.state.phase = AgentPhase::Recovering;
+                    run_recovery_event_hook(
+                        &request.project_root,
+                        &request.hooks,
+                        "stuck_abort",
+                        &message,
+                    )?;
+                    events(AgentRunEvent::Recovery {
+                        message: message.clone(),
+                    });
+                    let summary = AgentRunSummary {
+                        turns: outcomes,
+                        usage: total_usage,
+                        stopped_reason: StopReason::Interrupted,
+                    duration_ms: started_at.elapsed().as_millis() as u64,
+                    };
+                    events(AgentRunEvent::Finished {
+                        summary: summary.clone(),
+                    });
+                    return Ok(summary);
+                }
             }
             if done {
                 if let Some(goal_checker_model) = request.goal_checker_model.as_deref()
@@ -520,6 +648,7 @@ impl HarnessAgent {
                     turns: outcomes,
                     usage: total_usage,
                     stopped_reason: StopReason::Done,
+                duration_ms: started_at.elapsed().as_millis() as u64,
                 };
                 events(AgentRunEvent::Finished {
                     summary: summary.clone(),
@@ -536,6 +665,7 @@ impl HarnessAgent {
                     turns: outcomes,
                     usage: total_usage,
                     stopped_reason: StopReason::Budget,
+                duration_ms: started_at.elapsed().as_millis() as u64,
                 };
                 events(AgentRunEvent::Finished {
                     summary: summary.clone(),
@@ -548,6 +678,7 @@ impl HarnessAgent {
             turns: outcomes,
             usage: total_usage,
             stopped_reason: StopReason::MaxTurns,
+        duration_ms: started_at.elapsed().as_millis() as u64,
         };
         events(AgentRunEvent::Finished {
             summary: summary.clone(),
@@ -655,3 +786,31 @@ where
         });
     }
 }
+
+/// Builds the provider-neutral tool definitions surfaced through native tool calling
+/// from every tool registered on the harness. Order is deterministic because the
+/// registry stores tools in a `BTreeMap`.
+fn registry_tool_definitions(registry: &ToolRegistry) -> Vec<ToolDefinition> {
+    registry
+        .descriptors()
+        .into_iter()
+        .map(|descriptor| ToolDefinition {
+            name: descriptor.name,
+            description: descriptor.description,
+            parameters: descriptor.parameters,
+        })
+        .collect()
+}
+
+/// Decodes the model's tool call arguments. Providers normalise them to a
+/// `serde_json::Value`, but Chat Completions returns the JSON as a raw string that
+/// may already have been parsed into `Value::Null` on the wire — coerce both shapes
+/// into an object so downstream `validate_params` checks keep working.
+fn tool_invocation_parameters(invocation: &ToolInvocation) -> serde_json::Value {
+    match &invocation.arguments {
+        serde_json::Value::Null => serde_json::json!({}),
+        serde_json::Value::String(raw) => serde_json::from_str(raw).unwrap_or(serde_json::json!({})),
+        other => other.clone(),
+    }
+}
+

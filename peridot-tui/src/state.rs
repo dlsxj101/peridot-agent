@@ -9,6 +9,28 @@ fn current_unix_seconds() -> u64 {
         .unwrap_or_default()
 }
 
+/// Formats a millisecond duration as a compact human-readable string. Sub-
+/// second durations show milliseconds so a 200 ms call doesn't render as
+/// "0s"; longer durations promote into `Xm Ys` and then `Xh Ym` so the
+/// status bar stays narrow even on multi-hour runs.
+pub fn format_duration_ms(ms: u64) -> String {
+    if ms < 1000 {
+        return format!("{ms} ms");
+    }
+    let total_seconds = ms / 1000;
+    let seconds = total_seconds % 60;
+    let total_minutes = total_seconds / 60;
+    let minutes = total_minutes % 60;
+    let hours = total_minutes / 60;
+    if hours > 0 {
+        format!("{hours}h {minutes}m")
+    } else if minutes > 0 {
+        format!("{minutes}m {seconds}s")
+    } else {
+        format!("{seconds}s")
+    }
+}
+
 /// TUI layout mode selected from terminal size.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -285,6 +307,9 @@ pub enum TuiRuntimeEvent {
         turns: usize,
         /// Whether the stop reason represents successful completion.
         success: bool,
+        /// Wall-clock duration of the run in milliseconds.
+        #[serde(default)]
+        duration_ms: u64,
     },
     /// The run summary was saved for later resume.
     SessionSaved {
@@ -460,6 +485,12 @@ pub enum TranscriptKind {
     TurnSeparator,
     /// Parsed model thinking surfaced only when debug or show_thinking is on.
     Thinking,
+    /// Run-lifecycle bookkeeping ("task: foo", "run: stopped=Done turns=3",
+    /// "session: saved session-..."). Pushed by the agent loop and the host
+    /// runtime; hidden from the live chat view because the user only wants to
+    /// see the conversation itself. Still serialised so headless / snapshot
+    /// consumers and session journals retain the trace.
+    Meta,
 }
 
 /// One transcript line plus its style classification.
@@ -609,6 +640,13 @@ pub struct TuiState {
     /// Token total consumed by the Reviewer role this session (M-COM5).
     #[serde(default)]
     pub committee_reviewer_tokens: u64,
+    /// Wall-clock start of the currently running task (unix seconds). `None`
+    /// while idle / between runs. `tick_spinner` recomputes
+    /// `side_panel.stats.elapsed_seconds` from this anchor on every frame so
+    /// the status bar advances second-by-second without the host loop having
+    /// to push periodic events.
+    #[serde(default)]
+    pub task_started_at_unix: Option<u64>,
 }
 
 /// A session-router intent emitted by a slash command. The TUI itself does not
@@ -710,6 +748,7 @@ impl TuiState {
             committee_reviewer_cost: 0.0,
             committee_reviewer_tokens: 0,
             pending_committee_events: Vec::new(),
+            task_started_at_unix: None,
         }
     }
 
@@ -736,9 +775,44 @@ impl TuiState {
         self.push_transcript_entry(TranscriptKind::System, line);
     }
 
-    /// Appends a transcript line of the given kind.
+    /// Appends a transcript line of the given kind. If the user has scrolled up
+    /// (`scroll_offset > 0`) we grow the offset by the number of `\n`-separated
+    /// rows the new entry contributes so the visible window stays anchored
+    /// instead of sliding forward when the agent emits output below them.
+    /// `scroll_offset` is measured in visual rows above the tail; the render
+    /// pass clamps it against the actual wrapped row count, so an
+    /// over-estimate here is harmless.
     pub fn push_transcript_entry(&mut self, kind: TranscriptKind, line: impl Into<String>) {
-        self.transcript.push(TranscriptEntry::new(kind, line));
+        let entry = TranscriptEntry::new(kind, line);
+        let row_count = entry.text.lines().count().max(1);
+        self.transcript.push(entry);
+        if self.scroll_offset > 0 {
+            self.scroll_offset = self.scroll_offset.saturating_add(row_count);
+        }
+    }
+
+    /// Scrolls the transcript view up by `amount` rows. The render pass
+    /// clamps the offset against the total wrapped row count, so a generous
+    /// overshoot here is safe.
+    pub fn scroll_up(&mut self, amount: usize) {
+        self.scroll_offset = self.scroll_offset.saturating_add(amount);
+    }
+
+    /// Scrolls the transcript view down by `amount` rows, saturating at the
+    /// tail (`scroll_offset == 0`).
+    pub fn scroll_down(&mut self, amount: usize) {
+        self.scroll_offset = self.scroll_offset.saturating_sub(amount);
+    }
+
+    /// Resets the transcript view to follow the tail. Called automatically when
+    /// the user submits new input so they always see their own message land.
+    pub fn scroll_to_tail(&mut self) {
+        self.scroll_offset = 0;
+    }
+
+    /// Returns true when the user has scrolled away from the tail.
+    pub fn is_scrolled_back(&self) -> bool {
+        self.scroll_offset > 0
     }
 
     /// Appends a user input line.
@@ -900,9 +974,16 @@ impl TuiState {
         }
     }
 
-    /// Advances the spinner animation by one frame.
+    /// Advances the spinner animation by one frame. While a task is running
+    /// we also refresh `side_panel.stats.elapsed_seconds` from the
+    /// `task_started_at_unix` anchor so the elapsed counter ticks in real time
+    /// without the host loop having to push periodic events.
     pub fn tick_spinner(&mut self) {
         self.spinner_tick = self.spinner_tick.wrapping_add(1);
+        if let Some(started) = self.task_started_at_unix {
+            let now = current_unix_seconds();
+            self.side_panel.stats.elapsed_seconds = now.saturating_sub(started);
+        }
     }
 
     /// Returns the current braille spinner glyph.
@@ -1030,28 +1111,37 @@ impl TuiState {
         self.input_cursor = self.input.chars().count();
     }
 
-    /// Marks an agent task as running.
+    /// Marks an agent task as running. Resets the elapsed counter and stamps
+    /// the wall-clock anchor so the status bar can tick second-by-second
+    /// without external events.
     pub fn mark_agent_running(&mut self, task: impl Into<String>) {
         let task = task.into();
         self.agent_run_status = AgentRunStatus::Running;
         self.last_task = Some(task.clone());
+        self.task_started_at_unix = Some(current_unix_seconds());
+        self.side_panel.stats.elapsed_seconds = 0;
         self.begin_stream("assistant");
         self.push_activity(ActivityKind::Stream, "run", format!("running: {task}"));
-        self.push_transcript_entry(TranscriptKind::System, format!("task: {task}"));
+        self.push_transcript_entry(TranscriptKind::Meta, format!("task: {task}"));
     }
 
-    /// Marks the active agent task as completed.
+    /// Marks the active agent task as completed. Freezes the elapsed counter
+    /// on whatever value the run finished at (i.e. clears the running anchor
+    /// so `tick_spinner` stops bumping it forward).
     pub fn mark_agent_succeeded(&mut self, summary: impl Into<String>) {
         self.agent_run_status = AgentRunStatus::Succeeded;
         self.active_tools.clear();
+        self.task_started_at_unix = None;
         self.push_activity(ActivityKind::Stream, "run", "done");
-        self.push_transcript_entry(TranscriptKind::System, format!("run: {}", summary.into()));
+        self.push_transcript_entry(TranscriptKind::Meta, format!("run: {}", summary.into()));
     }
 
-    /// Marks the active agent task as failed.
+    /// Marks the active agent task as failed. Also freezes the elapsed
+    /// counter so the failure timing stays visible.
     pub fn mark_agent_failed(&mut self, message: impl Into<String>) {
         self.agent_run_status = AgentRunStatus::Failed;
         self.active_tools.clear();
+        self.task_started_at_unix = None;
         self.side_panel.stats.errors += 1;
         self.push_activity(ActivityKind::Stream, "run", "failed");
         self.push_transcript_entry(
@@ -1153,15 +1243,47 @@ impl TuiState {
         let summary = summary.into();
         self.finish_active_tool(&tool_name);
         self.record_tool_activity(tool_name.clone(), success, summary.clone());
+        // `agent_done` is a synthetic call: when the model replies with plain text we
+        // promote the reply to an `agent_done(summary=text)` invocation so the loop
+        // can complete. The assistant text was already pushed as a chat entry by
+        // `finish_stream`, so echoing it again under a green check would be visual
+        // noise. Only show the `agent_done` line when its summary differs from the
+        // most recent assistant entry (e.g. an explicit completion summary).
         let kind = if success {
             TranscriptKind::ToolOk
         } else {
             TranscriptKind::ToolFail
         };
-        self.push_transcript_entry(kind, format!("{tool_name}  {summary}"));
-        for line in tool_output_preview(&tool_name, &output) {
-            self.push_transcript_entry(kind, line);
+        let suppress_duplicate = tool_name == "agent_done"
+            && success
+            && self.last_assistant_text_matches(summary.trim());
+        if !suppress_duplicate {
+            self.push_transcript_entry(kind, format!("{tool_name}  {summary}"));
+            for line in tool_output_preview(&tool_name, &output) {
+                self.push_transcript_entry(kind, line);
+            }
         }
+    }
+
+    /// Returns true when the most recent transcript entry is an assistant message
+    /// whose trimmed body equals `candidate`. Used to suppress redundant
+    /// `agent_done` echoes of the chat text already shown above.
+    fn last_assistant_text_matches(&self, candidate: &str) -> bool {
+        self.transcript
+            .iter()
+            .rev()
+            .find(|entry| {
+                !matches!(
+                    entry.kind,
+                    TranscriptKind::Debug
+                        | TranscriptKind::Thinking
+                        | TranscriptKind::TurnSeparator
+                )
+            })
+            .map(|entry| {
+                entry.kind == TranscriptKind::Assistant && entry.text.trim() == candidate
+            })
+            .unwrap_or(false)
     }
 
     /// Records one verification stage in the visible activity list.
@@ -1334,26 +1456,61 @@ impl TuiState {
                 stop_reason,
                 turns,
                 success,
+                duration_ms,
             } => {
+                // Sync the side-panel elapsed counter to the agent's reported
+                // duration so the `⏱ completed in 17s` stamp matches the
+                // `elapsed: 17s` Status block. The TUI's view starts a beat
+                // earlier (at `mark_agent_running`, before provider setup),
+                // so without this they'd disagree by a few seconds.
+                if duration_ms > 0 {
+                    self.side_panel.stats.elapsed_seconds = duration_ms / 1000;
+                }
+                let duration = format_duration_ms(duration_ms);
                 if self.approval.is_some() {
                     self.push_transcript_entry(
-                        TranscriptKind::System,
-                        format!("run: stopped={stop_reason} turns={turns}"),
+                        TranscriptKind::Meta,
+                        format!(
+                            "run: stopped={stop_reason} turns={turns} duration={duration}"
+                        ),
                     );
                     self.agent_run_status = AgentRunStatus::WaitingApproval;
                     return;
                 }
                 if self.agent_run_status == AgentRunStatus::Interrupted {
                     self.push_transcript_entry(
-                        TranscriptKind::System,
-                        format!("run: stopped={stop_reason} turns={turns}"),
+                        TranscriptKind::Meta,
+                        format!(
+                            "run: stopped={stop_reason} turns={turns} duration={duration}"
+                        ),
                     );
                     return;
                 }
-                if success {
-                    self.mark_agent_succeeded(format!("stopped={stop_reason} turns={turns}"));
+                // Use the Assistant kind for the visible completion stamp so
+                // it stays in the chat view (System entries are now hidden).
+                // Prefix with `⏱` so it visually reads as a meta line rather
+                // than agent prose, and include turn / token counts that the
+                // operator would otherwise have to read off the status bar.
+                let stamp = if success {
+                    format!(
+                        "\u{23F1} completed in {duration} ({turns} turn{})",
+                        if turns == 1 { "" } else { "s" }
+                    )
                 } else {
-                    self.mark_agent_failed(format!("stopped={stop_reason} turns={turns}"));
+                    format!(
+                        "\u{23F1} stopped: {stop_reason} after {duration} ({turns} turn{})",
+                        if turns == 1 { "" } else { "s" }
+                    )
+                };
+                self.push_transcript_entry(TranscriptKind::Assistant, stamp);
+                if success {
+                    self.mark_agent_succeeded(format!(
+                        "stopped={stop_reason} turns={turns} duration={duration}"
+                    ));
+                } else {
+                    self.mark_agent_failed(format!(
+                        "stopped={stop_reason} turns={turns} duration={duration}"
+                    ));
                 }
             }
             TuiRuntimeEvent::SessionSaved { session_id } => {
@@ -1363,7 +1520,7 @@ impl TuiState {
                     format!("saved: {session_id}"),
                 );
                 self.push_transcript_entry(
-                    TranscriptKind::Notice,
+                    TranscriptKind::Meta,
                     format!(
                         "session: saved {session_id}  ·  resume with: peridot session resume {session_id}"
                     ),

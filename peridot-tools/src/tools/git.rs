@@ -23,6 +23,10 @@ impl Tool for GitStatusTool {
         "Return git status --short --branch"
     }
 
+    fn parameters_schema(&self) -> Value {
+        serde_json::json!({"type": "object", "properties": {}, "additionalProperties": false})
+    }
+
     async fn execute(&self, _params: Value, ctx: &ToolContext) -> PeriResult<ToolResult> {
         run_read_only_command("git status --short --branch", ctx, "git status")
     }
@@ -50,6 +54,10 @@ impl Tool for GitDiffTool {
         "Return git diff"
     }
 
+    fn parameters_schema(&self) -> Value {
+        serde_json::json!({"type": "object", "properties": {}, "additionalProperties": false})
+    }
+
     async fn execute(&self, _params: Value, ctx: &ToolContext) -> PeriResult<ToolResult> {
         run_read_only_command("git diff", ctx, "git diff")
     }
@@ -75,6 +83,21 @@ impl Tool for GitLogTool {
 
     fn description(&self) -> &str {
         "Return compact git log output"
+    }
+
+    fn parameters_schema(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 200,
+                    "description": "Number of commits to show (default 10)"
+                }
+            },
+            "additionalProperties": false,
+        })
     }
 
     async fn execute(&self, params: Value, ctx: &ToolContext) -> PeriResult<ToolResult> {

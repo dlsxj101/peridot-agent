@@ -497,6 +497,7 @@ where
     events(AgentRunEvent::RunStarted {
         task: options.task.clone(),
     });
+    let started_at = std::time::Instant::now();
 
     let reviewer_model = if options.config.committee.reviewer_model.is_empty() {
         options.model.clone()
@@ -644,6 +645,7 @@ where
         turns: outcomes,
         usage: total_usage,
         stopped_reason: stop_reason,
+        duration_ms: started_at.elapsed().as_millis() as u64,
     };
     events(AgentRunEvent::Finished {
         summary: summary.clone(),
@@ -725,7 +727,7 @@ where
     F: FnMut(AgentRunEvent),
 {
     use peridot_core::AgentRole;
-    use peridot_llm::{CompletionRequest, LlmMessage, MessageRole};
+    use peridot_llm::{CompletionRequest, LlmMessage, MessageRole, ToolChoice};
     let system = AgentRole::Reviewer
         .system_prompt_suffix()
         .trim_start_matches('\n')
@@ -739,6 +741,8 @@ where
         messages: vec![LlmMessage::new(MessageRole::User, user_prompt)],
         max_tokens: Some(512),
         thinking: false,
+        tools: Vec::new(),
+        tool_choice: ToolChoice::Auto,
     };
     let completion = provider.complete(request).await?;
     let reviewer_tokens = completion.usage.input_tokens

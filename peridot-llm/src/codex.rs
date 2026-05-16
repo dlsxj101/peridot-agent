@@ -308,7 +308,11 @@ impl CodexRpcSession {
                     }
                 }
                 "turn/completed" => {
-                    return Ok(CompletionResponse { text, usage });
+                    return Ok(CompletionResponse {
+                        text,
+                        tool_calls: Vec::new(),
+                        usage,
+                    });
                 }
                 "turn/failed" | "turn/cancelled" => {
                     return Err(PeriError::Provider(format!(
@@ -460,6 +464,8 @@ mod tests {
             messages: vec![LlmMessage::new(MessageRole::User, "do work")],
             max_tokens: Some(1000),
             thinking: false,
+            tools: Vec::new(),
+            tool_choice: crate::ToolChoice::Auto,
         });
         assert!(prompt.contains("Return exactly one Peridot JSON action object"));
         assert!(prompt.contains("user:\ndo work"));

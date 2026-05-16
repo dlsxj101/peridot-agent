@@ -26,9 +26,29 @@ pub trait LlmProvider: Send + Sync {
         let response = self.complete(request).await?;
         Ok(vec![CompletionStreamChunk {
             delta: response.text,
+            tool_calls: response.tool_calls,
             done: true,
             usage: Some(response.usage),
         }])
+    }
+
+    /// True incremental streaming. The default implementation calls [`stream`] and
+    /// replays the buffered chunks through the channel; HTTP providers should
+    /// override this so chunks reach the receiver as the bytes arrive, giving the
+    /// TUI a character-by-character typing effect instead of one big dump.
+    async fn stream_chunks(
+        &self,
+        request: CompletionRequest,
+        sender: tokio::sync::mpsc::UnboundedSender<CompletionStreamChunk>,
+    ) -> PeriResult<()> {
+        let chunks = self.stream(request).await?;
+        for chunk in chunks {
+            // Receiver gone → caller stopped listening; abort cleanly.
+            if sender.send(chunk).is_err() {
+                break;
+            }
+        }
+        Ok(())
     }
 
     /// Returns true when the provider supports prompt caching.

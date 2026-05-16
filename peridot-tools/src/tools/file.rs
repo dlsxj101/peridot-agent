@@ -27,6 +27,20 @@ impl Tool for FileReadTool {
         "Read a workspace file"
     }
 
+    fn parameters_schema(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Project-relative path of the file to read"
+                }
+            },
+            "required": ["path"],
+            "additionalProperties": false,
+        })
+    }
+
     async fn execute(&self, params: Value, ctx: &ToolContext) -> PeriResult<ToolResult> {
         let path = workspace_path(ctx, &params)?;
         let content = fs::read_to_string(&path)
@@ -58,6 +72,18 @@ impl Tool for FileWriteTool {
 
     fn description(&self) -> &str {
         "Write a workspace file"
+    }
+
+    fn parameters_schema(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Project-relative path"},
+                "content": {"type": "string", "description": "File contents to write"}
+            },
+            "required": ["path", "content"],
+            "additionalProperties": false,
+        })
     }
 
     async fn execute(&self, params: Value, ctx: &ToolContext) -> PeriResult<ToolResult> {
@@ -102,6 +128,19 @@ impl Tool for FilePatchTool {
 
     fn description(&self) -> &str {
         "Replace one exact text segment in a workspace file"
+    }
+
+    fn parameters_schema(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Project-relative path"},
+                "old_text": {"type": "string", "description": "Exact substring to replace"},
+                "new_text": {"type": "string", "description": "Replacement text"}
+            },
+            "required": ["path", "old_text", "new_text"],
+            "additionalProperties": false,
+        })
     }
 
     async fn execute(&self, params: Value, ctx: &ToolContext) -> PeriResult<ToolResult> {
@@ -177,6 +216,21 @@ impl Tool for FileSearchTool {
         "Search workspace files for a substring pattern"
     }
 
+    fn parameters_schema(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "pattern": {"type": "string", "description": "Substring to search for"},
+                "path": {
+                    "type": "string",
+                    "description": "Optional project-relative directory to scope the search"
+                }
+            },
+            "required": ["pattern"],
+            "additionalProperties": false,
+        })
+    }
+
     async fn execute(&self, params: Value, ctx: &ToolContext) -> PeriResult<ToolResult> {
         let pattern = required_str(&params, "pattern")?;
         let path = params.get("path").and_then(Value::as_str).map_or_else(
@@ -250,6 +304,20 @@ impl Tool for FileListTool {
 
     fn description(&self) -> &str {
         "List a workspace directory"
+    }
+
+    fn parameters_schema(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Project-relative directory path (use \".\" for project root)"
+                }
+            },
+            "required": ["path"],
+            "additionalProperties": false,
+        })
     }
 
     async fn execute(&self, params: Value, ctx: &ToolContext) -> PeriResult<ToolResult> {

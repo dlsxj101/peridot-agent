@@ -299,4 +299,9 @@ pub struct AgentRunSummary {
     pub usage: Usage,
     /// Stop reason.
     pub stopped_reason: StopReason,
+    /// Wall-clock time from the first `run_until_done_with_events` event to
+    /// the `Finished` event, in milliseconds. Defaults to `0` for old
+    /// serialised summaries that pre-date this field.
+    #[serde(default)]
+    pub duration_ms: u64,
 }

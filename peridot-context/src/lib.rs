@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use peridot_common::{PeriError, PeriResult};
-use peridot_llm::{LlmMessage, MessageRole};
+use peridot_llm::{LlmMessage, MessageRole, ToolInvocation};
 use serde::{Deserialize, Serialize};
 
 /// Source category for a context entry.
@@ -26,6 +26,10 @@ pub enum ContextSource {
 }
 
 /// One immutable entry in the append-only context log.
+///
+/// Carries optional native tool-calling metadata so the conversation history can
+/// round-trip OpenAI's `tool_calls` / `tool_call_id` linkage end-to-end. Plain
+/// chat entries leave `tool_calls` empty and `tool_call_id` as `None`.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ContextEntry {
     /// Source category.
@@ -34,6 +38,14 @@ pub struct ContextEntry {
     pub content: String,
     /// Whether this content must be treated as untrusted external text.
     pub untrusted: bool,
+    /// Tool calls emitted by the assistant on this turn (for `Assistant` entries
+    /// that issued one or more `tool_use` instructions).
+    #[serde(default)]
+    pub tool_calls: Vec<ToolInvocation>,
+    /// Identifier of the assistant tool call this entry answers (for `Tool` entries
+    /// produced by tool execution); matches one of the assistant's `tool_calls` ids.
+    #[serde(default)]
+    pub tool_call_id: Option<String>,
 }
 
 impl ContextEntry {
@@ -43,6 +55,8 @@ impl ContextEntry {
             source,
             content: content.into(),
             untrusted: false,
+            tool_calls: Vec::new(),
+            tool_call_id: None,
         }
     }
 
@@ -52,7 +66,32 @@ impl ContextEntry {
             source,
             content: content.into(),
             untrusted: true,
+            tool_calls: Vec::new(),
+            tool_call_id: None,
         }
+    }
+
+    /// Creates a trusted assistant entry that carries native tool calls. `content`
+    /// may be empty when the model returned only tool calls.
+    pub fn assistant_with_tool_calls(
+        content: impl Into<String>,
+        tool_calls: Vec<ToolInvocation>,
+    ) -> Self {
+        Self {
+            source: ContextSource::Assistant,
+            content: content.into(),
+            untrusted: false,
+            tool_calls,
+            tool_call_id: None,
+        }
+    }
+
+    /// Attaches a `tool_call_id` to this entry. Used after creating an untrusted
+    /// `Tool` observation so the wire protocol can pair the result with the
+    /// originating assistant tool call.
+    pub fn with_tool_call_id(mut self, tool_call_id: impl Into<String>) -> Self {
+        self.tool_call_id = Some(tool_call_id.into());
+        self
     }
 }
 
@@ -74,7 +113,13 @@ impl Default for ContextLimits {
         Self {
             hard_limit_tokens: 160_000,
             compaction_threshold_tokens: 100_000,
-            offload_threshold_chars: 3_000,
+            // Disable offload by default. Modern models all support 200K+ context, and
+            // offloading tool output to disk confuses smaller models into recursively
+            // re-reading the offload file instead of using the result the harness just
+            // gave them. Setting `usize::MAX` keeps the code path intact (so projects
+            // that explicitly opt into offload still work) while making it inert in
+            // practice. Override via [`ContextLimits::with_offload`] when needed.
+            offload_threshold_chars: usize::MAX,
             offload_dir: None,
         }
     }
@@ -190,11 +235,26 @@ impl ContextManager {
     }
 
     /// Builds provider-neutral messages from the current entries.
+    ///
+    /// Entries with a `tool_call_id` are emitted as proper `Tool` role messages so
+    /// the provider can pair them with the assistant's prior `tool_calls`. The
+    /// untrusted-content wrapper is skipped for those entries because the wire
+    /// protocol already labels them as tool results — the prompt-injection guard
+    /// still applies through the surrounding system instructions.
     pub fn to_messages(&self) -> Vec<LlmMessage> {
         let mut messages = self
             .entries
             .iter()
             .map(|entry| {
+                if entry.source == ContextSource::Assistant && !entry.tool_calls.is_empty() {
+                    return LlmMessage::assistant_with_tool_calls(
+                        entry.content.clone(),
+                        entry.tool_calls.clone(),
+                    );
+                }
+                if let Some(id) = entry.tool_call_id.as_ref() {
+                    return LlmMessage::tool_result(id.clone(), entry.content.clone());
+                }
                 let role = match entry.source {
                     ContextSource::User => MessageRole::User,
                     ContextSource::Assistant => MessageRole::Assistant,
@@ -291,11 +351,21 @@ fn source_name(source: &ContextSource) -> &'static str {
     }
 }
 
+/// Merges adjacent messages of the same role into one block, skipping any message
+/// that carries native tool metadata — assistant messages with `tool_calls` must
+/// keep their structure, and tool-result messages must stay paired with their
+/// `tool_call_id`. Without this guard the wire payload would collapse a tool
+/// turn into a sibling user/assistant message and the provider would reject it.
 fn merge_consecutive_roles(messages: &mut Vec<LlmMessage>) {
     let mut merged: Vec<LlmMessage> = Vec::new();
     for message in messages.drain(..) {
-        if let Some(last) = merged.last_mut()
+        let carries_tool_metadata =
+            !message.tool_calls.is_empty() || message.tool_call_id.is_some();
+        if !carries_tool_metadata
+            && let Some(last) = merged.last_mut()
             && last.role == message.role
+            && last.tool_calls.is_empty()
+            && last.tool_call_id.is_none()
         {
             last.content.push_str("\n\n");
             last.content.push_str(&message.content);

@@ -114,7 +114,7 @@ pub(crate) fn recovery_message(error: &PeriError) -> String {
 }
 
 pub(crate) fn format_reminder_message() -> String {
-    "Format reminder: respond with a single JSON object like {\"thinking\":\"brief reason\",\"action\":\"tool_name\",\"parameters\":{}}. Do not wrap it in prose unless the JSON object remains recoverable.".to_string()
+    "Format reminder: call one of the provided tools using the native tool-calling protocol, or reply with a plain text message when no tool is needed. Do not emit raw JSON action envelopes — the harness no longer parses them.".to_string()
 }
 
 pub(crate) fn classify_error(error: &PeriError) -> &'static str {
@@ -148,6 +148,20 @@ pub(crate) struct StuckDetector {
     threshold: usize,
 }
 
+/// Outcome of a [`StuckDetector::record`] call.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum StuckAction {
+    /// Nothing to do; the agent is making progress.
+    Continue,
+    /// The same action has repeated `threshold` times; inject the recovery
+    /// directive so the model gets a hint to try a different approach.
+    Recover(String),
+    /// The same action has repeated long enough that we no longer trust the
+    /// model to recover on its own. The agent loop should abort the run with
+    /// the supplied reason so we stop burning tokens.
+    Abort(String),
+}
+
 impl StuckDetector {
     pub(crate) fn new(threshold: usize) -> Self {
         Self {
@@ -157,7 +171,7 @@ impl StuckDetector {
         }
     }
 
-    pub(crate) fn record(&mut self, outcome: &AgentTurnOutcome) -> Option<String> {
+    pub(crate) fn record(&mut self, outcome: &AgentTurnOutcome) -> StuckAction {
         let signature = format!("{}:{}", outcome.tool_name, outcome.tool_result.summary);
         if self.last_signature.as_deref() == Some(signature.as_str()) {
             self.repeat_count += 1;
@@ -166,10 +180,25 @@ impl StuckDetector {
             self.repeat_count = 1;
         }
         if self.repeat_count < self.threshold {
-            return None;
+            return StuckAction::Continue;
         }
-        Some(format!(
-            "Recovery directive: the last action repeated {} times with the same result. Re-read the goal, choose a different tool or path, and update the plan before continuing.",
+        // Soft signal at `threshold`, hard stop at `2 * threshold`. Without the
+        // hard stop a model that ignores the recovery directive can keep
+        // repeating itself for dozens of turns, racking up cost. Two times the
+        // threshold gives the directive a fair chance to land before we pull
+        // the plug.
+        if self.repeat_count >= self.threshold * 2 {
+            return StuckAction::Abort(format!(
+                "Stuck-detector circuit breaker: tool `{}` repeated {} times with identical result. Aborting the run so the model can be retried or guided by the user.",
+                self.last_signature
+                    .as_deref()
+                    .and_then(|sig| sig.split_once(':').map(|(name, _)| name))
+                    .unwrap_or("(unknown)"),
+                self.repeat_count
+            ));
+        }
+        StuckAction::Recover(format!(
+            "Recovery directive: the last action repeated {} times with the same result. The conversation history above already contains that tool call and its `tool` role result paired by `tool_call_id` — read that prior result instead of calling the same tool again. Choose a different tool, change the arguments, or finish with `agent_done` if the answer is already in the prior result.",
             self.repeat_count
         ))
     }

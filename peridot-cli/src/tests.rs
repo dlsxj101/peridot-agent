@@ -156,6 +156,7 @@ fn saves_run_summary_for_resume() {
         turns: Vec::new(),
         usage: Usage::default(),
         stopped_reason: StopReason::Done,
+    duration_ms: 0,
     };
 
     save_run_session(
@@ -191,6 +192,7 @@ fn completed_run_saves_auto_skill_when_enabled() {
         }],
         usage: Usage::default(),
         stopped_reason: StopReason::Done,
+    duration_ms: 0,
     };
 
     save_run_session(
@@ -228,6 +230,7 @@ fn plan_summary_output_includes_execution_choices() {
         turns: Vec::new(),
         usage: Usage::default(),
         stopped_reason: StopReason::Done,
+    duration_ms: 0,
     };
 
     let output = run_summary_output(&summary, ExecutionMode::Plan);
@@ -264,6 +267,7 @@ fn auto_commit_run_commits_dirty_worktree() {
         turns: Vec::new(),
         usage: Usage::default(),
         stopped_reason: StopReason::Done,
+    duration_ms: 0,
     };
     let config = PeridotConfig {
         git: peridot_common::GitConfig {

@@ -25,20 +25,61 @@ pub enum MessageRole {
 }
 
 /// A chat message in Peridot's provider-neutral format.
+///
+/// Carries native tool-calling metadata so providers can emit the structured wire
+/// format that OpenAI and Anthropic expect — an assistant turn with `tool_calls` is
+/// always followed by `Tool` turn(s) whose `tool_call_id` matches an entry in
+/// `tool_calls`. Plain chat messages leave both fields empty.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct LlmMessage {
     /// Message role.
     pub role: MessageRole,
-    /// Message text content.
+    /// Message text content. May be empty for assistant turns that consist solely of
+    /// tool calls, or for `Tool` turns whose payload lives in `content` after the
+    /// tool runs.
     pub content: String,
+    /// Tool calls emitted by the assistant on this turn. Empty for non-assistant
+    /// turns and for assistant turns that returned plain text only.
+    #[serde(default)]
+    pub tool_calls: Vec<ToolInvocation>,
+    /// Identifier of the assistant tool call this message answers. Only set on
+    /// `Tool` role messages; pairs with one of the assistant's `tool_calls` ids.
+    #[serde(default)]
+    pub tool_call_id: Option<String>,
 }
 
 impl LlmMessage {
-    /// Creates a new provider-neutral LLM message.
+    /// Creates a new plain provider-neutral LLM message.
     pub fn new(role: MessageRole, content: impl Into<String>) -> Self {
         Self {
             role,
             content: content.into(),
+            tool_calls: Vec::new(),
+            tool_call_id: None,
+        }
+    }
+
+    /// Builds an assistant message carrying native tool calls. `content` may be
+    /// empty when the model returned only tool calls (no text).
+    pub fn assistant_with_tool_calls(
+        content: impl Into<String>,
+        tool_calls: Vec<ToolInvocation>,
+    ) -> Self {
+        Self {
+            role: MessageRole::Assistant,
+            content: content.into(),
+            tool_calls,
+            tool_call_id: None,
+        }
+    }
+
+    /// Builds a tool-result message paired with the assistant call that produced it.
+    pub fn tool_result(tool_call_id: impl Into<String>, content: impl Into<String>) -> Self {
+        Self {
+            role: MessageRole::Tool,
+            content: content.into(),
+            tool_calls: Vec::new(),
+            tool_call_id: Some(tool_call_id.into()),
         }
     }
 }
@@ -56,6 +97,47 @@ pub struct CompletionRequest {
     pub max_tokens: Option<u32>,
     /// Whether extended thinking is enabled for the session.
     pub thinking: bool,
+    /// Native tool definitions surfaced to the model. Empty disables tool calling.
+    #[serde(default)]
+    pub tools: Vec<ToolDefinition>,
+    /// Tool-choice policy mirroring OpenAI/Anthropic semantics.
+    #[serde(default)]
+    pub tool_choice: ToolChoice,
+}
+
+/// Provider-neutral tool definition surfaced via native tool calling.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ToolDefinition {
+    /// Stable tool name the model uses when invoking the function.
+    pub name: String,
+    /// Human-readable description shown to the model.
+    pub description: String,
+    /// JSON Schema describing the tool's parameter object.
+    pub parameters: Value,
+}
+
+/// Tool-choice policy passed to providers.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolChoice {
+    /// Model decides whether to call a tool or reply with text.
+    #[default]
+    Auto,
+    /// Model must not call a tool.
+    None,
+    /// Model must call at least one tool.
+    Required,
+}
+
+/// One tool invocation requested by the model.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ToolInvocation {
+    /// Provider-supplied identifier used to pair the call with its result.
+    pub id: String,
+    /// Tool name the model wants to call.
+    pub name: String,
+    /// Raw JSON arguments emitted by the model.
+    pub arguments: Value,
 }
 
 /// Token and billing usage returned by a provider.
@@ -79,8 +161,11 @@ pub struct Usage {
 /// Completion response returned by an LLM provider.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CompletionResponse {
-    /// Raw assistant text.
+    /// Raw assistant text. Empty when the model responded with tool calls only.
     pub text: String,
+    /// Tool invocations requested by the model. Empty when the model replied with plain text.
+    #[serde(default)]
+    pub tool_calls: Vec<ToolInvocation>,
     /// Provider-reported usage.
     pub usage: Usage,
 }
@@ -90,6 +175,9 @@ pub struct CompletionResponse {
 pub struct CompletionStreamChunk {
     /// Text delta for this chunk.
     pub delta: String,
+    /// Tool calls assembled from this chunk (populated on the final chunk).
+    #[serde(default)]
+    pub tool_calls: Vec<ToolInvocation>,
     /// Whether this is the final chunk.
     pub done: bool,
     /// Usage accounting, populated on the final chunk when available.
@@ -97,13 +185,5 @@ pub struct CompletionStreamChunk {
     pub usage: Option<Usage>,
 }
 
-/// Structured model action parsed from assistant text.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct ParsedAction {
-    /// Optional reasoning text when present.
-    pub thinking: Option<String>,
-    /// Tool call requested by the model.
-    pub tool_call: ToolCall,
-}
-use peridot_common::ToolCall;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;

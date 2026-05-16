@@ -53,6 +53,14 @@ impl Tool for McpToolAdapter {
             .unwrap_or("External MCP tool")
     }
 
+    fn parameters_schema(&self) -> Value {
+        if self.tool.input_schema.is_null() {
+            serde_json::json!({"type": "object", "additionalProperties": true})
+        } else {
+            self.tool.input_schema.clone()
+        }
+    }
+
     async fn execute(&self, params: Value, _ctx: &ToolContext) -> PeriResult<ToolResult> {
         let result = McpClient::new(self.server.clone())
             .call_tool(&self.tool.name, params)

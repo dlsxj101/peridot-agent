@@ -32,6 +32,17 @@ impl Tool for AgentScratchpadTool {
         "Append a note to the project-local scratchpad"
     }
 
+    fn parameters_schema(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "note": {"type": "string", "description": "Text appended to .peridot/scratchpad.md"}
+            },
+            "required": ["note"],
+            "additionalProperties": false,
+        })
+    }
+
     async fn execute(&self, params: Value, ctx: &ToolContext) -> PeriResult<ToolResult> {
         let note = required_str(&params, "note")?;
         let dir = ensure_within_project(&ctx.project_root, &ctx.project_root.join(".peridot"))?;
@@ -73,7 +84,35 @@ impl Tool for AgentAskUserTool {
     }
 
     fn description(&self) -> &str {
-        "Ask the user a question, returning a default answer in headless execution"
+        "Ask the user a question only when a decision cannot be safely inferred. Do NOT use for greetings or small talk; reply with a plain text message instead."
+    }
+
+    fn parameters_schema(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "question": {"type": "string", "description": "The question shown to the user"},
+                "kind": {
+                    "type": "string",
+                    "enum": ["free_form", "single_select"],
+                    "description": "Whether the answer is free-form text or a choice from `choices`"
+                },
+                "choices": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Discrete options when kind is single_select"
+                },
+                "default_index": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Default option index for single_select"
+                },
+                "default": {"type": "string", "description": "Default answer for free_form"},
+                "explanation": {"type": "string", "description": "Optional rationale shown to the user"}
+            },
+            "required": ["question"],
+            "additionalProperties": false,
+        })
     }
 
     async fn execute(&self, params: Value, ctx: &ToolContext) -> PeriResult<ToolResult> {
@@ -222,6 +261,27 @@ impl Tool for AgentDelegateTool {
         "Prepare a fork, worktree, or teammate subagent for a bounded task"
     }
 
+    fn parameters_schema(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "prompt": {"type": "string", "description": "Task description handed to the subagent"},
+                "kind": {
+                    "type": "string",
+                    "enum": ["fork", "worktree", "teammate"],
+                    "description": "Subagent isolation kind"
+                },
+                "model_tier": {
+                    "type": "string",
+                    "enum": ["haiku", "main", "opus"],
+                    "description": "Cost/capability tier for the subagent"
+                }
+            },
+            "required": ["prompt"],
+            "additionalProperties": false,
+        })
+    }
+
     async fn execute(&self, params: Value, ctx: &ToolContext) -> PeriResult<ToolResult> {
         let prompt = required_str(&params, "prompt")?.to_string();
         let (kind, model_tier) = subagent_selection(&params, &prompt)?;
@@ -359,6 +419,17 @@ impl Tool for AgentMemorySearchTool {
         "Search project and global learned skills and known error resolutions"
     }
 
+    fn parameters_schema(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search query against memory layers"}
+            },
+            "required": ["query"],
+            "additionalProperties": false,
+        })
+    }
+
     async fn execute(&self, params: Value, ctx: &ToolContext) -> PeriResult<ToolResult> {
         let query = required_str(&params, "query")?;
         let layers = search_memory_layers(&ctx.project_root, query)?;
@@ -447,7 +518,18 @@ impl Tool for AgentDoneTool {
     }
 
     fn description(&self) -> &str {
-        "Declare the active task complete"
+        "Declare the active task complete. Use this both when finishing real work AND when responding to a casual user message (use `summary` for the reply text)."
+    }
+
+    fn parameters_schema(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "summary": {"type": "string", "description": "Short summary of the work completed or the reply shown to the user"}
+            },
+            "required": ["summary"],
+            "additionalProperties": false,
+        })
     }
 
     async fn execute(&self, params: Value, _ctx: &ToolContext) -> PeriResult<ToolResult> {
