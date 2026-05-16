@@ -324,6 +324,16 @@ where
     )
     .await?;
 
+    let planner_tokens = summary.usage.input_tokens
+        + summary.usage.output_tokens
+        + summary.usage.cache_read_tokens
+        + summary.usage.cache_creation_tokens
+        + summary.usage.reasoning_output_tokens;
+    events(AgentRunEvent::CommitteeRoleUsage {
+        role: "planner".to_string(),
+        cost_usd: summary.usage.estimated_cost_usd,
+        tokens: planner_tokens,
+    });
     if let Some(plan_text) = extract_planner_plan(&planner_agent, &summary) {
         executor
             .context_mut()
@@ -556,6 +566,7 @@ where
                 &options.task,
                 &diff,
                 &options.config.security,
+                &mut events,
             )
             .await
             {
@@ -701,15 +712,17 @@ fn truncate_diff(raw: &str, max_chars: usize) -> String {
     out
 }
 
-async fn run_reviewer_pass<P>(
+async fn run_reviewer_pass<P, F>(
     provider: &P,
     reviewer_model: &str,
     task: &str,
     diff: &str,
     _security: &peridot_common::SecurityConfig,
+    events: &mut F,
 ) -> Result<peridot_core::ReviewerVerdict>
 where
     P: LlmProvider + ?Sized,
+    F: FnMut(AgentRunEvent),
 {
     use peridot_core::AgentRole;
     use peridot_llm::{CompletionRequest, LlmMessage, MessageRole};
@@ -728,6 +741,16 @@ where
         thinking: false,
     };
     let completion = provider.complete(request).await?;
+    let reviewer_tokens = completion.usage.input_tokens
+        + completion.usage.output_tokens
+        + completion.usage.cache_read_tokens
+        + completion.usage.cache_creation_tokens
+        + completion.usage.reasoning_output_tokens;
+    events(AgentRunEvent::CommitteeRoleUsage {
+        role: "reviewer".to_string(),
+        cost_usd: completion.usage.estimated_cost_usd,
+        tokens: reviewer_tokens,
+    });
     parse_reviewer_verdict(&completion.text).ok_or_else(|| {
         anyhow::anyhow!(
             "reviewer returned a non-verdict response (could not parse JSON): {}",

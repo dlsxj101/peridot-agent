@@ -1658,6 +1658,49 @@ fn parse_slash_committee_recognises_all_modes() {
 }
 
 #[test]
+fn committee_role_usage_event_accumulates_into_per_role_totals() {
+    use peridot_common::CommitteeMode;
+
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    state.committee_mode = CommitteeMode::Full;
+
+    state.apply_runtime_event(TuiRuntimeEvent::CommitteeRoleUsage {
+        role: "planner".to_string(),
+        cost_usd: 0.0123,
+        tokens: 450,
+    });
+    state.apply_runtime_event(TuiRuntimeEvent::CommitteeRoleUsage {
+        role: "reviewer".to_string(),
+        cost_usd: 0.0042,
+        tokens: 120,
+    });
+    state.apply_runtime_event(TuiRuntimeEvent::CommitteeRoleUsage {
+        role: "reviewer".to_string(),
+        cost_usd: 0.0058,
+        tokens: 180,
+    });
+    state.apply_runtime_event(TuiRuntimeEvent::CommitteeRoleUsage {
+        role: "unknown".to_string(),
+        cost_usd: 9.99,
+        tokens: 999,
+    });
+
+    assert!((state.committee_planner_cost - 0.0123).abs() < 1e-9);
+    assert_eq!(state.committee_planner_tokens, 450);
+    assert!((state.committee_reviewer_cost - 0.0100).abs() < 1e-9);
+    assert_eq!(state.committee_reviewer_tokens, 300);
+
+    apply_slash_command(&mut state, SlashCommand::Cost);
+    let line = state.transcript.last().unwrap().text.clone();
+    assert!(line.contains("committee cost: planner $0.0123"));
+    assert!(line.contains("reviewer $0.0100"));
+}
+
+#[test]
 fn reviewer_verdict_event_renders_with_kind_per_outcome() {
     let mut state = TuiState::new(HeaderState::new(
         ExecutionMode::Execute,

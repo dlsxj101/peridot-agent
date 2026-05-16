@@ -577,6 +577,15 @@ pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
                 provider,
                 state.current_turn,
             ));
+            if state.committee_mode != peridot_common::CommitteeMode::Off {
+                state.push_transcript(format!(
+                    "committee cost: planner ${:.4} ({} tok) · reviewer ${:.4} ({} tok)",
+                    state.committee_planner_cost,
+                    state.committee_planner_tokens,
+                    state.committee_reviewer_cost,
+                    state.committee_reviewer_tokens,
+                ));
+            }
         }
         SlashCommand::PlanShow => {
             if state.side_panel.plan.is_empty() {
@@ -650,6 +659,16 @@ pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
                 state.header.total_tokens,
                 state.header.cost_usd,
             ));
+            if state.committee_mode != peridot_common::CommitteeMode::Off {
+                state.push_transcript(format!(
+                    "  committee: mode {} · planner ${:.4} ({} tok) · reviewer ${:.4} ({} tok)",
+                    state.committee_mode,
+                    state.committee_planner_cost,
+                    state.committee_planner_tokens,
+                    state.committee_reviewer_cost,
+                    state.committee_reviewer_tokens,
+                ));
+            }
         }
         SlashCommand::Lang(locale) => {
             state.config.language = locale;

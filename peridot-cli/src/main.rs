@@ -1399,6 +1399,15 @@ fn tui_runtime_event_from_agent(event: AgentRunEvent) -> TuiRuntimeEvent {
                 comments,
             }
         }
+        AgentRunEvent::CommitteeRoleUsage {
+            role,
+            cost_usd,
+            tokens,
+        } => TuiRuntimeEvent::CommitteeRoleUsage {
+            role,
+            cost_usd,
+            tokens,
+        },
     }
 }
 

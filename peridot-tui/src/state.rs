@@ -375,6 +375,15 @@ pub enum TuiRuntimeEvent {
         /// Reviewer comments or blocking reason (empty on plain approve).
         comments: String,
     },
+    /// One non-executor committee role (planner / reviewer) used tokens.
+    CommitteeRoleUsage {
+        /// Role label ("planner" or "reviewer").
+        role: String,
+        /// Estimated cost in USD for this pass.
+        cost_usd: f64,
+        /// Approximate token count for this pass.
+        tokens: u64,
+    },
 }
 
 /// Plan step payload carried by [`TuiRuntimeEvent::PlanUpdated`].
@@ -583,6 +592,18 @@ pub struct TuiState {
     /// switching it per-session at runtime.
     #[serde(default)]
     pub committee_mode: peridot_common::CommitteeMode,
+    /// Estimated USD spent by the Planner role this session (M-COM5).
+    #[serde(default)]
+    pub committee_planner_cost: f64,
+    /// Token total consumed by the Planner role this session (M-COM5).
+    #[serde(default)]
+    pub committee_planner_tokens: u64,
+    /// Estimated USD spent by the Reviewer role this session (M-COM5).
+    #[serde(default)]
+    pub committee_reviewer_cost: f64,
+    /// Token total consumed by the Reviewer role this session (M-COM5).
+    #[serde(default)]
+    pub committee_reviewer_tokens: u64,
 }
 
 /// A session-router intent emitted by a slash command. The TUI itself does not
@@ -679,6 +700,10 @@ impl TuiState {
             pending_session_commands: Vec::new(),
             pending_notes: Vec::new(),
             committee_mode: peridot_common::CommitteeMode::Off,
+            committee_planner_cost: 0.0,
+            committee_planner_tokens: 0,
+            committee_reviewer_cost: 0.0,
+            committee_reviewer_tokens: 0,
         }
     }
 
@@ -1426,6 +1451,28 @@ impl TuiState {
                     format!("committee planner ready:\n{plan_text}"),
                 );
                 self.push_activity(ActivityKind::Stream, "committee planner", "plan ready");
+            }
+            TuiRuntimeEvent::CommitteeRoleUsage {
+                role,
+                cost_usd,
+                tokens,
+            } => {
+                match role.as_str() {
+                    "planner" => {
+                        self.committee_planner_cost += cost_usd;
+                        self.committee_planner_tokens += tokens;
+                    }
+                    "reviewer" => {
+                        self.committee_reviewer_cost += cost_usd;
+                        self.committee_reviewer_tokens += tokens;
+                    }
+                    _ => {}
+                }
+                self.push_activity(
+                    ActivityKind::Stream,
+                    format!("committee {role}"),
+                    format!("+${cost_usd:.4} / +{tokens} tok"),
+                );
             }
             TuiRuntimeEvent::ReviewerVerdict {
                 turn_index,

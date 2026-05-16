@@ -160,6 +160,18 @@ pub enum AgentRunEvent {
         /// Verdict body.
         verdict: ReviewerVerdict,
     },
+    /// One non-executor committee role consumed provider tokens. The
+    /// executor's per-turn cost is already covered by `UsageUpdated`; this
+    /// event only fires for Planner and Reviewer so the TUI can split per
+    /// role.
+    CommitteeRoleUsage {
+        /// Which committee role accumulated the cost.
+        role: String,
+        /// Estimated cost in USD for this pass.
+        cost_usd: f64,
+        /// Approximate token count for this pass.
+        tokens: u64,
+    },
 }
 
 /// Verdict returned by the reviewer agent after inspecting one executor
