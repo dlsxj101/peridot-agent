@@ -75,6 +75,10 @@ its parent transcript (M4), and the attention notifier line (M5).
   the child with an empty context (silent no-op), matching the previous
   behaviour for that edge case.
 
+### M35 — `/help` regenerates from slash catalog (landed)
+- The `/help` slash now renders one line per `SlashCommandSpec` returned by `slash_command_catalog()`: `<name> <arg_hint>  ·  <description> [<category>]`. Newly registered slashes therefore appear in `/help` automatically — no more drift between the catalog and the help text.
+- Output remains a single `push_transcript` so the existing transcript-wrap logic handles long help lists.
+
 ### M34 — `peridot version --detailed` (landed)
 - Bare `peridot version` still prints `peridot <semver>` for backwards compatibility with scripts that grep the first token.
 - `peridot version --detailed` adds three indented follow-up lines: `target: <os>`, `arch: <arch>`, and `profile: <release|dev>` when the binary was built with `CARGO_BUILD_PROFILE` propagated. Helpful when triaging "which binary is the operator running" against a release vs a local dev build.

@@ -552,7 +552,19 @@ pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
             state.transcript.clear();
         }
         SlashCommand::Help => {
-            state.push_transcript("commands: /plan /execute /goal <objective> /goal pause|resume|clear|status /safe /auto /yolo /model <name> /cost /plan show /clear /compact /session save /diff /undo /help");
+            let mut lines: Vec<String> = Vec::new();
+            lines.push("commands:".to_string());
+            for spec in crate::slash_command_catalog() {
+                let hint = spec
+                    .arg_hint
+                    .map(|hint| format!(" {hint}"))
+                    .unwrap_or_default();
+                lines.push(format!(
+                    "  {}{hint}  ·  {} [{}]",
+                    spec.name, spec.description, spec.category
+                ));
+            }
+            state.push_transcript(lines.join("\n"));
         }
         SlashCommand::Cost => {
             let provider = state.header.provider.as_deref().unwrap_or("default");
