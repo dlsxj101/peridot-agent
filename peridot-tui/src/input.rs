@@ -55,17 +55,30 @@ where
     let mut terminal = TerminalGuard::enter()?;
     let (width, height) = terminal_size()?;
     state.resize(width, height);
+    let mut other_states: std::collections::HashMap<String, TuiState> =
+        std::collections::HashMap::new();
+    let mut last_foreground = state.current_session_id.clone();
     loop {
         for (session_id, event) in runtime_events.try_iter() {
             if state.current_session_id.is_empty() || session_id == state.current_session_id {
                 state.apply_runtime_event(event);
             } else {
                 state.record_background_event(&session_id, &event);
+                if let Some(other) = other_states.get_mut(&session_id) {
+                    other.apply_runtime_event(event);
+                }
             }
         }
         let pending = state.drain_pending_session_commands();
         for cmd in pending {
             on_session_command(cmd, &mut state);
+        }
+        if state.current_session_id != last_foreground
+            && !state.current_session_id.is_empty()
+            && !last_foreground.is_empty()
+        {
+            swap_foreground_state(&mut state, &mut other_states, &last_foreground);
+            last_foreground = state.current_session_id.clone();
         }
         drain_input_queue(&mut state, &mut on_submit);
         state.tick_spinner();
@@ -95,6 +108,35 @@ where
         state,
         submitted: None,
     })
+}
+
+/// Hot-swaps `state` so that its transcript/header/plan match the new
+/// `state.current_session_id`. The previous foreground's contents are stashed
+/// in `other_states` under `previous_id`; if the target session was seen
+/// before, its state is restored, otherwise a fresh state inherits the
+/// header / config / sessions directory from the master view. Called from the
+/// main loop the moment `current_session_id` diverges from the foreground we
+/// last drew.
+pub(super) fn swap_foreground_state(
+    state: &mut TuiState,
+    other_states: &mut std::collections::HashMap<String, TuiState>,
+    previous_id: &str,
+) {
+    let target_id = state.current_session_id.clone();
+    if target_id.is_empty() || previous_id.is_empty() || target_id == previous_id {
+        return;
+    }
+    let mut new_state = other_states.remove(&target_id).unwrap_or_else(|| {
+        let mut fresh = TuiState::new(state.header.clone()).with_config(state.config.clone());
+        fresh.current_session_id = target_id.clone();
+        fresh
+    });
+    new_state.sessions = state.sessions.clone();
+    new_state.current_session_id = target_id.clone();
+    new_state.layout = state.layout.clone();
+    let mut saved = std::mem::replace(state, new_state);
+    saved.current_session_id = previous_id.to_string();
+    other_states.insert(previous_id.to_string(), saved);
 }
 
 /// Applies a keyboard event to the TUI state.

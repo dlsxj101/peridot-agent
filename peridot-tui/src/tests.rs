@@ -2,6 +2,7 @@ use peridot_common::{AskUserRequest, ExecutionMode, Locale, PermissionMode, TuiC
 use peridot_core::{GoalStatus, SlashCommand};
 
 use super::fixtures::{TestScenario, fixture_state};
+use super::input::swap_foreground_state;
 use super::input::*;
 use super::render::*;
 use super::state::{TranscriptEntry, TranscriptKind};
@@ -1611,6 +1612,66 @@ fn record_background_event_skips_subagent_monitor_when_parent_not_foreground() {
         state.subagents.iter().all(|item| item.id != "fork-2"),
         "subagent monitor must only follow the foreground parent"
     );
+}
+
+#[test]
+fn swap_foreground_state_round_trips_transcripts_between_sessions() {
+    use std::collections::HashMap;
+
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    state.current_session_id = "A".to_string();
+    state.sessions.push(SessionDirectoryItem::new("A", "alpha"));
+    state.sessions.push(SessionDirectoryItem::new("B", "beta"));
+    state.push_transcript("hello from A");
+
+    state.current_session_id = "B".to_string();
+    let mut other_states: HashMap<String, TuiState> = HashMap::new();
+    swap_foreground_state(&mut state, &mut other_states, "A");
+
+    assert_eq!(state.current_session_id, "B");
+    assert!(
+        state.transcript.is_empty(),
+        "freshly-swapped foreground starts with a clean transcript"
+    );
+    assert_eq!(state.sessions.len(), 2);
+    assert!(other_states.contains_key("A"));
+    assert_eq!(other_states["A"].transcript.len(), 1);
+    assert_eq!(other_states["A"].transcript[0].text, "hello from A");
+
+    state.push_transcript("hello from B");
+    state.current_session_id = "A".to_string();
+    swap_foreground_state(&mut state, &mut other_states, "B");
+
+    assert_eq!(state.current_session_id, "A");
+    assert_eq!(state.transcript.len(), 1);
+    assert_eq!(state.transcript[0].text, "hello from A");
+    assert!(other_states.contains_key("B"));
+    assert_eq!(other_states["B"].transcript.len(), 1);
+    assert_eq!(other_states["B"].transcript[0].text, "hello from B");
+}
+
+#[test]
+fn swap_foreground_state_noops_when_target_matches_previous() {
+    use std::collections::HashMap;
+
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    state.current_session_id = "A".to_string();
+    state.push_transcript("only line");
+    let mut other_states: HashMap<String, TuiState> = HashMap::new();
+
+    swap_foreground_state(&mut state, &mut other_states, "A");
+
+    assert_eq!(state.current_session_id, "A");
+    assert_eq!(state.transcript.len(), 1);
+    assert!(other_states.is_empty());
 }
 
 #[test]

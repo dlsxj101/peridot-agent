@@ -75,6 +75,12 @@ its parent transcript (M4), and the attention notifier line (M5).
   the child with an empty context (silent no-op), matching the previous
   behaviour for that edge case.
 
+### M6 — Per-session TuiState swap (landed)
+- `run_interactive_with_events` now keeps a per-session `HashMap<String, TuiState>` of stashed states; every time `state.current_session_id` diverges from the foreground that was last rendered (Ctrl+T, Ctrl+W, `/session switch`), `swap_foreground_state` hot-swaps `state` so the visible transcript, plan, header counters, and active stream all jump to the new session.
+- The latest `sessions` directory is always copied from the master view into the swapped-in state, so the tab bar stays consistent regardless of which session is foreground.
+- Background sessions receive `apply_runtime_event` against their own stashed state in addition to the master `record_background_event` counter update — once the user swaps to them, the recorded transcript is already populated.
+- Tests: round-trip `swap_foreground_state` between two sessions preserves each transcript and confirms the helper no-ops when target == previous.
+
 ### M5 — Attention notifier (landed)
 - `TuiState::pending_attention_count()` reports how many non-foreground
   sessions are flagged `pending_attention`. The status bar renders
