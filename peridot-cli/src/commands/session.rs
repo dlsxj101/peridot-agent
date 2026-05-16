@@ -270,7 +270,7 @@ fn handle_session_note(
                 output,
             )?;
         }
-        SessionNoteAction::List => {
+        SessionNoteAction::List { last } => {
             let raw = match std::fs::read_to_string(&notes_path) {
                 Ok(v) => v,
                 Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
@@ -287,24 +287,39 @@ fn handle_session_note(
                     notes.push(value);
                 }
             }
+            let total = notes.len();
+            let trimmed: Vec<&serde_json::Value> = if let Some(limit) = last {
+                let start = total.saturating_sub(*limit);
+                notes[start..].iter().collect()
+            } else {
+                notes.iter().collect()
+            };
             match output {
                 OutputFormat::Json => {
                     println!(
                         "{}",
                         serde_json::to_string_pretty(&serde_json::json!({
                             "id": id,
-                            "notes": notes,
+                            "notes": trimmed,
+                            "total": total,
                         }))?
                     );
                 }
                 OutputFormat::Text => {
-                    if notes.is_empty() {
+                    if trimmed.is_empty() {
                         println!("no notes for {id}");
                     } else {
-                        for note in &notes {
+                        for note in &trimmed {
                             let ts = note["ts"].as_u64().unwrap_or_default();
                             let text = note["text"].as_str().unwrap_or("");
                             println!("[{ts}] {text}");
+                        }
+                        if trimmed.len() < total {
+                            println!(
+                                "... showing {} of {} notes; drop --last for the full list.",
+                                trimmed.len(),
+                                total,
+                            );
                         }
                     }
                 }

@@ -75,6 +75,9 @@ its parent transcript (M4), and the attention notifier line (M5).
   the child with an empty context (silent no-op), matching the previous
   behaviour for that edge case.
 
+### M25 — `session note list --last N` (landed)
+- `peridot session note <id> list` now accepts `--last N` to print only the most recent N entries from `notes.ndjson`. JSON output adds a `total` field next to `notes` so tooling knows when the slice is truncated; text output appends a "... showing X of Y notes; drop --last for the full list." footer in the same case.
+
 ### M24 — `peridot session show` carries notes summary (landed)
 - `peridot session show <id>` now reads `notes.ndjson` (when present) and reports the note count plus the most recent note's body inline. Text output: `  notes: <count>  (<last text>)`; JSON output: `notes_count`, `last_note`.
 - Sessions without a notes file render exactly as before, so the addition is backwards compatible.

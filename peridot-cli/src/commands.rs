@@ -261,7 +261,11 @@ pub(crate) enum SessionNoteAction {
         text: Vec<String>,
     },
     /// Print all notes attached to the session.
-    List,
+    List {
+        /// Only print the most recent N notes.
+        #[arg(long)]
+        last: Option<usize>,
+    },
     /// Remove every note attached to the session.
     Clear,
 }
