@@ -1708,6 +1708,40 @@ fn info_slash_command_summarises_session_metadata() {
 }
 
 #[test]
+fn status_metrics_show_active_subagent_count() {
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    state.subagents.push(SubagentMonitorItem {
+        kind: "fork".to_string(),
+        task: "audit lib".to_string(),
+        status: "running".to_string(),
+        summary: None,
+        id: "fork-1".to_string(),
+        parent_id: Some("parent".to_string()),
+        depth: 1,
+        started_at_unix: 0,
+        tokens: 0,
+    });
+    state.subagents.push(SubagentMonitorItem {
+        kind: "fork".to_string(),
+        task: "verify".to_string(),
+        status: "done".to_string(),
+        summary: Some("ok".to_string()),
+        id: "fork-2".to_string(),
+        parent_id: Some("parent".to_string()),
+        depth: 1,
+        started_at_unix: 0,
+        tokens: 0,
+    });
+
+    let snapshot = render_text_snapshot(&state);
+    assert!(snapshot.contains("subagents 1"));
+}
+
+#[test]
 fn status_metrics_show_turn_count_after_first_turn() {
     let mut state = TuiState::new(HeaderState::new(
         ExecutionMode::Execute,

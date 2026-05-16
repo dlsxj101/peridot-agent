@@ -23,6 +23,14 @@ pub(super) fn render_status_metrics(state: &TuiState) -> String {
     if state.current_turn > 0 {
         parts.push(format!("turn {}", state.current_turn));
     }
+    let active_subagents = state
+        .subagents
+        .iter()
+        .filter(|item| matches!(item.status.as_str(), "running" | "starting"))
+        .count();
+    if active_subagents > 0 {
+        parts.push(format!("subagents {active_subagents}"));
+    }
     if state.config.show_token_count {
         parts.push(format!("{} tok", state.header.total_tokens));
     }

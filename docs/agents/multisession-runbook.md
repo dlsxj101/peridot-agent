@@ -75,6 +75,9 @@ its parent transcript (M4), and the attention notifier line (M5).
   the child with an empty context (silent no-op), matching the previous
   behaviour for that edge case.
 
+### M32 — Status bar carries active subagent count (landed)
+- `render_status_metrics` appends `subagents N` when one or more entries in `state.subagents` have status `running` or `starting`. Done / failed subagents are excluded so the count means "in-flight work" rather than "lifetime spawn count" — useful when a TUI has spawned several `/fork` or `/teammate` sessions and the operator wants a quick activity gauge from the bottom bar without opening the side panel.
+
 ### M31 — `peridot agents show` carries path and rule count (landed)
 - Text output now leads with `# <path> (<N> non-blank lines)` so the operator can tell exactly which instruction file is being read (`AGENTS.md` vs `CLAUDE.md` vs `.peridot/AGENTS.md` vs `.github/copilot-instructions.md`) and how many real rules are inside it. JSON output adds a matching `rule_count` field.
 
