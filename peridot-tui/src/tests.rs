@@ -1415,3 +1415,181 @@ fn approval_runtime_event_opens_panel_and_records_decision() {
             .contains("approval: shell_exec approved")
     );
 }
+
+#[test]
+fn session_new_slash_queues_pending_command_with_task() {
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+
+    apply_slash_command(
+        &mut state,
+        SlashCommand::SessionNew(Some("rewrite README".to_string())),
+    );
+
+    let pending = state.drain_pending_session_commands();
+    assert_eq!(
+        pending,
+        vec![SessionCommandEvent::SessionNew(Some(
+            "rewrite README".to_string()
+        ))]
+    );
+    assert!(
+        state
+            .transcript
+            .last()
+            .unwrap()
+            .text
+            .contains("opening new session with task 'rewrite README'")
+    );
+}
+
+#[test]
+fn session_switch_and_close_slashes_queue_router_intents() {
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    state.current_session_id = "s1".to_string();
+    state.sessions.push(SessionDirectoryItem::new("s1", "main"));
+
+    apply_slash_command(&mut state, SlashCommand::SessionSwitch("s2".to_string()));
+    apply_slash_command(&mut state, SlashCommand::SessionClose("s1".to_string()));
+
+    let pending = state.drain_pending_session_commands();
+    assert_eq!(
+        pending,
+        vec![
+            SessionCommandEvent::SessionSwitch("s2".to_string()),
+            SessionCommandEvent::SessionClose("s1".to_string()),
+        ]
+    );
+}
+
+#[test]
+fn fork_teammate_worktree_slashes_queue_pending_commands() {
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+
+    apply_slash_command(&mut state, SlashCommand::Fork("audit lib.rs".to_string()));
+    apply_slash_command(
+        &mut state,
+        SlashCommand::Teammate("compile checks".to_string()),
+    );
+    apply_slash_command(
+        &mut state,
+        SlashCommand::Worktree {
+            branch: "wt/audit".to_string(),
+            task: "audit branch".to_string(),
+        },
+    );
+
+    let pending = state.drain_pending_session_commands();
+    assert_eq!(
+        pending,
+        vec![
+            SessionCommandEvent::Fork("audit lib.rs".to_string()),
+            SessionCommandEvent::Teammate("compile checks".to_string()),
+            SessionCommandEvent::Worktree {
+                branch: "wt/audit".to_string(),
+                task: "audit branch".to_string(),
+            },
+        ]
+    );
+}
+
+#[test]
+fn record_background_event_updates_directory_stats_and_attention() {
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    state
+        .sessions
+        .push(SessionDirectoryItem::new("bg", "background"));
+
+    state.record_background_event(
+        "bg",
+        &TuiRuntimeEvent::RunStarted {
+            task: "audit".to_string(),
+        },
+    );
+    state.record_background_event(
+        "bg",
+        &TuiRuntimeEvent::UsageUpdated {
+            total_tokens: 1_400,
+            cache_hit_rate: 0.5,
+            cost_usd: 0.04,
+        },
+    );
+    state.record_background_event(
+        "bg",
+        &TuiRuntimeEvent::ApprovalRequested {
+            tool_name: "shell_exec".to_string(),
+            reason: "destructive shell command".to_string(),
+            parameters: serde_json::json!({"command": "rm -rf /tmp/cache"}),
+        },
+    );
+
+    let item = state.sessions.iter().find(|s| s.id == "bg").unwrap();
+    assert_eq!(item.status, AgentRunStatus::Running);
+    assert_eq!(item.tokens, 1_400);
+    assert!((item.cost_usd - 0.04).abs() < f64::EPSILON);
+    assert!(item.pending_attention);
+    assert!(item.last_event_at_unix > 0);
+}
+
+#[test]
+fn record_background_event_marks_finished_status_per_stop_reason() {
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    state.sessions.push(SessionDirectoryItem::new("a", "a"));
+    state.sessions.push(SessionDirectoryItem::new("b", "b"));
+    state.sessions.push(SessionDirectoryItem::new("c", "c"));
+
+    state.record_background_event(
+        "a",
+        &TuiRuntimeEvent::Finished {
+            stop_reason: "Done".to_string(),
+            turns: 1,
+            success: true,
+        },
+    );
+    state.record_background_event(
+        "b",
+        &TuiRuntimeEvent::Finished {
+            stop_reason: "Interrupted".to_string(),
+            turns: 1,
+            success: false,
+        },
+    );
+    state.record_background_event(
+        "c",
+        &TuiRuntimeEvent::Failed {
+            message: "boom".to_string(),
+        },
+    );
+
+    let by_id = |id: &str| {
+        state
+            .sessions
+            .iter()
+            .find(|s| s.id == id)
+            .unwrap()
+            .status
+            .clone()
+    };
+    assert_eq!(by_id("a"), AgentRunStatus::Succeeded);
+    assert_eq!(by_id("b"), AgentRunStatus::Interrupted);
+    assert_eq!(by_id("c"), AgentRunStatus::Failed);
+}

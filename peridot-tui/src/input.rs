@@ -1,5 +1,5 @@
 use super::*;
-use state::{AgentRunStatus, TranscriptKind};
+use state::{AgentRunStatus, SessionCommandEvent, TranscriptKind};
 
 /// Runs the interactive terminal UI until the user quits or submits a task.
 pub fn run_interactive(mut state: TuiState) -> io::Result<TuiExit> {
@@ -26,12 +26,23 @@ pub fn run_interactive(mut state: TuiState) -> io::Result<TuiExit> {
 }
 
 /// Runs the interactive terminal UI while background runtime events update it.
+///
+/// `runtime_events` carries `(session_id, event)` tuples — the foreground
+/// session feeds the main transcript while other ids only update
+/// [`SessionDirectoryItem`](crate::SessionDirectoryItem) counters via
+/// [`TuiState::record_background_event`].
+///
+/// `on_session_command` is invoked whenever a slash command queues a
+/// [`SessionCommandEvent`]; the host translates it into a real
+/// `SessionRouter` mutation.
+#[allow(clippy::too_many_arguments)]
 pub fn run_interactive_with_events<F>(
     mut state: TuiState,
-    runtime_events: std::sync::mpsc::Receiver<TuiRuntimeEvent>,
+    runtime_events: std::sync::mpsc::Receiver<(String, TuiRuntimeEvent)>,
     mut on_submit: F,
     mut on_approval: impl FnMut(ApprovalDecision, ApprovalScope, String, String, &mut TuiState),
     mut on_interrupt: impl FnMut(&mut TuiState),
+    mut on_session_command: impl FnMut(SessionCommandEvent, &mut TuiState),
 ) -> io::Result<TuiExit>
 where
     F: FnMut(String, &mut TuiState),
@@ -40,8 +51,16 @@ where
     let (width, height) = terminal_size()?;
     state.resize(width, height);
     loop {
-        for event in runtime_events.try_iter() {
-            state.apply_runtime_event(event);
+        for (session_id, event) in runtime_events.try_iter() {
+            if state.current_session_id.is_empty() || session_id == state.current_session_id {
+                state.apply_runtime_event(event);
+            } else {
+                state.record_background_event(&session_id, &event);
+            }
+        }
+        let pending = state.drain_pending_session_commands();
+        for cmd in pending {
+            on_session_command(cmd, &mut state);
         }
         drain_input_queue(&mut state, &mut on_submit);
         state.tick_spinner();
@@ -525,52 +544,32 @@ pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
             );
         }
         SlashCommand::Fork(task) => {
-            state.push_transcript(format!("fork queued: {task} (router wiring pending)"));
+            state.push_transcript(format!("fork: {task} — spawning"));
+            state.push_pending_session_command(SessionCommandEvent::Fork(task));
         }
         SlashCommand::Teammate(task) => {
-            state.push_transcript(format!("teammate queued: {task} (worktree spawn pending)"));
+            state.push_transcript(format!("teammate: {task} — spawning worktree"));
+            state.push_pending_session_command(SessionCommandEvent::Teammate(task));
         }
         SlashCommand::Worktree { branch, task } => {
-            state.push_transcript(format!(
-                "worktree queued: {task} on branch {branch} (spawn pending)"
-            ));
+            state.push_transcript(format!("worktree: {task} on branch {branch} — spawning"));
+            state.push_pending_session_command(SessionCommandEvent::Worktree { branch, task });
         }
         SlashCommand::SessionNew(task) => {
             let suffix = task
                 .as_deref()
                 .map(|task| format!(" with task '{task}'"))
                 .unwrap_or_default();
-            state.push_transcript(format!("session new requested{suffix} (router pending)"));
+            state.push_transcript(format!("session: opening new session{suffix}"));
+            state.push_pending_session_command(SessionCommandEvent::SessionNew(task));
         }
         SlashCommand::SessionSwitch(target) => {
-            if let Some(item) = state
-                .sessions
-                .iter()
-                .find(|item| item.id == target || item.title == target)
-            {
-                state.current_session_id = item.id.clone();
-                state.push_transcript(format!("session: switched to {}", item.id));
-            } else {
-                state.push_error(format!("session: no session matching '{target}'"));
-            }
+            state.push_transcript(format!("session: switching to {target}"));
+            state.push_pending_session_command(SessionCommandEvent::SessionSwitch(target));
         }
         SlashCommand::SessionClose(target) => {
-            let before = state.sessions.len();
-            state
-                .sessions
-                .retain(|item| item.id != target && item.title != target);
-            if state.sessions.len() < before {
-                if state.current_session_id == target {
-                    state.current_session_id = state
-                        .sessions
-                        .first()
-                        .map(|item| item.id.clone())
-                        .unwrap_or_default();
-                }
-                state.push_transcript(format!("session closed: {target}"));
-            } else {
-                state.push_error(format!("session: nothing to close for '{target}'"));
-            }
+            state.push_transcript(format!("session: closing {target}"));
+            state.push_pending_session_command(SessionCommandEvent::SessionClose(target));
         }
         SlashCommand::SessionList => {
             if state.sessions.is_empty() {

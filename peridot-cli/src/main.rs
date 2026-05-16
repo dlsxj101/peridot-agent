@@ -34,7 +34,8 @@ use peridot_project::ProjectScanner;
 use peridot_tools::hooks::{HookRunner, HookVariables, lifecycle_hook_variables};
 use peridot_tools::{ToolRegistry, register_builtin_tools, register_mcp_tools};
 use peridot_tui::{
-    ApprovalDecision, HeaderState, TuiRuntimeEvent, TuiState, run_interactive_with_events,
+    ApprovalDecision, HeaderState, SessionCommandEvent, SessionDirectoryItem, TuiRuntimeEvent,
+    TuiState, run_interactive_with_events,
 };
 
 mod commands;
@@ -54,6 +55,7 @@ use providers::{FileMockProvider, live_provider};
 use run_loop::{agent_task_options, run_task, run_task_with_events};
 use run_output::{exit_for_summary, print_run_summary_text, run_summary_output};
 use run_state::{apply_resume, auto_commit_run, save_run_session, unix_timestamp};
+use session_router::{SessionHandle, SessionRouter, WorkspaceIsolation};
 
 /// Peridot autonomous coding agent.
 #[derive(Debug, Parser)]
@@ -413,43 +415,56 @@ async fn main() -> Result<()> {
                     state.push_transcript(
                         "Submitted tasks continue inside this TUI; tool activity and run status stream here.",
                     );
-                    let (event_tx, event_rx) = std::sync::mpsc::channel();
+                    let router: std::sync::Arc<std::sync::Mutex<SessionRouter>> =
+                        std::sync::Arc::new(std::sync::Mutex::new(SessionRouter::new()));
+                    let initial_session_id =
+                        format!("session-{}-{}", std::process::id(), unix_timestamp());
+                    router.lock().unwrap().register(SessionHandle::new(
+                        initial_session_id.clone(),
+                        project_root.clone(),
+                        WorkspaceIsolation::Shared,
+                    ));
+                    state.current_session_id = initial_session_id.clone();
+                    state
+                        .sessions
+                        .push(SessionDirectoryItem::new(&initial_session_id, "main"));
+                    let (event_tx, event_rx) =
+                        std::sync::mpsc::channel::<(String, TuiRuntimeEvent)>();
                     let handle = tokio::runtime::Handle::current();
                     let base_options = agent_task_options(&cli, &config);
                     let run_config = config.clone();
                     let run_project_root = project_root.clone();
-                    let submit_options = base_options.clone();
-                    let approve_options = base_options.clone();
-                    let submit_config = run_config.clone();
-                    let approve_config = run_config.clone();
-                    let submit_project_root = run_project_root.clone();
-                    let approve_project_root = run_project_root.clone();
-                    let active_cancel: std::sync::Arc<
-                        std::sync::Mutex<Option<peridot_core::CancelToken>>,
-                    > = std::sync::Arc::new(std::sync::Mutex::new(None));
-                    let submit_cancel = active_cancel.clone();
-                    let approve_cancel = active_cancel.clone();
-                    let interrupt_cancel = active_cancel.clone();
                     let exit = run_interactive_with_events(
                         state,
                         event_rx,
                         {
                             let event_tx = event_tx.clone();
                             let handle = handle.clone();
+                            let router = router.clone();
+                            let options_template = base_options.clone();
+                            let config_template = run_config.clone();
+                            let project_template = run_project_root.clone();
                             move |task, state| {
-                                let mut options = submit_options.clone();
+                                let foreground = state.current_session_id.clone();
+                                let mut options = options_template.clone();
                                 options.permission = state.header.permission;
                                 options.model = state.header.model.clone();
                                 let token = peridot_core::CancelToken::new();
-                                *submit_cancel.lock().unwrap() = Some(token.clone());
+                                {
+                                    let mut router = router.lock().unwrap();
+                                    if let Some(handle) = router.get_mut(&foreground) {
+                                        handle.cancel = token.clone();
+                                    }
+                                }
                                 spawn_tui_agent_run(
                                     handle.clone(),
                                     event_tx.clone(),
+                                    foreground,
                                     task,
                                     state.header.mode,
                                     options,
-                                    submit_config.clone(),
-                                    submit_project_root.clone(),
+                                    config_template.clone(),
+                                    project_template.clone(),
                                     Some(token),
                                 );
                             }
@@ -457,6 +472,10 @@ async fn main() -> Result<()> {
                         {
                             let event_tx = event_tx.clone();
                             let handle = handle.clone();
+                            let router = router.clone();
+                            let options_template = base_options.clone();
+                            let config_template = run_config.clone();
+                            let project_template = run_project_root.clone();
                             move |decision, scope, _tool_name, reason, state| {
                                 if decision != ApprovalDecision::Approve {
                                     return;
@@ -467,10 +486,11 @@ async fn main() -> Result<()> {
                                     );
                                     return;
                                 };
-                                let mut options = approve_options.clone();
+                                let foreground = state.current_session_id.clone();
+                                let mut options = options_template.clone();
                                 options.permission = state.header.permission;
                                 options.model = state.header.model.clone();
-                                let mut config = approve_config.clone();
+                                let mut config = config_template.clone();
                                 relax_security_for_approval(&mut config, &reason);
                                 if scope != peridot_tui::ApprovalScope::Once {
                                     state.push_transcript(format!(
@@ -478,23 +498,64 @@ async fn main() -> Result<()> {
                                     ));
                                 }
                                 let token = peridot_core::CancelToken::new();
-                                *approve_cancel.lock().unwrap() = Some(token.clone());
+                                {
+                                    let mut router = router.lock().unwrap();
+                                    if let Some(handle) = router.get_mut(&foreground) {
+                                        handle.cancel = token.clone();
+                                    }
+                                }
                                 spawn_tui_agent_run(
                                     handle.clone(),
                                     event_tx.clone(),
+                                    foreground,
                                     task,
                                     state.header.mode,
                                     options,
                                     config,
-                                    approve_project_root.clone(),
+                                    project_template.clone(),
                                     Some(token),
                                 );
                             }
                         },
-                        move |state| {
-                            if let Some(token) = interrupt_cancel.lock().unwrap().take() {
-                                token.cancel();
-                                state.push_transcript("interrupting current run...");
+                        {
+                            let router = router.clone();
+                            move |state| {
+                                let foreground = state.current_session_id.clone();
+                                let cancelled = {
+                                    let router = router.lock().unwrap();
+                                    router
+                                        .get(&foreground)
+                                        .map(|handle| {
+                                            handle.cancel.cancel();
+                                            true
+                                        })
+                                        .unwrap_or(false)
+                                };
+                                if cancelled {
+                                    state.push_transcript("interrupting current run...");
+                                } else {
+                                    state.push_transcript("interrupt: no active run");
+                                }
+                            }
+                        },
+                        {
+                            let router = router.clone();
+                            let event_tx = event_tx.clone();
+                            let handle = handle.clone();
+                            let options_template = base_options.clone();
+                            let config_template = run_config.clone();
+                            let project_template = run_project_root.clone();
+                            move |command, state| {
+                                apply_session_command(
+                                    command,
+                                    state,
+                                    &router,
+                                    &handle,
+                                    &event_tx,
+                                    &options_template,
+                                    &config_template,
+                                    &project_template,
+                                );
                             }
                         },
                     )?;
@@ -510,7 +571,8 @@ async fn main() -> Result<()> {
 #[allow(clippy::too_many_arguments)]
 fn spawn_tui_agent_run(
     handle: tokio::runtime::Handle,
-    event_tx: std::sync::mpsc::Sender<TuiRuntimeEvent>,
+    event_tx: std::sync::mpsc::Sender<(String, TuiRuntimeEvent)>,
+    session_id: String,
     task: String,
     mode: ExecutionMode,
     options: run_loop::AgentTaskOptions,
@@ -520,6 +582,7 @@ fn spawn_tui_agent_run(
 ) {
     handle.spawn(async move {
         let event_sender = event_tx.clone();
+        let session = session_id.clone();
         let result = run_task_with_events(
             task,
             mode,
@@ -528,16 +591,205 @@ fn spawn_tui_agent_run(
             project_root,
             cancel,
             move |event| {
-                let _ = event_sender.send(tui_runtime_event_from_agent(event));
+                let _ = event_sender.send((session.clone(), tui_runtime_event_from_agent(event)));
             },
         )
         .await;
         if let Err(err) = result {
-            let _ = event_tx.send(TuiRuntimeEvent::Failed {
-                message: err.to_string(),
-            });
+            let _ = event_tx.send((
+                session_id,
+                TuiRuntimeEvent::Failed {
+                    message: err.to_string(),
+                },
+            ));
         }
     });
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_session_command(
+    command: SessionCommandEvent,
+    state: &mut TuiState,
+    router: &std::sync::Arc<std::sync::Mutex<SessionRouter>>,
+    handle: &tokio::runtime::Handle,
+    event_tx: &std::sync::mpsc::Sender<(String, TuiRuntimeEvent)>,
+    options_template: &run_loop::AgentTaskOptions,
+    config_template: &PeridotConfig,
+    project_template: &Path,
+) {
+    match command {
+        SessionCommandEvent::SessionNew(task) => {
+            let new_id = format!("session-{}-{}", std::process::id(), unix_timestamp());
+            let title = task.clone().unwrap_or_else(|| "new session".to_string());
+            router.lock().unwrap().register(SessionHandle::new(
+                new_id.clone(),
+                project_template.to_path_buf(),
+                WorkspaceIsolation::Shared,
+            ));
+            state
+                .sessions
+                .push(SessionDirectoryItem::new(&new_id, &title));
+            state.push_transcript(format!("session: registered {new_id}"));
+            if let Some(task) = task {
+                spawn_session_task(
+                    handle,
+                    event_tx,
+                    router,
+                    new_id,
+                    task,
+                    state.header.mode,
+                    state.header.permission,
+                    state.header.model.clone(),
+                    options_template,
+                    config_template,
+                    project_template,
+                );
+            }
+        }
+        SessionCommandEvent::SessionSwitch(target) => {
+            let resolved = resolve_session_id(state, &target);
+            if let Some(id) = resolved {
+                let switched = router.lock().unwrap().switch_to(&id);
+                if switched {
+                    state.current_session_id = id.clone();
+                    if let Some(item) = state.sessions.iter_mut().find(|item| item.id == id) {
+                        item.pending_attention = false;
+                    }
+                    state.push_transcript(format!("session: switched to {id}"));
+                } else {
+                    state.push_error(format!("session: router has no session {id}"));
+                }
+            } else {
+                state.push_error(format!("session: no session matching '{target}'"));
+            }
+        }
+        SessionCommandEvent::SessionClose(target) => {
+            let resolved = resolve_session_id(state, &target);
+            if let Some(id) = resolved {
+                let removed = {
+                    let mut router = router.lock().unwrap();
+                    if let Some(handle) = router.get(&id) {
+                        handle.cancel.cancel();
+                    }
+                    router.close(&id)
+                };
+                if removed {
+                    state.sessions.retain(|item| item.id != id);
+                    if state.current_session_id == id {
+                        state.current_session_id = router
+                            .lock()
+                            .unwrap()
+                            .foreground()
+                            .map(|s| s.to_string())
+                            .unwrap_or_default();
+                    }
+                    state.push_transcript(format!("session: closed {id}"));
+                } else {
+                    state.push_error(format!("session: nothing to close for '{target}'"));
+                }
+            } else {
+                state.push_error(format!("session: no session matching '{target}'"));
+            }
+        }
+        SessionCommandEvent::Fork(task) => {
+            let new_id = format!("fork-{}-{}", std::process::id(), unix_timestamp());
+            let title = task.clone();
+            router.lock().unwrap().register(SessionHandle::new(
+                new_id.clone(),
+                project_template.to_path_buf(),
+                WorkspaceIsolation::Shared,
+            ));
+            state
+                .sessions
+                .push(SessionDirectoryItem::new(&new_id, &title));
+            spawn_session_task(
+                handle,
+                event_tx,
+                router,
+                new_id.clone(),
+                task,
+                state.header.mode,
+                state.header.permission,
+                state.header.model.clone(),
+                options_template,
+                config_template,
+                project_template,
+            );
+            state.push_transcript(format!("fork: registered {new_id}"));
+        }
+        SessionCommandEvent::Teammate(task) | SessionCommandEvent::Worktree { task, .. } => {
+            // Worktree isolation lands in milestone M2; for now the session is
+            // registered as Shared so the agent loop still runs end-to-end.
+            let new_id = format!("teammate-{}-{}", std::process::id(), unix_timestamp());
+            let title = task.clone();
+            router.lock().unwrap().register(SessionHandle::new(
+                new_id.clone(),
+                project_template.to_path_buf(),
+                WorkspaceIsolation::Shared,
+            ));
+            state
+                .sessions
+                .push(SessionDirectoryItem::new(&new_id, &title));
+            spawn_session_task(
+                handle,
+                event_tx,
+                router,
+                new_id.clone(),
+                task,
+                state.header.mode,
+                state.header.permission,
+                state.header.model.clone(),
+                options_template,
+                config_template,
+                project_template,
+            );
+            state.push_transcript(format!(
+                "teammate: registered {new_id} (worktree isolation pending)"
+            ));
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn spawn_session_task(
+    handle: &tokio::runtime::Handle,
+    event_tx: &std::sync::mpsc::Sender<(String, TuiRuntimeEvent)>,
+    router: &std::sync::Arc<std::sync::Mutex<SessionRouter>>,
+    session_id: String,
+    task: String,
+    mode: ExecutionMode,
+    permission: PermissionMode,
+    model: String,
+    options_template: &run_loop::AgentTaskOptions,
+    config_template: &PeridotConfig,
+    project_template: &Path,
+) {
+    let mut options = options_template.clone();
+    options.permission = permission;
+    options.model = model;
+    let token = peridot_core::CancelToken::new();
+    if let Some(session_handle) = router.lock().unwrap().get_mut(&session_id) {
+        session_handle.cancel = token.clone();
+    }
+    spawn_tui_agent_run(
+        handle.clone(),
+        event_tx.clone(),
+        session_id,
+        task,
+        mode,
+        options,
+        config_template.clone(),
+        project_template.to_path_buf(),
+        Some(token),
+    );
+}
+
+fn resolve_session_id(state: &TuiState, target: &str) -> Option<String> {
+    state
+        .sessions
+        .iter()
+        .find(|item| item.id == target || item.title == target)
+        .map(|item| item.id.clone())
 }
 
 fn relax_security_for_approval(config: &mut PeridotConfig, reason: &str) {

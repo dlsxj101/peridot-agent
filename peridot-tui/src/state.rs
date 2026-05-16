@@ -1,4 +1,13 @@
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use super::*;
+
+fn current_unix_seconds() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or_default()
+}
 
 /// TUI layout mode selected from terminal size.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -531,6 +540,35 @@ pub struct TuiState {
     /// Id of the session currently in the foreground of the TUI.
     #[serde(default)]
     pub current_session_id: String,
+    /// Deferred session-router commands emitted from slash handlers. The host
+    /// loop drains these every tick and applies them to its router. Skipped
+    /// from serialisation so resumed sessions never re-execute stale commands.
+    #[serde(default, skip)]
+    pub pending_session_commands: Vec<SessionCommandEvent>,
+}
+
+/// A session-router intent emitted by a slash command. The TUI itself does not
+/// own the router; instead it pushes one of these onto
+/// [`TuiState::pending_session_commands`] and the CLI drains them every tick.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SessionCommandEvent {
+    /// `/session new [task]` — open a new session, optionally with an initial task.
+    SessionNew(Option<String>),
+    /// `/session switch <id|title>` — make a different session the foreground one.
+    SessionSwitch(String),
+    /// `/session close <id|title>` — cancel and remove a session.
+    SessionClose(String),
+    /// `/fork <task>` — spawn a single-turn Fork subagent inline.
+    Fork(String),
+    /// `/teammate <task>` — spawn a worktree-isolated Teammate subagent.
+    Teammate(String),
+    /// `/worktree <branch> <task>` — explicit worktree-isolated fork.
+    Worktree {
+        /// Branch name to materialise as a git worktree.
+        branch: String,
+        /// Initial task text.
+        task: String,
+    },
 }
 
 /// Result produced when an interactive TUI session exits.
@@ -600,6 +638,7 @@ impl TuiState {
             current_turn: 0,
             sessions: Vec::new(),
             current_session_id: String::new(),
+            pending_session_commands: Vec::new(),
         }
     }
 
@@ -647,6 +686,64 @@ impl TuiState {
     /// Appends a debug-only line (hidden unless debug_view is enabled).
     pub fn push_debug(&mut self, text: impl Into<String>) {
         self.push_transcript_entry(TranscriptKind::Debug, text);
+    }
+
+    /// Records a session-router intent that the host loop will pick up next tick.
+    pub fn push_pending_session_command(&mut self, command: SessionCommandEvent) {
+        self.pending_session_commands.push(command);
+    }
+
+    /// Removes and returns every queued session-router intent in FIFO order.
+    pub fn drain_pending_session_commands(&mut self) -> Vec<SessionCommandEvent> {
+        std::mem::take(&mut self.pending_session_commands)
+    }
+
+    /// Updates the [`SessionDirectoryItem`](crate::SessionDirectoryItem) entry
+    /// for a background session in response to a [`TuiRuntimeEvent`]. Foreground
+    /// sessions should consume the event through
+    /// [`apply_runtime_event`](Self::apply_runtime_event) instead — this method
+    /// only tracks counters and attention flags for sessions the user is not
+    /// currently watching.
+    pub fn record_background_event(&mut self, session_id: &str, event: &TuiRuntimeEvent) {
+        if let Some(item) = self.sessions.iter_mut().find(|item| item.id == session_id) {
+            match event {
+                TuiRuntimeEvent::RunStarted { .. } | TuiRuntimeEvent::TurnStarted { .. } => {
+                    item.status = AgentRunStatus::Running;
+                }
+                TuiRuntimeEvent::Finished {
+                    success,
+                    stop_reason,
+                    ..
+                } => {
+                    item.status = if *success {
+                        AgentRunStatus::Succeeded
+                    } else if stop_reason == "Interrupted" {
+                        AgentRunStatus::Interrupted
+                    } else {
+                        AgentRunStatus::Failed
+                    };
+                }
+                TuiRuntimeEvent::Interrupted { .. } => {
+                    item.status = AgentRunStatus::Interrupted;
+                }
+                TuiRuntimeEvent::Failed { .. } => {
+                    item.status = AgentRunStatus::Failed;
+                }
+                TuiRuntimeEvent::UsageUpdated {
+                    total_tokens,
+                    cost_usd,
+                    ..
+                } => {
+                    item.tokens = *total_tokens;
+                    item.cost_usd = *cost_usd;
+                }
+                TuiRuntimeEvent::ApprovalRequested { .. } => {
+                    item.pending_attention = true;
+                }
+                _ => {}
+            }
+            item.last_event_at_unix = current_unix_seconds();
+        }
     }
 
     /// Advances the spinner animation by one frame.

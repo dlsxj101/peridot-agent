@@ -4,11 +4,17 @@
 //! `TuiRuntimeEvent`s from each session's mpsc channel into the TUI, and tracks
 //! a per-process "foreground" session that the TUI is currently focused on.
 //!
-//! This module lands the data model and a single-session-foreground default so
-//! that the existing CLI flow keeps working unchanged. The live `tokio::spawn`
-//! wiring + tab UI integration (Phase 14 / PR10 in the plan) consume this API.
+//! `main.rs` registers an initial foreground session at startup and routes
+//! every `/session new|switch|close`, `/fork`, `/teammate`, `/worktree` slash
+//! intent (carried as [`peridot_tui::SessionCommandEvent`]) through the router.
+//! Worktree isolation and persistence round-trip land in milestones M2/M3 of
+//! the multi-session runbook.
 //!
-//! Items are gated on dead_code while the live wiring is staged in a follow-up PR.
+//! `SessionTotals`, `ActiveSession`, `to_record`, and a couple of router
+//! accessors live on the data model now but are exercised by milestones M2–M5
+//! (worktree isolation, persistence round-trip, subagent fan-in, attention
+//! notifier). They sit behind `#[allow(dead_code)]` until those milestones
+//! land so we don't churn imports on every PR.
 
 #![allow(dead_code)]
 
