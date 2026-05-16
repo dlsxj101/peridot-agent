@@ -555,11 +555,15 @@ pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
             state.push_transcript("commands: /plan /execute /goal <objective> /goal pause|resume|clear|status /safe /auto /yolo /model <name> /cost /plan show /clear /compact /session save /diff /undo /help");
         }
         SlashCommand::Cost => {
+            let provider = state.header.provider.as_deref().unwrap_or("default");
             state.push_transcript(format!(
-                "cost: ${:.4}, tokens: {}, cache: {:.0}%",
+                "cost: ${:.4} · tokens: {} · cache: {:.0}% · model: {} · provider: {} · turn: {}",
                 state.header.cost_usd,
                 state.header.total_tokens,
-                state.header.cache_hit_rate * 100.0
+                state.header.cache_hit_rate * 100.0,
+                state.header.model,
+                provider,
+                state.current_turn,
             ));
         }
         SlashCommand::PlanShow => {

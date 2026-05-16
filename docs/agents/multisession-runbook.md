@@ -75,6 +75,10 @@ its parent transcript (M4), and the attention notifier line (M5).
   the child with an empty context (silent no-op), matching the previous
   behaviour for that edge case.
 
+### M26 — `/cost` slash includes model / provider / turn (landed)
+- Re-renders the `/cost` notice in the transcript as `cost: $X · tokens: T · cache: H% · model: M · provider: P · turn: N` so a quick check answers "where am I, what am I running, and how much has it cost" in one glance.
+- Provider falls back to `default` when no explicit `/provider` is in effect; turn is `state.current_turn` (0 before the first turn).
+
 ### M25 — `session note list --last N` (landed)
 - `peridot session note <id> list` now accepts `--last N` to print only the most recent N entries from `notes.ndjson`. JSON output adds a `total` field next to `notes` so tooling knows when the slice is truncated; text output appends a "... showing X of Y notes; drop --last for the full list." footer in the same case.
 
