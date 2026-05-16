@@ -141,6 +141,8 @@ pub(crate) enum ConfigCommand {
     Show,
     /// Open project-local config in $EDITOR.
     Edit,
+    /// List supported live providers (`auth.primary` values).
+    Providers,
 }
 
 /// Session subcommands.

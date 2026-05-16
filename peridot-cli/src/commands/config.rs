@@ -244,7 +244,48 @@ pub(crate) fn run_config_command(
         }
         ConfigCommand::Show => print_config(config, output),
         ConfigCommand::Edit => edit_project_config(project_root),
+        ConfigCommand::Providers => print_provider_catalog(config, output),
     }
+}
+
+fn print_provider_catalog(config: &PeridotConfig, output: OutputFormat) -> Result<()> {
+    let providers = [
+        ("claude-api", "Anthropic Claude API"),
+        ("openai-api", "OpenAI API (api.openai.com)"),
+        ("openrouter-api", "OpenRouter (openrouter.ai/api)"),
+        ("openai-oauth", "OpenAI OAuth (Codex)"),
+        ("codex", "Codex App Server (local)"),
+    ];
+    let active = config.auth.primary.as_str();
+    match output {
+        OutputFormat::Json => {
+            let payload: Vec<_> = providers
+                .iter()
+                .map(|(name, description)| {
+                    serde_json::json!({
+                        "name": name,
+                        "description": description,
+                        "active": *name == active,
+                    })
+                })
+                .collect();
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "active": active,
+                    "providers": payload,
+                }))?
+            );
+        }
+        OutputFormat::Text => {
+            println!("active provider: {active}");
+            for (name, description) in providers {
+                let marker = if name == active { "*" } else { " " };
+                println!("  {marker} {name:<16} {description}");
+            }
+        }
+    }
+    Ok(())
 }
 
 pub(super) fn init_project_config(project_root: &Path, output: OutputFormat) -> Result<()> {

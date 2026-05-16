@@ -75,6 +75,10 @@ its parent transcript (M4), and the attention notifier line (M5).
   the child with an empty context (silent no-op), matching the previous
   behaviour for that edge case.
 
+### M27 — `peridot config providers` catalog (landed)
+- Lists the five live provider keys the CLI accepts (`claude-api`, `openai-api`, `openrouter-api`, `openai-oauth`, `codex`) with short descriptions and marks the one currently set as `auth.primary` in the project config.
+- JSON output mirrors the same shape (`{ active, providers: [{ name, description, active }] }`) so tooling can pick a sensible value before calling `peridot config set auth.primary <name>`.
+
 ### M26 — `/cost` slash includes model / provider / turn (landed)
 - Re-renders the `/cost` notice in the transcript as `cost: $X · tokens: T · cache: H% · model: M · provider: P · turn: N` so a quick check answers "where am I, what am I running, and how much has it cost" in one glance.
 - Provider falls back to `default` when no explicit `/provider` is in effect; turn is `state.current_turn` (0 before the first turn).
