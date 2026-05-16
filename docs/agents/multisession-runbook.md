@@ -75,6 +75,10 @@ its parent transcript (M4), and the attention notifier line (M5).
   the child with an empty context (silent no-op), matching the previous
   behaviour for that edge case.
 
+### M19 — Workspace label in status bar (landed)
+- `HeaderState.workspace_label: Option<String>` (#[serde(default)]) carries the project root's basename. `peridot-cli` populates it from `project_root.file_name()` at TUI startup (and on resume) so the status bar reads `workspace <name>` next to mode/permission.
+- The label is per-session, so a `/teammate` worktree session that targets a different checkout will naturally show a different `workspace` label than the foreground session.
+
 ### M18 — AGENTS.md hot reload (landed)
 - `HarnessAgent::set_agents_md_path` lets the host point the agent at the AGENTS-style instruction file the project resolves (`.peridot/AGENTS.md`, `AGENTS.md`, `CLAUDE.md`, or `.github/copilot-instructions.md`, in that priority order). `peridot_project::locate_agents_md` resolves this from the project root.
 - Every turn the agent loop calls `refresh_agents_md`: it compares `(modified_unix, len)` against the last-seen fingerprint and, when the file has been edited mid-run, re-reads the content, appends a trusted `ContextEntry::PlanReminder` carrying the new rules into the context, and emits `AgentRunEvent::AgentsMdLoaded` so the TUI side panel reflects the refresh. The first turn after `set_agents_md_path` always fires the inject because the signature starts as `None`.

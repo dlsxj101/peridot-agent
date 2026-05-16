@@ -44,6 +44,11 @@ pub struct HeaderState {
     /// config's primary auth selection.
     #[serde(default)]
     pub provider: Option<String>,
+    /// Display label for the workspace this session targets (typically the
+    /// project root's basename). Rendered in the status bar so the operator
+    /// can tell which checkout each session is acting against.
+    #[serde(default)]
+    pub workspace_label: Option<String>,
 }
 
 impl HeaderState {
@@ -58,6 +63,7 @@ impl HeaderState {
             cost_usd: 0.0,
             update_available: None,
             provider: None,
+            workspace_label: None,
         }
     }
 

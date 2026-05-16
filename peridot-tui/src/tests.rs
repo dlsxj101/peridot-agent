@@ -1660,6 +1660,19 @@ fn ask_user_freeform_accepts_shift_enter_and_ctrl_j_newline() {
 }
 
 #[test]
+fn workspace_label_appears_in_status_metrics_when_set() {
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    state.header.workspace_label = Some("peridot-agent".to_string());
+
+    let snapshot = render_text_snapshot(&state);
+    assert!(snapshot.contains("workspace peridot-agent"));
+}
+
+#[test]
 fn provider_slash_command_updates_header_and_status_metrics() {
     let mut state = TuiState::new(HeaderState::new(
         ExecutionMode::Execute,

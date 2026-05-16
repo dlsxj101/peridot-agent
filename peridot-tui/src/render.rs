@@ -14,6 +14,9 @@ pub(super) fn render_status_metrics(state: &TuiState) -> String {
         "{} · {}",
         state.header.mode, state.header.permission
     )];
+    if let Some(workspace) = state.header.workspace_label.as_deref() {
+        parts.push(format!("workspace {workspace}"));
+    }
     if let Some(provider) = state.header.provider.as_deref() {
         parts.push(format!("provider {provider}"));
     }

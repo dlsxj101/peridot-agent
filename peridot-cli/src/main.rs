@@ -416,16 +416,21 @@ async fn main() -> Result<()> {
                         .resume
                         .as_deref()
                         .and_then(|id| restore_tui_state_from_disk(id, &project_root).ok());
+                    let workspace_label = project_root
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .map(|name| name.to_string());
                     let mut state = match restored_state {
                         Some((id, restored)) => {
                             let mut state = restored.with_config(config.tui.clone());
+                            state.header.workspace_label = workspace_label.clone();
                             state.push_notice(format!("session: resumed {id} from disk"));
                             state
                         }
                         None => {
-                            let mut state =
-                                TuiState::new(HeaderState::new(mode, permission, model.clone()))
-                                    .with_config(config.tui.clone());
+                            let mut header = HeaderState::new(mode, permission, model.clone());
+                            header.workspace_label = workspace_label.clone();
+                            let mut state = TuiState::new(header).with_config(config.tui.clone());
                             state.push_transcript("Peridot ready. Type a task, /plan, /execute, /goal <objective>, /safe, /auto, /yolo, or Esc.");
                             state.push_transcript(
                                 "Submitted tasks continue inside this TUI; tool activity and run status stream here.",
