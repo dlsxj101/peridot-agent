@@ -742,6 +742,61 @@ fn busy_agent_queues_input_and_drains_when_idle() {
 }
 
 #[test]
+fn tool_preview_lines_render_without_inheriting_parent_icon() {
+    use ratatui::{Terminal, backend::TestBackend};
+
+    let backend = TestBackend::new(120, 32);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    state.resize(120, 32);
+    state.apply_runtime_event(TuiRuntimeEvent::ToolStarted {
+        name: "shell_exec".to_string(),
+        parameters: serde_json::json!({"command": "ls"}),
+    });
+    state.apply_runtime_event(TuiRuntimeEvent::ToolFinished {
+        name: "shell_exec".to_string(),
+        success: true,
+        summary: "ok".to_string(),
+        output: serde_json::json!({"status": 0, "stdout": "one\n"}),
+    });
+    terminal.draw(|frame| draw(frame, &state)).unwrap();
+    let rendered = format!("{:?}", terminal.backend().buffer());
+    // Header lines keep their icon, indented preview lines must NOT.
+    assert!(rendered.contains("\u{2714} tool shell_exec: ok"));
+    assert!(!rendered.contains("\u{2714}   status"));
+    assert!(!rendered.contains("\u{2714}   stdout"));
+    assert!(!rendered.contains("\u{2022}   command"));
+}
+
+#[test]
+fn debug_raw_entry_is_truncated_with_ellipsis() {
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    state.debug_view = true;
+    let long_payload = "x".repeat(500);
+    state.apply_runtime_event(TuiRuntimeEvent::AssistantDelta {
+        delta: long_payload,
+    });
+    state.apply_runtime_event(TuiRuntimeEvent::AssistantFinished);
+
+    let raw = state
+        .transcript
+        .iter()
+        .find(|entry| entry.text.starts_with("assistant raw:"))
+        .expect("debug raw entry");
+    assert!(raw.text.ends_with("..."));
+    assert!(raw.text.chars().count() < 200);
+    assert!(!raw.text.contains(&"x".repeat(400)));
+}
+
+#[test]
 fn status_bar_reflects_active_tool_and_spinner() {
     let mut state = TuiState::new(HeaderState::new(
         ExecutionMode::Execute,

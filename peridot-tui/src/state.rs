@@ -663,9 +663,10 @@ impl TuiState {
                 );
             }
             if self.debug_view {
+                let summary = truncate_for_debug(content, 80);
                 self.push_transcript_entry(
                     TranscriptKind::Debug,
-                    format!("{} raw: {content}", stream.label),
+                    format!("{} raw: {summary}", stream.label),
                 );
             }
             let _ = parsed;
@@ -978,6 +979,21 @@ impl TuiState {
             let overflow = self.subagents.len() - 6;
             self.subagents.drain(0..overflow);
         }
+    }
+}
+
+/// Truncates raw debug content to `max_chars` characters with an ellipsis suffix when shortened.
+fn truncate_for_debug(text: &str, max_chars: usize) -> String {
+    let collapsed: String = text
+        .lines()
+        .collect::<Vec<_>>()
+        .join(" \u{21B5} ");
+    let mut chars = collapsed.chars();
+    let head: String = chars.by_ref().take(max_chars).collect();
+    if chars.next().is_some() {
+        format!("{head}...")
+    } else {
+        head
     }
 }
 
