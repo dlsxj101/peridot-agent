@@ -245,7 +245,27 @@ pub(crate) fn run_config_command(
         ConfigCommand::Show => print_config(config, output),
         ConfigCommand::Edit => edit_project_config(project_root),
         ConfigCommand::Providers => print_provider_catalog(config, output),
+        ConfigCommand::Models => print_model_catalog(config, output),
     }
+}
+
+fn print_model_catalog(config: &PeridotConfig, output: OutputFormat) -> Result<()> {
+    match output {
+        OutputFormat::Json => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "main": config.models.main,
+                    "goal_checker": config.models.goal_checker,
+                }))?
+            );
+        }
+        OutputFormat::Text => {
+            println!("main:         {}", config.models.main);
+            println!("goal_checker: {}", config.models.goal_checker);
+        }
+    }
+    Ok(())
 }
 
 fn print_provider_catalog(config: &PeridotConfig, output: OutputFormat) -> Result<()> {

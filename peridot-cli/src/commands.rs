@@ -143,6 +143,8 @@ pub(crate) enum ConfigCommand {
     Edit,
     /// List supported live providers (`auth.primary` values).
     Providers,
+    /// Print the configured main and goal-checker model names.
+    Models,
 }
 
 /// Session subcommands.

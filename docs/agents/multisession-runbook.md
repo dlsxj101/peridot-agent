@@ -75,6 +75,9 @@ its parent transcript (M4), and the attention notifier line (M5).
   the child with an empty context (silent no-op), matching the previous
   behaviour for that edge case.
 
+### M29 — `peridot config models` catalog (landed)
+- Prints the two configured model names from `PeridotConfig.models`: `main` (used by `HarnessAgent`) and `goal_checker` (used by goal mode). JSON output mirrors the same fields. Pairs with M27's `peridot config providers` so an operator can introspect both halves of "what runs where" without `peridot config show`'s full dump.
+
 ### M28 — `/info` slash one-shot session summary (landed)
 - New `SlashCommand::Info` (no argument). When typed inside the TUI, prints a single transcript line that bundles `session id · workspace · model · provider · mode · permission · turn · tokens · cost` so an operator can confirm the entire session context without combining `/cost`, status bar, and tab bar.
 - Picker advertises the command in the same `session` category as `/cost`, `/note`, and `/provider`.
