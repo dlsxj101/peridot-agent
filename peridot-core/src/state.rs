@@ -58,7 +58,8 @@ impl AgentState {
             | SlashCommand::Compact
             | SlashCommand::SessionSave
             | SlashCommand::Diff
-            | SlashCommand::Undo => {}
+            | SlashCommand::Undo
+            | SlashCommand::Lang(_) => {}
         }
     }
 }

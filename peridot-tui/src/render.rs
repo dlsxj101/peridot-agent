@@ -261,25 +261,26 @@ fn style_active_stream(state: &TuiState, stream: &StreamState) -> Option<Line<'s
 
 /// Human-readable description of the current agent activity.
 pub(super) fn agent_status_summary(state: &TuiState) -> String {
+    let locale = state.config.language;
     if state.ask_user.is_some() {
-        return "사용자 응답 대기".to_string();
+        return tr(PhraseKey::StatusWaitingUser, locale).to_string();
     }
     if state.approval.is_some() || state.agent_run_status == AgentRunStatus::WaitingApproval {
-        return "승인 대기 중".to_string();
+        return tr(PhraseKey::StatusWaitingApproval, locale).to_string();
     }
     if !state.active_tools.is_empty() {
         let names = state.active_tools.join(", ");
-        return format!("도구 실행 중: {names}");
+        return format!("{} {names}", tr(PhraseKey::StatusToolRunning, locale));
     }
     if state.active_stream.is_some() {
-        return "처리 중...".to_string();
+        return tr(PhraseKey::StatusProcessing, locale).to_string();
     }
     match state.agent_run_status {
-        AgentRunStatus::Idle => "대기 중".to_string(),
-        AgentRunStatus::Running => "처리 중...".to_string(),
-        AgentRunStatus::Succeeded => "완료".to_string(),
-        AgentRunStatus::Failed => "실패".to_string(),
-        AgentRunStatus::WaitingApproval => "승인 대기 중".to_string(),
+        AgentRunStatus::Idle => tr(PhraseKey::StatusIdle, locale).to_string(),
+        AgentRunStatus::Running => tr(PhraseKey::StatusProcessing, locale).to_string(),
+        AgentRunStatus::Succeeded => tr(PhraseKey::StatusDone, locale).to_string(),
+        AgentRunStatus::Failed => tr(PhraseKey::StatusFailed, locale).to_string(),
+        AgentRunStatus::WaitingApproval => tr(PhraseKey::StatusWaitingApproval, locale).to_string(),
     }
 }
 
@@ -321,7 +322,11 @@ fn render_status_bar(state: &TuiState) -> Line<'static> {
     spans.push(Span::raw(agent_status_summary(state)));
     if !state.input_queue.is_empty() {
         spans.push(Span::styled(
-            format!("  | 대기열 {} 건", state.input_queue.len()),
+            format!(
+                "  | {} {}",
+                tr(PhraseKey::StatusQueueSuffix, state.config.language),
+                state.input_queue.len()
+            ),
             Style::default()
                 .fg(Color::Yellow)
                 .add_modifier(Modifier::DIM),

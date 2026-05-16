@@ -1,4 +1,4 @@
-use peridot_common::{AskUserRequest, ExecutionMode, PermissionMode, TuiConfig};
+use peridot_common::{AskUserRequest, ExecutionMode, Locale, PermissionMode, TuiConfig};
 use peridot_core::{GoalStatus, SlashCommand};
 
 use super::input::*;
@@ -780,6 +780,65 @@ fn assistant_tool_call_action_emits_no_visible_assistant_line() {
 }
 
 #[test]
+fn locale_switches_status_bar_strings() {
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    assert_eq!(state.config.language, Locale::En);
+    let snapshot = render_text_snapshot(&state);
+    assert!(snapshot.contains("status: idle"));
+
+    state.config.language = Locale::Ko;
+    let snapshot = render_text_snapshot(&state);
+    assert!(snapshot.contains("status: 대기 중"));
+
+    state.config.language = Locale::En;
+    state.apply_runtime_event(TuiRuntimeEvent::ToolStarted {
+        name: "shell_exec".to_string(),
+        parameters: serde_json::json!({}),
+    });
+    let snapshot = render_text_snapshot(&state);
+    assert!(snapshot.contains("status: tool running: shell_exec"));
+}
+
+#[test]
+fn lang_slash_command_changes_locale() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    assert_eq!(state.config.language, Locale::En);
+    for character in "/lang ko".chars() {
+        handle_key_event(
+            &mut state,
+            KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE),
+        );
+    }
+    handle_key_event(
+        &mut state,
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+    );
+    assert_eq!(state.config.language, Locale::Ko);
+
+    for character in "/lang en".chars() {
+        handle_key_event(
+            &mut state,
+            KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE),
+        );
+    }
+    handle_key_event(
+        &mut state,
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+    );
+    assert_eq!(state.config.language, Locale::En);
+}
+
+#[test]
 fn busy_agent_queues_input_and_drains_when_idle() {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -805,9 +864,12 @@ fn busy_agent_queues_input_and_drains_when_idle() {
     );
     assert_eq!(outcome, TuiEventOutcome::Continue);
     assert_eq!(state.input_queue, vec!["second".to_string()]);
-    assert!(state.transcript.iter().any(
-        |entry| entry.kind == TranscriptKind::Notice && entry.text.contains("대기열에 추가됨")
-    ));
+    assert!(
+        state
+            .transcript
+            .iter()
+            .any(|entry| entry.kind == TranscriptKind::Notice && entry.text.contains("queued"))
+    );
 
     state.apply_runtime_event(TuiRuntimeEvent::Finished {
         stop_reason: "Done".to_string(),
@@ -893,7 +955,7 @@ fn status_bar_reflects_active_tool_and_spinner() {
         parameters: serde_json::json!({}),
     });
     let snapshot = render_text_snapshot(&state);
-    assert!(snapshot.contains("status: 도구 실행 중: shell_exec"));
+    assert!(snapshot.contains("status: tool running: shell_exec"));
 
     state.apply_runtime_event(TuiRuntimeEvent::ToolFinished {
         name: "shell_exec".to_string(),

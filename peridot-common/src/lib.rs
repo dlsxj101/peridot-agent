@@ -271,12 +271,47 @@ pub struct PeridotConfig {
     pub hooks: HooksConfig,
 }
 
+/// Display locale for user-facing strings in the TUI.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Locale {
+    /// English.
+    #[default]
+    En,
+    /// Korean.
+    Ko,
+}
+
+impl fmt::Display for Locale {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Locale::En => formatter.write_str("en"),
+            Locale::Ko => formatter.write_str("ko"),
+        }
+    }
+}
+
+impl std::str::FromStr for Locale {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "en" | "english" => Ok(Locale::En),
+            "ko" | "korean" | "kr" => Ok(Locale::Ko),
+            other => Err(format!("unsupported locale: {other}")),
+        }
+    }
+}
+
 /// Terminal UI configuration.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct TuiConfig {
     /// Theme identifier.
     #[serde(default = "default_tui_theme")]
     pub theme: String,
+    /// Display locale for status text, queue messages, and other free-form UI strings.
+    #[serde(default)]
+    pub language: Locale,
     /// Whether model thinking should be shown when available.
     #[serde(default = "default_true")]
     pub show_thinking: bool,
@@ -301,6 +336,7 @@ impl Default for TuiConfig {
     fn default() -> Self {
         Self {
             theme: default_tui_theme(),
+            language: Locale::default(),
             show_thinking: true,
             show_token_count: true,
             show_cost: true,

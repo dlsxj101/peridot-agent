@@ -25,12 +25,15 @@ use ratatui::{
 use serde::{Deserialize, Serialize};
 
 mod ask_user;
+mod i18n;
 mod input;
 mod render;
 mod state;
 mod terminal;
 #[cfg(test)]
 mod tests;
+
+pub use i18n::{PhraseKey, tr};
 
 pub use ask_user::{ApprovalDecision, ApprovalPanel, AskUserPanel, MenuState};
 pub use input::{handle_key_event, run_interactive, run_interactive_with_events};

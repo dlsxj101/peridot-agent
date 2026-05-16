@@ -1,3 +1,6 @@
+use std::str::FromStr;
+
+use peridot_common::Locale;
 use serde::{Deserialize, Serialize};
 
 /// Slash commands supported by Peridot's interactive surfaces.
@@ -41,6 +44,8 @@ pub enum SlashCommand {
     Diff,
     /// Undo the last change.
     Undo,
+    /// Change the display locale for TUI strings.
+    Lang(Locale),
 }
 
 /// Parses a user slash command.
@@ -64,6 +69,7 @@ pub fn parse_slash_command(input: &str) -> Option<SlashCommand> {
         "diff" if rest.is_empty() => Some(SlashCommand::Diff),
         "undo" if rest.is_empty() => Some(SlashCommand::Undo),
         "model" if !rest.is_empty() => Some(SlashCommand::Model(rest.to_string())),
+        "lang" if !rest.is_empty() => Locale::from_str(rest).ok().map(SlashCommand::Lang),
         "session" if rest == "save" => Some(SlashCommand::SessionSave),
         "plan" if rest == "show" => Some(SlashCommand::PlanShow),
         "goal" => match rest {

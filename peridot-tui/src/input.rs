@@ -335,16 +335,20 @@ pub(super) fn submit_input(state: &mut TuiState) -> TuiEventOutcome {
         return TuiEventOutcome::Continue;
     }
     if state.is_agent_busy() {
+        let locale = state.config.language;
         let current = state
             .last_task
             .as_deref()
-            .map(|task| format!("작업 중: {task}"))
-            .unwrap_or_else(|| "현재 작업 진행 중".to_string());
+            .map(|task| format!("{} {task}", crate::tr(PhraseKey::NoticeRunning, locale)))
+            .unwrap_or_else(|| crate::tr(PhraseKey::NoticeRunningGeneric, locale).to_string());
         state.input_queue.push(input);
         let queued = state.input_queue.len();
         state.push_transcript_entry(
             TranscriptKind::Notice,
-            format!("대기열에 추가됨 (#{queued}) — {current}"),
+            format!(
+                "{} (#{queued}) — {current}",
+                crate::tr(PhraseKey::NoticeQueued, locale)
+            ),
         );
         return TuiEventOutcome::Continue;
     }
@@ -468,6 +472,10 @@ pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
             let from = state.header.model.clone();
             state.header.model = model.clone();
             state.push_transcript(format!("model: {from} -> {model}"));
+        }
+        SlashCommand::Lang(locale) => {
+            state.config.language = locale;
+            state.push_transcript(format!("lang: {locale}"));
         }
         SlashCommand::Compact => {
             state.push_transcript("compact: queued for next agent turn");
