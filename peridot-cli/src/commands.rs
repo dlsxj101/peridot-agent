@@ -192,6 +192,17 @@ pub(crate) enum SessionCommand {
         #[arg(long)]
         from_now: bool,
     },
+    /// Search persisted transcripts for a substring (case insensitive).
+    Search {
+        /// Substring to look for.
+        query: String,
+        /// Restrict the search to one session id.
+        #[arg(long)]
+        session: Option<String>,
+        /// Stop after the first N matches.
+        #[arg(long)]
+        limit: Option<usize>,
+    },
 }
 
 /// AGENTS.md subcommands.

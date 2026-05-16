@@ -132,6 +132,86 @@ pub(crate) fn run_session_command(
         } => {
             tail_session_transcript(project_root, id, *interval_ms, *from_now)?;
         }
+        SessionCommand::Search {
+            query,
+            session,
+            limit,
+        } => {
+            search_session_transcripts(project_root, query, session.as_deref(), *limit, output)?;
+        }
+    }
+    Ok(())
+}
+
+fn search_session_transcripts(
+    project_root: &Path,
+    query: &str,
+    only_session: Option<&str>,
+    limit: Option<usize>,
+    output: OutputFormat,
+) -> Result<()> {
+    if query.is_empty() {
+        anyhow::bail!("search query must not be empty");
+    }
+    let needle = query.to_ascii_lowercase();
+    let sessions_root = project_root.join(".peridot").join("sessions");
+    let session_ids: Vec<String> = match only_session {
+        Some(id) => vec![id.to_string()],
+        None => match std::fs::read_dir(&sessions_root) {
+            Ok(entries) => entries
+                .filter_map(|entry| entry.ok())
+                .filter(|entry| entry.path().is_dir())
+                .filter_map(|entry| entry.file_name().into_string().ok())
+                .collect(),
+            Err(_) => Vec::new(),
+        },
+    };
+    let mut hits: Vec<serde_json::Value> = Vec::new();
+    let cap = limit.unwrap_or(usize::MAX);
+    'outer: for id in session_ids {
+        let Ok(entries) = load_session_transcript(project_root, &id) else {
+            continue;
+        };
+        for (index, entry) in entries.iter().enumerate() {
+            if entry.text.to_ascii_lowercase().contains(&needle) {
+                hits.push(serde_json::json!({
+                    "session": id,
+                    "index": index,
+                    "kind": format!("{:?}", entry.kind).to_ascii_lowercase(),
+                    "text": entry.text,
+                }));
+                if hits.len() >= cap {
+                    break 'outer;
+                }
+            }
+        }
+    }
+    match output {
+        OutputFormat::Json => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "query": query,
+                    "total": hits.len(),
+                    "hits": hits,
+                }))?
+            );
+        }
+        OutputFormat::Text => {
+            if hits.is_empty() {
+                println!("no matches for '{query}'");
+            } else {
+                for hit in &hits {
+                    println!(
+                        "{}[{}] {} {}",
+                        hit["session"].as_str().unwrap_or("?"),
+                        hit["index"].as_u64().unwrap_or_default(),
+                        hit["kind"].as_str().unwrap_or("?"),
+                        hit["text"].as_str().unwrap_or(""),
+                    );
+                }
+            }
+        }
     }
     Ok(())
 }
