@@ -20,7 +20,9 @@ use peridot_common::{
     PermissionMode,
 };
 use peridot_context::{ContextLimits, ContextManager, project_context_limits};
-use peridot_core::{AgentRunRequest, AgentRunSummary, AgentState, HarnessAgent, StopReason};
+use peridot_core::{
+    AgentRunEvent, AgentRunRequest, AgentRunSummary, AgentState, HarnessAgent, StopReason,
+};
 use peridot_git::GitManager;
 use peridot_llm::{
     AuthMethod, ClaudeProvider, CodexAppServerProvider, CompletionRequest, CompletionResponse,
@@ -31,7 +33,9 @@ use peridot_memory::{MemoryStore, SessionSummary, StoredSkill};
 use peridot_project::ProjectScanner;
 use peridot_tools::hooks::{HookRunner, HookVariables, lifecycle_hook_variables};
 use peridot_tools::{ToolRegistry, register_builtin_tools, register_mcp_tools};
-use peridot_tui::{HeaderState, TuiState, run_interactive};
+use peridot_tui::{
+    ApprovalDecision, HeaderState, TuiRuntimeEvent, TuiState, run_interactive_with_events,
+};
 
 mod commands;
 mod context_limits;
@@ -46,7 +50,7 @@ mod tests;
 use context_limits::project_context_limits_from_config;
 use interactive_io::{read_piped_task, run_tui_lifecycle_hooks};
 use providers::{FileMockProvider, live_provider};
-use run_loop::run_task;
+use run_loop::{agent_task_options, run_task, run_task_with_events};
 use run_output::{exit_for_summary, print_run_summary_text, run_summary_output};
 use run_state::{apply_resume, auto_commit_run, save_run_session, unix_timestamp};
 
@@ -406,19 +410,165 @@ async fn main() -> Result<()> {
                             .with_config(config.tui.clone());
                     state.push_transcript("Peridot ready. Type a task, /plan, /execute, /goal <objective>, /safe, /auto, /yolo, or Esc.");
                     state.push_transcript(
-                        "Live provider is enabled by default for submitted tasks.",
+                        "Submitted tasks continue inside this TUI; tool activity and run status stream here.",
                     );
-                    let exit = run_interactive(state)?;
+                    let (event_tx, event_rx) = std::sync::mpsc::channel();
+                    let handle = tokio::runtime::Handle::current();
+                    let base_options = agent_task_options(&cli, &config);
+                    let run_config = config.clone();
+                    let run_project_root = project_root.clone();
+                    let submit_options = base_options.clone();
+                    let approve_options = base_options.clone();
+                    let submit_config = run_config.clone();
+                    let approve_config = run_config.clone();
+                    let submit_project_root = run_project_root.clone();
+                    let approve_project_root = run_project_root.clone();
+                    let exit = run_interactive_with_events(
+                        state,
+                        event_rx,
+                        {
+                            let event_tx = event_tx.clone();
+                            let handle = handle.clone();
+                            move |task, state| {
+                                let mut options = submit_options.clone();
+                                options.permission = state.header.permission;
+                                options.model = state.header.model.clone();
+                                spawn_tui_agent_run(
+                                    handle.clone(),
+                                    event_tx.clone(),
+                                    task,
+                                    state.header.mode,
+                                    options,
+                                    submit_config.clone(),
+                                    submit_project_root.clone(),
+                                );
+                            }
+                        },
+                        {
+                            let event_tx = event_tx.clone();
+                            let handle = handle.clone();
+                            move |decision, _tool_name, reason, state| {
+                                if decision != ApprovalDecision::Approve {
+                                    return;
+                                }
+                                let Some(task) = state.last_task.clone() else {
+                                    state.push_transcript(
+                                        "approval: no task is available to resume",
+                                    );
+                                    return;
+                                };
+                                let mut options = approve_options.clone();
+                                options.permission = state.header.permission;
+                                options.model = state.header.model.clone();
+                                let mut config = approve_config.clone();
+                                relax_security_for_approval(&mut config, &reason);
+                                spawn_tui_agent_run(
+                                    handle.clone(),
+                                    event_tx.clone(),
+                                    task,
+                                    state.header.mode,
+                                    options,
+                                    config,
+                                    approve_project_root.clone(),
+                                );
+                            }
+                        },
+                    )?;
                     run_tui_lifecycle_hooks(&exit.state, &config, &project_root)?;
-                    if let Some(task) = exit.submitted {
-                        run_task(task, mode, &cli, &config, &project_root).await?;
-                    }
                 }
             }
         }
     }
 
     Ok(())
+}
+
+fn spawn_tui_agent_run(
+    handle: tokio::runtime::Handle,
+    event_tx: std::sync::mpsc::Sender<TuiRuntimeEvent>,
+    task: String,
+    mode: ExecutionMode,
+    options: run_loop::AgentTaskOptions,
+    config: PeridotConfig,
+    project_root: PathBuf,
+) {
+    handle.spawn(async move {
+        let event_sender = event_tx.clone();
+        let result =
+            run_task_with_events(task, mode, options, config, project_root, move |event| {
+                let _ = event_sender.send(tui_runtime_event_from_agent(event));
+            })
+            .await;
+        if let Err(err) = result {
+            let _ = event_tx.send(TuiRuntimeEvent::Failed {
+                message: err.to_string(),
+            });
+        }
+    });
+}
+
+fn relax_security_for_approval(config: &mut PeridotConfig, reason: &str) {
+    if reason.contains("dependency installation") {
+        config.security.ask_before_install = false;
+    }
+    if reason.contains("destructive shell command") {
+        config.security.ask_before_delete = false;
+    }
+}
+
+fn tui_runtime_event_from_agent(event: AgentRunEvent) -> TuiRuntimeEvent {
+    match event {
+        AgentRunEvent::RunStarted { task } => TuiRuntimeEvent::RunStarted { task },
+        AgentRunEvent::TurnStarted { turn_index } => TuiRuntimeEvent::TurnStarted { turn_index },
+        AgentRunEvent::AssistantStarted { label } => TuiRuntimeEvent::AssistantStarted { label },
+        AgentRunEvent::AssistantDelta { delta } => TuiRuntimeEvent::AssistantDelta { delta },
+        AgentRunEvent::AssistantFinished { .. } => TuiRuntimeEvent::AssistantFinished,
+        AgentRunEvent::Thinking { text } => TuiRuntimeEvent::Thinking { text },
+        AgentRunEvent::ToolStarted { name, parameters } => {
+            TuiRuntimeEvent::ToolStarted { name, parameters }
+        }
+        AgentRunEvent::ToolFinished { name, result } => TuiRuntimeEvent::ToolFinished {
+            name,
+            success: result.success,
+            summary: result.summary,
+            output: result.output,
+        },
+        AgentRunEvent::ApprovalRequested { tool_name, reason } => {
+            TuiRuntimeEvent::ApprovalRequested { tool_name, reason }
+        }
+        AgentRunEvent::UsageUpdated { usage } => {
+            let prompt_tokens =
+                usage.input_tokens + usage.cache_read_tokens + usage.cache_creation_tokens;
+            let cache_hit_rate = if prompt_tokens == 0 {
+                0.0
+            } else {
+                usage.cache_read_tokens as f64 / prompt_tokens as f64
+            };
+            TuiRuntimeEvent::UsageUpdated {
+                total_tokens: usage.input_tokens
+                    + usage.output_tokens
+                    + usage.cache_read_tokens
+                    + usage.cache_creation_tokens
+                    + usage.reasoning_output_tokens,
+                cache_hit_rate,
+                cost_usd: usage.estimated_cost_usd,
+            }
+        }
+        AgentRunEvent::Recovery { message } => TuiRuntimeEvent::Recovery { message },
+        AgentRunEvent::Finished { summary } => TuiRuntimeEvent::Finished {
+            success: summary.stopped_reason == StopReason::Done,
+            stop_reason: format!("{:?}", summary.stopped_reason),
+            turns: summary.turns.len(),
+        },
+        AgentRunEvent::SessionSaved { session_id } => TuiRuntimeEvent::SessionSaved { session_id },
+        AgentRunEvent::SessionSaveFailed {
+            session_id,
+            message,
+        } => TuiRuntimeEvent::SessionSaveFailed {
+            session_id,
+            message,
+        },
+    }
 }
 
 fn env_truthy(name: &str) -> bool {

@@ -15,6 +15,20 @@ fn parses_goal_slash_commands() {
         Some(SlashCommand::GoalPause)
     );
     assert_eq!(parse_slash_command("/safe"), Some(SlashCommand::Safe));
+    assert_eq!(parse_slash_command("/help"), Some(SlashCommand::Help));
+    assert_eq!(parse_slash_command("/cost"), Some(SlashCommand::Cost));
+    assert_eq!(
+        parse_slash_command("/plan show"),
+        Some(SlashCommand::PlanShow)
+    );
+    assert_eq!(
+        parse_slash_command("/model claude-sonnet-4-6"),
+        Some(SlashCommand::Model("claude-sonnet-4-6".to_string()))
+    );
+    assert_eq!(
+        parse_slash_command("/session save"),
+        Some(SlashCommand::SessionSave)
+    );
 }
 
 #[test]

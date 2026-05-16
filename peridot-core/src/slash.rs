@@ -23,6 +23,24 @@ pub enum SlashCommand {
     Auto,
     /// Switch to yolo permission mode.
     Yolo,
+    /// Clear the visible transcript.
+    Clear,
+    /// Show help for interactive commands.
+    Help,
+    /// Show cost and token accounting.
+    Cost,
+    /// Show the current plan.
+    PlanShow,
+    /// Switch the active model.
+    Model(String),
+    /// Request context compaction.
+    Compact,
+    /// Save the current session.
+    SessionSave,
+    /// Show working-tree diff.
+    Diff,
+    /// Undo the last change.
+    Undo,
 }
 
 /// Parses a user slash command.
@@ -39,6 +57,15 @@ pub fn parse_slash_command(input: &str) -> Option<SlashCommand> {
         "safe" if rest.is_empty() => Some(SlashCommand::Safe),
         "auto" if rest.is_empty() => Some(SlashCommand::Auto),
         "yolo" if rest.is_empty() => Some(SlashCommand::Yolo),
+        "clear" if rest.is_empty() => Some(SlashCommand::Clear),
+        "help" if rest.is_empty() => Some(SlashCommand::Help),
+        "cost" if rest.is_empty() => Some(SlashCommand::Cost),
+        "compact" if rest.is_empty() => Some(SlashCommand::Compact),
+        "diff" if rest.is_empty() => Some(SlashCommand::Diff),
+        "undo" if rest.is_empty() => Some(SlashCommand::Undo),
+        "model" if !rest.is_empty() => Some(SlashCommand::Model(rest.to_string())),
+        "session" if rest == "save" => Some(SlashCommand::SessionSave),
+        "plan" if rest == "show" => Some(SlashCommand::PlanShow),
         "goal" => match rest {
             "pause" => Some(SlashCommand::GoalPause),
             "resume" => Some(SlashCommand::GoalResume),

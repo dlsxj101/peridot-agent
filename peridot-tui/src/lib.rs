@@ -17,7 +17,7 @@ use peridot_core::{GoalStatus, SlashCommand, parse_slash_command};
 use ratatui::{
     Frame, Terminal,
     backend::CrosstermBackend,
-    layout::{Constraint, Direction, Layout},
+    layout::{Constraint, Direction, Layout, Position},
     style::{Color, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
@@ -32,12 +32,13 @@ mod terminal;
 #[cfg(test)]
 mod tests;
 
-pub use ask_user::{AskUserPanel, MenuState};
-pub use input::{handle_key_event, run_interactive};
+pub use ask_user::{ApprovalDecision, ApprovalPanel, AskUserPanel, MenuState};
+pub use input::{handle_key_event, run_interactive, run_interactive_with_events};
 use render::goal_status_label;
 pub use render::{draw, render_text_snapshot, select_layout};
 pub use state::{
-    ActivityKind, HeaderState, LayoutMode, PlanStep, RuntimeActivity, SessionStats, SidePanelState,
-    StreamState, SubagentMonitorItem, TuiEventOutcome, TuiExit, TuiLifecycleEvent, TuiState,
+    ActivityKind, AgentRunStatus, HeaderState, LayoutMode, PlanStep, RuntimeActivity, SessionStats,
+    SidePanelState, StreamState, SubagentMonitorItem, TuiEventOutcome, TuiExit, TuiLifecycleEvent,
+    TuiRuntimeEvent, TuiState,
 };
 use terminal::TerminalGuard;

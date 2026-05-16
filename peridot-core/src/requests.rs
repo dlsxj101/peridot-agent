@@ -4,6 +4,90 @@ use peridot_common::{HooksConfig, SecurityConfig, ToolResult};
 use peridot_llm::Usage;
 use serde::{Deserialize, Serialize};
 
+/// User-interface event emitted by the harness run loop.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum AgentRunEvent {
+    /// A bounded run started.
+    RunStarted {
+        /// Initial task text.
+        task: String,
+    },
+    /// A model/tool turn started.
+    TurnStarted {
+        /// Zero-based turn index.
+        turn_index: u32,
+    },
+    /// Assistant streaming began.
+    AssistantStarted {
+        /// Stream label for display.
+        label: String,
+    },
+    /// Assistant text streamed.
+    AssistantDelta {
+        /// Text delta.
+        delta: String,
+    },
+    /// Assistant output completed.
+    AssistantFinished {
+        /// Full assistant text.
+        text: String,
+    },
+    /// Parsed model thinking text.
+    Thinking {
+        /// Thinking text.
+        text: String,
+    },
+    /// Tool execution started.
+    ToolStarted {
+        /// Tool name.
+        name: String,
+        /// Tool parameters.
+        parameters: serde_json::Value,
+    },
+    /// Tool execution finished.
+    ToolFinished {
+        /// Tool name.
+        name: String,
+        /// Tool result.
+        result: ToolResult,
+    },
+    /// A tool needs explicit user approval before it can proceed.
+    ApprovalRequested {
+        /// Tool name.
+        tool_name: String,
+        /// Human-readable reason.
+        reason: String,
+    },
+    /// Usage totals changed.
+    UsageUpdated {
+        /// Aggregated run usage.
+        usage: Usage,
+    },
+    /// The harness entered recovery.
+    Recovery {
+        /// Recovery message.
+        message: String,
+    },
+    /// The bounded run finished.
+    Finished {
+        /// Final run summary.
+        summary: AgentRunSummary,
+    },
+    /// The run summary was saved for later resume.
+    SessionSaved {
+        /// Saved session id.
+        session_id: String,
+    },
+    /// The run summary could not be saved.
+    SessionSaveFailed {
+        /// Intended session id.
+        session_id: String,
+        /// Failure message.
+        message: String,
+    },
+}
+
 /// Request for one agent turn.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AgentTurnRequest {
@@ -68,6 +152,8 @@ pub struct AgentRunRequest {
 pub enum StopReason {
     /// The agent called agent_done.
     Done,
+    /// The run paused because a tool needs explicit approval.
+    ApprovalRequired,
     /// The run hit max turns.
     MaxTurns,
     /// The run hit its configured cost budget.

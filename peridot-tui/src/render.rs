@@ -21,7 +21,23 @@ pub(super) fn render_header_status(state: &TuiState) -> String {
     if let Some(status) = state.goal_status.as_ref() {
         parts.push(format!("goal {}", goal_status_label(Some(status))));
     }
+    if state.agent_run_status != AgentRunStatus::Idle {
+        parts.push(format!(
+            "agent {}",
+            agent_run_status_label(&state.agent_run_status)
+        ));
+    }
     parts.join(" | ")
+}
+
+pub(super) fn agent_run_status_label(status: &AgentRunStatus) -> &'static str {
+    match status {
+        AgentRunStatus::Idle => "idle",
+        AgentRunStatus::Running => "running",
+        AgentRunStatus::Succeeded => "done",
+        AgentRunStatus::Failed => "failed",
+        AgentRunStatus::WaitingApproval => "waiting-approval",
+    }
 }
 
 pub(super) fn goal_status_label(status: Option<&GoalStatus>) -> &'static str {
@@ -137,6 +153,13 @@ pub fn render_text_snapshot(state: &TuiState) -> String {
             state.side_panel.stats.errors,
             state.side_panel.stats.elapsed_seconds
         );
+        if state.agent_run_status != AgentRunStatus::Idle {
+            let _ = writeln!(
+                output,
+                "Agent status: {}",
+                agent_run_status_label(&state.agent_run_status)
+            );
+        }
         if !state.activities.is_empty() {
             let _ = writeln!(output, "Activity");
             for activity in &state.activities {
@@ -201,6 +224,8 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
     };
     let transcript = if let Some(menu) = &state.menu {
         render_menu(menu)
+    } else if let Some(panel) = &state.approval {
+        render_approval_panel(panel)
     } else if let Some(panel) = &state.ask_user {
         render_ask_user_panel(panel)
     } else {
@@ -250,9 +275,10 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
             .map(|status| format!("Goal: {}\n\n", goal_status_label(Some(status))))
             .unwrap_or_default();
         let side = format!(
-            "{goal}Plan {done}/{}\n{}\n\nSession\nsteps: {}\nerrors: {}\nelapsed: {}s\n\n{}\n\n{}",
+            "{goal}Plan {done}/{}\n{}\n\nSession\nagent: {}\nsteps: {}\nerrors: {}\nelapsed: {}s\n\n{}\n\n{}",
             state.side_panel.plan.len(),
             plan,
+            agent_run_status_label(&state.agent_run_status),
             state.side_panel.stats.steps,
             state.side_panel.stats.errors,
             state.side_panel.stats.elapsed_seconds,
@@ -270,11 +296,16 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
             .block(Block::default().title("Input").borders(Borders::ALL)),
         chunks[2],
     );
+    let cursor_x =
+        chunks[2].x + 2 + (state.input_cursor as u16).min(chunks[2].width.saturating_sub(4));
+    frame.set_cursor_position(Position::new(cursor_x, chunks[2].y + 1));
 }
 
 pub(super) fn body_title(state: &TuiState) -> &'static str {
     if state.menu.is_some() {
         "Menu"
+    } else if state.approval.is_some() {
+        "Approval"
     } else if state.ask_user.is_some() {
         "Ask User"
     } else {
@@ -327,6 +358,27 @@ pub(super) fn render_ask_user_panel(panel: &AskUserPanel) -> String {
     } else {
         format!("{}\n\n{}", panel.question, choices)
     }
+}
+
+pub(super) fn render_approval_panel(panel: &ApprovalPanel) -> String {
+    let choices = panel
+        .choices()
+        .iter()
+        .enumerate()
+        .map(|(index, choice)| {
+            let marker = if index == panel.selected_index {
+                ">"
+            } else {
+                " "
+            };
+            format!("{marker} {choice}")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "Approval required\n\nTool: {}\nReason: {}\n\n{}",
+        panel.tool_name, panel.reason, choices
+    )
 }
 
 /// Selects a layout mode from terminal dimensions.

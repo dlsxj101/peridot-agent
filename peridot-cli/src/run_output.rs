@@ -6,6 +6,7 @@ pub(super) fn exit_for_summary(summary: &AgentRunSummary, headless: bool) {
     }
     match summary.stopped_reason {
         StopReason::Done => {}
+        StopReason::ApprovalRequired => std::process::exit(4),
         StopReason::Budget => std::process::exit(2),
         StopReason::MaxTurns => std::process::exit(3),
     }

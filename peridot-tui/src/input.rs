@@ -13,6 +13,7 @@ pub fn run_interactive(mut state: TuiState) -> io::Result<TuiExit> {
                     TuiEventOutcome::Continue => {}
                     TuiEventOutcome::Quit => break None,
                     TuiEventOutcome::Submit(task) => break Some(task),
+                    TuiEventOutcome::Approval { .. } => {}
                 },
                 Event::Resize(width, height) => state.resize(width, height),
                 _ => {}
@@ -22,10 +23,54 @@ pub fn run_interactive(mut state: TuiState) -> io::Result<TuiExit> {
     Ok(TuiExit { state, submitted })
 }
 
+/// Runs the interactive terminal UI while background runtime events update it.
+pub fn run_interactive_with_events<F>(
+    mut state: TuiState,
+    runtime_events: std::sync::mpsc::Receiver<TuiRuntimeEvent>,
+    mut on_submit: F,
+    mut on_approval: impl FnMut(ApprovalDecision, String, String, &mut TuiState),
+) -> io::Result<TuiExit>
+where
+    F: FnMut(String, &mut TuiState),
+{
+    let mut terminal = TerminalGuard::enter()?;
+    let (width, height) = terminal_size()?;
+    state.resize(width, height);
+    loop {
+        for event in runtime_events.try_iter() {
+            state.apply_runtime_event(event);
+        }
+        terminal.terminal.draw(|frame| draw(frame, &state))?;
+        if event::poll(Duration::from_millis(100))? {
+            match event::read()? {
+                Event::Key(key) => match handle_key_event(&mut state, key) {
+                    TuiEventOutcome::Continue => {}
+                    TuiEventOutcome::Quit => break,
+                    TuiEventOutcome::Submit(task) => on_submit(task, &mut state),
+                    TuiEventOutcome::Approval {
+                        decision,
+                        tool_name,
+                        reason,
+                    } => on_approval(decision, tool_name, reason, &mut state),
+                },
+                Event::Resize(width, height) => state.resize(width, height),
+                _ => {}
+            }
+        }
+    }
+    Ok(TuiExit {
+        state,
+        submitted: None,
+    })
+}
+
 /// Applies a keyboard event to the TUI state.
 pub fn handle_key_event(state: &mut TuiState, key: KeyEvent) -> TuiEventOutcome {
     if state.menu.is_some() {
         return handle_menu_key_event(state, key);
+    }
+    if state.approval.is_some() {
+        return handle_approval_key_event(state, key);
     }
     if state.ask_user.is_some() {
         return handle_ask_user_key_event(state, key);
@@ -34,17 +79,72 @@ pub fn handle_key_event(state: &mut TuiState, key: KeyEvent) -> TuiEventOutcome 
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             TuiEventOutcome::Quit
         }
+        KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            TuiEventOutcome::Quit
+        }
+        KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            state.backspace_input();
+            TuiEventOutcome::Continue
+        }
+        KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            state.move_input_cursor_home();
+            TuiEventOutcome::Continue
+        }
+        KeyCode::Char('e') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            state.move_input_cursor_end();
+            TuiEventOutcome::Continue
+        }
+        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            state.clear_input();
+            TuiEventOutcome::Continue
+        }
+        KeyCode::Char('l') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            state.transcript.clear();
+            TuiEventOutcome::Continue
+        }
         KeyCode::Esc => {
             state.menu = Some(MenuState::default());
             TuiEventOutcome::Continue
         }
+        KeyCode::Up => {
+            state.previous_input_history();
+            TuiEventOutcome::Continue
+        }
+        KeyCode::Down => {
+            state.next_input_history();
+            TuiEventOutcome::Continue
+        }
+        KeyCode::Left => {
+            state.move_input_cursor_left();
+            TuiEventOutcome::Continue
+        }
+        KeyCode::Right => {
+            state.move_input_cursor_right();
+            TuiEventOutcome::Continue
+        }
+        KeyCode::Home => {
+            state.move_input_cursor_home();
+            TuiEventOutcome::Continue
+        }
+        KeyCode::End => {
+            state.move_input_cursor_end();
+            TuiEventOutcome::Continue
+        }
         KeyCode::Backspace => {
-            state.input.pop();
+            state.backspace_input();
+            TuiEventOutcome::Continue
+        }
+        KeyCode::Delete => {
+            state.delete_input_char();
             TuiEventOutcome::Continue
         }
         KeyCode::Enter => submit_input(state),
-        KeyCode::Char(character) => {
-            state.input.push(character);
+        KeyCode::Char(character)
+            if !key
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+        {
+            state.insert_input_char(character);
             TuiEventOutcome::Continue
         }
         _ => TuiEventOutcome::Continue,
@@ -109,6 +209,12 @@ pub(super) fn handle_ask_user_key_event(state: &mut TuiState, key: KeyEvent) -> 
             panel.freeform.pop();
             TuiEventOutcome::Continue
         }
+        KeyCode::Char('h')
+            if key.modifiers.contains(KeyModifiers::CONTROL) && panel.choices.is_empty() =>
+        {
+            panel.freeform.pop();
+            TuiEventOutcome::Continue
+        }
         KeyCode::Char(character) if panel.choices.is_empty() => {
             panel.freeform.push(character);
             TuiEventOutcome::Continue
@@ -136,18 +242,76 @@ pub(super) fn handle_ask_user_key_event(state: &mut TuiState, key: KeyEvent) -> 
     }
 }
 
+pub(super) fn handle_approval_key_event(state: &mut TuiState, key: KeyEvent) -> TuiEventOutcome {
+    let Some(panel) = state.approval.as_mut() else {
+        return TuiEventOutcome::Continue;
+    };
+    match key.code {
+        KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('d') => {
+            let tool_name = panel.tool_name.clone();
+            let reason = panel.reason.clone();
+            state.record_approval_decision(ApprovalDecision::Deny);
+            TuiEventOutcome::Approval {
+                decision: ApprovalDecision::Deny,
+                tool_name,
+                reason,
+            }
+        }
+        KeyCode::Char('y') | KeyCode::Char('a') => {
+            let tool_name = panel.tool_name.clone();
+            let reason = panel.reason.clone();
+            state.record_approval_decision(ApprovalDecision::Approve);
+            TuiEventOutcome::Approval {
+                decision: ApprovalDecision::Approve,
+                tool_name,
+                reason,
+            }
+        }
+        KeyCode::Up => {
+            panel.selected_index = panel.selected_index.saturating_sub(1);
+            TuiEventOutcome::Continue
+        }
+        KeyCode::Down => {
+            panel.selected_index = (panel.selected_index + 1).min(panel.choices().len() - 1);
+            TuiEventOutcome::Continue
+        }
+        KeyCode::Enter => {
+            let decision = panel.selected_decision();
+            let tool_name = panel.tool_name.clone();
+            let reason = panel.reason.clone();
+            state.record_approval_decision(decision.clone());
+            TuiEventOutcome::Approval {
+                decision,
+                tool_name,
+                reason,
+            }
+        }
+        _ => TuiEventOutcome::Continue,
+    }
+}
+
 pub(super) fn submit_input(state: &mut TuiState) -> TuiEventOutcome {
     let input = state.input.trim().to_string();
-    state.input.clear();
+    state.clear_input();
     if input.is_empty() {
         return TuiEventOutcome::Continue;
     }
+    state.record_input_history(&input);
     if input == "/quit" || input == "/exit" {
         return TuiEventOutcome::Quit;
     }
     state.push_transcript(format!("> {input}"));
     if let Some(command) = parse_slash_command(&input) {
         apply_slash_command(state, command);
+        return TuiEventOutcome::Continue;
+    }
+    if input.starts_with('/') {
+        state.push_transcript(format!("unknown command: {input}"));
+        state.push_transcript("type /help for available commands");
+        return TuiEventOutcome::Continue;
+    }
+    if state.agent_run_status == AgentRunStatus::Running {
+        state.push_transcript("agent: already running; wait for the current task to finish");
         return TuiEventOutcome::Continue;
     }
     TuiEventOutcome::Submit(input)
@@ -215,6 +379,59 @@ pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
             record_permission_switch(state, PermissionMode::Yolo);
             state.header.permission = PermissionMode::Yolo;
             state.push_transcript("permission: yolo");
+        }
+        SlashCommand::Clear => {
+            state.transcript.clear();
+        }
+        SlashCommand::Help => {
+            state.push_transcript("commands: /plan /execute /goal <objective> /goal pause|resume|clear|status /safe /auto /yolo /model <name> /cost /plan show /clear /compact /session save /diff /undo /help");
+        }
+        SlashCommand::Cost => {
+            state.push_transcript(format!(
+                "cost: ${:.4}, tokens: {}, cache: {:.0}%",
+                state.header.cost_usd,
+                state.header.total_tokens,
+                state.header.cache_hit_rate * 100.0
+            ));
+        }
+        SlashCommand::PlanShow => {
+            if state.side_panel.plan.is_empty() {
+                state.push_transcript("plan: <empty>");
+            } else {
+                let done = state
+                    .side_panel
+                    .plan
+                    .iter()
+                    .filter(|step| step.done)
+                    .count();
+                state.push_transcript(format!(
+                    "plan: {done}/{} steps",
+                    state.side_panel.plan.len()
+                ));
+                for (index, step) in state.side_panel.plan.clone().iter().enumerate() {
+                    let marker = if step.done { "[x]" } else { "[ ]" };
+                    state.push_transcript(format!("{marker} {}. {}", index + 1, step.label));
+                }
+            }
+        }
+        SlashCommand::Model(model) => {
+            let from = state.header.model.clone();
+            state.header.model = model.clone();
+            state.push_transcript(format!("model: {from} -> {model}"));
+        }
+        SlashCommand::Compact => {
+            state.push_transcript("compact: queued for next agent turn");
+        }
+        SlashCommand::SessionSave => {
+            state.push_transcript("session: save requested");
+        }
+        SlashCommand::Diff => {
+            state.push_transcript("diff: use the agent run stream for tool-backed diff output");
+        }
+        SlashCommand::Undo => {
+            state.push_transcript(
+                "undo: requires tool approval in a run; ask Peridot to undo the last change",
+            );
         }
     }
 }

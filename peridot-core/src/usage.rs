@@ -12,18 +12,26 @@ pub(crate) fn accumulate_usage(total: &mut Usage, usage: Usage) {
     total.estimated_cost_usd += usage.estimated_cost_usd;
 }
 
-pub(crate) async fn stream_completion<P>(
+pub(crate) async fn stream_completion_with_chunks<P, F>(
     provider: &P,
     request: CompletionRequest,
+    on_chunk: F,
 ) -> PeriResult<CompletionResponse>
 where
     P: LlmProvider + ?Sized,
+    F: FnMut(&CompletionStreamChunk),
 {
     let chunks = provider.stream(request).await?;
-    collect_stream_chunks(chunks)
+    collect_stream_chunks(chunks, on_chunk)
 }
 
-fn collect_stream_chunks(chunks: Vec<CompletionStreamChunk>) -> PeriResult<CompletionResponse> {
+fn collect_stream_chunks<F>(
+    chunks: Vec<CompletionStreamChunk>,
+    mut on_chunk: F,
+) -> PeriResult<CompletionResponse>
+where
+    F: FnMut(&CompletionStreamChunk),
+{
     if chunks.is_empty() {
         return Err(PeriError::Provider(
             "provider stream returned no chunks".to_string(),
@@ -33,6 +41,7 @@ fn collect_stream_chunks(chunks: Vec<CompletionStreamChunk>) -> PeriResult<Compl
     let mut usage = Usage::default();
     let mut saw_done = false;
     for chunk in chunks {
+        on_chunk(&chunk);
         text.push_str(&chunk.delta);
         if chunk.done {
             saw_done = true;

@@ -49,7 +49,16 @@ impl AgentState {
             SlashCommand::GoalPause
             | SlashCommand::GoalResume
             | SlashCommand::GoalClear
-            | SlashCommand::GoalStatus => {}
+            | SlashCommand::GoalStatus
+            | SlashCommand::Clear
+            | SlashCommand::Help
+            | SlashCommand::Cost
+            | SlashCommand::PlanShow
+            | SlashCommand::Model(_)
+            | SlashCommand::Compact
+            | SlashCommand::SessionSave
+            | SlashCommand::Diff
+            | SlashCommand::Undo => {}
         }
     }
 }

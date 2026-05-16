@@ -30,6 +30,49 @@ pub struct MenuState {
     pub selected_index: usize,
 }
 
+/// Approval prompt shown when a tool needs explicit user confirmation.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ApprovalPanel {
+    /// Tool requesting approval.
+    pub tool_name: String,
+    /// Reason the operation is gated.
+    pub reason: String,
+    /// Currently highlighted choice.
+    pub selected_index: usize,
+}
+
+/// User decision from an approval prompt.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum ApprovalDecision {
+    /// Allow the operation.
+    Approve,
+    /// Deny the operation.
+    Deny,
+}
+
+impl ApprovalPanel {
+    /// Creates a tool approval panel.
+    pub fn new(tool_name: impl Into<String>, reason: impl Into<String>) -> Self {
+        Self {
+            tool_name: tool_name.into(),
+            reason: reason.into(),
+            selected_index: 0,
+        }
+    }
+
+    pub(super) fn choices(&self) -> [&'static str; 2] {
+        ["Approve once", "Deny"]
+    }
+
+    pub(super) fn selected_decision(&self) -> ApprovalDecision {
+        if self.selected_index == 0 {
+            ApprovalDecision::Approve
+        } else {
+            ApprovalDecision::Deny
+        }
+    }
+}
+
 impl Default for MenuState {
     fn default() -> Self {
         Self {

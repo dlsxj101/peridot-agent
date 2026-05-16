@@ -10,6 +10,7 @@ use peridot_memory::MemoryStore;
 use peridot_tui::{HeaderState, TuiState};
 
 use super::interactive_io::*;
+use super::relax_security_for_approval;
 use super::run_output::*;
 use super::run_state::*;
 
@@ -30,6 +31,26 @@ fn resume_text_handles_empty_task() {
         text,
         "Resume session demo from this summary: created parser"
     );
+}
+
+#[test]
+fn approval_relaxes_matching_security_gate_only() {
+    let mut config = PeridotConfig::default();
+
+    relax_security_for_approval(
+        &mut config,
+        "dependency installation requires explicit user approval",
+    );
+
+    assert!(!config.security.ask_before_install);
+    assert!(config.security.ask_before_delete);
+
+    relax_security_for_approval(
+        &mut config,
+        "destructive shell command requires explicit user approval",
+    );
+
+    assert!(!config.security.ask_before_delete);
 }
 
 #[cfg(unix)]

@@ -16,7 +16,7 @@ pub use agent::HarnessAgent;
 pub use goal::{GoalController, GoalStatus};
 pub use permissions::allowed_tool_groups;
 pub use requests::{
-    AgentRunRequest, AgentRunSummary, AgentTurnOutcome, AgentTurnRequest, StopReason,
+    AgentRunEvent, AgentRunRequest, AgentRunSummary, AgentTurnOutcome, AgentTurnRequest, StopReason,
 };
 pub use slash::{SlashCommand, parse_slash_command};
 pub use state::AgentState;

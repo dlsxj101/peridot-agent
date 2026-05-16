@@ -18,10 +18,10 @@ use crate::recovery::{
     run_error_event_hooks, run_recovery_event_hook, should_emit_budget_warning,
 };
 use crate::requests::{
-    AgentRunRequest, AgentRunSummary, AgentTurnOutcome, AgentTurnRequest, StopReason,
+    AgentRunEvent, AgentRunRequest, AgentRunSummary, AgentTurnOutcome, AgentTurnRequest, StopReason,
 };
 use crate::state::AgentState;
-use crate::usage::{accumulate_usage, stream_completion};
+use crate::usage::{accumulate_usage, stream_completion_with_chunks};
 
 /// Peridot harness agent shell.
 pub struct HarnessAgent {
@@ -153,6 +153,21 @@ impl HarnessAgent {
     where
         P: LlmProvider + ?Sized,
     {
+        self.run_turn_with_events(provider, request, &mut |_| {})
+            .await
+    }
+
+    /// Runs one model/tool turn and emits user-interface events.
+    pub async fn run_turn_with_events<P, F>(
+        &mut self,
+        provider: &P,
+        request: AgentTurnRequest,
+        events: &mut F,
+    ) -> PeriResult<AgentTurnOutcome>
+    where
+        P: LlmProvider + ?Sized,
+        F: FnMut(AgentRunEvent),
+    {
         if let Some(user_input) = request.user_input {
             self.context
                 .append(ContextEntry::trusted(ContextSource::User, user_input));
@@ -171,7 +186,10 @@ impl HarnessAgent {
             )?;
         }
 
-        let completion = stream_completion(
+        events(AgentRunEvent::AssistantStarted {
+            label: "assistant".to_string(),
+        });
+        let completion = stream_completion_with_chunks(
             provider,
             CompletionRequest {
                 model: request.model,
@@ -180,17 +198,39 @@ impl HarnessAgent {
                 max_tokens: Some(request.max_tokens),
                 thinking: self.state.mode == ExecutionMode::Goal,
             },
+            |chunk| {
+                if !chunk.delta.is_empty() {
+                    events(AgentRunEvent::AssistantDelta {
+                        delta: chunk.delta.clone(),
+                    });
+                }
+            },
         )
         .await?;
+        events(AgentRunEvent::AssistantFinished {
+            text: completion.text.clone(),
+        });
         self.context.append(ContextEntry::trusted(
             ContextSource::Assistant,
             completion.text.clone(),
         ));
 
         let parsed = parse_action(&completion.text)?;
+        if let Some(thinking) = parsed.thinking.as_ref()
+            && !thinking.trim().is_empty()
+        {
+            events(AgentRunEvent::Thinking {
+                text: thinking.clone(),
+            });
+        }
         let tool_name = parsed.tool_call.name.clone();
+        let tool_parameters = parsed.tool_call.parameters.clone();
         self.state.phase = AgentPhase::Executing;
-        let tool_result = self
+        events(AgentRunEvent::ToolStarted {
+            name: tool_name.clone(),
+            parameters: tool_parameters,
+        });
+        let tool_result = match self
             .execute_tool_call_with_runtime(
                 parsed.tool_call,
                 request.project_root,
@@ -198,7 +238,23 @@ impl HarnessAgent {
                 request.hooks,
                 request.security,
             )
-            .await?;
+            .await
+        {
+            Ok(result) => result,
+            Err(err) => {
+                if let PeriError::PermissionDenied(reason) = &err {
+                    events(AgentRunEvent::ApprovalRequested {
+                        tool_name,
+                        reason: reason.clone(),
+                    });
+                }
+                return Err(err);
+            }
+        };
+        events(AgentRunEvent::ToolFinished {
+            name: tool_name.clone(),
+            result: tool_result.clone(),
+        });
         self.context
             .append_observation(serde_json::to_string(&tool_result).map_err(|err| {
                 PeriError::Parse(format!("failed to serialize tool result: {err}"))
@@ -227,14 +283,33 @@ impl HarnessAgent {
     where
         P: LlmProvider + ?Sized,
     {
+        self.run_until_done_with_events(provider, request, |_| {})
+            .await
+    }
+
+    /// Runs model/tool turns until done while emitting user-interface events.
+    pub async fn run_until_done_with_events<P, F>(
+        &mut self,
+        provider: &P,
+        request: AgentRunRequest,
+        mut events: F,
+    ) -> PeriResult<AgentRunSummary>
+    where
+        P: LlmProvider + ?Sized,
+        F: FnMut(AgentRunEvent),
+    {
+        events(AgentRunEvent::RunStarted {
+            task: request.task.clone(),
+        });
         let mut outcomes = Vec::new();
         let mut total_usage = Usage::default();
         let mut stuck_detector = StuckDetector::new(3);
         let mut budget_warning_sent = false;
         let mut consecutive_parse_failures = 0usize;
         for turn_index in 0..request.max_turns {
+            events(AgentRunEvent::TurnStarted { turn_index });
             let outcome = match self
-                .run_turn(
+                .run_turn_with_events(
                     provider,
                     AgentTurnRequest {
                         user_input: (turn_index == 0).then(|| request.task.clone()),
@@ -245,6 +320,7 @@ impl HarnessAgent {
                         hooks: request.hooks.clone(),
                         security: request.security.clone(),
                     },
+                    &mut events,
                 )
                 .await
             {
@@ -253,6 +329,17 @@ impl HarnessAgent {
                     outcome
                 }
                 Err(err) => {
+                    if approval_required_error(&err) {
+                        let summary = AgentRunSummary {
+                            turns: outcomes,
+                            usage: total_usage,
+                            stopped_reason: StopReason::ApprovalRequired,
+                        };
+                        events(AgentRunEvent::Finished {
+                            summary: summary.clone(),
+                        });
+                        return Ok(summary);
+                    }
                     self.state.phase = AgentPhase::Recovering;
                     run_error_event_hooks(&request.project_root, &request.hooks, &err)?;
                     if classify_error(&err) == "parse" {
@@ -264,6 +351,9 @@ impl HarnessAgent {
                         ContextSource::PlanReminder,
                         recovery_message(&err),
                     ));
+                    events(AgentRunEvent::Recovery {
+                        message: err.to_string(),
+                    });
                     if consecutive_parse_failures == 3 {
                         self.context.append(ContextEntry::trusted(
                             ContextSource::PlanReminder,
@@ -274,6 +364,7 @@ impl HarnessAgent {
                 }
             };
             accumulate_usage(&mut total_usage, outcome.usage);
+            events(AgentRunEvent::UsageUpdated { usage: total_usage });
             if should_emit_budget_warning(
                 request.budget_usd,
                 request.budget_warning_pct,
@@ -302,6 +393,9 @@ impl HarnessAgent {
                 run_recovery_event_hook(&request.project_root, &request.hooks, "stuck", &message)?;
                 self.context
                     .append(ContextEntry::trusted(ContextSource::PlanReminder, message));
+                events(AgentRunEvent::Recovery {
+                    message: "stuck detector requested a new strategy".to_string(),
+                });
             }
             if done {
                 if let Some(goal_checker_model) = request.goal_checker_model.as_deref()
@@ -334,11 +428,15 @@ impl HarnessAgent {
                         continue;
                     }
                 }
-                return Ok(AgentRunSummary {
+                let summary = AgentRunSummary {
                     turns: outcomes,
                     usage: total_usage,
                     stopped_reason: StopReason::Done,
+                };
+                events(AgentRunEvent::Finished {
+                    summary: summary.clone(),
                 });
+                return Ok(summary);
             }
             if request.budget_usd > 0.0 && total_usage.estimated_cost_usd >= request.budget_usd {
                 self.state.phase = AgentPhase::Recovering;
@@ -346,18 +444,33 @@ impl HarnessAgent {
                     ContextSource::PlanReminder,
                     budget_exceeded_message(total_usage.estimated_cost_usd, request.budget_usd),
                 ));
-                return Ok(AgentRunSummary {
+                let summary = AgentRunSummary {
                     turns: outcomes,
                     usage: total_usage,
                     stopped_reason: StopReason::Budget,
+                };
+                events(AgentRunEvent::Finished {
+                    summary: summary.clone(),
                 });
+                return Ok(summary);
             }
         }
 
-        Ok(AgentRunSummary {
+        let summary = AgentRunSummary {
             turns: outcomes,
             usage: total_usage,
             stopped_reason: StopReason::MaxTurns,
-        })
+        };
+        events(AgentRunEvent::Finished {
+            summary: summary.clone(),
+        });
+        Ok(summary)
+    }
+}
+
+fn approval_required_error(err: &PeriError) -> bool {
+    match err {
+        PeriError::PermissionDenied(reason) => reason.contains("requires explicit user approval"),
+        _ => false,
     }
 }

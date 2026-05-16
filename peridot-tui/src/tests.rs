@@ -101,6 +101,73 @@ fn records_tool_and_verification_activity() {
 }
 
 #[test]
+fn tool_result_preview_reaches_main_transcript() {
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+
+    state.apply_runtime_event(TuiRuntimeEvent::ToolFinished {
+        name: "shell_exec".to_string(),
+        success: true,
+        summary: "command exited 0: cargo test".to_string(),
+        output: serde_json::json!({
+            "status": 0,
+            "stdout": "running tests\nok\n",
+            "stderr": ""
+        }),
+    });
+    state.apply_runtime_event(TuiRuntimeEvent::ToolFinished {
+        name: "file_write".to_string(),
+        success: true,
+        summary: "wrote /tmp/demo.rs".to_string(),
+        output: serde_json::json!({ "path": "/tmp/demo.rs" }),
+    });
+
+    let snapshot = render_text_snapshot(&state);
+    assert!(snapshot.contains("tool shell_exec: ok: command exited 0: cargo test"));
+    assert!(snapshot.contains("  stdout:"));
+    assert!(snapshot.contains("    running tests"));
+    assert!(snapshot.contains("tool file_write: ok: wrote /tmp/demo.rs"));
+    assert!(snapshot.contains("  path: \"/tmp/demo.rs\""));
+}
+
+#[test]
+fn tool_started_preview_shows_patch_and_write_details() {
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+
+    state.apply_runtime_event(TuiRuntimeEvent::ToolStarted {
+        name: "file_patch".to_string(),
+        parameters: serde_json::json!({
+            "path": "src/lib.rs",
+            "old_text": "fn old() {\n    todo!()\n}\n",
+            "new_text": "fn old() {\n    42\n}\n"
+        }),
+    });
+    state.apply_runtime_event(TuiRuntimeEvent::ToolStarted {
+        name: "file_write".to_string(),
+        parameters: serde_json::json!({
+            "path": "README.md",
+            "content": "# Peridot\n\nhello\n"
+        }),
+    });
+
+    let snapshot = render_text_snapshot(&state);
+    assert!(snapshot.contains("tool file_patch: running"));
+    assert!(snapshot.contains("  path: src/lib.rs"));
+    assert!(snapshot.contains("    - fn old() {"));
+    assert!(snapshot.contains("    + fn old() {"));
+    assert!(snapshot.contains("tool file_write: running"));
+    assert!(snapshot.contains("  content:"));
+    assert!(snapshot.contains("    # Peridot"));
+}
+
+#[test]
 fn records_subagent_monitor_state() {
     let mut state = TuiState::new(HeaderState::new(
         ExecutionMode::Goal,
@@ -204,10 +271,112 @@ fn key_events_edit_and_submit_input() {
     assert_eq!(
         handle_key_event(
             &mut state,
+            KeyEvent::new(KeyCode::Char('h'), KeyModifiers::CONTROL)
+        ),
+        TuiEventOutcome::Continue
+    );
+    assert_eq!(state.input, "");
+
+    assert_eq!(
+        handle_key_event(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE)
+        ),
+        TuiEventOutcome::Continue
+    );
+    assert_eq!(
+        handle_key_event(
+            &mut state,
             KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)
         ),
-        TuiEventOutcome::Submit("f".to_string())
+        TuiEventOutcome::Submit("o".to_string())
     );
+}
+
+#[test]
+fn input_history_and_control_shortcuts_work() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+
+    for character in "first".chars() {
+        handle_key_event(
+            &mut state,
+            KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE),
+        );
+    }
+    assert_eq!(
+        handle_key_event(
+            &mut state,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)
+        ),
+        TuiEventOutcome::Submit("first".to_string())
+    );
+
+    handle_key_event(&mut state, KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+    assert_eq!(state.input, "first");
+    handle_key_event(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    assert_eq!(state.input, "");
+
+    state.input = "clear me".to_string();
+    handle_key_event(
+        &mut state,
+        KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL),
+    );
+    assert_eq!(state.input, "");
+
+    state.push_transcript("old");
+    handle_key_event(
+        &mut state,
+        KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL),
+    );
+    assert!(state.transcript.is_empty());
+}
+
+#[test]
+fn input_cursor_supports_midline_editing() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+
+    for character in "ac".chars() {
+        handle_key_event(
+            &mut state,
+            KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE),
+        );
+    }
+    handle_key_event(&mut state, KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+    handle_key_event(
+        &mut state,
+        KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE),
+    );
+    assert_eq!(state.input, "abc");
+    assert_eq!(state.input_cursor, 2);
+
+    handle_key_event(
+        &mut state,
+        KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE),
+    );
+    assert_eq!(state.input, "ab");
+
+    handle_key_event(
+        &mut state,
+        KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL),
+    );
+    assert_eq!(state.input_cursor, 0);
+    handle_key_event(
+        &mut state,
+        KeyEvent::new(KeyCode::Char('e'), KeyModifiers::CONTROL),
+    );
+    assert_eq!(state.input_cursor, 2);
 }
 
 #[test]
@@ -245,6 +414,48 @@ fn slash_commands_update_tui_state() {
     apply_slash_command(&mut state, SlashCommand::GoalStatus);
     assert!(state.transcript.last().unwrap().contains("goal: paused"));
     assert!(render_text_snapshot(&state).contains("goal paused"));
+}
+
+#[test]
+fn utility_slash_commands_update_tui_surface() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    state.side_panel.plan.push(PlanStep {
+        label: "write tests".to_string(),
+        done: false,
+    });
+
+    apply_slash_command(&mut state, SlashCommand::Help);
+    assert!(state.transcript.last().unwrap().contains("/model <name>"));
+
+    apply_slash_command(&mut state, SlashCommand::PlanShow);
+    assert!(
+        state
+            .transcript
+            .iter()
+            .any(|line| line.contains("[ ] 1. write tests"))
+    );
+
+    apply_slash_command(&mut state, SlashCommand::Model("next-model".to_string()));
+    assert_eq!(state.header.model, "next-model");
+
+    state.input = "/not-real".to_string();
+    assert_eq!(
+        handle_key_event(
+            &mut state,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)
+        ),
+        TuiEventOutcome::Continue
+    );
+    assert!(state.transcript.last().unwrap().contains("/help"));
+
+    apply_slash_command(&mut state, SlashCommand::Clear);
+    assert!(state.transcript.is_empty());
 }
 
 #[test]
@@ -313,6 +524,14 @@ fn ask_user_panel_supports_explain_and_other() {
         KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
     );
     assert!(state.ask_user.as_ref().unwrap().choices.is_empty());
+
+    let panel = state.ask_user.as_mut().unwrap();
+    panel.freeform = "abc".to_string();
+    handle_key_event(
+        &mut state,
+        KeyEvent::new(KeyCode::Char('h'), KeyModifiers::CONTROL),
+    );
+    assert_eq!(state.ask_user.as_ref().unwrap().freeform, "ab");
 }
 
 #[test]
@@ -340,4 +559,105 @@ fn escape_opens_menu_and_q_closes_it() {
         TuiEventOutcome::Continue
     );
     assert!(state.menu.is_none());
+}
+
+#[test]
+fn runtime_events_update_tui_without_exiting() {
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+
+    state.apply_runtime_event(TuiRuntimeEvent::RunStarted {
+        task: "fix tests".to_string(),
+    });
+    state.apply_runtime_event(TuiRuntimeEvent::AssistantDelta {
+        delta: "thinking".to_string(),
+    });
+    state.apply_runtime_event(TuiRuntimeEvent::AssistantFinished);
+    state.apply_runtime_event(TuiRuntimeEvent::Thinking {
+        text: "checking the failing test path".to_string(),
+    });
+    state.apply_runtime_event(TuiRuntimeEvent::ToolStarted {
+        name: "verify_test".to_string(),
+        parameters: serde_json::json!({}),
+    });
+    state.apply_runtime_event(TuiRuntimeEvent::ToolFinished {
+        name: "verify_test".to_string(),
+        success: true,
+        summary: "passed".to_string(),
+        output: serde_json::json!({}),
+    });
+    state.apply_runtime_event(TuiRuntimeEvent::Finished {
+        stop_reason: "Done".to_string(),
+        turns: 1,
+        success: true,
+    });
+
+    let snapshot = render_text_snapshot(&state);
+    assert!(snapshot.contains("agent done"));
+    assert!(snapshot.contains("task: fix tests"));
+    assert!(snapshot.contains("assistant: thinking"));
+    assert!(snapshot.contains("thinking: checking the failing test path"));
+    assert!(snapshot.contains("tool verify_test: ok: passed"));
+    assert!(snapshot.contains("run: stopped=Done turns=1"));
+
+    state.apply_runtime_event(TuiRuntimeEvent::SessionSaved {
+        session_id: "session-test".to_string(),
+    });
+    let snapshot = render_text_snapshot(&state);
+    assert!(snapshot.contains("session: saved session-test"));
+}
+
+#[test]
+fn approval_runtime_event_opens_panel_and_records_decision() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+
+    state.apply_runtime_event(TuiRuntimeEvent::ApprovalRequested {
+        tool_name: "shell_exec".to_string(),
+        reason: "dependency installation requires explicit user approval".to_string(),
+    });
+
+    assert_eq!(state.agent_run_status, AgentRunStatus::WaitingApproval);
+    assert!(render_text_snapshot(&state).contains("agent waiting-approval"));
+    assert!(
+        render_approval_panel(state.approval.as_ref().unwrap()).contains("dependency installation")
+    );
+
+    state.apply_runtime_event(TuiRuntimeEvent::Finished {
+        stop_reason: "ApprovalRequired".to_string(),
+        turns: 0,
+        success: false,
+    });
+    assert_eq!(state.agent_run_status, AgentRunStatus::WaitingApproval);
+    assert!(state.approval.is_some());
+    assert!(
+        state
+            .transcript
+            .last()
+            .unwrap()
+            .contains("stopped=ApprovalRequired")
+    );
+
+    handle_key_event(
+        &mut state,
+        KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE),
+    );
+
+    assert!(state.approval.is_none());
+    assert_eq!(state.agent_run_status, AgentRunStatus::Running);
+    assert!(
+        state
+            .transcript
+            .last()
+            .unwrap()
+            .contains("approval: shell_exec approved")
+    );
 }

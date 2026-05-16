@@ -8,7 +8,9 @@ use peridot_context::{ContextEntry, ContextManager, ContextSource};
 use peridot_tools::{ToolRegistry, register_builtin_tools};
 use serde_json::json;
 
-use crate::{AgentRunRequest, AgentState, AgentTurnRequest, HarnessAgent, StopReason};
+use crate::{
+    AgentRunEvent, AgentRunRequest, AgentState, AgentTurnRequest, HarnessAgent, StopReason,
+};
 
 use super::support::{StaticProvider, StreamingOnlyProvider};
 
@@ -62,6 +64,136 @@ async fn run_until_done_executes_tools_and_stops() {
         std::fs::read_to_string(root.join("loop.txt")).unwrap(),
         "ok\n"
     );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn run_until_done_emits_ui_events() {
+    let root =
+        std::env::temp_dir().join(format!("peridot-core-loop-events-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    let mut registry = ToolRegistry::new();
+    register_builtin_tools(&mut registry).unwrap();
+    let mut agent = HarnessAgent::new(
+        AgentState::new(ExecutionMode::Execute, PermissionMode::Auto),
+        ContextManager::new(),
+        registry,
+    );
+    let provider = StaticProvider::new(vec![
+        json!({
+            "thinking": "ready to finish",
+            "action": "agent_done",
+            "parameters": {"summary": "finished"}
+        })
+        .to_string(),
+    ]);
+    let mut events = Vec::new();
+
+    let summary = agent
+        .run_until_done_with_events(
+            &provider,
+            AgentRunRequest {
+                task: "finish".to_string(),
+                model: "mock".to_string(),
+                goal_checker_model: None,
+                max_turns: 2,
+                max_tokens: 512,
+                budget_usd: 5.0,
+                budget_warning_pct: 50,
+                project_root: root.clone(),
+                denied_paths: Vec::new(),
+                hooks: HooksConfig::default(),
+                security: SecurityConfig::default(),
+            },
+            |event| events.push(event),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(summary.stopped_reason, StopReason::Done);
+    assert!(matches!(events[0], AgentRunEvent::RunStarted { .. }));
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, AgentRunEvent::AssistantDelta { .. }))
+    );
+    assert!(events.iter().any(|event| {
+        matches!(
+            event,
+            AgentRunEvent::Thinking { text } if text == "ready to finish"
+        )
+    }));
+    assert!(events.iter().any(|event| {
+        matches!(
+            event,
+            AgentRunEvent::ToolFinished { name, result }
+                if name == "agent_done" && result.success
+        )
+    }));
+    assert!(matches!(
+        events.last().unwrap(),
+        AgentRunEvent::Finished { .. }
+    ));
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn permission_denied_tool_emits_approval_event() {
+    let root = std::env::temp_dir().join(format!(
+        "peridot-core-approval-event-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let mut registry = ToolRegistry::new();
+    register_builtin_tools(&mut registry).unwrap();
+    let mut agent = HarnessAgent::new(
+        AgentState::new(ExecutionMode::Execute, PermissionMode::Auto),
+        ContextManager::new(),
+        registry,
+    );
+    let provider = StaticProvider::new(vec![
+        json!({
+            "action": "shell_exec",
+            "parameters": {"command": "npm install left-pad"}
+        })
+        .to_string(),
+    ]);
+    let mut events = Vec::new();
+
+    let summary = agent
+        .run_until_done_with_events(
+            &provider,
+            AgentRunRequest {
+                task: "install dependency".to_string(),
+                model: "mock".to_string(),
+                goal_checker_model: None,
+                max_turns: 1,
+                max_tokens: 512,
+                budget_usd: 5.0,
+                budget_warning_pct: 50,
+                project_root: root.clone(),
+                denied_paths: Vec::new(),
+                hooks: HooksConfig::default(),
+                security: SecurityConfig::default(),
+            },
+            |event| events.push(event),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(summary.stopped_reason, StopReason::ApprovalRequired);
+    assert!(events.iter().any(|event| {
+        matches!(
+            event,
+            AgentRunEvent::ApprovalRequested { tool_name, reason }
+                if tool_name == "shell_exec" && reason.contains("dependency installation")
+        )
+    }));
+    assert!(matches!(
+        events.last().unwrap(),
+        AgentRunEvent::Finished { summary }
+            if summary.stopped_reason == StopReason::ApprovalRequired
+    ));
     std::fs::remove_dir_all(root).unwrap();
 }
 
