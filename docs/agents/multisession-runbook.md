@@ -81,7 +81,7 @@ its parent transcript (M4), and the attention notifier line (M5).
 - `HeaderState.provider` carries `#[serde(default)]`, so existing saved sessions resume with `None` (fall back to the config default).
 
 ### M7 — Replay journal CLI (landed)
-- `peridot session replay <id> [--last N]` deserialises the persisted `tui_state.json` for that session and dumps the transcript entries with the same five-marker vocabulary the TUI uses (`▸ ◆ ❯ ✔ ✘ · ⚠ ? — …`). `--output json` returns the entries as a structured payload for tooling.
+- `peridot session replay <id> [--last N] [--step]` deserialises the persisted `tui_state.json` for that session and dumps the transcript entries with the same five-marker vocabulary the TUI uses (`▸ ◆ ❯ ✔ ✘ · ⚠ ? — …`). `--output json` returns the entries as a structured payload for tooling, and `--step` pauses for `Enter` between entries (type `q` to bail out early) so a session can be reviewed beat-by-beat.
 - Reuses the on-disk format already written by the M3 throttled persistence path, so no new write codepath was needed.
 
 ### M6 — Per-session TuiState swap (landed)

@@ -177,6 +177,9 @@ pub(crate) enum SessionCommand {
         /// Limit output to the most recent N transcript entries.
         #[arg(long)]
         last: Option<usize>,
+        /// Pause for `Enter` between entries; type `q` to quit early.
+        #[arg(long)]
+        step: bool,
     },
 }
 

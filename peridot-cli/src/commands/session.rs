@@ -68,8 +68,8 @@ pub(crate) fn run_session_command(
                 output,
             )?;
         }
-        SessionCommand::Replay { id, last } => {
-            replay_session_transcript(project_root, id, *last, output)?;
+        SessionCommand::Replay { id, last, step } => {
+            replay_session_transcript(project_root, id, *last, *step, output)?;
         }
     }
     Ok(())
@@ -79,6 +79,7 @@ fn replay_session_transcript(
     project_root: &Path,
     id: &str,
     last: Option<usize>,
+    step: bool,
     output: OutputFormat,
 ) -> Result<()> {
     let sessions_root = project_root.join(".peridot").join("sessions");
@@ -110,13 +111,18 @@ fn replay_session_transcript(
                     "id": id,
                     "entries": payload,
                     "total": state.transcript.len(),
+                    "step_mode": step,
                 }))?
             );
         }
         OutputFormat::Text => {
-            for entry in &entries {
-                let marker = transcript_marker(entry.kind);
-                println!("{marker} {}", entry.text);
+            if step {
+                replay_step_mode(&entries)?;
+            } else {
+                for entry in &entries {
+                    let marker = transcript_marker(entry.kind);
+                    println!("{marker} {}", entry.text);
+                }
             }
             if entries.len() < state.transcript.len() {
                 println!(
@@ -124,6 +130,38 @@ fn replay_session_transcript(
                     entries.len(),
                     state.transcript.len()
                 );
+            }
+        }
+    }
+    Ok(())
+}
+
+fn replay_step_mode(entries: &[&peridot_tui::TranscriptEntry]) -> Result<()> {
+    use std::io::{BufRead, Write};
+    let stdin = std::io::stdin();
+    let mut stdin_lock = stdin.lock();
+    let stdout = std::io::stdout();
+    let total = entries.len();
+    let mut buffer = String::new();
+    for (idx, entry) in entries.iter().enumerate() {
+        let marker = transcript_marker(entry.kind);
+        println!("[{}/{}] {marker} {}", idx + 1, total, entry.text);
+        if idx + 1 < total {
+            {
+                let mut handle = stdout.lock();
+                write!(
+                    handle,
+                    "press Enter for next ({}/{}), q+Enter to quit > ",
+                    idx + 2,
+                    total
+                )?;
+                handle.flush()?;
+            }
+            buffer.clear();
+            stdin_lock.read_line(&mut buffer)?;
+            if matches!(buffer.trim(), "q" | "quit") {
+                println!("replay aborted at entry {}/{}.", idx + 1, total);
+                break;
             }
         }
     }
