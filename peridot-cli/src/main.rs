@@ -1377,6 +1377,9 @@ fn tui_runtime_event_from_agent(event: AgentRunEvent) -> TuiRuntimeEvent {
             outcome,
         },
         AgentRunEvent::Interrupted { stage } => TuiRuntimeEvent::Interrupted { stage },
+        AgentRunEvent::PlannerPlanReady { plan_text } => {
+            TuiRuntimeEvent::PlannerPlanReady { plan_text }
+        }
     }
 }
 

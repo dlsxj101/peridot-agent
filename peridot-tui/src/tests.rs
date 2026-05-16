@@ -1615,6 +1615,21 @@ fn record_background_event_skips_subagent_monitor_when_parent_not_foreground() {
 }
 
 #[test]
+fn planner_plan_ready_event_lands_in_transcript() {
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    state.apply_runtime_event(TuiRuntimeEvent::PlannerPlanReady {
+        plan_text: "1. read AGENTS.md\n2. update lib.rs".to_string(),
+    });
+    let last = state.transcript.last().unwrap();
+    assert!(last.text.contains("committee planner ready"));
+    assert!(last.text.contains("update lib.rs"));
+}
+
+#[test]
 fn ask_user_freeform_accepts_shift_enter_and_ctrl_j_newline() {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 

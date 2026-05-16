@@ -361,6 +361,11 @@ pub enum TuiRuntimeEvent {
         /// Stage name.
         stage: String,
     },
+    /// Committee planner produced its task plan (M-COM2).
+    PlannerPlanReady {
+        /// Plan text dictated by the planner agent.
+        plan_text: String,
+    },
 }
 
 /// Plan step payload carried by [`TuiRuntimeEvent::PlanUpdated`].
@@ -1399,6 +1404,13 @@ impl TuiState {
                     format!("interrupted during {stage}"),
                 );
                 self.push_activity(ActivityKind::Stream, "run", "interrupted");
+            }
+            TuiRuntimeEvent::PlannerPlanReady { plan_text } => {
+                self.push_transcript_entry(
+                    TranscriptKind::System,
+                    format!("committee planner ready:\n{plan_text}"),
+                );
+                self.push_activity(ActivityKind::Stream, "committee planner", "plan ready");
             }
         }
     }

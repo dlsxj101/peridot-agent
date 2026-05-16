@@ -166,10 +166,22 @@ where
         agent.set_agents_md_path(path);
     }
     let profile = ProjectScanner::new().scan(&project_root)?;
-    let denied_paths = profile.boundaries.into_iter().map(PathBuf::from).collect();
+    let denied_paths: Vec<PathBuf> = profile.boundaries.into_iter().map(PathBuf::from).collect();
+    let mut events = events;
 
-    if let Some(mock_response_file) = options.mock_response_file {
+    if let Some(mock_response_file) = options.mock_response_file.clone() {
         let provider = FileMockProvider::from_file(&mock_response_file)?;
+        run_planner_preflight_if_enabled(
+            &mut agent,
+            &provider,
+            &task,
+            &config,
+            &options,
+            &project_root,
+            &denied_paths,
+            &mut events,
+        )
+        .await?;
         return run_agent_loop_with_events(
             &mut agent,
             &provider,
@@ -189,6 +201,17 @@ where
 
     let _live_flag_kept_for_compatibility = options.live;
     let provider = live_provider(&config, &options.model, &project_root).await?;
+    run_planner_preflight_if_enabled(
+        &mut agent,
+        provider.as_ref(),
+        &task,
+        &config,
+        &options,
+        &project_root,
+        &denied_paths,
+        &mut events,
+    )
+    .await?;
     run_agent_loop_with_events(
         &mut agent,
         provider.as_ref(),
@@ -204,6 +227,104 @@ where
         events,
     )
     .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn run_planner_preflight_if_enabled<P, F>(
+    executor: &mut HarnessAgent,
+    provider: &P,
+    task: &str,
+    config: &PeridotConfig,
+    options: &AgentTaskOptions,
+    project_root: &Path,
+    denied_paths: &[PathBuf],
+    events: &mut F,
+) -> Result<()>
+where
+    P: peridot_llm::LlmProvider + ?Sized,
+    F: FnMut(AgentRunEvent),
+{
+    use peridot_common::CommitteeMode;
+    if config.committee.mode == CommitteeMode::Off {
+        return Ok(());
+    }
+    let planner_model = if config.committee.planner_model.is_empty() {
+        options.model.clone()
+    } else {
+        config.committee.planner_model.clone()
+    };
+
+    let mut planner_registry = ToolRegistry::new();
+    register_builtin_tools(&mut planner_registry)?;
+    let planner_context = ContextManager::with_limits(project_context_limits_from_config(
+        project_root,
+        &config.context,
+    ));
+    let planner_state = peridot_core::AgentState::new(ExecutionMode::Plan, options.permission);
+    let mut planner_agent = HarnessAgent::new(planner_state, planner_context, planner_registry);
+    planner_agent.set_role(peridot_core::AgentRole::Planner);
+
+    // Planner gets at most a few turns to produce its plan; budget is capped
+    // at a fraction of the executor budget so a runaway planner can't burn
+    // the whole session's headroom.
+    let planner_max_turns = options.max_turns.clamp(1, 3);
+    let planner_budget = if options.budget_usd > 0.0 {
+        (options.budget_usd * 0.25).max(0.001)
+    } else {
+        0.0
+    };
+
+    let summary = run_agent_loop_with_events(
+        &mut planner_agent,
+        provider,
+        RunLoopOptions {
+            task: task.to_string(),
+            model: planner_model,
+            max_turns: planner_max_turns,
+            budget_usd: planner_budget,
+            config,
+            project_root,
+            denied_paths: denied_paths.to_vec(),
+        },
+        &mut *events,
+    )
+    .await?;
+
+    if let Some(plan_text) = extract_planner_plan(&planner_agent, &summary) {
+        executor
+            .context_mut()
+            .append(peridot_context::ContextEntry::trusted(
+                peridot_context::ContextSource::PlanReminder,
+                format!("Committee plan from planner:\n\n{plan_text}"),
+            ));
+        events(AgentRunEvent::PlannerPlanReady { plan_text });
+    }
+    Ok(())
+}
+
+fn extract_planner_plan(
+    agent: &HarnessAgent,
+    summary: &peridot_core::AgentRunSummary,
+) -> Option<String> {
+    if let Some(content) = agent
+        .context()
+        .entries()
+        .iter()
+        .rev()
+        .find(|entry| matches!(entry.source, peridot_context::ContextSource::Assistant))
+        .map(|entry| entry.content.trim().to_string())
+        && !content.is_empty()
+    {
+        return Some(content);
+    }
+    summary.turns.iter().rev().find_map(|turn| {
+        let summary = turn.tool_result.summary.trim();
+        if summary.is_empty() {
+            None
+        } else {
+            Some(summary.to_string())
+        }
+    })
 }
 
 pub(super) async fn register_configured_mcp_tools(
