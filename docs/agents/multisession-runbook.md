@@ -75,6 +75,9 @@ its parent transcript (M4), and the attention notifier line (M5).
   the child with an empty context (silent no-op), matching the previous
   behaviour for that edge case.
 
+### M31 — `peridot agents show` carries path and rule count (landed)
+- Text output now leads with `# <path> (<N> non-blank lines)` so the operator can tell exactly which instruction file is being read (`AGENTS.md` vs `CLAUDE.md` vs `.peridot/AGENTS.md` vs `.github/copilot-instructions.md`) and how many real rules are inside it. JSON output adds a matching `rule_count` field.
+
 ### M30 — `peridot session show --notes-tail N` (landed)
 - `peridot session show <id> --notes-tail N` prints the most recent N notes from `notes.ndjson` inline beneath the existing session/record block (text output) or under a `notes_tail` array (JSON output). Pairs with M24's `notes_count` so the operator sees both "how many notes exist" and "what were the latest ones" in a single call.
 

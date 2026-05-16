@@ -25,15 +25,23 @@ pub(crate) fn run_agents_command(
             let path = find_agents_instruction(project_root)
                 .with_context(|| "no AGENTS.md-compatible instruction file found")?;
             let content = fs::read_to_string(&path)?;
+            let rule_count = content
+                .lines()
+                .filter(|line| !line.trim().is_empty())
+                .count();
             match output {
                 OutputFormat::Json => println!(
                     "{}",
                     serde_json::to_string_pretty(&serde_json::json!({
                         "path": path,
-                        "content": content
+                        "content": content,
+                        "rule_count": rule_count,
                     }))?
                 ),
-                OutputFormat::Text => print!("{content}"),
+                OutputFormat::Text => {
+                    println!("# {} ({rule_count} non-blank lines)", path.display());
+                    print!("{content}");
+                }
             }
             Ok(())
         }
