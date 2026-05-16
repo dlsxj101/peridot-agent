@@ -574,6 +574,15 @@ pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
             state.header.model = model.clone();
             state.push_transcript(format!("model: {from} -> {model}"));
         }
+        SlashCommand::Provider(provider) => {
+            let from = state.header.provider.clone().unwrap_or_default();
+            state.header.provider = Some(provider.clone());
+            if from.is_empty() {
+                state.push_transcript(format!("provider: {provider}"));
+            } else {
+                state.push_transcript(format!("provider: {from} -> {provider}"));
+            }
+        }
         SlashCommand::Lang(locale) => {
             state.config.language = locale;
             state.push_transcript(format!("lang: {locale}"));

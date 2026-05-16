@@ -39,6 +39,11 @@ pub struct HeaderState {
     /// Optional update notice (semver string) surfaced on the right of the header.
     #[serde(default)]
     pub update_available: Option<String>,
+    /// Explicit provider override for this session (e.g. "claude-api",
+    /// "openai-api", "openrouter-api"). `None` falls back to the project
+    /// config's primary auth selection.
+    #[serde(default)]
+    pub provider: Option<String>,
 }
 
 impl HeaderState {
@@ -52,6 +57,7 @@ impl HeaderState {
             cache_hit_rate: 0.0,
             cost_usd: 0.0,
             update_available: None,
+            provider: None,
         }
     }
 

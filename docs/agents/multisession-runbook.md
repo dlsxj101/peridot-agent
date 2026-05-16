@@ -75,6 +75,11 @@ its parent transcript (M4), and the attention notifier line (M5).
   the child with an empty context (silent no-op), matching the previous
   behaviour for that edge case.
 
+### M8 — Per-session LLM provider override (landed)
+- New `/provider <name>` slash command (also exposed in the slash picker / `/help`) records an explicit provider on `state.header.provider`. The status bar surfaces it as `provider <name>` in the metrics line.
+- `apply_session_command`, submit, and approve callbacks all clone the project config and replace `auth.primary` with the session's provider before calling `spawn_tui_agent_run`, so concurrent sessions can run on different providers (e.g. one on `claude-api`, another on `openai-api` or `openrouter-api`) without mutating shared state.
+- `HeaderState.provider` carries `#[serde(default)]`, so existing saved sessions resume with `None` (fall back to the config default).
+
 ### M7 — Replay journal CLI (landed)
 - `peridot session replay <id> [--last N]` deserialises the persisted `tui_state.json` for that session and dumps the transcript entries with the same five-marker vocabulary the TUI uses (`▸ ◆ ❯ ✔ ✘ · ⚠ ? — …`). `--output json` returns the entries as a structured payload for tooling.
 - Reuses the on-disk format already written by the M3 throttled persistence path, so no new write codepath was needed.

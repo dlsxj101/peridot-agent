@@ -487,6 +487,10 @@ async fn main() -> Result<()> {
                                         handle.cancel = token.clone();
                                     }
                                 }
+                                let effective_config = config_with_provider(
+                                    &config_template,
+                                    state.header.provider.as_deref(),
+                                );
                                 spawn_tui_agent_run(
                                     handle.clone(),
                                     event_tx.clone(),
@@ -495,7 +499,7 @@ async fn main() -> Result<()> {
                                     task,
                                     state.header.mode,
                                     options,
-                                    config_template.clone(),
+                                    effective_config,
                                     project_template.clone(),
                                     Some(token),
                                 );
@@ -522,7 +526,10 @@ async fn main() -> Result<()> {
                                 let mut options = options_template.clone();
                                 options.permission = state.header.permission;
                                 options.model = state.header.model.clone();
-                                let mut config = config_template.clone();
+                                let mut config = config_with_provider(
+                                    &config_template,
+                                    state.header.provider.as_deref(),
+                                );
                                 relax_security_for_approval(&mut config, &reason);
                                 if scope != peridot_tui::ApprovalScope::Once {
                                     state.push_transcript(format!(
@@ -702,6 +709,8 @@ fn apply_session_command(
     config_template: &PeridotConfig,
     project_template: &Path,
 ) {
+    let effective_config = config_with_provider(config_template, state.header.provider.as_deref());
+    let config_template = &effective_config;
     match command {
         SessionCommandEvent::SessionNew(task) => {
             let new_id = format!("session-{}-{}", std::process::id(), unix_timestamp());
@@ -1024,6 +1033,19 @@ fn inherit_parent_context(parent_id: &str, child_id: &str, project_root: &Path) 
         return;
     }
     let _ = std::fs::copy(&parent, child_dir.join("context.bin"));
+}
+
+/// Returns a clone of `template` with `auth.primary` replaced by `provider`
+/// when one is set. Used to thread per-session `/provider` selections through
+/// to `live_provider` without mutating the project-wide config.
+fn config_with_provider(template: &PeridotConfig, provider: Option<&str>) -> PeridotConfig {
+    let mut cfg = template.clone();
+    if let Some(value) = provider
+        && !value.is_empty()
+    {
+        cfg.auth.primary = value.to_string();
+    }
+    cfg
 }
 
 fn lifecycle_from_status(status: &peridot_tui::AgentRunStatus) -> SessionLifecycle {

@@ -14,6 +14,9 @@ pub(super) fn render_status_metrics(state: &TuiState) -> String {
         "{} · {}",
         state.header.mode, state.header.permission
     )];
+    if let Some(provider) = state.header.provider.as_deref() {
+        parts.push(format!("provider {provider}"));
+    }
     if state.config.show_token_count {
         parts.push(format!("{} tok", state.header.total_tokens));
     }

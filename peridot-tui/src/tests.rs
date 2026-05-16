@@ -1615,6 +1615,36 @@ fn record_background_event_skips_subagent_monitor_when_parent_not_foreground() {
 }
 
 #[test]
+fn provider_slash_command_updates_header_and_status_metrics() {
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+
+    apply_slash_command(&mut state, SlashCommand::Provider("openai-api".to_string()));
+
+    assert_eq!(state.header.provider.as_deref(), Some("openai-api"));
+    let snapshot = render_text_snapshot(&state);
+    assert!(snapshot.contains("provider openai-api"));
+    assert!(
+        state
+            .transcript
+            .iter()
+            .any(|line| line.text.contains("provider: openai-api"))
+    );
+}
+
+#[test]
+fn parse_slash_command_accepts_provider() {
+    assert_eq!(
+        peridot_core::parse_slash_command("/provider claude-api"),
+        Some(SlashCommand::Provider("claude-api".to_string())),
+    );
+    assert_eq!(peridot_core::parse_slash_command("/provider"), None);
+}
+
+#[test]
 fn swap_foreground_state_round_trips_transcripts_between_sessions() {
     use std::collections::HashMap;
 

@@ -63,6 +63,12 @@ pub fn slash_command_catalog() -> &'static [SlashCommandSpec] {
             category: "session",
         },
         SlashCommandSpec {
+            name: "/provider",
+            description: "switch the active provider (claude-api, openai-api, openrouter-api, ...)",
+            arg_hint: Some("<name>"),
+            category: "session",
+        },
+        SlashCommandSpec {
             name: "/cost",
             description: "show cost / token / cache totals",
             arg_hint: None,

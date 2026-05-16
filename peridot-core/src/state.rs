@@ -55,6 +55,7 @@ impl AgentState {
             | SlashCommand::Cost
             | SlashCommand::PlanShow
             | SlashCommand::Model(_)
+            | SlashCommand::Provider(_)
             | SlashCommand::Compact
             | SlashCommand::SessionSave
             | SlashCommand::Diff

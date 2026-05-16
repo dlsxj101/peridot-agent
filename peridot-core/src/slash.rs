@@ -36,6 +36,8 @@ pub enum SlashCommand {
     PlanShow,
     /// Switch the active model.
     Model(String),
+    /// Switch the active provider (claude-api, openai-api, openrouter-api, ...).
+    Provider(String),
     /// Request context compaction.
     Compact,
     /// Save the current session.
@@ -88,6 +90,7 @@ pub fn parse_slash_command(input: &str) -> Option<SlashCommand> {
         "diff" if rest.is_empty() => Some(SlashCommand::Diff),
         "undo" if rest.is_empty() => Some(SlashCommand::Undo),
         "model" if !rest.is_empty() => Some(SlashCommand::Model(rest.to_string())),
+        "provider" if !rest.is_empty() => Some(SlashCommand::Provider(rest.to_string())),
         "lang" if !rest.is_empty() => Locale::from_str(rest).ok().map(SlashCommand::Lang),
         "fork" if !rest.is_empty() => Some(SlashCommand::Fork(rest.to_string())),
         "teammate" if !rest.is_empty() => Some(SlashCommand::Teammate(rest.to_string())),
