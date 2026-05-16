@@ -75,6 +75,10 @@ its parent transcript (M4), and the attention notifier line (M5).
   the child with an empty context (silent no-op), matching the previous
   behaviour for that edge case.
 
+### M21 — `/note` slash inside the TUI (landed)
+- New `SlashCommand::Note(String)` and `/note <text>` slash entry. Inside the TUI, the slash queues the body onto `TuiState.pending_notes` and prints a transcript line so the user can see the note landed.
+- `run_interactive_with_events` now hands the host a mutable `&mut TuiState` via `on_persist`. The CLI host's persist closure drains `pending_notes` every tick and appends one `{ts, text}` JSON line per note to the foreground session's `notes.ndjson`, matching the M20 file format. `peridot session note <id> list` then surfaces both CLI- and TUI-added notes uniformly.
+
 ### M20 — Operator notes per session (landed)
 - `peridot session note <id> add <text>` appends a `{ts, text}` JSON line to `<sessions>/<id>/notes.ndjson` (created on demand) so an operator can annotate sessions without touching the transcript.
 - `peridot session note <id> list` prints `[unix_ts] text` lines in chronological order (or returns `{ id, notes: [...] }` under `--output json`).

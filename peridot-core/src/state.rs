@@ -56,6 +56,7 @@ impl AgentState {
             | SlashCommand::PlanShow
             | SlashCommand::Model(_)
             | SlashCommand::Provider(_)
+            | SlashCommand::Note(_)
             | SlashCommand::Compact
             | SlashCommand::SessionSave
             | SlashCommand::Diff

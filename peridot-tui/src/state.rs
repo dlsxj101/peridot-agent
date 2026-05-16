@@ -557,6 +557,13 @@ pub struct TuiState {
     /// from serialisation so resumed sessions never re-execute stale commands.
     #[serde(default, skip)]
     pub pending_session_commands: Vec<SessionCommandEvent>,
+    /// Free-form operator notes queued by the `/note <text>` slash command.
+    /// The host drains the queue every tick and appends each entry to the
+    /// current session's `notes.ndjson`. Skipped from serialisation so a
+    /// resumed session never replays the queue after the disk write already
+    /// landed.
+    #[serde(default, skip)]
+    pub pending_notes: Vec<String>,
 }
 
 /// A session-router intent emitted by a slash command. The TUI itself does not
@@ -651,6 +658,7 @@ impl TuiState {
             sessions: Vec::new(),
             current_session_id: String::new(),
             pending_session_commands: Vec::new(),
+            pending_notes: Vec::new(),
         }
     }
 
@@ -703,6 +711,17 @@ impl TuiState {
     /// Records a session-router intent that the host loop will pick up next tick.
     pub fn push_pending_session_command(&mut self, command: SessionCommandEvent) {
         self.pending_session_commands.push(command);
+    }
+
+    /// Queues a free-form note that the host loop will append to the current
+    /// session's `notes.ndjson` on the next tick.
+    pub fn push_pending_note(&mut self, text: String) {
+        self.pending_notes.push(text);
+    }
+
+    /// Removes and returns every queued note in FIFO order.
+    pub fn drain_pending_notes(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.pending_notes)
     }
 
     /// Counts background sessions (i.e. anything except the current foreground

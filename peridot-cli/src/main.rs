@@ -611,12 +611,13 @@ async fn main() -> Result<()> {
                                 String,
                                 usize,
                             > = std::collections::HashMap::new();
-                            move |state: &TuiState| {
+                            move |state: &mut TuiState| {
                                 append_new_transcript_entries(
                                     state,
                                     &mut last_transcript_count,
                                     &project_template,
                                 );
+                                flush_pending_notes(state, &project_template);
                                 let now = SystemTime::now()
                                     .duration_since(UNIX_EPOCH)
                                     .map(|d| d.as_secs())
@@ -1052,6 +1053,48 @@ fn inherit_parent_context(parent_id: &str, child_id: &str, project_root: &Path) 
 /// Returns a clone of `template` with `auth.primary` replaced by `provider`
 /// when one is set. Used to thread per-session `/provider` selections through
 /// to `live_provider` without mutating the project-wide config.
+/// Drains the foreground session's queued `/note` slash commands and appends
+/// one `{ "ts", "text" }` line per note to `<sessions>/<id>/notes.ndjson`.
+/// Errors are silent: this runs from the UI thread and must never block.
+fn flush_pending_notes(state: &mut TuiState, project_root: &Path) {
+    if state.current_session_id.is_empty() {
+        return;
+    }
+    let pending = state.drain_pending_notes();
+    if pending.is_empty() {
+        return;
+    }
+    let session_dir = project_root
+        .join(".peridot")
+        .join("sessions")
+        .join(&state.current_session_id);
+    if std::fs::create_dir_all(&session_dir).is_err() {
+        return;
+    }
+    let path = session_dir.join("notes.ndjson");
+    let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    else {
+        return;
+    };
+    use std::io::Write;
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or_default();
+    for body in pending {
+        let line = serde_json::json!({"ts": ts, "text": body});
+        let Ok(serialised) = serde_json::to_string(&line) else {
+            continue;
+        };
+        if writeln!(file, "{serialised}").is_err() {
+            break;
+        }
+    }
+}
+
 /// Appends any transcript entries past `last_count` for the foreground
 /// session to `<sessions>/<id>/transcript.ndjson`. Each entry is one JSON line
 /// (newline-delimited). The append is best-effort: if the directory or file

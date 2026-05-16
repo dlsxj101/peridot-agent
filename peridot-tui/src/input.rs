@@ -38,7 +38,8 @@ pub fn run_interactive(mut state: TuiState) -> io::Result<TuiExit> {
 ///
 /// `on_persist` is called on every tick after state has been updated, giving
 /// the host a chance to throttle and serialise `TuiState` to disk so a crash
-/// or `Ctrl+C` does not lose the current session.
+/// or `Ctrl+C` does not lose the current session. The mutable handle also
+/// lets the host drain queues such as `pending_notes` after writing them.
 #[allow(clippy::too_many_arguments)]
 pub fn run_interactive_with_events<F>(
     mut state: TuiState,
@@ -47,7 +48,7 @@ pub fn run_interactive_with_events<F>(
     mut on_approval: impl FnMut(ApprovalDecision, ApprovalScope, String, String, &mut TuiState),
     mut on_interrupt: impl FnMut(&mut TuiState),
     mut on_session_command: impl FnMut(SessionCommandEvent, &mut TuiState),
-    mut on_persist: impl FnMut(&TuiState),
+    mut on_persist: impl FnMut(&mut TuiState),
 ) -> io::Result<TuiExit>
 where
     F: FnMut(String, &mut TuiState),
@@ -83,7 +84,7 @@ where
         drain_input_queue(&mut state, &mut on_submit);
         state.tick_spinner();
         terminal.terminal.draw(|frame| draw(frame, &state))?;
-        on_persist(&state);
+        on_persist(&mut state);
         if event::poll(Duration::from_millis(100))? {
             match event::read()? {
                 Event::Key(key) => match handle_key_event(&mut state, key) {
@@ -103,7 +104,7 @@ where
             }
         }
     }
-    on_persist(&state);
+    on_persist(&mut state);
     Ok(TuiExit {
         state,
         submitted: None,
@@ -593,6 +594,15 @@ pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
                 state.push_transcript(format!("provider: {provider}"));
             } else {
                 state.push_transcript(format!("provider: {from} -> {provider}"));
+            }
+        }
+        SlashCommand::Note(text) => {
+            let body = text.trim();
+            if body.is_empty() {
+                state.push_error("note: text must not be empty");
+            } else {
+                state.push_pending_note(body.to_string());
+                state.push_transcript(format!("note: {body}"));
             }
         }
         SlashCommand::Lang(locale) => {

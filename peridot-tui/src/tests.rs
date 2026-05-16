@@ -1660,6 +1660,32 @@ fn ask_user_freeform_accepts_shift_enter_and_ctrl_j_newline() {
 }
 
 #[test]
+fn note_slash_queues_pending_note_and_records_transcript() {
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+
+    apply_slash_command(
+        &mut state,
+        SlashCommand::Note("kickoff observed for the migration".to_string()),
+    );
+
+    let drained = state.drain_pending_notes();
+    assert_eq!(
+        drained,
+        vec!["kickoff observed for the migration".to_string()]
+    );
+    assert!(
+        state
+            .transcript
+            .iter()
+            .any(|line| line.text.contains("note: kickoff observed"))
+    );
+}
+
+#[test]
 fn workspace_label_appears_in_status_metrics_when_set() {
     let mut state = TuiState::new(HeaderState::new(
         ExecutionMode::Execute,

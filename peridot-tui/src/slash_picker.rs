@@ -69,6 +69,12 @@ pub fn slash_command_catalog() -> &'static [SlashCommandSpec] {
             category: "session",
         },
         SlashCommandSpec {
+            name: "/note",
+            description: "attach an operator note to the current session",
+            arg_hint: Some("<text>"),
+            category: "session",
+        },
+        SlashCommandSpec {
             name: "/cost",
             description: "show cost / token / cache totals",
             arg_hint: None,

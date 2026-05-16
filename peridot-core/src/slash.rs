@@ -38,6 +38,8 @@ pub enum SlashCommand {
     Model(String),
     /// Switch the active provider (claude-api, openai-api, openrouter-api, ...).
     Provider(String),
+    /// Append a free-form note to the current session's notes.ndjson.
+    Note(String),
     /// Request context compaction.
     Compact,
     /// Save the current session.
@@ -91,6 +93,7 @@ pub fn parse_slash_command(input: &str) -> Option<SlashCommand> {
         "undo" if rest.is_empty() => Some(SlashCommand::Undo),
         "model" if !rest.is_empty() => Some(SlashCommand::Model(rest.to_string())),
         "provider" if !rest.is_empty() => Some(SlashCommand::Provider(rest.to_string())),
+        "note" if !rest.is_empty() => Some(SlashCommand::Note(rest.to_string())),
         "lang" if !rest.is_empty() => Locale::from_str(rest).ok().map(SlashCommand::Lang),
         "fork" if !rest.is_empty() => Some(SlashCommand::Fork(rest.to_string())),
         "teammate" if !rest.is_empty() => Some(SlashCommand::Teammate(rest.to_string())),
