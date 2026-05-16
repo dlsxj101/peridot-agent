@@ -75,6 +75,10 @@ its parent transcript (M4), and the attention notifier line (M5).
   the child with an empty context (silent no-op), matching the previous
   behaviour for that edge case.
 
+### M34 — `peridot version --detailed` (landed)
+- Bare `peridot version` still prints `peridot <semver>` for backwards compatibility with scripts that grep the first token.
+- `peridot version --detailed` adds three indented follow-up lines: `target: <os>`, `arch: <arch>`, and `profile: <release|dev>` when the binary was built with `CARGO_BUILD_PROFILE` propagated. Helpful when triaging "which binary is the operator running" against a release vs a local dev build.
+
 ### M33 — `peridot session show --transcript-tail N` (landed)
 - `peridot session show <id> --transcript-tail N` prints the most recent N transcript entries (kind marker + text) under a `transcript (last N):` header, reusing the M10 load-with-fallback helper so even sessions that only have `transcript.ndjson` render the tail. JSON output exposes them under `transcript_tail: [{ kind, text }]`.
 - Pairs with `--notes-tail N` (M30) so a single `show` invocation can answer "what happened recently in this session" without follow-up replay calls.

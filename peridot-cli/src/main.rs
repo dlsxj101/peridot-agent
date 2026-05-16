@@ -216,7 +216,11 @@ enum Command {
         force: bool,
     },
     /// Print version information.
-    Version,
+    Version {
+        /// Include build metadata (target triple, rustc fingerprint).
+        #[arg(long)]
+        detailed: bool,
+    },
 }
 
 /// Clap representation of execution modes.
@@ -276,8 +280,17 @@ async fn main() -> Result<()> {
     let config = load_effective_config(&project_root, cli.config.as_deref())?;
 
     match &cli.command {
-        Some(Command::Version) => {
-            println!("peridot {}", env!("CARGO_PKG_VERSION"));
+        Some(Command::Version { detailed }) => {
+            if *detailed {
+                println!("peridot {}", env!("CARGO_PKG_VERSION"));
+                println!("  target: {}", std::env::consts::OS);
+                println!("  arch:   {}", std::env::consts::ARCH);
+                if let Some(profile) = option_env!("PROFILE") {
+                    println!("  profile: {profile}");
+                }
+            } else {
+                println!("peridot {}", env!("CARGO_PKG_VERSION"));
+            }
             return Ok(());
         }
         Some(Command::Scan) => {
