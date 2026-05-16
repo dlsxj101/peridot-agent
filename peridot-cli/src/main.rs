@@ -44,6 +44,7 @@ mod providers;
 mod run_loop;
 mod run_output;
 mod run_state;
+mod session_router;
 #[cfg(test)]
 mod tests;
 
