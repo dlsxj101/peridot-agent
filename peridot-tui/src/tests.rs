@@ -1,6 +1,7 @@
 use peridot_common::{AskUserRequest, ExecutionMode, Locale, PermissionMode, TuiConfig};
 use peridot_core::{GoalStatus, SlashCommand};
 
+use super::fixtures::{TestScenario, fixture_state};
 use super::input::*;
 use super::render::*;
 use super::state::{TranscriptEntry, TranscriptKind};
@@ -876,6 +877,35 @@ fn tui_state_serde_round_trip_preserves_new_defaults() {
     assert_eq!(restored.last_session_save_unix, 0);
     assert_eq!(restored.current_turn, 0);
     assert_eq!(restored.header.update_available, None);
+}
+
+#[test]
+fn fixture_scenarios_render_through_ratatui_backend() {
+    use ratatui::{Terminal, backend::TestBackend};
+
+    for scenario in [
+        TestScenario::Welcome,
+        TestScenario::Running,
+        TestScenario::Approval,
+        TestScenario::AskUser,
+        TestScenario::Menu,
+        TestScenario::Finished,
+        TestScenario::MultiSessionTabBar,
+        TestScenario::KoreanLocale,
+    ] {
+        let backend = TestBackend::new(140, 36);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut state = fixture_state(scenario);
+        state.resize(140, 36);
+        terminal
+            .draw(|frame| draw(frame, &state))
+            .unwrap_or_else(|_| panic!("draw failed for {scenario:?}"));
+        let rendered = format!("{:?}", terminal.backend().buffer());
+        assert!(
+            rendered.contains("PERIDOT"),
+            "header missing for {scenario:?}"
+        );
+    }
 }
 
 #[test]

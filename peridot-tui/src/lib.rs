@@ -25,6 +25,8 @@ use ratatui::{
 use serde::{Deserialize, Serialize};
 
 mod ask_user;
+#[cfg(test)]
+mod fixtures;
 mod i18n;
 mod input;
 mod mascot;
