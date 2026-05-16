@@ -879,6 +879,41 @@ fn tui_state_serde_round_trip_preserves_new_defaults() {
 }
 
 #[test]
+fn subagent_monitor_indents_children_by_depth() {
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Goal,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    state.subagents.push(SubagentMonitorItem {
+        kind: "teammate".to_string(),
+        task: "parent task".to_string(),
+        status: "running".to_string(),
+        summary: None,
+        id: "p".to_string(),
+        parent_id: None,
+        depth: 0,
+        started_at_unix: 0,
+        tokens: 0,
+    });
+    state.subagents.push(SubagentMonitorItem {
+        kind: "fork".to_string(),
+        task: "child task".to_string(),
+        status: "running".to_string(),
+        summary: None,
+        id: "c".to_string(),
+        parent_id: Some("p".to_string()),
+        depth: 1,
+        started_at_unix: 0,
+        tokens: 1200,
+    });
+    let rendered = render_subagent_monitor(&state.subagents);
+    assert!(rendered.contains("teammate parent task [running]"));
+    assert!(rendered.contains("└─ fork child task [running]"));
+    assert!(rendered.contains("(1200 tok)"));
+}
+
+#[test]
 fn esc_during_busy_run_returns_interrupt_outcome() {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 

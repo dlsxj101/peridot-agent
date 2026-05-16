@@ -1105,7 +1105,9 @@ impl TuiState {
                 );
                 self.push_transcript_entry(
                     TranscriptKind::Notice,
-                    format!("session: saved {session_id}"),
+                    format!(
+                        "session: saved {session_id}  ·  resume with: peridot session resume {session_id}"
+                    ),
                 );
             }
             TuiRuntimeEvent::SessionSaveFailed {

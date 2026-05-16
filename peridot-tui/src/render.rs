@@ -106,16 +106,21 @@ pub(super) fn render_welcome(state: &TuiState) -> String {
         "Welcome back {user}!\n\n\
          Peridot is ready for an agent run.\n\
          model      {}\n\
-         mode       {}.{}\n\
+         mode       {} · {}\n\
          workspace  {}\n\n\
          Type a task in the input line below and press Enter.\n\n\
          Try\n\
          - fix the failing tests and explain the change\n\
          - create a small utility and add focused tests\n\n\
+         Getting started\n\
+         1. Type a task  →  Enter to run\n\
+         2. Slash commands  →  `/` opens the picker (Tab autocompletes)\n\
+         3. Need to stop?  →  Esc interrupts the active run\n\
+         4. Multi-line input  →  Shift+Enter for a newline\n\n\
          Slash commands\n\
-         /plan  /execute  /goal <objective>  /safe  /auto  /yolo  /help\n\n\
+         /plan  /execute  /goal <objective>  /safe  /auto  /yolo  /help  /lang en|ko\n\n\
          Keys\n\
-         Enter sends  |  Esc opens/closes menu  |  Up/Down history  |  Ctrl-C quits",
+         Enter sends  |  Shift+Enter newline  |  Esc interrupts/menu  |  Ctrl+P menu  |  Ctrl+] side panel  |  Ctrl-C quits",
         state.header.model, state.header.mode, state.header.permission, workspace
     )
 }
@@ -130,15 +135,29 @@ pub(super) fn render_subagent_monitor(subagents: &[SubagentMonitorItem]) -> Stri
         .take(4)
         .rev()
         .map(|subagent| {
+            let indent = if subagent.depth == 0 {
+                String::new()
+            } else {
+                let mut s = String::new();
+                for _ in 0..subagent.depth.saturating_sub(1) {
+                    s.push_str("│  ");
+                }
+                s.push_str("└─ ");
+                s
+            };
             let summary = subagent
                 .summary
                 .as_ref()
                 .map(|summary| format!(": {summary}"))
                 .unwrap_or_default();
-            format!(
-                "{} {} [{}]{}",
+            let mut tail = format!(
+                "{indent}{} {} [{}]{}",
                 subagent.kind, subagent.task, subagent.status, summary
-            )
+            );
+            if subagent.tokens > 0 {
+                tail.push_str(&format!("  ({} tok)", subagent.tokens));
+            }
+            tail
         })
         .collect::<Vec<_>>()
         .join("\n");
