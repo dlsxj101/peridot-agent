@@ -75,6 +75,10 @@ its parent transcript (M4), and the attention notifier line (M5).
   the child with an empty context (silent no-op), matching the previous
   behaviour for that edge case.
 
+### M12 — Session list/show carry SessionRecord (landed)
+- `peridot session list` now joins each `SessionSummary` with the matching `SessionRecord` written by M3's throttled persistence path. Text output appends `status / tokens / cost / turns`; JSON output nests the full record under each entry. Sessions without a record fall back to the previous summary-only view, so behaviour stays backwards compatible.
+- `peridot session show` mirrors the same join with a more readable multi-line layout (status, workspace, tokens, cost, turns, optional worktree branch and last task). JSON output exposes the same nested shape for tooling.
+
 ### M11 — Live transcript tail (landed)
 - `peridot session tail <id> [--from-now] [--interval-ms N]` prints the existing `transcript.ndjson` and then polls the file at `interval_ms` (default 200 ms, floored to 50 ms), printing every new line as it arrives with the same five-marker vocabulary the TUI uses. Ctrl+C terminates the watcher; no special signal handling needed.
 - `--from-now` skips the existing journal and only prints entries written after the watch starts, useful when attaching mid-run.

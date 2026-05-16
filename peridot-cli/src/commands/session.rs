@@ -9,11 +9,36 @@ pub(crate) fn run_session_command(
     match command {
         SessionCommand::List => {
             let sessions = store.list_sessions()?;
+            let records = store.list_session_records().unwrap_or_default();
+            let record_for = |id: &str| records.iter().find(|r| r.id == id).cloned();
             match output {
-                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&sessions)?),
+                OutputFormat::Json => {
+                    let payload: Vec<_> = sessions
+                        .iter()
+                        .map(|session| {
+                            let record = record_for(&session.id);
+                            serde_json::json!({
+                                "id": session.id,
+                                "summary": session.summary,
+                                "record": record,
+                            })
+                        })
+                        .collect();
+                    println!("{}", serde_json::to_string_pretty(&payload)?);
+                }
                 OutputFormat::Text => {
                     for session in sessions {
-                        println!("{}\t{}", session.id, session.summary);
+                        let record = record_for(&session.id);
+                        let suffix = record
+                            .as_ref()
+                            .map(|r| {
+                                format!(
+                                    "\tstatus={:?}\ttokens={}\tcost=${:.4}\tturns={}",
+                                    r.status, r.total_tokens, r.total_cost_usd, r.turns_used,
+                                )
+                            })
+                            .unwrap_or_default();
+                        println!("{}\t{}{}", session.id, session.summary, suffix);
                     }
                 }
             }
@@ -52,11 +77,40 @@ pub(crate) fn run_session_command(
         }
         SessionCommand::Show { id } => {
             let session = store.get_session(id)?;
+            let record = store.get_session_record(id).unwrap_or_default();
             match output {
-                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&session)?),
-                OutputFormat::Text => match session {
-                    Some(session) => println!("{}\t{}", session.id, session.summary),
-                    None => println!("session not found: {id}"),
+                OutputFormat::Json => {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&serde_json::json!({
+                            "session": session,
+                            "record": record,
+                        }))?
+                    );
+                }
+                OutputFormat::Text => match (session, record) {
+                    (Some(session), Some(record)) => {
+                        println!("{}\t{}", session.id, session.summary);
+                        println!(
+                            "  status={:?} workspace={} tokens={} cost=${:.4} turns={}",
+                            record.status,
+                            record.workspace_root.display(),
+                            record.total_tokens,
+                            record.total_cost_usd,
+                            record.turns_used,
+                        );
+                        if let Some(branch) = record.worktree_branch.as_deref() {
+                            println!("  worktree branch: {branch}");
+                        }
+                        if let Some(task) = record.last_task.as_deref() {
+                            println!("  last task: {task}");
+                        }
+                    }
+                    (Some(session), None) => {
+                        println!("{}\t{}", session.id, session.summary);
+                        println!("  (no SessionRecord yet — session never persisted a snapshot)");
+                    }
+                    (None, _) => println!("session not found: {id}"),
                 },
             }
         }
