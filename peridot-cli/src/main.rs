@@ -763,14 +763,20 @@ fn apply_session_command(
         SessionCommandEvent::Fork(task) => {
             let new_id = format!("fork-{}-{}", std::process::id(), unix_timestamp());
             let title = task.clone();
-            router.lock().unwrap().register(SessionHandle::new(
-                new_id.clone(),
-                project_template.to_path_buf(),
-                WorkspaceIsolation::Shared,
-            ));
+            let parent_id = state.current_session_id.clone();
+            {
+                let mut router = router.lock().unwrap();
+                let mut new_handle = SessionHandle::new(
+                    new_id.clone(),
+                    project_template.to_path_buf(),
+                    WorkspaceIsolation::Shared,
+                );
+                new_handle.parent_id = Some(parent_id.clone());
+                router.register(new_handle);
+            }
             state
                 .sessions
-                .push(SessionDirectoryItem::new(&new_id, &title));
+                .push(SessionDirectoryItem::new(&new_id, &title).with_parent(parent_id, "fork"));
             spawn_session_task(
                 handle,
                 event_tx,
@@ -792,6 +798,7 @@ fn apply_session_command(
             spawn_worktree_session(
                 &new_id,
                 &branch,
+                "teammate",
                 task,
                 state,
                 router,
@@ -807,6 +814,7 @@ fn apply_session_command(
             spawn_worktree_session(
                 &new_id,
                 &branch,
+                "worktree",
                 task,
                 state,
                 router,
@@ -825,6 +833,7 @@ fn apply_session_command(
 fn spawn_worktree_session(
     new_id: &str,
     branch: &str,
+    kind: &str,
     task: String,
     state: &mut TuiState,
     router: &std::sync::Arc<std::sync::Mutex<SessionRouter>>,
@@ -859,16 +868,22 @@ fn spawn_worktree_session(
         }
     }
     let title = task.clone();
-    router.lock().unwrap().register(SessionHandle::new(
-        new_id.to_string(),
-        worktree_path.clone(),
-        WorkspaceIsolation::Worktree {
-            branch: branch.to_string(),
-        },
-    ));
+    let parent_id = state.current_session_id.clone();
+    {
+        let mut router = router.lock().unwrap();
+        let mut new_handle = SessionHandle::new(
+            new_id.to_string(),
+            worktree_path.clone(),
+            WorkspaceIsolation::Worktree {
+                branch: branch.to_string(),
+            },
+        );
+        new_handle.parent_id = Some(parent_id.clone());
+        router.register(new_handle);
+    }
     state
         .sessions
-        .push(SessionDirectoryItem::new(new_id, &title));
+        .push(SessionDirectoryItem::new(new_id, &title).with_parent(parent_id, kind));
     state.push_transcript(format!(
         "worktree: registered {new_id} on branch {branch} at {}",
         worktree_path.display()

@@ -51,12 +51,21 @@ its parent transcript (M4), and the attention notifier line (M5).
 - Startup scan downgrades any `SessionRecord` still marked `Running` to `Suspended` and surfaces the ids in the welcome transcript with the `peridot --resume <id>` hint.
 - Outstanding: `peridot-context` blob round-trip (the context manager itself is not yet serialised — TuiState alone covers the UI surface).
 
-### M4 — Subagent fan-in (`/fork`, `/teammate`, `/worktree`)
-- Route `/fork <task>` through `LocalSubAgentRunner::fork` with `parent_id` set on the spawned `SessionHandle`.
-- `/teammate <task>` defaults to a `Worktree(<auto-branch>)` session and registers a tab.
-- `/worktree <branch> <task>` is the explicit form.
-- Child events propagate to the parent's subagent tree (`SubagentMonitorItem`), and a child completion writes a one-line summary back into the parent transcript.
-- Tests: parent + child concurrent run, parent transcript receives child progress, child cancel via `/session close <child_id>` interrupts cleanly.
+### M4 — Subagent fan-in (`/fork`, `/teammate`, `/worktree`) (landed)
+- `/fork`, `/teammate`, and `/worktree` register the new session with
+  `SessionHandle.parent_id = current foreground id` and the
+  `SessionDirectoryItem.kind` set to `fork` / `teammate` / `worktree` so the
+  tree-shaped side panel can render the child under its parent.
+- `TuiState::record_background_event` automatically promotes child events into
+  `SubagentMonitorItem` entries (id + parent_id + tokens + kind + task)
+  whenever the child's `parent_id` matches the foreground session — the
+  parent transcript reflects child progress without forcing a tab swap.
+- `/session close <child>` reuses the M2 worktree cleanup flow so cancelling
+  a teammate / worktree subagent leaves no orphan directories or branches.
+- Outstanding: `LocalSubAgentRunner::fork` integration for prompt-injection
+  parents — the wiring tracks parent/child here, but the agent loop still
+  starts each child with an empty context. M5 covers the attention notifier;
+  shared context propagation is a follow-up after that.
 
 ### M5 — Attention notifier
 - `SessionDirectoryItem::pending_attention` toggles on `ApprovalRequested` or `AskUser*` for background sessions.

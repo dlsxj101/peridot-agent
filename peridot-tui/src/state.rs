@@ -704,7 +704,12 @@ impl TuiState {
     /// [`apply_runtime_event`](Self::apply_runtime_event) instead — this method
     /// only tracks counters and attention flags for sessions the user is not
     /// currently watching.
+    ///
+    /// When the background session is a subagent of the foreground session
+    /// (matching `parent_id`), a [`SubagentMonitorItem`] is also created or
+    /// updated so the side panel tree reflects child progress inline.
     pub fn record_background_event(&mut self, session_id: &str, event: &TuiRuntimeEvent) {
+        let mut subagent_update: Option<(String, Option<String>, String, String, u64)> = None;
         if let Some(item) = self.sessions.iter_mut().find(|item| item.id == session_id) {
             match event {
                 TuiRuntimeEvent::RunStarted { .. } | TuiRuntimeEvent::TurnStarted { .. } => {
@@ -743,6 +748,55 @@ impl TuiState {
                 _ => {}
             }
             item.last_event_at_unix = current_unix_seconds();
+            if item.parent_id.as_deref() == Some(self.current_session_id.as_str()) {
+                let status = format!("{:?}", item.status).to_ascii_lowercase();
+                subagent_update = Some((
+                    item.id.clone(),
+                    item.parent_id.clone(),
+                    item.kind.clone().unwrap_or_else(|| "subagent".to_string()),
+                    item.title.clone(),
+                    item.tokens,
+                ));
+                let _ = status;
+            }
+        }
+        if let Some((id, parent_id, kind, task, tokens)) = subagent_update {
+            self.upsert_subagent_monitor(id, parent_id, kind, task, tokens);
+        }
+    }
+
+    fn upsert_subagent_monitor(
+        &mut self,
+        id: String,
+        parent_id: Option<String>,
+        kind: String,
+        task: String,
+        tokens: u64,
+    ) {
+        let status_from_directory = self
+            .sessions
+            .iter()
+            .find(|item| item.id == id)
+            .map(|item| format!("{:?}", item.status).to_ascii_lowercase())
+            .unwrap_or_else(|| "running".to_string());
+        if let Some(monitor) = self.subagents.iter_mut().find(|item| item.id == id) {
+            monitor.parent_id = parent_id;
+            monitor.kind = kind;
+            monitor.task = task;
+            monitor.status = status_from_directory;
+            monitor.tokens = tokens;
+        } else {
+            self.subagents.push(SubagentMonitorItem {
+                kind,
+                task,
+                status: status_from_directory,
+                summary: None,
+                id,
+                parent_id,
+                depth: 1,
+                started_at_unix: current_unix_seconds(),
+                tokens,
+            });
         }
     }
 

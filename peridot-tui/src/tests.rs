@@ -1547,6 +1547,73 @@ fn record_background_event_updates_directory_stats_and_attention() {
 }
 
 #[test]
+fn record_background_event_promotes_child_into_subagent_monitor() {
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    state.current_session_id = "parent".to_string();
+    state
+        .sessions
+        .push(SessionDirectoryItem::new("parent", "main"));
+    let child = SessionDirectoryItem::new("fork-1", "audit lib.rs").with_parent("parent", "fork");
+    state.sessions.push(child);
+
+    state.record_background_event(
+        "fork-1",
+        &TuiRuntimeEvent::RunStarted {
+            task: "audit lib.rs".to_string(),
+        },
+    );
+    state.record_background_event(
+        "fork-1",
+        &TuiRuntimeEvent::UsageUpdated {
+            total_tokens: 800,
+            cache_hit_rate: 0.0,
+            cost_usd: 0.01,
+        },
+    );
+
+    let monitor = state
+        .subagents
+        .iter()
+        .find(|item| item.id == "fork-1")
+        .expect("subagent monitor entry should be created for the child");
+    assert_eq!(monitor.kind, "fork");
+    assert_eq!(monitor.parent_id.as_deref(), Some("parent"));
+    assert_eq!(monitor.task, "audit lib.rs");
+    assert_eq!(monitor.tokens, 800);
+}
+
+#[test]
+fn record_background_event_skips_subagent_monitor_when_parent_not_foreground() {
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    state.current_session_id = "other".to_string();
+    state
+        .sessions
+        .push(SessionDirectoryItem::new("other", "other"));
+    let child = SessionDirectoryItem::new("fork-2", "compile checks").with_parent("parent", "fork");
+    state.sessions.push(child);
+
+    state.record_background_event(
+        "fork-2",
+        &TuiRuntimeEvent::RunStarted {
+            task: "compile checks".to_string(),
+        },
+    );
+
+    assert!(
+        state.subagents.iter().all(|item| item.id != "fork-2"),
+        "subagent monitor must only follow the foreground parent"
+    );
+}
+
+#[test]
 fn record_background_event_marks_finished_status_per_stop_reason() {
     let mut state = TuiState::new(HeaderState::new(
         ExecutionMode::Execute,

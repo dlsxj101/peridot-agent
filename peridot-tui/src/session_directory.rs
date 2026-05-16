@@ -30,6 +30,15 @@ pub struct SessionDirectoryItem {
     pub last_event_at_unix: u64,
     /// Whether the session has an approval / ask_user prompt awaiting the user.
     pub pending_attention: bool,
+    /// Parent session id when this entry was spawned as a subagent
+    /// (`/fork`, `/teammate`, `/worktree`). `None` means the session is a
+    /// top-level user session.
+    #[serde(default)]
+    pub parent_id: Option<String>,
+    /// Kind label used to distinguish fork / teammate / worktree subagents in
+    /// the side panel tree. `None` for top-level sessions.
+    #[serde(default)]
+    pub kind: Option<String>,
 }
 
 impl SessionDirectoryItem {
@@ -43,7 +52,17 @@ impl SessionDirectoryItem {
             cost_usd: 0.0,
             last_event_at_unix: 0,
             pending_attention: false,
+            parent_id: None,
+            kind: None,
         }
+    }
+
+    /// Marks this entry as a subagent of `parent_id` with the given kind label
+    /// (e.g. "fork", "teammate", "worktree").
+    pub fn with_parent(mut self, parent_id: impl Into<String>, kind: impl Into<String>) -> Self {
+        self.parent_id = Some(parent_id.into());
+        self.kind = Some(kind.into());
+        self
     }
 }
 
