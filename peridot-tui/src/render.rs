@@ -157,6 +157,18 @@ fn is_entry_hidden(state: &TuiState, entry: &TranscriptEntry) -> bool {
 
 /// Builds a styled line for one transcript entry.
 fn style_transcript_entry(state: &TuiState, entry: &TranscriptEntry) -> Line<'static> {
+    let is_indented_detail = matches!(
+        entry.kind,
+        TranscriptKind::ToolStart | TranscriptKind::ToolOk | TranscriptKind::ToolFail
+    ) && entry.text.starts_with("  ");
+    if is_indented_detail {
+        return Line::from(Span::styled(
+            entry.text.clone(),
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::DIM),
+        ));
+    }
     match entry.kind {
         TranscriptKind::User => Line::from(vec![
             Span::styled(
