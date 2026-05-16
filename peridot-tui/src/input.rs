@@ -534,6 +534,13 @@ pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
             record_mode_switch(state, ExecutionMode::Goal);
             state.header.mode = ExecutionMode::Goal;
             state.goal_status = Some(GoalStatus::Running);
+            state.goal_text = Some(goal.clone());
+            state.goal_started_at_unix = Some(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or_default(),
+            );
             state.side_panel.plan.push(PlanStep {
                 label: goal.clone(),
                 done: false,
@@ -550,6 +557,8 @@ pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
         }
         SlashCommand::GoalClear => {
             state.goal_status = Some(GoalStatus::Cleared);
+            state.goal_text = None;
+            state.goal_started_at_unix = None;
             state.side_panel.plan.clear();
             state.push_transcript("goal: cleared");
         }
@@ -768,6 +777,31 @@ pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
                     .join("\n");
                 state.push_transcript(format!("sessions:\n{summary}"));
             }
+        }
+        SlashCommand::SubagentModel(change) => match change {
+            peridot_core::SubagentModelChange::Set(name) => {
+                let from = state
+                    .subagent_default_model
+                    .clone()
+                    .unwrap_or_else(|| "<inherit caller>".to_string());
+                state.subagent_default_model = Some(name.clone());
+                state.push_transcript(format!("subagent model: {from} -> {name}"));
+            }
+            peridot_core::SubagentModelChange::Reset => {
+                let from = state
+                    .subagent_default_model
+                    .clone()
+                    .unwrap_or_else(|| "<inherit caller>".to_string());
+                state.subagent_default_model = None;
+                state.push_transcript(format!(
+                    "subagent model: {from} -> <inherit caller>"
+                ));
+            }
+        },
+        SlashCommand::Reasoning(effort) => {
+            let from = state.reasoning_effort;
+            state.reasoning_effort = effort;
+            state.push_transcript(format!("reasoning: {from} -> {effort}"));
         }
     }
 }

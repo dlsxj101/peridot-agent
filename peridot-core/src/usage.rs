@@ -64,6 +64,7 @@ where
     Ok(CompletionResponse {
         text,
         tool_calls,
+        reasoning_content: None,
         usage,
     })
 }

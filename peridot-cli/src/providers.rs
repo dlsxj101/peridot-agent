@@ -130,6 +130,7 @@ pub(super) fn parse_mock_completion_response(line: String) -> PeriResult<Complet
         return Ok(CompletionResponse {
             text: line,
             tool_calls: Vec::new(),
+            reasoning_content: None,
             usage: Usage::default(),
         });
     };
@@ -137,6 +138,7 @@ pub(super) fn parse_mock_completion_response(line: String) -> PeriResult<Complet
         return Ok(CompletionResponse {
             text: line,
             tool_calls: Vec::new(),
+            reasoning_content: None,
             usage: Usage::default(),
         });
     };
@@ -144,6 +146,7 @@ pub(super) fn parse_mock_completion_response(line: String) -> PeriResult<Complet
         return Ok(CompletionResponse {
             text: line,
             tool_calls: Vec::new(),
+            reasoning_content: None,
             usage: Usage::default(),
         });
     };
@@ -157,6 +160,7 @@ pub(super) fn parse_mock_completion_response(line: String) -> PeriResult<Complet
     Ok(CompletionResponse {
         text: text.to_string(),
         tool_calls: Vec::new(),
+        reasoning_content: None,
         usage,
     })
 }

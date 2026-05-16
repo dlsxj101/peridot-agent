@@ -34,6 +34,7 @@ mod tests {
             messages,
             max_tokens: Some(16),
             thinking: false,
+            reasoning_effort: peridot_common::ReasoningEffort::Off,
             tools: Vec::new(),
             tool_choice: ToolChoice::Auto,
         }
@@ -46,6 +47,7 @@ mod tests {
             messages,
             max_tokens: Some(64),
             thinking: false,
+            reasoning_effort: peridot_common::ReasoningEffort::Off,
             tools,
             tool_choice: ToolChoice::Auto,
         }
@@ -60,6 +62,7 @@ mod tests {
             Ok(CompletionResponse {
                 text: "hello".to_string(),
                 tool_calls: Vec::new(),
+                reasoning_content: None,
                 usage: Usage {
                     input_tokens: 1,
                     output_tokens: 2,
@@ -117,6 +120,7 @@ mod tests {
             ],
             max_tokens: Some(128),
             thinking: false,
+            reasoning_effort: peridot_common::ReasoningEffort::Off,
             tools: Vec::new(),
             tool_choice: ToolChoice::Auto,
         });
@@ -180,6 +184,7 @@ mod tests {
             messages: vec![LlmMessage::new(MessageRole::User, "hello")],
             max_tokens: Some(256),
             thinking: false,
+            reasoning_effort: peridot_common::ReasoningEffort::Off,
             tools: Vec::new(),
             tool_choice: ToolChoice::Auto,
         });
@@ -216,6 +221,7 @@ mod tests {
             ],
             max_tokens: Some(128),
             thinking: false,
+            reasoning_effort: peridot_common::ReasoningEffort::Off,
             tools: Vec::new(),
             tool_choice: ToolChoice::Auto,
         });
@@ -258,6 +264,7 @@ mod tests {
             messages: vec![assistant],
             max_tokens: None,
             thinking: false,
+            reasoning_effort: peridot_common::ReasoningEffort::Off,
             tools: Vec::new(),
             tool_choice: ToolChoice::Auto,
         });
@@ -286,6 +293,7 @@ mod tests {
             ],
             max_tokens: Some(128),
             thinking: false,
+            reasoning_effort: peridot_common::ReasoningEffort::Off,
             tools: Vec::new(),
             tool_choice: ToolChoice::Auto,
         });
@@ -370,6 +378,7 @@ mod tests {
                 messages: vec![LlmMessage::new(MessageRole::User, "hello")],
                 max_tokens: Some(16),
                 thinking: false,
+                reasoning_effort: peridot_common::ReasoningEffort::Off,
                 tools: Vec::new(),
                 tool_choice: ToolChoice::Auto,
             })

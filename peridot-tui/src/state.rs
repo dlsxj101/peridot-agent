@@ -647,6 +647,30 @@ pub struct TuiState {
     /// to push periodic events.
     #[serde(default)]
     pub task_started_at_unix: Option<u64>,
+    /// Runtime override for the model spawned sub-agents (`/fork`,
+    /// `/teammate`, `/worktree`, `agent_delegate`) should use. `None` means
+    /// "fall back to `config.subagents.default_model` from the toml, and if
+    /// that's also unset, inherit the caller's main model." Mutated via the
+    /// `/subagent model <name|reset>` slash command; serialised so a resumed
+    /// session keeps the operator's runtime preference.
+    #[serde(default)]
+    pub subagent_default_model: Option<String>,
+    /// Active goal-mode objective text (the verbatim string the operator
+    /// passed to `/goal <objective>`). `None` while no goal is active. Lets
+    /// the side panel show the actual target instead of just "running".
+    #[serde(default)]
+    pub goal_text: Option<String>,
+    /// Wall-clock start of the current goal in unix seconds. Used to render
+    /// "goal age" in the side panel. Set on `/goal <objective>`, refreshed
+    /// when paused goals are resumed, cleared on `/goal clear`.
+    #[serde(default)]
+    pub goal_started_at_unix: Option<u64>,
+    /// Runtime reasoning-intensity dial applied to outgoing model requests.
+    /// Initialised from `config.models.reasoning_effort`; mutated via the
+    /// `/reasoning <off|low|medium|high>` slash command. Persisted so a
+    /// resumed session keeps the operator's preference.
+    #[serde(default)]
+    pub reasoning_effort: peridot_common::ReasoningEffort,
 }
 
 /// A session-router intent emitted by a slash command. The TUI itself does not
@@ -749,6 +773,10 @@ impl TuiState {
             committee_reviewer_tokens: 0,
             pending_committee_events: Vec::new(),
             task_started_at_unix: None,
+            subagent_default_model: None,
+            goal_text: None,
+            goal_started_at_unix: None,
+            reasoning_effort: peridot_common::ReasoningEffort::default(),
         }
     }
 

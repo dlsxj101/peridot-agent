@@ -424,6 +424,7 @@ where
                 goal_checker_model: Some(options.config.models.goal_checker.clone()),
                 max_turns: options.max_turns,
                 max_tokens: 4096,
+                reasoning_effort: options.config.models.reasoning_effort,
                 budget_usd: options.budget_usd,
                 budget_warning_pct: options.config.defaults.budget_warning_pct,
                 project_root: options.project_root.to_path_buf(),
@@ -529,6 +530,7 @@ where
             user_input: user_input_for_next.take(),
             model: options.model.clone(),
             max_tokens: 4096,
+            reasoning_effort: options.config.models.reasoning_effort,
             project_root: options.project_root.to_path_buf(),
             denied_paths: options.denied_paths.clone(),
             hooks: options.config.hooks.clone(),
@@ -741,6 +743,7 @@ where
         messages: vec![LlmMessage::new(MessageRole::User, user_prompt)],
         max_tokens: Some(512),
         thinking: false,
+        reasoning_effort: peridot_common::ReasoningEffort::Off,
         tools: Vec::new(),
         tool_choice: ToolChoice::Auto,
     };

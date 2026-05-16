@@ -104,6 +104,80 @@ fn short_session_id(id: &str) -> String {
         .unwrap_or_else(|| id.to_string())
 }
 
+/// Renders the side-panel Goal block as plain text (joined later into the
+/// side panel string). When no goal is active the block collapses to an
+/// empty string so the panel doesn't carry a "Goal" header for nothing.
+/// Active goals show the objective (truncated to fit narrow panels), a
+/// status label, plan progress percentage, and goal age — all of the
+/// information the operator needs to glance at without leaving the chat.
+fn render_goal_block(state: &TuiState) -> String {
+    let Some(status) = state.goal_status.as_ref() else {
+        return String::new();
+    };
+    let status_label = goal_status_label(Some(status));
+    // Objective truncated to fit in a typical 20-30 col side panel without
+    // overflowing. The full text is still in `state.goal_text` and surfaced
+    // via `/goal status` in the transcript.
+    let objective = state
+        .goal_text
+        .as_deref()
+        .map(|text| truncate_objective(text, 28))
+        .unwrap_or_else(|| "<no objective>".to_string());
+    let total = state.side_panel.plan.len();
+    let done = state
+        .side_panel
+        .plan
+        .iter()
+        .filter(|step| step.done)
+        .count();
+    let progress_pct = if total > 0 {
+        (done as f32 / total as f32 * 100.0).round() as u32
+    } else {
+        0
+    };
+    let bar = render_progress_bar(done, total, 10);
+    let age = state
+        .goal_started_at_unix
+        .map(|started| {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(started);
+            state::format_duration_ms(now.saturating_sub(started) * 1000)
+        })
+        .unwrap_or_else(|| "0s".to_string());
+    format!(
+        "Goal ({status_label})\n{objective}\n{bar} {done}/{total} ({progress_pct}%)\nage: {age}\n\n"
+    )
+}
+
+/// Truncates an objective string at character (not byte) boundary so CJK
+/// inputs don't get mangled. Adds an ellipsis when truncation actually
+/// trims something so the operator knows the full text is longer.
+fn truncate_objective(text: &str, max_chars: usize) -> String {
+    if text.chars().count() <= max_chars {
+        return text.to_string();
+    }
+    let head: String = text.chars().take(max_chars.saturating_sub(1)).collect();
+    format!("{head}\u{2026}")
+}
+
+/// Builds a Unicode block-character progress bar of the requested width.
+/// `done >= total` saturates to a full bar; `total == 0` returns an empty
+/// bar so a goal with no steps still renders cleanly.
+fn render_progress_bar(done: usize, total: usize, width: usize) -> String {
+    if total == 0 || width == 0 {
+        return String::new();
+    }
+    let filled = ((done.min(total)) * width).div_ceil(total);
+    let empty = width.saturating_sub(filled);
+    format!(
+        "[{}{}]",
+        "\u{2588}".repeat(filled),
+        "\u{2591}".repeat(empty)
+    )
+}
+
 pub(super) fn should_render_welcome(state: &TuiState) -> bool {
     state.transcript.is_empty()
         && state.active_stream.is_none()
@@ -538,16 +612,22 @@ fn render_prefixed_block(
 /// Builds the live in-progress agent reply as inline lines. The braille
 /// spinner sits on the first line so the user can see the model is still
 /// generating; subsequent lines render plain. When nothing has streamed yet
-/// the body collapses to a single dim `thinking...` line.
+/// we pick a placeholder that matches the actual underlying state — there
+/// is no point claiming the model is "thinking" if it is sitting on the
+/// network roundtrip or running a tool. The streaming bubble itself is
+/// suppressed by `draw()` while a tool is executing (active_stream is
+/// `None` during that phase), so this placeholder only fires during the
+/// "waiting for the model's first token" window.
 fn render_streaming_inline(state: &TuiState, stream: &StreamState) -> Vec<Line<'static>> {
     let body_style = Style::default().fg(Color::White);
     let spinner_style = Style::default().fg(Color::Cyan);
     let content = stream.content.trim();
     if content.is_empty() {
+        let placeholder = streaming_placeholder_label(state);
         return vec![Line::from(vec![
             Span::styled(format!("{} ", state.spinner_frame()), spinner_style),
             Span::styled(
-                "thinking...".to_string(),
+                placeholder.to_string(),
                 Style::default()
                     .fg(Color::DarkGray)
                     .add_modifier(Modifier::ITALIC | Modifier::DIM),
@@ -568,6 +648,21 @@ fn render_streaming_inline(state: &TuiState, stream: &StreamState) -> Vec<Line<'
         lines.push(Line::from(style_markdown_inline(rest, body_style)));
     }
     lines
+}
+
+/// Picks the dim italic line shown in the streaming bubble before the model
+/// emits its first delta. We avoid the historical "thinking..." string
+/// because it implies reasoning content — the placeholder fires whenever
+/// the stream is empty (model warmup, network latency, queue waits), and
+/// most of that time is not reasoning at all. When a tool happens to be
+/// active (rare with our current draw rules), the status bar already names
+/// the tool, so we fall through to a generic label here.
+fn streaming_placeholder_label(state: &TuiState) -> &'static str {
+    if !state.active_tools.is_empty() {
+        "running tool…"
+    } else {
+        "generating reply…"
+    }
 }
 
 /// Human-readable description of the current agent activity.
@@ -995,11 +1090,7 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
             })
             .collect::<Vec<_>>()
             .join("\n");
-        let goal = state
-            .goal_status
-            .as_ref()
-            .map(|status| format!("Goal: {}\n\n", goal_status_label(Some(status))))
-            .unwrap_or_default();
+        let goal = render_goal_block(state);
         // Session id is rendered as a short suffix when it fits; the directory
         // entries use long ids like `session-628850-1778945666`, so we keep
         // the last numeric chunk for compactness. The Activity feed and

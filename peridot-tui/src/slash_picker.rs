@@ -159,6 +159,18 @@ pub fn slash_command_catalog() -> &'static [SlashCommandSpec] {
             category: "subagent",
         },
         SlashCommandSpec {
+            name: "/subagent model",
+            description: "override the default model for spawned subagents (or 'reset')",
+            arg_hint: Some("<name|reset>"),
+            category: "subagent",
+        },
+        SlashCommandSpec {
+            name: "/reasoning",
+            description: "set reasoning intensity (off / low / medium / high)",
+            arg_hint: Some("<off|low|medium|high>"),
+            category: "session",
+        },
+        SlashCommandSpec {
             name: "/session new",
             description: "open a new session, optionally with an initial task",
             arg_hint: Some("[task]"),

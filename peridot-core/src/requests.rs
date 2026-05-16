@@ -225,6 +225,8 @@ pub struct AgentTurnRequest {
     pub model: String,
     /// Maximum output tokens.
     pub max_tokens: u32,
+    /// Reasoning intensity forwarded to the provider for this turn.
+    pub reasoning_effort: peridot_common::ReasoningEffort,
     /// Project root.
     pub project_root: PathBuf,
     /// Denied path prefixes.
@@ -261,6 +263,11 @@ pub struct AgentRunRequest {
     pub max_turns: u32,
     /// Maximum output tokens per turn.
     pub max_tokens: u32,
+    /// Reasoning intensity forwarded to the provider for every turn.
+    /// Sourced from `state.reasoning_effort` (slash-command override) with
+    /// `config.models.reasoning_effort` as the persistent fallback. The
+    /// agent loop passes this verbatim to each `CompletionRequest`.
+    pub reasoning_effort: peridot_common::ReasoningEffort,
     /// Maximum estimated cost for the run. Values <= 0 disable budget stopping.
     pub budget_usd: f64,
     /// Budget warning threshold percentage.

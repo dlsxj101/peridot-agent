@@ -368,6 +368,21 @@ pub(crate) fn openai_chat_payload(request: &CompletionRequest) -> Value {
     if let Some(max_tokens) = request.max_tokens {
         payload["max_tokens"] = json!(max_tokens);
     }
+    // Forward reasoning intensity for o-series / gpt-5 models. Chat-only
+    // models ignore the field silently, so it's safe to send unconditionally
+    // when the operator opts in. Legacy `thinking: true` callers fall
+    // through to Medium when they leave `reasoning_effort` at its default.
+    let effective_effort =
+        if request.reasoning_effort != peridot_common::ReasoningEffort::Off {
+            request.reasoning_effort
+        } else if request.thinking {
+            peridot_common::ReasoningEffort::Medium
+        } else {
+            peridot_common::ReasoningEffort::Off
+        };
+    if let Some(label) = effective_effort.openai_effort_label() {
+        payload["reasoning"] = json!({ "effort": label });
+    }
     if !request.tools.is_empty() {
         let tools = request
             .tools
@@ -443,6 +458,7 @@ pub(crate) fn parse_openai_response(
     Ok(CompletionResponse {
         text,
         tool_calls,
+        reasoning_content: None,
         usage: Usage {
             input_tokens,
             output_tokens,
@@ -533,6 +549,7 @@ async fn drive_openai_stream(
             {
                 let _ = sender.send(CompletionStreamChunk {
                     delta: text.to_string(),
+                    reasoning_delta: String::new(),
                     tool_calls: Vec::new(),
                     done: false,
                     usage: None,
@@ -589,6 +606,7 @@ async fn drive_openai_stream(
     let estimated_cost_usd = estimate_cost(pricing, input_tokens, output_tokens, cache_read_tokens);
     let _ = sender.send(CompletionStreamChunk {
         delta: String::new(),
+        reasoning_delta: String::new(),
         tool_calls: assembled_tool_calls,
         done: true,
         usage: Some(Usage {
@@ -653,6 +671,7 @@ pub(crate) fn parse_openai_stream(
         {
             chunks.push(CompletionStreamChunk {
                 delta: text.to_string(),
+                reasoning_delta: String::new(),
                 tool_calls: Vec::new(),
                 done: false,
                 usage: None,
@@ -709,6 +728,7 @@ pub(crate) fn parse_openai_stream(
     let estimated_cost_usd = estimate_cost(pricing, input_tokens, output_tokens, cache_read_tokens);
     chunks.push(CompletionStreamChunk {
         delta: String::new(),
+        reasoning_delta: String::new(),
         tool_calls: assembled_tool_calls,
         done: true,
         usage: Some(Usage {

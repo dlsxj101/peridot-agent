@@ -70,7 +70,9 @@ impl AgentState {
             | SlashCommand::SessionNew(_)
             | SlashCommand::SessionSwitch(_)
             | SlashCommand::SessionClose(_)
-            | SlashCommand::SessionList => {}
+            | SlashCommand::SessionList
+            | SlashCommand::SubagentModel(_)
+            | SlashCommand::Reasoning(_) => {}
         }
     }
 }

@@ -272,6 +272,96 @@ pub struct PeridotConfig {
     /// Multi-LLM committee settings (Planner / Reviewer / Executor roles).
     #[serde(default)]
     pub committee: CommitteeConfig,
+    /// Sub-agent (fork / worktree / teammate) spawn defaults.
+    #[serde(default)]
+    pub subagents: SubAgentsConfig,
+}
+
+/// Defaults applied when the main agent spawns a sub-agent via
+/// `agent_delegate` / `/fork` / `/teammate` / `/worktree`. When
+/// `default_model` is `None` the spawn reuses the caller's main model name
+/// so sub-agents stay on the user's chosen tier by default; setting it lets
+/// the operator route every sub-agent to a cheaper / faster / stronger
+/// model regardless of the main loop's selection. Overrideable at runtime
+/// through the `/subagent model <name|reset>` slash command, which writes
+/// to the running TUI state — config.toml carries the persistent default.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct SubAgentsConfig {
+    /// Model name passed to every sub-agent spawn. `None` (the default)
+    /// means "inherit from the caller" — sub-agents run on the same model
+    /// as the main agent unless an explicit value is set here.
+    #[serde(default)]
+    pub default_model: Option<String>,
+}
+
+/// Provider-neutral reasoning intensity dial. Maps to: Anthropic
+/// `thinking: { type: enabled, budget_tokens }` with budget scaled by tier
+/// (Low ≈ 1k, Medium ≈ 4k, High ≈ 16k tokens); OpenAI
+/// `reasoning: { effort: "low|medium|high" }` (gpt-5, o-series); Codex
+/// app-server forwards via the RPC envelope and handles the per-model
+/// mapping. Models without a reasoning channel simply ignore the field.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReasoningEffort {
+    /// No reasoning channel; cheap chat-style behaviour.
+    #[default]
+    Off,
+    /// Light reasoning — small token budget, fast.
+    Low,
+    /// Default reasoning depth when the user opts in without specifying.
+    Medium,
+    /// Maximum reasoning budget; expensive but most thorough.
+    High,
+}
+
+impl ReasoningEffort {
+    /// Parses a case-insensitive string (`off|low|medium|high`) used by the
+    /// `/reasoning` slash command and toml deserialisation when the user
+    /// types a value by hand. Returns `None` for unrecognised input so
+    /// callers can surface a helpful error.
+    pub fn parse(input: &str) -> Option<Self> {
+        match input.trim().to_ascii_lowercase().as_str() {
+            "off" | "none" | "false" | "0" => Some(Self::Off),
+            "low" | "min" | "minimal" => Some(Self::Low),
+            "medium" | "med" | "default" | "true" => Some(Self::Medium),
+            "high" | "max" | "maximum" => Some(Self::High),
+            _ => None,
+        }
+    }
+
+    /// Approximate Anthropic `budget_tokens` value for the tier. Empirically
+    /// chosen to give a clear cost/quality separation while staying well
+    /// inside published limits.
+    pub fn anthropic_budget_tokens(self) -> Option<u32> {
+        match self {
+            Self::Off => None,
+            Self::Low => Some(1_024),
+            Self::Medium => Some(4_096),
+            Self::High => Some(16_384),
+        }
+    }
+
+    /// String value passed to OpenAI's `reasoning.effort` field. `None`
+    /// when reasoning is disabled (the field is omitted from the request).
+    pub fn openai_effort_label(self) -> Option<&'static str> {
+        match self {
+            Self::Off => None,
+            Self::Low => Some("low"),
+            Self::Medium => Some("medium"),
+            Self::High => Some("high"),
+        }
+    }
+}
+
+impl std::fmt::Display for ReasoningEffort {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Off => "off",
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+        })
+    }
 }
 
 /// Activation mode for the multi-role committee. `Off` keeps the legacy
@@ -614,6 +704,13 @@ pub struct ModelsConfig {
     /// Compaction model.
     #[serde(default = "default_goal_checker_model")]
     pub compaction: String,
+    /// Reasoning intensity applied to every request the main agent sends.
+    /// Cheap chat models ignore this; o-series / gpt-5 / Anthropic extended
+    /// thinking models translate it to their native reasoning controls.
+    /// Defaults to `Off` so cost stays predictable; opt in via toml or the
+    /// `/reasoning <off|low|medium|high>` slash command.
+    #[serde(default)]
+    pub reasoning_effort: ReasoningEffort,
 }
 
 impl Default for ModelsConfig {
@@ -622,6 +719,7 @@ impl Default for ModelsConfig {
             main: default_main_model(),
             goal_checker: default_goal_checker_model(),
             compaction: default_goal_checker_model(),
+            reasoning_effort: ReasoningEffort::default(),
         }
     }
 }

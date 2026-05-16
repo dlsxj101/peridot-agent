@@ -96,7 +96,20 @@ pub struct CompletionRequest {
     /// Maximum output tokens.
     pub max_tokens: Option<u32>,
     /// Whether extended thinking is enabled for the session.
+    ///
+    /// **Deprecated** in favour of `reasoning_effort`. Kept as a boolean for
+    /// backward compatibility — providers that read it treat
+    /// `thinking == true` as `ReasoningEffort::Medium` when
+    /// `reasoning_effort` is left at its default. New call sites should set
+    /// `reasoning_effort` instead and leave this `false`.
     pub thinking: bool,
+    /// Requested reasoning depth. Providers translate this to their native
+    /// reasoning controls: Anthropic → `thinking: { type: enabled,
+    /// budget_tokens }`; OpenAI o-series / gpt-5 → `reasoning: { effort }`;
+    /// Codex → forwarded via app-server. `Off` (the default) disables
+    /// reasoning entirely so cheap chat-style models keep their cost.
+    #[serde(default)]
+    pub reasoning_effort: ReasoningEffort,
     /// Native tool definitions surfaced to the model. Empty disables tool calling.
     #[serde(default)]
     pub tools: Vec<ToolDefinition>,
@@ -104,6 +117,8 @@ pub struct CompletionRequest {
     #[serde(default)]
     pub tool_choice: ToolChoice,
 }
+
+pub use peridot_common::ReasoningEffort;
 
 /// Provider-neutral tool definition surfaced via native tool calling.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -166,6 +181,15 @@ pub struct CompletionResponse {
     /// Tool invocations requested by the model. Empty when the model replied with plain text.
     #[serde(default)]
     pub tool_calls: Vec<ToolInvocation>,
+    /// Reasoning / chain-of-thought content surfaced separately from the
+    /// final reply text. Captured from Anthropic `thinking` content blocks
+    /// and OpenAI `reasoning.content` / `reasoning_summary` fields when
+    /// present. The TUI does not render this today — it would clutter the
+    /// chat view — but downstream consumers (VSCode extension, web GUI,
+    /// audit log replayer) can surface it. `None` for providers / models
+    /// that don't expose reasoning text.
+    #[serde(default)]
+    pub reasoning_content: Option<String>,
     /// Provider-reported usage.
     pub usage: Usage,
 }
@@ -175,6 +199,11 @@ pub struct CompletionResponse {
 pub struct CompletionStreamChunk {
     /// Text delta for this chunk.
     pub delta: String,
+    /// Reasoning / thinking delta for this chunk, when the provider emits a
+    /// separate reasoning channel. Captured for downstream consumers; the
+    /// TUI does not display it.
+    #[serde(default)]
+    pub reasoning_delta: String,
     /// Tool calls assembled from this chunk (populated on the final chunk).
     #[serde(default)]
     pub tool_calls: Vec<ToolInvocation>,

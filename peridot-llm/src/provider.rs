@@ -26,6 +26,7 @@ pub trait LlmProvider: Send + Sync {
         let response = self.complete(request).await?;
         Ok(vec![CompletionStreamChunk {
             delta: response.text,
+            reasoning_delta: String::new(),
             tool_calls: response.tool_calls,
             done: true,
             usage: Some(response.usage),

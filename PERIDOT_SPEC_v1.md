@@ -1915,6 +1915,56 @@ git push origin v0.2.0
 
 ---
 
+## 21.5 Beyond v1 — 일반 코딩 에이전트엔 있지만 우리 v1 계획엔 빠진 항목
+
+Claude Code, Codex CLI, Cursor, Continue 등 표준 자율 코딩 에이전트와 비교했을 때 우리 v1 명세에 빠진 영역. v2 이후 마일스톤에 편입 후보.
+
+### 21.5.1 LSP / Tree-sitter 심볼 인덱스
+- **현황**: 현재 코드 검색은 `file_search`(glob) + `shell_exec`(grep) 조합으로 텍스트 기반
+- **목표**: rust-analyzer / typescript-language-server 등 LSP 클라이언트 또는 tree-sitter 파서를 통합해 `symbol_definition`, `symbol_references`, `symbol_outline` 같은 의미 기반 도구 추가
+- **모델 토큰 절약 효과**: 거대 코드베이스에서 grep 결과를 전부 읽는 대신 정확한 정의/사용처만 첨부
+
+### 21.5.2 Multimodal 이미지 입력
+- **현황**: 텍스트 전용 입력 (`task: String`)
+- **목표**: 스크린샷/도식/diagram 첨부 지원. Anthropic vision API (claude-sonnet-4-vision), OpenAI vision (gpt-4o vision) 라우팅. 텍스트 전용 모델 fallback은 OCR로 대체
+- **UX**: 클립보드 이미지 paste, 파일 드래그&드롭, `/attach <path>` 슬래시
+
+### 21.5.3 `@file` Auto-mention
+- **현황**: 사용자가 파일 경로를 자연어로 적어야 모델이 `file_read` 호출
+- **목표**: 입력 중 `@`로 파일 picker 떠서 선택한 파일을 자동으로 컨텍스트에 prepend. Claude Code의 시그니처 UX
+- **구현**: `slash_picker.rs`와 같은 패턴으로 `at_picker.rs` 추가, project scanner의 파일 목록 + recent file로 fuzzy match
+
+### 21.5.4 GitHub PR Workflow 통합
+- **현황**: `git_*` 도구로 status/diff/log만 가능. push, PR 생성 없음
+- **목표**: `gh` CLI 또는 GitHub REST API로 push → PR open → reviewer assign → check polling → merge 자동화. `peridot ship` 같은 한 번에 묶는 CLI 서브커맨드
+- **보안 게이트**: PR 생성은 `auto` 권한 이상에서만, `safe`에선 사용자 승인
+
+### 21.5.5 Conversation Branching
+- **현황**: 세션은 선형 transcript (save/resume만 가능)
+- **목표**: 임의 turn에서 fork → 다른 prompt로 alternate 분기 → 양쪽 결과 비교. `/branch fork`, `/branch switch <n>`, `/branch merge` 슬래시
+- **저장 모델**: session journal을 DAG로 확장. 현재 linear append-only를 entry별 `parent_turn`으로 트리화
+
+### 21.5.6 Workspace Code Map / TODO 인덱스
+- **현황**: `peridot scan`이 언어/크레이트 통계만 출력, 동적 인덱스 없음
+- **목표**: 백그라운드에서 TODO/FIXME/HACK 주석 + 모든 public symbol 자동 인덱싱. 사이드 패널 또는 `/codemap` 슬래시로 진입. 모델이 큰 코드베이스 탐색 시 우선순위 후보로 활용
+- **갱신**: file watcher (notify crate)로 변경된 파일만 재인덱스
+
+### 21.5.7 Inline Markdown 렌더링 강화
+- **현황**: `**bold**`, `` `code` `` 인라인 styling만 있음
+- **목표**: code fence (` ```rust ... ``` `) 신택스 하이라이트, 리스트/체크박스 글리프, 테이블 정렬, blockquote 처리
+- **구현**: `pulldown-cmark` 또는 자체 light parser, ratatui Span 단위 변환
+
+### 21.5.8 우선순위 추천
+1. **`@file` auto-mention** — 작업 효율 가장 크게 향상, UX 시그니처
+2. **LSP 심볼 인덱스** — 컨텍스트 절감 효과 큼
+3. **GitHub PR workflow** — 자율 에이전트 완성도
+4. **Conversation branching** — 실험적 탐색 가능
+5. **Multimodal** — vision API 비용 고려
+6. **TODO 인덱스** — Beyond v1 nice-to-have
+7. **Markdown 강화** — 시각적 마감
+
+---
+
 ## 22. 미설계 항목 (이후 논의 필요)
 
 - [x] peridot-project: AGENTS.md 전체 필드 스펙 → v1.1

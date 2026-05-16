@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use peridot_common::{PeriError, PeriResult};
+use peridot_common::{PeriError, PeriResult, ReasoningEffort};
 use serde_json::{Value, json};
 
 use crate::transport::{
@@ -348,10 +348,21 @@ pub(crate) fn anthropic_payload(request: &CompletionRequest) -> Value {
         payload["system"] = Value::String(system_parts.join("\n\n"));
     }
 
-    if request.thinking {
+    // `reasoning_effort` is the canonical knob; `thinking: true` is the
+    // legacy boolean and maps to Medium when reasoning_effort is left at
+    // its default of Off. This keeps old callers working while letting new
+    // ones dial intensity per-request.
+    let effective_effort = if request.reasoning_effort != ReasoningEffort::Off {
+        request.reasoning_effort
+    } else if request.thinking {
+        ReasoningEffort::Medium
+    } else {
+        ReasoningEffort::Off
+    };
+    if let Some(budget) = effective_effort.anthropic_budget_tokens() {
         payload["thinking"] = json!({
             "type": "enabled",
-            "budget_tokens": 1024
+            "budget_tokens": budget
         });
     }
 
@@ -391,11 +402,22 @@ pub(crate) fn parse_anthropic_response(
         .unwrap_or_default();
     let mut text = String::new();
     let mut tool_calls = Vec::new();
+    // Capture `thinking` content blocks so downstream consumers (audit log,
+    // future GUI) can replay the model's reasoning. The TUI deliberately
+    // does NOT render this — extended thinking text is verbose and would
+    // bury the actual reply — but losing it at the provider boundary would
+    // make it impossible to surface elsewhere.
+    let mut reasoning = String::new();
     for part in content {
         match part.get("type").and_then(Value::as_str) {
             Some("text") => {
                 if let Some(chunk) = part.get("text").and_then(Value::as_str) {
                     text.push_str(chunk);
+                }
+            }
+            Some("thinking") => {
+                if let Some(chunk) = part.get("thinking").and_then(Value::as_str) {
+                    reasoning.push_str(chunk);
                 }
             }
             Some("tool_use") => {
@@ -433,6 +455,11 @@ pub(crate) fn parse_anthropic_response(
     Ok(CompletionResponse {
         text,
         tool_calls,
+        reasoning_content: if reasoning.is_empty() {
+            None
+        } else {
+            Some(reasoning)
+        },
         usage: Usage {
             input_tokens,
             output_tokens,
@@ -535,6 +562,7 @@ async fn drive_anthropic_stream(
                         {
                             let _ = sender.send(CompletionStreamChunk {
                                 delta: text.to_string(),
+                                reasoning_delta: String::new(),
                                 tool_calls: Vec::new(),
                                 done: false,
                                 usage: None,
@@ -592,6 +620,7 @@ async fn drive_anthropic_stream(
     );
     let _ = sender.send(CompletionStreamChunk {
         delta: String::new(),
+        reasoning_delta: String::new(),
         tool_calls: assembled_tool_calls,
         done: true,
         usage: Some(Usage {
@@ -676,6 +705,7 @@ pub(crate) fn parse_anthropic_stream(
                         {
                             chunks.push(CompletionStreamChunk {
                                 delta: text.to_string(),
+                                reasoning_delta: String::new(),
                                 tool_calls: Vec::new(),
                                 done: false,
                                 usage: None,
@@ -732,6 +762,7 @@ pub(crate) fn parse_anthropic_stream(
     );
     chunks.push(CompletionStreamChunk {
         delta: String::new(),
+        reasoning_delta: String::new(),
         tool_calls: assembled_tool_calls,
         done: true,
         usage: Some(Usage {

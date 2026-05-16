@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use peridot_common::{CommitteeMode, Locale};
+use peridot_common::{CommitteeMode, Locale, ReasoningEffort};
 use serde::{Deserialize, Serialize};
 
 /// Slash commands supported by Peridot's interactive surfaces.
@@ -74,6 +74,22 @@ pub enum SlashCommand {
     SessionClose(String),
     /// List all known sessions in the transcript.
     SessionList,
+    /// Override the default model used when spawning sub-agents. `reset`
+    /// clears the override so future spawns inherit the caller's main model.
+    SubagentModel(SubagentModelChange),
+    /// Change the reasoning intensity applied to every model request.
+    /// Cheap models without a reasoning channel ignore the setting.
+    Reasoning(ReasoningEffort),
+}
+
+/// Payload for `/subagent model <name|reset>`. Wrapped in a dedicated enum so
+/// the parser distinguishes "set to specific name" from "clear override".
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum SubagentModelChange {
+    /// Set the sub-agent default model name to the wrapped string.
+    Set(String),
+    /// Clear the override; sub-agents fall back to caller's main model.
+    Reset,
 }
 
 /// Parses a user slash command.
@@ -154,6 +170,19 @@ pub fn parse_slash_command(input: &str) -> Option<SlashCommand> {
             "" => None,
             goal => Some(SlashCommand::GoalStart(goal.to_string())),
         },
+        "subagent" if rest.starts_with("model") => {
+            let target = rest.strip_prefix("model").unwrap_or("").trim();
+            match target {
+                "" => None,
+                "reset" => Some(SlashCommand::SubagentModel(SubagentModelChange::Reset)),
+                name => Some(SlashCommand::SubagentModel(SubagentModelChange::Set(
+                    name.to_string(),
+                ))),
+            }
+        }
+        "reasoning" if !rest.is_empty() => {
+            ReasoningEffort::parse(rest).map(SlashCommand::Reasoning)
+        }
         _ => None,
     }
 }

@@ -130,6 +130,7 @@ impl LlmProvider for StaticProvider {
             return Ok(CompletionResponse {
                 text: response_text,
                 tool_calls,
+                reasoning_content: None,
                 usage: Usage {
                     input_tokens: 1,
                     output_tokens: 1,
@@ -151,6 +152,7 @@ impl LlmProvider for StaticProvider {
         Ok(CompletionResponse {
             text: response_text,
             tool_calls,
+            reasoning_content: None,
             usage: Usage {
                 input_tokens: 1,
                 output_tokens: 1,
@@ -195,12 +197,14 @@ impl LlmProvider for StreamingOnlyProvider {
         Ok(vec![
             CompletionStreamChunk {
                 delta: "streamed agent_done".to_string(),
+                reasoning_delta: String::new(),
                 tool_calls: Vec::new(),
                 done: false,
                 usage: None,
             },
             CompletionStreamChunk {
                 delta: String::new(),
+                reasoning_delta: String::new(),
                 tool_calls: vec![peridot_llm::ToolInvocation {
                     id: "call_0".to_string(),
                     name: "agent_done".to_string(),

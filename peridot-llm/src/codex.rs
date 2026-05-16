@@ -311,6 +311,7 @@ impl CodexRpcSession {
                     return Ok(CompletionResponse {
                         text,
                         tool_calls: Vec::new(),
+                        reasoning_content: None,
                         usage,
                     });
                 }
@@ -464,6 +465,7 @@ mod tests {
             messages: vec![LlmMessage::new(MessageRole::User, "do work")],
             max_tokens: Some(1000),
             thinking: false,
+            reasoning_effort: peridot_common::ReasoningEffort::Off,
             tools: Vec::new(),
             tool_choice: crate::ToolChoice::Auto,
         });
