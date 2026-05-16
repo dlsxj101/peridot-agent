@@ -82,18 +82,15 @@ fn replay_session_transcript(
     step: bool,
     output: OutputFormat,
 ) -> Result<()> {
-    let sessions_root = project_root.join(".peridot").join("sessions");
-    let bytes = peridot_memory::load_session_blob(&sessions_root, id, "tui_state.json")?
-        .with_context(|| format!("no persisted tui_state.json for session {id}"))?;
-    let state: peridot_tui::TuiState = serde_json::from_slice(&bytes)
-        .with_context(|| format!("failed to parse persisted tui_state.json for {id}"))?;
+    let entries_owned = load_session_transcript(project_root, id)?;
     let entries: Vec<&peridot_tui::TranscriptEntry> = if let Some(limit) = last {
-        let total = state.transcript.len();
+        let total = entries_owned.len();
         let start = total.saturating_sub(limit);
-        state.transcript[start..].iter().collect()
+        entries_owned[start..].iter().collect()
     } else {
-        state.transcript.iter().collect()
+        entries_owned.iter().collect()
     };
+    let total_entries = entries_owned.len();
     match output {
         OutputFormat::Json => {
             let payload: Vec<_> = entries
@@ -110,7 +107,7 @@ fn replay_session_transcript(
                 serde_json::to_string_pretty(&serde_json::json!({
                     "id": id,
                     "entries": payload,
-                    "total": state.transcript.len(),
+                    "total": total_entries,
                     "step_mode": step,
                 }))?
             );
@@ -124,16 +121,59 @@ fn replay_session_transcript(
                     println!("{marker} {}", entry.text);
                 }
             }
-            if entries.len() < state.transcript.len() {
+            if entries.len() < total_entries {
                 println!(
                     "... showing {} of {} entries; drop --last for the full replay.",
                     entries.len(),
-                    state.transcript.len()
+                    total_entries
                 );
             }
         }
     }
     Ok(())
+}
+
+/// Loads a session's transcript by preferring the canonical `tui_state.json`
+/// snapshot and falling back to the incremental `transcript.ndjson` journal
+/// (M9). Returns an error only when both sources are missing.
+fn load_session_transcript(
+    project_root: &Path,
+    id: &str,
+) -> Result<Vec<peridot_tui::TranscriptEntry>> {
+    let sessions_root = project_root.join(".peridot").join("sessions");
+    if let Some(bytes) = peridot_memory::load_session_blob(&sessions_root, id, "tui_state.json")? {
+        let state: peridot_tui::TuiState = serde_json::from_slice(&bytes)
+            .with_context(|| format!("failed to parse persisted tui_state.json for {id}"))?;
+        return Ok(state.transcript);
+    }
+    let ndjson_path = sessions_root.join(id).join("transcript.ndjson");
+    if !ndjson_path.exists() {
+        anyhow::bail!(
+            "no persisted transcript for session {id} (looked for tui_state.json and transcript.ndjson)"
+        );
+    }
+    let raw = std::fs::read_to_string(&ndjson_path).with_context(|| {
+        format!(
+            "failed to read transcript.ndjson at {}",
+            ndjson_path.display()
+        )
+    })?;
+    let mut entries = Vec::new();
+    for (line_idx, line) in raw.lines().enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let entry: peridot_tui::TranscriptEntry =
+            serde_json::from_str(line).with_context(|| {
+                format!(
+                    "failed to parse line {} of {}",
+                    line_idx + 1,
+                    ndjson_path.display()
+                )
+            })?;
+        entries.push(entry);
+    }
+    Ok(entries)
 }
 
 fn replay_step_mode(entries: &[&peridot_tui::TranscriptEntry]) -> Result<()> {

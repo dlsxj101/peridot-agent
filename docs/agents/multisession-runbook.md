@@ -75,6 +75,10 @@ its parent transcript (M4), and the attention notifier line (M5).
   the child with an empty context (silent no-op), matching the previous
   behaviour for that edge case.
 
+### M10 — Replay ndjson fallback (landed)
+- `peridot session replay` now prefers the canonical `tui_state.json` snapshot but transparently falls back to `transcript.ndjson` when the snapshot is missing — which happens when a process was killed before the throttled `on_persist` could write but the per-tick M9 append already captured every entry. The result is that even uncleanly terminated sessions stay reviewable.
+- The fallback parses ndjson line-by-line via `serde_json::from_str`, skipping blank lines and reporting the offending line number on bad payloads so a corrupted file points the operator at the right spot.
+
 ### M9 — Incremental transcript ndjson journal (landed)
 - The on_persist callback now appends every newly observed `TranscriptEntry` to `<sessions_root>/<id>/transcript.ndjson` on every tick (no throttle). Per-session counts live in a `HashMap<String, usize>` inside the closure, so foreground swaps pick up the right entries for the right session.
 - Append happens with `OpenOptions::append`; serde_json serialises each entry on its own line so external tools can `tail -f`/`jq` the live transcript without parsing JSON arrays.
