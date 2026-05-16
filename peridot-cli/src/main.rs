@@ -437,6 +437,7 @@ async fn main() -> Result<()> {
                         Some((id, restored)) => {
                             let mut state = restored.with_config(config.tui.clone());
                             state.header.workspace_label = workspace_label.clone();
+                            state.committee_mode = config.committee.mode;
                             state.push_notice(format!("session: resumed {id} from disk"));
                             state
                         }
@@ -444,6 +445,7 @@ async fn main() -> Result<()> {
                             let mut header = HeaderState::new(mode, permission, model.clone());
                             header.workspace_label = workspace_label.clone();
                             let mut state = TuiState::new(header).with_config(config.tui.clone());
+                            state.committee_mode = config.committee.mode;
                             state.push_transcript("Peridot ready. Type a task, /plan, /execute, /goal <objective>, /safe, /auto, /yolo, or Esc.");
                             state.push_transcript(
                                 "Submitted tasks continue inside this TUI; tool activity and run status stream here.",

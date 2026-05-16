@@ -81,6 +81,12 @@ pub fn slash_command_catalog() -> &'static [SlashCommandSpec] {
             category: "session",
         },
         SlashCommandSpec {
+            name: "/committee",
+            description: "toggle multi-LLM committee mode (off|planner|full)",
+            arg_hint: Some("<mode>"),
+            category: "session",
+        },
+        SlashCommandSpec {
             name: "/cost",
             description: "show cost / token / cache totals",
             arg_hint: None,
@@ -219,7 +225,14 @@ mod tests {
 
     #[test]
     fn first_match_returns_some_for_prefix() {
-        assert_eq!(first_match("/com").map(|spec| spec.name), Some("/compact"));
+        assert_eq!(
+            first_match("/compa").map(|spec| spec.name),
+            Some("/compact")
+        );
+        assert_eq!(
+            first_match("/commit").map(|spec| spec.name),
+            Some("/committee"),
+        );
         assert!(first_match("/does-not-exist").is_none());
     }
 }

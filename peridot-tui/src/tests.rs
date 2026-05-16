@@ -1189,7 +1189,7 @@ fn tab_autocompletes_slash_command_prefix() {
     assert_eq!(state.input, "/goal <objective>");
 
     state.clear_input();
-    for character in "/com".chars() {
+    for character in "/compa".chars() {
         handle_key_event(
             &mut state,
             KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE),
@@ -1612,6 +1612,49 @@ fn record_background_event_skips_subagent_monitor_when_parent_not_foreground() {
         state.subagents.iter().all(|item| item.id != "fork-2"),
         "subagent monitor must only follow the foreground parent"
     );
+}
+
+#[test]
+fn committee_slash_toggles_mode_and_status_metrics() {
+    use peridot_common::CommitteeMode;
+
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    assert_eq!(state.committee_mode, CommitteeMode::Off);
+    let snapshot_off = render_text_snapshot(&state);
+    assert!(!snapshot_off.contains("committee "));
+
+    apply_slash_command(&mut state, SlashCommand::Committee(CommitteeMode::Full));
+    assert_eq!(state.committee_mode, CommitteeMode::Full);
+    let snapshot_full = render_text_snapshot(&state);
+    assert!(snapshot_full.contains("committee full"));
+    assert!(
+        state
+            .transcript
+            .iter()
+            .any(|line| line.text.contains("committee: off -> full"))
+    );
+}
+
+#[test]
+fn parse_slash_committee_recognises_all_modes() {
+    use peridot_common::CommitteeMode;
+    assert_eq!(
+        peridot_core::parse_slash_command("/committee off"),
+        Some(SlashCommand::Committee(CommitteeMode::Off))
+    );
+    assert_eq!(
+        peridot_core::parse_slash_command("/committee planner"),
+        Some(SlashCommand::Committee(CommitteeMode::Planner))
+    );
+    assert_eq!(
+        peridot_core::parse_slash_command("/committee full"),
+        Some(SlashCommand::Committee(CommitteeMode::Full))
+    );
+    assert_eq!(peridot_core::parse_slash_command("/committee bogus"), None);
 }
 
 #[test]

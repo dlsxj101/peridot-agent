@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use peridot_common::Locale;
+use peridot_common::{CommitteeMode, Locale};
 use serde::{Deserialize, Serialize};
 
 /// Slash commands supported by Peridot's interactive surfaces.
@@ -38,6 +38,8 @@ pub enum SlashCommand {
     Model(String),
     /// Switch the active provider (claude-api, openai-api, openrouter-api, ...).
     Provider(String),
+    /// Toggle the multi-LLM committee mode (off / planner / full).
+    Committee(CommitteeMode),
     /// Append a free-form note to the current session's notes.ndjson.
     Note(String),
     /// Print a one-shot summary of the current session (model, provider,
@@ -96,6 +98,9 @@ pub fn parse_slash_command(input: &str) -> Option<SlashCommand> {
         "undo" if rest.is_empty() => Some(SlashCommand::Undo),
         "model" if !rest.is_empty() => Some(SlashCommand::Model(rest.to_string())),
         "provider" if !rest.is_empty() => Some(SlashCommand::Provider(rest.to_string())),
+        "committee" if !rest.is_empty() => CommitteeMode::from_str(rest)
+            .ok()
+            .map(SlashCommand::Committee),
         "note" if !rest.is_empty() => Some(SlashCommand::Note(rest.to_string())),
         "info" if rest.is_empty() => Some(SlashCommand::Info),
         "lang" if !rest.is_empty() => Locale::from_str(rest).ok().map(SlashCommand::Lang),

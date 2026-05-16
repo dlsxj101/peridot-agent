@@ -612,6 +612,11 @@ pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
                 state.push_transcript(format!("provider: {from} -> {provider}"));
             }
         }
+        SlashCommand::Committee(mode) => {
+            let from = state.committee_mode;
+            state.committee_mode = mode;
+            state.push_transcript(format!("committee: {from} -> {mode}"));
+        }
         SlashCommand::Note(text) => {
             let body = text.trim();
             if body.is_empty() {

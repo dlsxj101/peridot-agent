@@ -23,6 +23,9 @@ pub(super) fn render_status_metrics(state: &TuiState) -> String {
     if state.current_turn > 0 {
         parts.push(format!("turn {}", state.current_turn));
     }
+    if state.committee_mode != peridot_common::CommitteeMode::Off {
+        parts.push(format!("committee {}", state.committee_mode));
+    }
     let active_subagents = state
         .subagents
         .iter()

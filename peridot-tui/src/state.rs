@@ -578,6 +578,11 @@ pub struct TuiState {
     /// landed.
     #[serde(default, skip)]
     pub pending_notes: Vec<String>,
+    /// Active committee mode for the foreground session (M-COM4). Mirrors
+    /// `[committee].mode` from project config, with `/committee <mode>`
+    /// switching it per-session at runtime.
+    #[serde(default)]
+    pub committee_mode: peridot_common::CommitteeMode,
 }
 
 /// A session-router intent emitted by a slash command. The TUI itself does not
@@ -673,6 +678,7 @@ impl TuiState {
             current_session_id: String::new(),
             pending_session_commands: Vec::new(),
             pending_notes: Vec::new(),
+            committee_mode: peridot_common::CommitteeMode::Off,
         }
     }
 
