@@ -431,7 +431,14 @@ fn slash_commands_update_tui_state() {
     apply_slash_command(&mut state, SlashCommand::GoalPause);
     assert_eq!(state.goal_status, Some(GoalStatus::Paused));
     apply_slash_command(&mut state, SlashCommand::GoalStatus);
-    assert!(state.transcript.last().unwrap().text.contains("goal: paused"));
+    assert!(
+        state
+            .transcript
+            .last()
+            .unwrap()
+            .text
+            .contains("goal: paused")
+    );
     assert!(render_text_snapshot(&state).contains("goal paused"));
 }
 
@@ -450,7 +457,14 @@ fn utility_slash_commands_update_tui_surface() {
     });
 
     apply_slash_command(&mut state, SlashCommand::Help);
-    assert!(state.transcript.last().unwrap().text.contains("/model <name>"));
+    assert!(
+        state
+            .transcript
+            .last()
+            .unwrap()
+            .text
+            .contains("/model <name>")
+    );
 
     apply_slash_command(&mut state, SlashCommand::PlanShow);
     assert!(
@@ -716,13 +730,9 @@ fn busy_agent_queues_input_and_drains_when_idle() {
     );
     assert_eq!(outcome, TuiEventOutcome::Continue);
     assert_eq!(state.input_queue, vec!["second".to_string()]);
-    assert!(
-        state
-            .transcript
-            .iter()
-            .any(|entry| entry.kind == TranscriptKind::Notice
-                && entry.text.contains("대기열에 추가됨"))
-    );
+    assert!(state.transcript.iter().any(
+        |entry| entry.kind == TranscriptKind::Notice && entry.text.contains("대기열에 추가됨")
+    ));
 
     state.apply_runtime_event(TuiRuntimeEvent::Finished {
         stop_reason: "Done".to_string(),
