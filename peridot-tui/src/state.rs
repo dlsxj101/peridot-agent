@@ -618,7 +618,10 @@ impl TuiState {
         self.active_tools.clear();
         self.side_panel.stats.errors += 1;
         self.push_activity(ActivityKind::Stream, "run", "failed");
-        self.push_transcript_entry(TranscriptKind::Error, format!("run failed: {}", message.into()));
+        self.push_transcript_entry(
+            TranscriptKind::Error,
+            format!("run failed: {}", message.into()),
+        );
     }
 
     /// Starts or replaces the active model stream.
@@ -650,10 +653,7 @@ impl TuiState {
         stream.done = true;
         let content = stream.content.trim();
         if content.is_empty() {
-            self.push_transcript_entry(
-                TranscriptKind::Debug,
-                format!("{}: <empty>", stream.label),
-            );
+            self.push_transcript_entry(TranscriptKind::Debug, format!("{}: <empty>", stream.label));
         } else {
             let parsed = parse_assistant_content(content);
             if let Some(visible) = parsed.display.as_ref() {
@@ -984,10 +984,7 @@ impl TuiState {
 
 /// Truncates raw debug content to `max_chars` characters with an ellipsis suffix when shortened.
 fn truncate_for_debug(text: &str, max_chars: usize) -> String {
-    let collapsed: String = text
-        .lines()
-        .collect::<Vec<_>>()
-        .join(" \u{21B5} ");
+    let collapsed: String = text.lines().collect::<Vec<_>>().join(" \u{21B5} ");
     let mut chars = collapsed.chars();
     let head: String = chars.by_ref().take(max_chars).collect();
     if chars.next().is_some() {

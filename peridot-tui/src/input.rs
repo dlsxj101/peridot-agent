@@ -184,16 +184,10 @@ pub(super) fn handle_menu_key_event(state: &mut TuiState, key: KeyEvent) -> TuiE
             } else if selected == "Debug" {
                 state.debug_view = !state.debug_view;
                 let label = if state.debug_view { "on" } else { "off" };
-                state.push_transcript_entry(
-                    TranscriptKind::Notice,
-                    format!("debug: {label}"),
-                );
+                state.push_transcript_entry(TranscriptKind::Notice, format!("debug: {label}"));
                 TuiEventOutcome::Continue
             } else {
-                state.push_transcript_entry(
-                    TranscriptKind::Notice,
-                    format!("menu: {selected}"),
-                );
+                state.push_transcript_entry(TranscriptKind::Notice, format!("menu: {selected}"));
                 TuiEventOutcome::Continue
             }
         }

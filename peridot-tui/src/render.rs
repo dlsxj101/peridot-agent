@@ -202,25 +202,16 @@ fn style_transcript_entry(state: &TuiState, entry: &TranscriptEntry) -> Line<'st
                 "\u{2022}".to_string()
             };
             Line::from(vec![
-                Span::styled(
-                    format!("{glyph} "),
-                    Style::default().fg(Color::DarkGray),
-                ),
+                Span::styled(format!("{glyph} "), Style::default().fg(Color::DarkGray)),
                 Span::styled(entry.text.clone(), Style::default().fg(Color::DarkGray)),
             ])
         }
         TranscriptKind::ToolOk => Line::from(vec![
-            Span::styled(
-                "\u{2714} ",
-                Style::default().fg(Color::Green),
-            ),
+            Span::styled("\u{2714} ", Style::default().fg(Color::Green)),
             Span::styled(entry.text.clone(), Style::default().fg(Color::Green)),
         ]),
         TranscriptKind::ToolFail => Line::from(vec![
-            Span::styled(
-                "\u{2718} ",
-                Style::default().fg(Color::Red),
-            ),
+            Span::styled("\u{2718} ", Style::default().fg(Color::Red)),
             Span::styled(
                 entry.text.clone(),
                 Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
@@ -228,7 +219,9 @@ fn style_transcript_entry(state: &TuiState, entry: &TranscriptEntry) -> Line<'st
         ]),
         TranscriptKind::System => Line::from(Span::styled(
             entry.text.clone(),
-            Style::default().fg(Color::Yellow).add_modifier(Modifier::DIM),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::DIM),
         )),
         TranscriptKind::Notice => Line::from(vec![
             Span::styled("\u{1F4CC} ", Style::default().fg(Color::Yellow)),
@@ -237,15 +230,11 @@ fn style_transcript_entry(state: &TuiState, entry: &TranscriptEntry) -> Line<'st
         TranscriptKind::Error => Line::from(vec![
             Span::styled(
                 "! ",
-                Style::default()
-                    .fg(Color::Red)
-                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
             ),
             Span::styled(
                 entry.text.clone(),
-                Style::default()
-                    .fg(Color::Red)
-                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
             ),
         ]),
         TranscriptKind::Debug => Line::from(Span::styled(
@@ -301,11 +290,10 @@ pub(super) fn agent_status_summary(state: &TuiState) -> String {
 
 /// Renders a 1-line agent status bar (icon, label, queue depth).
 fn render_status_bar(state: &TuiState) -> Line<'static> {
-    let (icon, icon_style) = if state.ask_user.is_some() {
-        ("\u{25CF}", Style::default().fg(Color::Rgb(255, 165, 0)))
-    } else if state.approval.is_some()
-        || state.agent_run_status == AgentRunStatus::WaitingApproval
-    {
+    let waiting_user = state.ask_user.is_some()
+        || state.approval.is_some()
+        || state.agent_run_status == AgentRunStatus::WaitingApproval;
+    let (icon, icon_style) = if waiting_user {
         ("\u{25CF}", Style::default().fg(Color::Rgb(255, 165, 0)))
     } else if !state.active_tools.is_empty() {
         (
@@ -314,9 +302,7 @@ fn render_status_bar(state: &TuiState) -> Line<'static> {
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         )
-    } else if state.active_stream.is_some()
-        || state.agent_run_status == AgentRunStatus::Running
-    {
+    } else if state.active_stream.is_some() || state.agent_run_status == AgentRunStatus::Running {
         (
             "\u{25CF}",
             Style::default()
