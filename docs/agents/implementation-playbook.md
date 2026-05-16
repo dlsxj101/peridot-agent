@@ -96,11 +96,14 @@ Done when:
 Goal: polished UX and release readiness.
 
 Key work:
-- Ratatui layouts, streaming, side panels, ask_user screen, menus, and keybindings.
+- Ratatui layouts, background agent event streaming, side panels, ask_user screen, menus, slash commands, approvals, and keybindings.
+- Terminal-native input editing, including Backspace/Ctrl-H, Delete, cursor motion, history, multiline-safe rendering, and submit-without-exit behavior.
+- In-TUI run continuity: status, plan/goal surfaces, thinking, tool activity, tool results, usage, session save/resume, and recovery events should stay visible while the agent continues.
 - Headless JSON/text output with exit codes.
 - CI, release workflow, install script, docs.
 
 Done when:
 - TUI works in full, compact, and minimal layouts.
+- TUI tests cover input editing regressions, runtime events, tool previews/results, approval panels, slash commands, and render snapshots.
 - Headless mode is scriptable.
 - Release artifacts can be built by CI.

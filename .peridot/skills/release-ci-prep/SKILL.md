@@ -15,9 +15,11 @@ description: Prepare Peridot CI, release, install, and distribution workflows. U
 - Before committing release changes or creating any `v*` tag, bump package metadata to the exact release version.
 - Check root `Cargo.toml` `[workspace.package].version`, internal path dependency versions such as `peridot-cli/Cargo.toml`, and `Cargo.lock`.
 - Never push a release tag until the version bump commit is on `main` and CI has passed for that commit.
+- After pushing a release tag, monitor the Release workflow to completion instead of assuming the tag is enough.
 - Build six targets from the spec.
 - Package Unix artifacts as tarballs and Windows artifacts as zips.
 - Generate and verify SHA256 checksums.
+- Confirm the GitHub Release exists for the tag and includes all expected artifacts plus checksums.
 - Preserve `peridot` binary and `peri` alias behavior.
 - Keep install/update scripts safe and explicit.
 
