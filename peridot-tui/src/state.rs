@@ -669,7 +669,6 @@ impl TuiState {
                     format!("{} raw: {summary}", stream.label),
                 );
             }
-            let _ = parsed;
         }
         self.push_activity(ActivityKind::Stream, stream.label, "done");
         self.side_panel.stats.steps += 1;

@@ -1,40 +1,28 @@
 //! Scriptable CLI subcommand handlers.
 
-#[allow(unused_imports)]
+// Submodules pull these names through `use super::*;`. Several are traits whose
+// methods are called downstream (e.g. `Context`, `Read`, `Write`, `Engine`,
+// `IsTerminal`, `Digest`), so they look unused from this file's perspective.
+#![allow(unused_imports)]
+
 use std::collections::HashMap;
-#[allow(unused_imports)]
 use std::fs;
-#[allow(unused_imports)]
 use std::io::{IsTerminal, Read, Write};
-#[allow(unused_imports)]
 use std::net::TcpListener;
-#[allow(unused_imports)]
 use std::path::{Path, PathBuf};
-#[allow(unused_imports)]
 use std::process::{Command, Stdio};
-#[allow(unused_imports)]
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-#[allow(unused_imports)]
 use anyhow::{Context, Result};
-#[allow(unused_imports)]
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use clap::{Subcommand, ValueEnum};
-#[allow(unused_imports)]
 use peridot_common::{HooksConfig, McpServerConfig, McpTransport, PeridotConfig};
-#[allow(unused_imports)]
 use peridot_mcp::McpClient;
-#[allow(unused_imports)]
 use peridot_memory::{MemoryStore, SessionSummary};
-#[allow(unused_imports)]
 use peridot_project::{ProjectProfile, ProjectScanner};
-#[allow(unused_imports)]
 use peridot_tools::hooks::{HookRunner, HookVariables};
-#[allow(unused_imports)]
 use peridot_verify::{VerifyPipeline, VerifyReport, VerifyStage, VerifyStageResult};
-#[allow(unused_imports)]
 use serde_json::Value;
-#[allow(unused_imports)]
 use sha2::{Digest, Sha256};
 
 mod agents;
