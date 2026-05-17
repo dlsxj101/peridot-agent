@@ -1622,7 +1622,7 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
 name = "peridot-agents"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "async-trait",
  "peridot-common",
@@ -1633,7 +1633,7 @@ dependencies = [
 
 [[package]]
 name = "peridot-cli"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1661,7 +1661,7 @@ dependencies = [
 
 [[package]]
 name = "peridot-common"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -1671,7 +1671,7 @@ dependencies = [
 
 [[package]]
 name = "peridot-context"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "async-trait",
  "peridot-common",
@@ -1683,7 +1683,7 @@ dependencies = [
 
 [[package]]
 name = "peridot-core"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "async-trait",
  "peridot-agents",
@@ -1698,7 +1698,7 @@ dependencies = [
 
 [[package]]
 name = "peridot-git"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "peridot-common",
  "serde",
@@ -1706,7 +1706,7 @@ dependencies = [
 
 [[package]]
 name = "peridot-llm"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -1719,7 +1719,7 @@ dependencies = [
 
 [[package]]
 name = "peridot-mcp"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "peridot-common",
  "reqwest",
@@ -1730,7 +1730,7 @@ dependencies = [
 
 [[package]]
 name = "peridot-memory"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "peridot-common",
  "rusqlite",
@@ -1739,7 +1739,7 @@ dependencies = [
 
 [[package]]
 name = "peridot-project"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "peridot-common",
  "serde",
@@ -1747,7 +1747,7 @@ dependencies = [
 
 [[package]]
 name = "peridot-tools"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "async-trait",
  "peridot-agents",
@@ -1762,7 +1762,7 @@ dependencies = [
 
 [[package]]
 name = "peridot-tui"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "crossterm",
  "peridot-common",
@@ -1774,7 +1774,7 @@ dependencies = [
 
 [[package]]
 name = "peridot-verify"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "peridot-common",
  "peridot-project",
