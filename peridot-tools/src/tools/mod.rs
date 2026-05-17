@@ -11,7 +11,8 @@ pub use agent::{
 };
 pub use file::{FileListTool, FilePatchTool, FileReadTool, FileSearchTool, FileWriteTool};
 pub use git::{
-    GitBranchTool, GitCommitTool, GitDiffTool, GitLogTool, GitPushTool, GitStatusTool,
+    GhPrCreateTool, GhPrMergeTool, GhPrStatusTool, GitBranchTool, GitCommitTool, GitDiffTool,
+    GitLogTool, GitPushTool, GitStatusTool,
 };
 pub use plan::{PlanCreateTool, PlanUpdateTool};
 pub use shell::ShellExecTool;
@@ -37,6 +38,9 @@ pub fn register_builtin_tools(registry: &mut ToolRegistry) -> PeriResult<()> {
     registry.register(GitCommitTool)?;
     registry.register(GitBranchTool)?;
     registry.register(GitPushTool)?;
+    registry.register(GhPrCreateTool)?;
+    registry.register(GhPrStatusTool)?;
+    registry.register(GhPrMergeTool)?;
     registry.register(VerifyBuildTool)?;
     registry.register(VerifyTestTool)?;
     registry.register(VerifyLintTool)?;

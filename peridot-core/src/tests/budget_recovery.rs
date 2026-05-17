@@ -297,11 +297,18 @@ async fn run_until_done_recovers_after_tool_error() {
 
     assert_eq!(summary.stopped_reason, StopReason::Done);
     assert_eq!(summary.turns.len(), 1);
-    assert!(agent.context().entries().iter().any(|entry| {
-        entry
-            .content
-            .contains("previous turn failed with not_found")
-    }));
+    // `recovery_message` now rotates through 5 phrasings keyed by error
+    // hash, so the test only asserts the classification name lands in
+    // SOME recovery line — the exact wording is no longer stable.
+    assert!(
+        agent
+            .context()
+            .entries()
+            .iter()
+            .any(|entry| entry.content.contains("not_found")),
+        "expected a recovery entry mentioning the not_found classification, got: {:?}",
+        agent.context().entries()
+    );
     std::fs::remove_dir_all(root).unwrap();
 }
 
