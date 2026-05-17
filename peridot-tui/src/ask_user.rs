@@ -19,6 +19,16 @@ pub struct AskUserPanel {
     pub other_index: Option<usize>,
     /// Index of the synthetic Explain choice.
     pub explain_index: Option<usize>,
+    /// Whether this panel was built from a `MultiSelect` request. When
+    /// true, Space toggles items into `selected_set` and Enter commits
+    /// the comma-joined selection rather than the single highlighted
+    /// option.
+    #[serde(default)]
+    pub multi_select: bool,
+    /// Indices currently toggled on (multi-select mode only). Ignored
+    /// when `multi_select == false`.
+    #[serde(default)]
+    pub selected_set: Vec<usize>,
 }
 
 /// Esc menu state.
@@ -147,6 +157,8 @@ impl AskUserPanel {
                 showing_explanation: false,
                 other_index: None,
                 explain_index: None,
+                multi_select: false,
+                selected_set: Vec::new(),
             },
             AskUserRequest::MultiSelect {
                 question, options, ..
@@ -156,11 +168,13 @@ impl AskUserPanel {
                 selected_index: 0,
                 freeform: String::new(),
                 explanation: Some(
-                    "Peridot needs one or more choices before continuing.".to_string(),
+                    "Peridot needs one or more choices before continuing. Space toggles, Enter commits.".to_string(),
                 ),
                 showing_explanation: false,
                 other_index: None,
                 explain_index: None,
+                multi_select: true,
+                selected_set: Vec::new(),
             },
             AskUserRequest::FreeForm {
                 question, default, ..
@@ -173,16 +187,54 @@ impl AskUserPanel {
                 showing_explanation: false,
                 other_index: None,
                 explain_index: None,
+                multi_select: false,
+                selected_set: Vec::new(),
             },
         }
         .with_control_indexes()
     }
 
     pub(super) fn selected_answer(&self) -> String {
+        if self.multi_select {
+            // Drop the synthetic Other / Explain control entries from the
+            // committed selection — only real choices flow back to the
+            // model.
+            let real_only = self
+                .selected_set
+                .iter()
+                .filter(|&&idx| {
+                    Some(idx) != self.other_index && Some(idx) != self.explain_index
+                })
+                .filter_map(|&idx| self.choices.get(idx).cloned())
+                .collect::<Vec<_>>();
+            return real_only.join(", ");
+        }
         self.choices
             .get(self.selected_index)
             .cloned()
             .unwrap_or_else(|| self.freeform.clone())
+    }
+
+    /// Toggles the currently-highlighted choice in `selected_set` for
+    /// multi-select mode. No-op in single-select / free-form modes so
+    /// the Space key handler can call this unconditionally.
+    pub fn toggle_selected(&mut self) {
+        if !self.multi_select {
+            return;
+        }
+        let idx = self.selected_index;
+        if let Some(pos) = self.selected_set.iter().position(|x| *x == idx) {
+            self.selected_set.remove(pos);
+        } else {
+            self.selected_set.push(idx);
+            self.selected_set.sort_unstable();
+        }
+    }
+
+    /// Returns true when `idx` is currently toggled on. Used by the
+    /// renderer to draw `[x]` vs `[ ]` markers in multi-select mode.
+    pub fn is_toggled(&self, idx: usize) -> bool {
+        self.multi_select && self.selected_set.contains(&idx)
     }
 
     fn with_control_indexes(mut self) -> Self {

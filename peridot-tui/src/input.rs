@@ -408,6 +408,14 @@ pub(super) fn handle_ask_user_key_event(state: &mut TuiState, key: KeyEvent) -> 
             panel.showing_explanation = !panel.showing_explanation;
             TuiEventOutcome::Continue
         }
+        // Space toggles the highlighted choice in multi-select mode.
+        // Single-select / free-form panels treat Space as a regular char,
+        // but we only reach this arm when `panel.choices` is non-empty
+        // (the free-form Char arm earlier consumed Space for typing).
+        KeyCode::Char(' ') if panel.multi_select => {
+            panel.toggle_selected();
+            TuiEventOutcome::Continue
+        }
         KeyCode::Enter => {
             if panel.explain_index == Some(panel.selected_index) {
                 panel.showing_explanation = !panel.showing_explanation;

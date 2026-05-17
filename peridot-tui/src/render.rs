@@ -115,6 +115,30 @@ fn short_session_id(id: &str) -> String {
         .unwrap_or_else(|| id.to_string())
 }
 
+/// Renders the side-panel Committee block as plain text. Shows planner
+/// and reviewer cost / token totals so the operator can see how much
+/// the multi-LLM orchestration is spending without leaving the chat.
+/// Empty when committee is off and neither role has accumulated any
+/// cost, so single-agent sessions keep the panel compact.
+fn render_committee_block(state: &TuiState) -> String {
+    let off = matches!(state.committee_mode, peridot_common::CommitteeMode::Off);
+    let no_spend = state.committee_planner_cost == 0.0
+        && state.committee_reviewer_cost == 0.0
+        && state.committee_planner_tokens == 0
+        && state.committee_reviewer_tokens == 0;
+    if off && no_spend {
+        return String::new();
+    }
+    format!(
+        "Committee ({})\nplanner:  ${:.4}  {} tok\nreviewer: ${:.4}  {} tok\n\n",
+        state.committee_mode,
+        state.committee_planner_cost,
+        state.committee_planner_tokens,
+        state.committee_reviewer_cost,
+        state.committee_reviewer_tokens,
+    )
+}
+
 /// Renders the side-panel Goal block as plain text (joined later into the
 /// side panel string). When no goal is active the block collapses to an
 /// empty string so the panel doesn't carry a "Goal" header for nothing.
@@ -1223,14 +1247,16 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
         } else {
             format!("id: {}\n", short_session_id(&state.current_session_id))
         };
+        let committee_block = render_committee_block(state);
         let side = format!(
-            "{goal}Plan {done}/{}\n{}\n\nSession\n{session_id_line}agent: {}\nsteps: {}\nerrors: {}\nelapsed: {}s\n\n{}",
+            "{goal}Plan {done}/{}\n{}\n\nSession\n{session_id_line}agent: {}\nsteps: {}\nerrors: {}\nelapsed: {}s\n\n{}{}",
             state.side_panel.plan.len(),
             plan,
             agent_run_status_label(&state.agent_run_status),
             state.side_panel.stats.steps,
             state.side_panel.stats.errors,
             state.side_panel.stats.elapsed_seconds,
+            committee_block,
             render_subagent_monitor(&state.subagents),
         );
         frame.render_widget(Paragraph::new(side).wrap(Wrap { trim: false }), info_area);
@@ -1427,24 +1453,43 @@ pub(super) fn render_ask_user_panel(panel: &AskUserPanel) -> String {
         .iter()
         .enumerate()
         .map(|(index, choice)| {
-            let marker = if index == panel.selected_index {
+            let cursor = if index == panel.selected_index {
                 ">"
             } else {
                 " "
             };
-            format!("{marker} {choice}")
+            // Multi-select mode shows `[x]` / `[ ]` checkboxes in front
+            // of every choice so the operator can see what they've
+            // already toggled on. Single-select just shows the cursor
+            // marker like before.
+            if panel.multi_select {
+                let check = if panel.is_toggled(index) { "x" } else { " " };
+                format!("{cursor} [{check}] {choice}")
+            } else {
+                format!("{cursor} {choice}")
+            }
         })
         .collect::<Vec<_>>()
         .join("\n");
+    let footer = if panel.multi_select {
+        Some("[Space] toggle  [Enter] commit selection".to_string())
+    } else {
+        None
+    };
+    let mut sections = vec![panel.question.clone(), String::new(), choices];
     if panel.showing_explanation {
         let explanation = panel
             .explanation
             .as_deref()
             .unwrap_or("No explanation provided.");
-        format!("{}\n\n{}\n\n{}", panel.question, choices, explanation)
-    } else {
-        format!("{}\n\n{}", panel.question, choices)
+        sections.push(String::new());
+        sections.push(explanation.to_string());
     }
+    if let Some(f) = footer {
+        sections.push(String::new());
+        sections.push(f);
+    }
+    sections.join("\n")
 }
 
 pub(super) fn render_approval_panel(panel: &ApprovalPanel) -> String {
