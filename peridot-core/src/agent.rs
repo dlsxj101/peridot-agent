@@ -265,14 +265,11 @@ impl HarnessAgent {
         // errors or produces no compaction. We deliberately swallow
         // provider errors here so a compaction hiccup never aborts the
         // run — the user's task continues with the longer context.
-        let mut compacted = match self
+        let mut compacted = self
             .context
             .compact_with_llm(provider, &request.model)
             .await
-        {
-            Ok(did) => did,
-            Err(_) => false,
-        };
+            .unwrap_or_default();
         if !compacted {
             compacted = self.context.compact_if_needed();
         }
