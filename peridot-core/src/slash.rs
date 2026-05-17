@@ -203,6 +203,14 @@ pub fn parse_slash_command(input: &str) -> Option<SlashCommand> {
         "reasoning" if !rest.is_empty() => {
             ReasoningEffort::parse(rest).map(SlashCommand::Reasoning)
         }
+        // `/think` and `/think hard` map to the High reasoning tier; `/think
+        // off` clears it. A convenient alias for users who think in terms of
+        // "make the model think harder" instead of the dial vocabulary.
+        "think" => match rest {
+            "" | "hard" | "harder" | "more" => Some(SlashCommand::Reasoning(ReasoningEffort::High)),
+            "off" | "stop" | "less" => Some(SlashCommand::Reasoning(ReasoningEffort::Off)),
+            other => ReasoningEffort::parse(other).map(SlashCommand::Reasoning),
+        },
         "mcp" => match rest {
             "list" => Some(SlashCommand::McpList),
             "" => None,

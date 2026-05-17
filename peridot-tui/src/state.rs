@@ -677,6 +677,18 @@ pub struct TuiState {
     /// resumed session keeps the operator's preference.
     #[serde(default)]
     pub reasoning_effort: peridot_common::ReasoningEffort,
+    /// Active `@file` picker, when the input cursor sits inside an
+    /// `@<token>` mention. Cleared as soon as the cursor leaves the
+    /// token. Tab / Enter inserts the highlighted suggestion in place of
+    /// the partial mention.
+    #[serde(default, skip)]
+    pub at_picker: Option<crate::at_picker::AtPicker>,
+    /// Cached project file index used by the `@file` picker. Built on
+    /// first open via [`at_picker::build_file_index`] and reused for the
+    /// rest of the session — skipped from serialisation because the disk
+    /// scan happens lazily on a freshly resumed session anyway.
+    #[serde(default, skip)]
+    pub at_picker_index: Vec<String>,
 }
 
 /// A session-router intent emitted by a slash command. The TUI itself does not
@@ -803,6 +815,8 @@ impl TuiState {
             goal_text: None,
             goal_started_at_unix: None,
             reasoning_effort: peridot_common::ReasoningEffort::default(),
+            at_picker: None,
+            at_picker_index: Vec::new(),
         }
     }
 
@@ -1119,11 +1133,68 @@ impl TuiState {
         self.input.insert(byte_index, character);
         self.input_cursor += 1;
         self.input_history_cursor = None;
+        self.refresh_at_picker();
+    }
+
+    /// Examines the current input + cursor to decide whether the `@file`
+    /// picker should be open. Called after any input mutation so the
+    /// picker tracks the user's caret naturally — opening when the
+    /// caret enters an `@token`, closing when it leaves.
+    pub fn refresh_at_picker(&mut self) {
+        let cursor = self.input_cursor;
+        let token = crate::at_picker::current_at_token(&self.input, cursor);
+        let Some((start, query)) = token else {
+            self.at_picker = None;
+            return;
+        };
+        match self.at_picker.as_mut() {
+            Some(picker) => {
+                picker.query = query;
+                picker.token_start = start;
+                picker.selected = 0;
+            }
+            None => {
+                self.at_picker = Some(crate::at_picker::AtPicker {
+                    query,
+                    selected: 0,
+                    token_start: start,
+                });
+            }
+        }
+    }
+
+    /// Refreshes the cached file index that powers the `@file` picker.
+    /// Called lazily the first time the picker needs to render so we
+    /// don't pay the scan cost on startup for users who never invoke it.
+    pub fn ensure_at_picker_index(&mut self, project_root: &std::path::Path) {
+        if self.at_picker_index.is_empty() {
+            self.at_picker_index = crate::at_picker::build_file_index(project_root, 5_000);
+        }
+    }
+
+    /// Replaces the active `@token` with the picker's currently-highlighted
+    /// suggestion. No-op when the picker is closed or has no matches.
+    pub fn accept_at_picker(&mut self) {
+        let Some(picker) = self.at_picker.take() else {
+            return;
+        };
+        let matches = crate::at_picker::filter_paths(&self.at_picker_index, &picker.query);
+        let Some(choice) = matches.get(picker.selected) else {
+            return;
+        };
+        let chosen = (*choice).clone();
+        let cursor_byte = input_byte_index(&self.input, self.input_cursor);
+        self.input
+            .replace_range(picker.token_start..cursor_byte, &format!("@{chosen} "));
+        let inserted_chars = chosen.chars().count() + 2; // '@' + path + ' '
+        let token_start_chars = self.input[..picker.token_start].chars().count();
+        self.input_cursor = token_start_chars + inserted_chars;
     }
 
     /// Removes the character before the current input cursor.
     pub fn backspace_input(&mut self) {
-        if self.input_cursor == 0 {
+        let cursor_before = self.input_cursor;
+        if cursor_before == 0 {
             return;
         }
         let start = input_byte_index(&self.input, self.input_cursor - 1);
@@ -1131,6 +1202,7 @@ impl TuiState {
         self.input.replace_range(start..end, "");
         self.input_cursor -= 1;
         self.input_history_cursor = None;
+        self.refresh_at_picker();
     }
 
     /// Removes the character at the current input cursor.
@@ -1143,16 +1215,19 @@ impl TuiState {
         let end = input_byte_index(&self.input, self.input_cursor + 1);
         self.input.replace_range(start..end, "");
         self.input_history_cursor = None;
+        self.refresh_at_picker();
     }
 
     /// Moves the input cursor one character left.
     pub fn move_input_cursor_left(&mut self) {
         self.input_cursor = self.input_cursor.saturating_sub(1);
+        self.refresh_at_picker();
     }
 
     /// Moves the input cursor one character right.
     pub fn move_input_cursor_right(&mut self) {
         self.input_cursor = (self.input_cursor + 1).min(self.input.chars().count());
+        self.refresh_at_picker();
     }
 
     /// Moves the input cursor to the start.

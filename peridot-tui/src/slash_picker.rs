@@ -171,6 +171,12 @@ pub fn slash_command_catalog() -> &'static [SlashCommandSpec] {
             category: "session",
         },
         SlashCommandSpec {
+            name: "/think",
+            description: "shortcut for /reasoning high (use `/think off` to disable)",
+            arg_hint: Some("[off]"),
+            category: "session",
+        },
+        SlashCommandSpec {
             name: "/mcp list",
             description: "list configured MCP servers from config.toml",
             arg_hint: None,

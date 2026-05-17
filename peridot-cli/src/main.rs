@@ -446,6 +446,11 @@ async fn main() -> Result<()> {
                             header.workspace_label = workspace_label.clone();
                             let mut state = TuiState::new(header).with_config(config.tui.clone());
                             state.committee_mode = config.committee.mode;
+                            // Warm the `@file` picker index up-front so the
+                            // first `@` keystroke gets an instant suggestion
+                            // list instead of having to walk the project
+                            // tree under the keystroke event.
+                            state.ensure_at_picker_index(&project_root);
                             state.push_transcript("Peridot ready. Type a task, /plan, /execute, /goal <objective>, /safe, /auto, /yolo, or Esc.");
                             state.push_transcript(
                                 "Submitted tasks continue inside this TUI; tool activity and run status stream here.",

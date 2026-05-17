@@ -530,15 +530,98 @@ fn render_user_block(text: &str) -> Vec<Line<'static>> {
     lines
 }
 
-/// Assistant message: no glyph or label, plain wrapped text in the default
-/// foreground colour. Inline markdown (`**bold**`, `` `code` ``) is styled so
-/// chat replies read naturally without dragging in a heavyweight markdown
-/// renderer.
+/// Assistant message renderer. Handles three markdown shapes beyond the
+/// inline bold/code styler: triple-backtick code fences, pipe tables, and
+/// everything else (delegated to `style_markdown_inline`).
 fn render_assistant_block(text: &str, _config: &TuiConfig) -> Vec<Line<'static>> {
     let body_style = Style::default().fg(Color::White);
-    text.lines()
-        .map(|line| Line::from(style_markdown_inline(line, body_style)))
-        .collect()
+    let code_style = Style::default().fg(Color::Rgb(180, 220, 255));
+    let fence_style = Style::default()
+        .fg(Color::DarkGray)
+        .add_modifier(Modifier::DIM);
+    let mut lines = Vec::new();
+    let mut in_fence = false;
+    for line in text.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") {
+            let label = trimmed.trim_start_matches("```").trim();
+            let rule = if in_fence {
+                "\u{2514}\u{2500} code".to_string()
+            } else if label.is_empty() {
+                "\u{250C}\u{2500} code".to_string()
+            } else {
+                format!("\u{250C}\u{2500} code ({label})")
+            };
+            lines.push(Line::from(Span::styled(rule, fence_style)));
+            in_fence = !in_fence;
+            continue;
+        }
+        if in_fence {
+            lines.push(Line::from(Span::styled(line.to_string(), code_style)));
+            continue;
+        }
+        if is_table_row(line) {
+            lines.push(Line::from(style_table_row(line, body_style)));
+            continue;
+        }
+        lines.push(Line::from(style_markdown_inline(line, body_style)));
+    }
+    lines
+}
+
+/// Returns true when `line` looks like a markdown pipe-table row — starts
+/// with `|` after trimming and carries at least two more `|` separators so
+/// `|x` (a non-table use of pipes) doesn't trigger.
+fn is_table_row(line: &str) -> bool {
+    let trimmed = line.trim();
+    trimmed.starts_with('|') && trimmed.matches('|').count() >= 2
+}
+
+/// Returns true for the separator row that follows a markdown pipe-table
+/// header, e.g. `| --- | :--: | ---: |`. Only `|`, `-`, `:`, and spaces are
+/// allowed; the row also needs at least three dashes so we don't mistake a
+/// data row that happens to be `|-|-|` for a separator.
+fn is_table_separator(line: &str) -> bool {
+    let trimmed = line.trim();
+    trimmed.chars().all(|c| matches!(c, '|' | '-' | ':' | ' '))
+        && trimmed.matches('-').count() >= 3
+}
+
+/// Replaces the cell separators in a pipe-table row with `│` (data row) or
+/// `┼─` rules (separator row). Cell contents flow through unchanged at
+/// `base_style`; the divider columns use a dim DarkGray so they recede.
+fn style_table_row(line: &str, base_style: Style) -> Vec<Span<'static>> {
+    let border = Style::default().fg(Color::DarkGray);
+    let trimmed = line.trim_end_matches(&[' ', '\t']);
+    if is_table_separator(line) {
+        let rule = trimmed
+            .chars()
+            .map(|c| match c {
+                '|' => '\u{253C}',
+                '-' | ':' => '\u{2500}',
+                other => other,
+            })
+            .collect::<String>();
+        return vec![Span::styled(
+            rule,
+            border.add_modifier(Modifier::DIM),
+        )];
+    }
+    let parts: Vec<&str> = trimmed.split('|').collect();
+    let last_index = parts.len().saturating_sub(1);
+    let mut spans = Vec::new();
+    for (idx, cell) in parts.iter().enumerate() {
+        let is_edge = idx == 0 || idx == last_index;
+        if is_edge && cell.is_empty() {
+            spans.push(Span::styled("\u{2502}".to_string(), border));
+            continue;
+        }
+        spans.push(Span::styled(cell.to_string(), base_style));
+        if idx < last_index {
+            spans.push(Span::styled("\u{2502}".to_string(), border));
+        }
+    }
+    spans
 }
 
 /// Lightweight inline markdown styling for one line of text. Recognises
@@ -1169,6 +1252,7 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
     frame.set_cursor_position(Position::new(cursor_x, input_area.y + 1));
 
     render_slash_picker(frame, state, input_area);
+    render_at_picker(frame, state, input_area);
 }
 
 /// Floats a small autocomplete overlay above the input box when the buffer
@@ -1223,6 +1307,66 @@ fn render_slash_picker(frame: &mut Frame<'_>, state: &TuiState, input_area: Rect
     };
     frame.render_widget(
         Paragraph::new(lines).block(Block::default().title("commands").borders(Borders::ALL)),
+        area,
+    );
+}
+
+/// Floats the `@file` picker above the input box. Hidden when other
+/// modal panels are active so two overlays can't overlap; otherwise
+/// mirrors the slash picker layout (overlay above input, top-aligned
+/// against the input border).
+fn render_at_picker(frame: &mut Frame<'_>, state: &TuiState, input_area: Rect) {
+    let Some(picker) = state.at_picker.as_ref() else {
+        return;
+    };
+    if state.menu.is_some() || state.approval.is_some() || state.ask_user.is_some() {
+        return;
+    }
+    let matches = crate::at_picker::filter_paths(&state.at_picker_index, &picker.query);
+    if matches.is_empty() {
+        return;
+    }
+    let highlight = Style::default()
+        .fg(Color::Cyan)
+        .add_modifier(Modifier::BOLD);
+    let dim = Style::default()
+        .fg(Color::DarkGray)
+        .add_modifier(Modifier::DIM);
+    let lines: Vec<Line<'static>> = matches
+        .iter()
+        .enumerate()
+        .map(|(idx, path)| {
+            let marker = if idx == picker.selected { "\u{25B8}" } else { " " };
+            let style = if idx == picker.selected {
+                highlight
+            } else {
+                Style::default()
+            };
+            Line::from(vec![
+                Span::styled(format!("{marker} "), style),
+                Span::styled((*path).clone(), style),
+            ])
+        })
+        .collect();
+    let height = (lines.len() as u16).min(crate::at_picker::AT_PICKER_LIMIT as u16) + 2;
+    if input_area.y < height {
+        return;
+    }
+    let area = Rect {
+        x: input_area.x,
+        y: input_area.y.saturating_sub(height),
+        width: input_area.width,
+        height,
+    };
+    let title = if picker.query.is_empty() {
+        "@file".to_string()
+    } else {
+        format!("@file: {}", picker.query)
+    };
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(Block::default().title(title).borders(Borders::ALL))
+            .style(dim),
         area,
     );
 }

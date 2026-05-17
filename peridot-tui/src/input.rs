@@ -226,6 +226,24 @@ pub fn handle_key_event(state: &mut TuiState, key: KeyEvent) -> TuiEventOutcome 
             state.scroll_down(1);
             TuiEventOutcome::Continue
         }
+        // `@file` picker takes priority over input history when open —
+        // Up/Down navigates the suggestion list so the operator can land
+        // on a non-first match without leaving the keyboard.
+        KeyCode::Up if state.at_picker.is_some() => {
+            if let Some(picker) = state.at_picker.as_mut() {
+                picker.selected = picker.selected.saturating_sub(1);
+            }
+            TuiEventOutcome::Continue
+        }
+        KeyCode::Down if state.at_picker.is_some() => {
+            if let Some(picker) = state.at_picker.as_mut() {
+                let matches = crate::at_picker::filter_paths(&state.at_picker_index, &picker.query);
+                if !matches.is_empty() {
+                    picker.selected = (picker.selected + 1).min(matches.len() - 1);
+                }
+            }
+            TuiEventOutcome::Continue
+        }
         KeyCode::Up => {
             state.previous_input_history();
             TuiEventOutcome::Continue
@@ -268,6 +286,12 @@ pub fn handle_key_event(state: &mut TuiState, key: KeyEvent) -> TuiEventOutcome 
         }
         KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => {
             state.insert_input_char('\n');
+            TuiEventOutcome::Continue
+        }
+        // Tab completes the highlighted `@file` suggestion when the picker
+        // is active; otherwise falls through to the slash-command picker.
+        KeyCode::Tab if state.at_picker.is_some() => {
+            state.accept_at_picker();
             TuiEventOutcome::Continue
         }
         KeyCode::Tab if state.input.starts_with('/') => {

@@ -1,4 +1,10 @@
 //! Terminal UI state and rendering boundary.
+//
+// Clippy's `doc_lazy_continuation` lint currently ICEs when a doc comment
+// contains certain multi-byte characters (em-dashes, CJK glyphs) — a
+// reported upstream bug. We disable the lint at the crate level until the
+// fix lands so the workspace clippy gate stays usable.
+#![allow(clippy::doc_lazy_continuation)]
 
 use std::fmt::Write as FmtWrite;
 use std::io::{self, Stdout};
@@ -25,6 +31,7 @@ use ratatui::{
 use serde::{Deserialize, Serialize};
 
 mod ask_user;
+mod at_picker;
 #[cfg(test)]
 mod fixtures;
 mod i18n;
