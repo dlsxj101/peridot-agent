@@ -40,6 +40,8 @@ pub struct HarnessAgent {
     agents_md_signature: Option<(u64, u64)>,
     role: AgentRole,
     subagent_runner: Option<Arc<dyn SubAgent>>,
+    auto_verify_after_mutation: bool,
+    auto_grade_on_done: bool,
 }
 
 impl HarnessAgent {
@@ -55,6 +57,8 @@ impl HarnessAgent {
             agents_md_signature: None,
             role: AgentRole::default(),
             subagent_runner: None,
+            auto_verify_after_mutation: false,
+            auto_grade_on_done: false,
         }
     }
 
@@ -64,6 +68,23 @@ impl HarnessAgent {
     /// instead of only preparing a workspace.
     pub fn set_subagent_runner(&mut self, runner: Arc<dyn SubAgent>) {
         self.subagent_runner = Some(runner);
+    }
+
+    /// Enables the "verify after every mutation" auto-loop. When on,
+    /// `verify_build` runs automatically after every successful
+    /// `file_write` / `file_patch` / `shell_exec` and its result is
+    /// injected into context as a `PlanReminder`, so the next model
+    /// turn sees compile errors immediately. Off by default.
+    pub fn set_auto_verify_after_mutation(&mut self, enabled: bool) {
+        self.auto_verify_after_mutation = enabled;
+    }
+
+    /// Enables LLM-based grading on `agent_done`. When the verdict
+    /// fails, the recommendations are folded back into context and
+    /// the loop continues for another turn instead of finishing.
+    /// Off by default.
+    pub fn set_auto_grade_on_done(&mut self, enabled: bool) {
+        self.auto_grade_on_done = enabled;
     }
 
     /// Assigns the committee role this agent plays. Defaults to
@@ -632,6 +653,54 @@ impl HarnessAgent {
                 consecutive_verify_failures = 0;
             }
             accumulate_usage(&mut total_usage, outcome.usage);
+            // Auto-verify after mutation: if the operator opted into
+            // "verify after every mutation", run `verify_build`
+            // immediately so a broken compile surfaces while the
+            // diff is still fresh. The result is appended as a
+            // PlanReminder so the next model turn reads it without
+            // expecting a paired native tool_call_id.
+            if self.auto_verify_after_mutation
+                && turn_success
+                && is_mutating_tool_name(&outcome.tool_name)
+            {
+                let auto_verify = self
+                    .execute_tool_call_with_runtime(
+                        ToolCall {
+                            name: "verify_build".to_string(),
+                            parameters: serde_json::json!({}),
+                        },
+                        request.project_root.clone(),
+                        request.denied_paths.clone(),
+                        request.hooks.clone(),
+                        request.security.clone(),
+                    )
+                    .await;
+                match auto_verify {
+                    Ok(result) => {
+                        let note = if result.success {
+                            format!("[auto-verify] verify_build passed: {}", result.summary)
+                        } else {
+                            format!(
+                                "[auto-verify] verify_build FAILED: {}\nFix this before declaring agent_done.",
+                                result.summary
+                            )
+                        };
+                        self.context.append(ContextEntry::trusted(
+                            ContextSource::PlanReminder,
+                            note,
+                        ));
+                    }
+                    Err(err) => {
+                        // Verify infrastructure isn't available
+                        // (e.g. no build command configured). Surface
+                        // a quiet note but never abort the run.
+                        self.context.append(ContextEntry::trusted(
+                            ContextSource::PlanReminder,
+                            format!("[auto-verify] verify_build could not run: {err}"),
+                        ));
+                    }
+                }
+            }
             events(AgentRunEvent::UsageUpdated { usage: total_usage });
             events(AgentRunEvent::TurnEnded {
                 turn_index,
@@ -737,6 +806,74 @@ impl HarnessAgent {
                         continue;
                     }
                 }
+                // Auto-grade on agent_done: ask an LLM to gate the
+                // task. When the grader fails the verdict we fold
+                // recommendations back into context and `continue` —
+                // the model gets one more turn to address them
+                // instead of finishing. Cheap callers can keep this
+                // off; the gate is `auto_grade_on_done`.
+                if self.auto_grade_on_done {
+                    let diff = collect_git_diff(&request.project_root);
+                    let verify_summary =
+                        recent_verify_summary(&self.context).unwrap_or_default();
+                    match crate::grader::grade_work(
+                        provider,
+                        &request.model,
+                        &request.task,
+                        &diff,
+                        &verify_summary,
+                    )
+                    .await
+                    {
+                        Ok(verdict) => {
+                            accumulate_usage(&mut total_usage, verdict.usage);
+                            if !verdict.passed {
+                                self.state.phase = AgentPhase::Recovering;
+                                let mut directive = format!(
+                                    "[auto-grade] Grader rejected agent_done: {}",
+                                    verdict.summary
+                                );
+                                if !verdict.recommendations.is_empty() {
+                                    directive.push_str("\nRecommendations:\n");
+                                    for rec in &verdict.recommendations {
+                                        directive.push_str("- ");
+                                        directive.push_str(rec);
+                                        directive.push('\n');
+                                    }
+                                }
+                                directive.push_str("\nAddress the recommendations and call agent_done again only when the change actually ships.");
+                                self.context.append(ContextEntry::trusted(
+                                    ContextSource::PlanReminder,
+                                    directive,
+                                ));
+                                events(AgentRunEvent::Recovery {
+                                    message: format!(
+                                        "auto-grade failed: {}",
+                                        verdict.summary
+                                    ),
+                                });
+                                continue;
+                            }
+                            self.context.append(ContextEntry::trusted(
+                                ContextSource::PlanReminder,
+                                format!("[auto-grade] Grader passed: {}", verdict.summary),
+                            ));
+                        }
+                        Err(err) => {
+                            // Grader infrastructure failed (provider
+                            // hiccup, unparseable response after
+                            // retries). Surface a note and let
+                            // agent_done stand — degrading to the
+                            // legacy "first done wins" path is safer
+                            // than blocking the operator on a flaky
+                            // grader.
+                            self.context.append(ContextEntry::trusted(
+                                ContextSource::PlanReminder,
+                                format!("[auto-grade] Grader unavailable: {err}"),
+                            ));
+                        }
+                    }
+                }
                 let summary = AgentRunSummary {
                     turns: outcomes,
                     usage: total_usage,
@@ -835,6 +972,42 @@ fn approval_required_error(err: &PeriError) -> bool {
         PeriError::PermissionDenied(reason) => reason.contains("requires explicit user approval"),
         _ => false,
     }
+}
+
+/// Returns true when the named tool mutates the workspace. Matches the
+/// hardcoded list the committee loop uses (`run_committee_loop_with_events`)
+/// so auto-verify and reviewer triggering stay aligned.
+fn is_mutating_tool_name(name: &str) -> bool {
+    matches!(name, "file_write" | "file_patch" | "shell_exec")
+}
+
+/// Runs `git diff` in `project_root` and returns its stdout. Returns
+/// an empty string when git isn't available or the directory isn't a
+/// repo — auto-grade is best-effort, never blocks the run.
+fn collect_git_diff(project_root: &std::path::Path) -> String {
+    std::process::Command::new("git")
+        .args(["diff", "HEAD"])
+        .current_dir(project_root)
+        .output()
+        .ok()
+        .map(|output| String::from_utf8_lossy(&output.stdout).to_string())
+        .unwrap_or_default()
+}
+
+/// Scans the most recent context entries for a `verify_*` tool result
+/// or `[auto-verify]` PlanReminder note. Used as the third grader
+/// input so the LLM gates on actual check output, not just the diff.
+fn recent_verify_summary(context: &ContextManager) -> Option<String> {
+    for entry in context.entries().iter().rev().take(20) {
+        let content = entry.content.trim();
+        if content.starts_with("[auto-verify]") {
+            return Some(content.to_string());
+        }
+        if entry.source == ContextSource::Tool && content.contains("verify_") {
+            return Some(content.to_string());
+        }
+    }
+    None
 }
 
 fn snapshot_context_to_disk<F>(path: &std::path::Path, context: &ContextManager, events: &mut F)

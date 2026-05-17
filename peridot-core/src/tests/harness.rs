@@ -578,3 +578,130 @@ async fn run_turn_emits_context_compacted_hook() {
     assert!(log.contains(":1"));
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[tokio::test]
+async fn auto_verify_after_mutation_appends_plan_reminder() {
+    // file_write succeeds → harness auto-runs verify_build → the
+    // result lands as a PlanReminder so the next turn sees it.
+    let root = std::env::temp_dir().join(format!(
+        "peridot-core-auto-verify-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let mut registry = ToolRegistry::new();
+    register_builtin_tools(&mut registry).unwrap();
+    let mut agent = HarnessAgent::new(
+        AgentState::new(ExecutionMode::Execute, PermissionMode::Auto),
+        ContextManager::new(),
+        registry,
+    );
+    agent.set_auto_verify_after_mutation(true);
+    let provider = StaticProvider::new(vec![
+        json!({
+            "action": "file_write",
+            "parameters": {"path": "note.txt", "content": "hello"}
+        })
+        .to_string(),
+        json!({"action": "agent_done", "parameters": {"summary": "done"}}).to_string(),
+    ]);
+    let summary = agent
+        .run_until_done_with_events(
+            &provider,
+            AgentRunRequest {
+                task: "write a note".to_string(),
+                model: "mock".to_string(),
+                goal_checker_model: None,
+                max_turns: 3,
+                max_tokens: 512,
+                reasoning_effort: peridot_common::ReasoningEffort::Off,
+                budget_usd: 5.0,
+                budget_warning_pct: 50,
+                project_root: root.clone(),
+                denied_paths: Vec::new(),
+                hooks: HooksConfig::default(),
+                security: SecurityConfig::default(),
+            },
+            |_| {},
+        )
+        .await
+        .unwrap();
+    assert_eq!(summary.stopped_reason, StopReason::Done);
+    let has_auto_verify_note = agent
+        .context()
+        .entries()
+        .iter()
+        .any(|entry| entry.content.contains("[auto-verify]"));
+    assert!(
+        has_auto_verify_note,
+        "expected an [auto-verify] PlanReminder after the file_write mutation"
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn auto_grade_failure_keeps_loop_running() {
+    // Grader rejects the first agent_done → recommendations injected
+    // into context, loop continues, second agent_done passes.
+    let root = std::env::temp_dir().join(format!(
+        "peridot-core-auto-grade-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let mut registry = ToolRegistry::new();
+    register_builtin_tools(&mut registry).unwrap();
+    let mut agent = HarnessAgent::new(
+        AgentState::new(ExecutionMode::Execute, PermissionMode::Auto),
+        ContextManager::new(),
+        registry,
+    );
+    agent.set_auto_grade_on_done(true);
+    // Provider responses, in order:
+    //   1. agent_done (first attempt — grader rejects)
+    //   2. grader verdict: passed=false + recommendations
+    //   3. agent_done (second attempt — grader passes)
+    //   4. grader verdict: passed=true
+    let provider = super::support::StaticProvider::new(vec![
+        json!({"action": "agent_done", "parameters": {"summary": "first try"}}).to_string(),
+        r#"{"passed": false, "summary": "tests missing", "recommendations": ["add a unit test"]}"#
+            .to_string(),
+        json!({"action": "agent_done", "parameters": {"summary": "second try"}}).to_string(),
+        r#"{"passed": true, "summary": "looks good", "recommendations": []}"#.to_string(),
+    ]);
+    let summary = agent
+        .run_until_done_with_events(
+            &provider,
+            AgentRunRequest {
+                task: "finish a small task".to_string(),
+                model: "mock".to_string(),
+                goal_checker_model: None,
+                max_turns: 4,
+                max_tokens: 512,
+                reasoning_effort: peridot_common::ReasoningEffort::Off,
+                budget_usd: 5.0,
+                budget_warning_pct: 50,
+                project_root: root.clone(),
+                denied_paths: Vec::new(),
+                hooks: HooksConfig::default(),
+                security: SecurityConfig::default(),
+            },
+            |_| {},
+        )
+        .await
+        .unwrap();
+    assert_eq!(summary.stopped_reason, StopReason::Done);
+    assert!(
+        summary.turns.len() >= 2,
+        "expected loop to continue past first agent_done — got {} turns",
+        summary.turns.len()
+    );
+    let has_rejection_note = agent
+        .context()
+        .entries()
+        .iter()
+        .any(|entry| entry.content.contains("Grader rejected"));
+    assert!(
+        has_rejection_note,
+        "expected an [auto-grade] rejection PlanReminder"
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}

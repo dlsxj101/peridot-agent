@@ -762,6 +762,22 @@ pub struct DefaultsConfig {
     /// Budget warning threshold percentage.
     #[serde(default = "default_budget_warning_pct")]
     pub budget_warning_pct: u8,
+    /// Automatically run `verify_build` after every mutating tool call
+    /// (`file_write` / `file_patch` / `shell_exec`). Off by default —
+    /// projects with a slow build can keep the legacy "model calls
+    /// verify when it wants" behaviour. When on, compile errors are
+    /// surfaced immediately while the change is still fresh in
+    /// context, so the model fixes them in the very next turn.
+    #[serde(default)]
+    pub auto_verify_after_mutation: bool,
+    /// Automatically call the LLM-based grader (`grade_work`) after
+    /// `agent_done` to decide whether the task is actually shippable.
+    /// When the verdict is `passed: false`, the recommendations are
+    /// injected as a `PlanReminder` and the loop continues for another
+    /// turn instead of stopping. Off by default to keep the legacy
+    /// "first agent_done wins" behaviour.
+    #[serde(default)]
+    pub auto_grade_on_done: bool,
 }
 
 impl Default for DefaultsConfig {
@@ -772,6 +788,8 @@ impl Default for DefaultsConfig {
             max_turns: default_max_turns(),
             budget_usd: default_budget_usd(),
             budget_warning_pct: default_budget_warning_pct(),
+            auto_verify_after_mutation: false,
+            auto_grade_on_done: false,
         }
     }
 }

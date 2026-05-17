@@ -81,6 +81,8 @@ pub(super) async fn run_task(
         .with_security(config.security.clone())
         .with_reasoning_effort(config.models.reasoning_effort),
     ));
+    agent.set_auto_verify_after_mutation(config.defaults.auto_verify_after_mutation);
+    agent.set_auto_grade_on_done(config.defaults.auto_grade_on_done);
     let summary = run_agent_loop(
         &mut agent,
         provider.as_ref(),
@@ -246,6 +248,8 @@ where
         .with_security(config.security.clone())
         .with_reasoning_effort(config.models.reasoning_effort),
     ));
+    agent.set_auto_verify_after_mutation(config.defaults.auto_verify_after_mutation);
+    agent.set_auto_grade_on_done(config.defaults.auto_grade_on_done);
     run_planner_preflight_if_enabled(
         &mut agent,
         provider.as_ref(),
