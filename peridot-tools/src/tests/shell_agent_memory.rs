@@ -294,6 +294,7 @@ async fn memory_search_reads_project_memory() {
         .save_skill(&peridot_memory::StoredSkill {
             name: "rust-fmt".to_string(),
             body: "Run cargo fmt.".to_string(),
+            ..Default::default()
         })
         .unwrap();
     let ctx = ToolContext::new(&root, PermissionMode::Auto);
@@ -318,6 +319,7 @@ fn memory_layer_search_returns_skills_and_errors() {
         .save_skill(&StoredSkill {
             name: "fmt-error-skill".to_string(),
             body: "Run cargo fmt.".to_string(),
+            ..Default::default()
         })
         .unwrap();
     store

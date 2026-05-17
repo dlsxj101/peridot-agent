@@ -102,6 +102,8 @@ pub(super) fn save_auto_skill(
     store.save_skill(&StoredSkill {
         name: name.clone(),
         body: body.clone(),
+        scope: "auto".to_string(),
+        ..Default::default()
     })?;
     let skills_dir = project_root.join(".peridot/skills/auto");
     fs::create_dir_all(&skills_dir)?;

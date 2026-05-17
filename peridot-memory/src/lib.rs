@@ -102,12 +102,37 @@ impl SessionRecord {
 }
 
 /// Stored learned skill.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Default)]
 pub struct StoredSkill {
     /// Skill name.
     pub name: String,
     /// Skill body.
     pub body: String,
+    /// Last time the skill body was actually loaded into agent context
+    /// (e.g. via `skill_view`). Unix seconds; `0` means never used since
+    /// it was saved. Drives the Curator's stale/archive decision.
+    #[serde(default)]
+    pub last_used_at_unix: u64,
+    /// When the Curator (or operator) archived this skill. Unix seconds;
+    /// `0` means active. Archived skills stay in the DB for restore but
+    /// are excluded from default listings and the auto-activation pool.
+    #[serde(default)]
+    pub archived_at_unix: u64,
+    /// Origin tag controlling whether the Curator may rewrite or archive
+    /// this skill. `"auto"` = agent-authored (Curator target).
+    /// `"bundled"` / `"community"` / `""` = leave alone. Empty string is
+    /// treated as bundled to keep legacy rows safe.
+    #[serde(default)]
+    pub scope: String,
+}
+
+/// Snapshot of a skill row plus Curator-relevant metadata.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SkillRecord {
+    /// Full stored skill, including body.
+    pub skill: StoredSkill,
+    /// Last update time (unix seconds) — when the body changed.
+    pub updated_at_unix: u64,
 }
 
 /// Stored error resolution.
@@ -155,7 +180,15 @@ impl MemoryStore {
                 CREATE TABLE IF NOT EXISTS skills (
                     name TEXT PRIMARY KEY,
                     body TEXT NOT NULL,
-                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at_unix INTEGER NOT NULL DEFAULT 0,
+                    last_used_at_unix INTEGER NOT NULL DEFAULT 0,
+                    archived_at_unix INTEGER NOT NULL DEFAULT 0,
+                    scope TEXT NOT NULL DEFAULT ''
+                );
+                CREATE TABLE IF NOT EXISTS kv_meta (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
                 );
                 CREATE TABLE IF NOT EXISTS errors (
                     signature TEXT PRIMARY KEY,
@@ -178,6 +211,25 @@ impl MemoryStore {
                 "#,
             )
             .map_err(sql_error)?;
+        ensure_column(
+            &connection,
+            "skills",
+            "updated_at_unix",
+            "INTEGER NOT NULL DEFAULT 0",
+        )?;
+        ensure_column(
+            &connection,
+            "skills",
+            "last_used_at_unix",
+            "INTEGER NOT NULL DEFAULT 0",
+        )?;
+        ensure_column(
+            &connection,
+            "skills",
+            "archived_at_unix",
+            "INTEGER NOT NULL DEFAULT 0",
+        )?;
+        ensure_column(&connection, "skills", "scope", "TEXT NOT NULL DEFAULT ''")?;
         Ok(())
     }
 
@@ -364,64 +416,183 @@ impl MemoryStore {
         Ok(changed > 0)
     }
 
-    /// Saves or replaces a learned skill.
+    /// Saves or replaces a learned skill. Carries `scope`, `last_used_at_unix`,
+    /// and `archived_at_unix` through so the Curator can round-trip records
+    /// it has just rewritten. Save with `scope = "auto"` for agent-authored
+    /// skills that the Curator is allowed to rewrite/archive.
     pub fn save_skill(&self, skill: &StoredSkill) -> PeriResult<()> {
         self.initialize()?;
         let connection = self.connection()?;
+        let now = unix_now() as i64;
         connection
             .execute(
                 r#"
-                INSERT INTO skills (name, body, updated_at)
-                VALUES (?1, ?2, CURRENT_TIMESTAMP)
+                INSERT INTO skills (
+                    name, body, updated_at, updated_at_unix,
+                    last_used_at_unix, archived_at_unix, scope
+                )
+                VALUES (?1, ?2, CURRENT_TIMESTAMP, ?3, ?4, ?5, ?6)
                 ON CONFLICT(name) DO UPDATE SET
                     body = excluded.body,
-                    updated_at = CURRENT_TIMESTAMP
+                    updated_at = CURRENT_TIMESTAMP,
+                    updated_at_unix = excluded.updated_at_unix,
+                    last_used_at_unix = excluded.last_used_at_unix,
+                    archived_at_unix = excluded.archived_at_unix,
+                    scope = excluded.scope
                 "#,
-                params![skill.name, skill.body],
+                params![
+                    skill.name,
+                    skill.body,
+                    now,
+                    skill.last_used_at_unix as i64,
+                    skill.archived_at_unix as i64,
+                    skill.scope,
+                ],
             )
             .map_err(sql_error)?;
         Ok(())
     }
 
-    /// Lists learned skills in latest-first order.
+    /// Lists active (non-archived) skills in latest-first order.
     pub fn list_skills(&self) -> PeriResult<Vec<StoredSkill>> {
         self.initialize()?;
         let connection = self.connection()?;
         let mut statement = connection
-            .prepare("SELECT name, body FROM skills ORDER BY updated_at DESC, name ASC")
+            .prepare(
+                "SELECT name, body, last_used_at_unix, archived_at_unix, scope FROM skills
+                 WHERE archived_at_unix = 0
+                 ORDER BY updated_at DESC, name ASC",
+            )
+            .map_err(sql_error)?;
+        let rows = statement
+            .query_map([], stored_skill_from_row)
+            .map_err(sql_error)?;
+        collect_rows(rows)
+    }
+
+    /// Lists every skill row including archived ones plus their last update
+    /// timestamp. The Curator uses this for stale/archive decisions.
+    pub fn list_skill_records(&self) -> PeriResult<Vec<SkillRecord>> {
+        self.initialize()?;
+        let connection = self.connection()?;
+        let mut statement = connection
+            .prepare(
+                "SELECT name, body, last_used_at_unix, archived_at_unix, scope, updated_at_unix
+                 FROM skills
+                 ORDER BY updated_at_unix DESC, name ASC",
+            )
             .map_err(sql_error)?;
         let rows = statement
             .query_map([], |row| {
-                Ok(StoredSkill {
-                    name: row.get(0)?,
-                    body: row.get(1)?,
+                Ok(SkillRecord {
+                    skill: stored_skill_from_row(row)?,
+                    updated_at_unix: row.get::<_, i64>(5)? as u64,
                 })
             })
             .map_err(sql_error)?;
         collect_rows(rows)
     }
 
-    /// Searches learned skills by name or body text.
+    /// Searches active skills by name or body text.
     pub fn search_skills(&self, query: &str) -> PeriResult<Vec<StoredSkill>> {
         self.initialize()?;
         let pattern = format!("%{query}%");
         let connection = self.connection()?;
         let mut statement = connection
             .prepare(
-                "SELECT name, body FROM skills
-                 WHERE name LIKE ?1 OR body LIKE ?1
+                "SELECT name, body, last_used_at_unix, archived_at_unix, scope FROM skills
+                 WHERE archived_at_unix = 0 AND (name LIKE ?1 OR body LIKE ?1)
                  ORDER BY updated_at DESC, name ASC",
             )
             .map_err(sql_error)?;
         let rows = statement
-            .query_map([pattern], |row| {
-                Ok(StoredSkill {
-                    name: row.get(0)?,
-                    body: row.get(1)?,
-                })
-            })
+            .query_map([pattern], stored_skill_from_row)
             .map_err(sql_error)?;
         collect_rows(rows)
+    }
+
+    /// Records that a skill body was just loaded into agent context. Drives
+    /// Curator's last-used tracking — only `skill_view` should call this.
+    pub fn mark_skill_viewed(&self, name: &str, at_unix: u64) -> PeriResult<bool> {
+        self.initialize()?;
+        let connection = self.connection()?;
+        let changed = connection
+            .execute(
+                "UPDATE skills SET last_used_at_unix = ?1 WHERE name = ?2",
+                params![at_unix as i64, name],
+            )
+            .map_err(sql_error)?;
+        Ok(changed > 0)
+    }
+
+    /// Marks a skill archived (Curator's 90-day rule or operator command).
+    /// Pass `at_unix = 0` to restore. Returns whether a row was changed.
+    pub fn set_skill_archived(&self, name: &str, at_unix: u64) -> PeriResult<bool> {
+        self.initialize()?;
+        let connection = self.connection()?;
+        let changed = connection
+            .execute(
+                "UPDATE skills SET archived_at_unix = ?1 WHERE name = ?2",
+                params![at_unix as i64, name],
+            )
+            .map_err(sql_error)?;
+        Ok(changed > 0)
+    }
+
+    /// Reads a Curator metadata value. Returns `None` when unset.
+    pub fn get_meta(&self, key: &str) -> PeriResult<Option<String>> {
+        self.initialize()?;
+        let connection = self.connection()?;
+        let mut statement = connection
+            .prepare("SELECT value FROM kv_meta WHERE key = ?1")
+            .map_err(sql_error)?;
+        let value = statement
+            .query_row([key], |row| row.get::<_, String>(0))
+            .optional()
+            .map_err(sql_error)?;
+        Ok(value)
+    }
+
+    /// Writes a Curator metadata value (e.g. `last_curator_run_unix`).
+    pub fn set_meta(&self, key: &str, value: &str) -> PeriResult<()> {
+        self.initialize()?;
+        let connection = self.connection()?;
+        connection
+            .execute(
+                r#"
+                INSERT INTO kv_meta (key, value) VALUES (?1, ?2)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                "#,
+                params![key, value],
+            )
+            .map_err(sql_error)?;
+        Ok(())
+    }
+
+    /// Most recent session-update unix timestamp across both session tables;
+    /// `0` when no sessions exist. The Curator's 7-day idle trigger compares
+    /// this with `last_curator_run_unix`.
+    pub fn last_activity_unix(&self) -> PeriResult<u64> {
+        self.initialize()?;
+        let connection = self.connection()?;
+        let from_records: i64 = connection
+            .query_row(
+                "SELECT COALESCE(MAX(updated_at_unix), 0) FROM session_records",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(sql_error)?;
+        let from_legacy: i64 = connection
+            .query_row(
+                "SELECT COALESCE(MAX(strftime('%s', updated_at)), 0) FROM sessions",
+                [],
+                |row| {
+                    let raw: String = row.get(0).unwrap_or_default();
+                    Ok(raw.parse::<i64>().unwrap_or(0))
+                },
+            )
+            .map_err(sql_error)?;
+        Ok(from_records.max(from_legacy).max(0) as u64)
     }
 
     /// Saves or replaces an error resolution.
@@ -539,6 +710,51 @@ pub fn remove_session_dir(sessions_root: &Path, id: &str) -> PeriResult<bool> {
     Ok(true)
 }
 
+fn stored_skill_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredSkill> {
+    Ok(StoredSkill {
+        name: row.get(0)?,
+        body: row.get(1)?,
+        last_used_at_unix: row.get::<_, i64>(2)? as u64,
+        archived_at_unix: row.get::<_, i64>(3)? as u64,
+        scope: row.get(4)?,
+    })
+}
+
+/// Adds a column to an existing table when it is missing. SQLite has no
+/// `ADD COLUMN IF NOT EXISTS`, so this checks `PRAGMA table_info` first.
+fn ensure_column(
+    connection: &Connection,
+    table: &str,
+    column: &str,
+    type_clause: &str,
+) -> PeriResult<()> {
+    let mut statement = connection
+        .prepare(&format!("PRAGMA table_info({table})"))
+        .map_err(sql_error)?;
+    let existing: Vec<String> = statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(sql_error)?
+        .filter_map(Result::ok)
+        .collect();
+    if existing.iter().any(|name| name == column) {
+        return Ok(());
+    }
+    connection
+        .execute(
+            &format!("ALTER TABLE {table} ADD COLUMN {column} {type_clause}"),
+            [],
+        )
+        .map_err(sql_error)?;
+    Ok(())
+}
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or_default()
+}
+
 fn sql_error(err: rusqlite::Error) -> PeriError {
     PeriError::Tool(format!("sqlite error: {err}"))
 }
@@ -636,6 +852,84 @@ mod tests {
     }
 
     #[test]
+    fn skill_metadata_round_trips_and_curator_helpers_work() {
+        let root = std::env::temp_dir().join(format!(
+            "peridot-memory-curator-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or_default()
+        ));
+        let store = MemoryStore::new(root.join("memory.db"));
+        store
+            .save_skill(&StoredSkill {
+                name: "auto-fix-parser".to_string(),
+                body: "Parser recipe".to_string(),
+                scope: "auto".to_string(),
+                ..Default::default()
+            })
+            .unwrap();
+        store
+            .save_skill(&StoredSkill {
+                name: "bundled-fmt".to_string(),
+                body: "Run cargo fmt".to_string(),
+                ..Default::default()
+            })
+            .unwrap();
+
+        assert!(store.mark_skill_viewed("auto-fix-parser", 1_000).unwrap());
+        let records = store.list_skill_records().unwrap();
+        let auto = records
+            .iter()
+            .find(|r| r.skill.name == "auto-fix-parser")
+            .unwrap();
+        assert_eq!(auto.skill.last_used_at_unix, 1_000);
+        assert_eq!(auto.skill.scope, "auto");
+
+        assert!(store.set_skill_archived("auto-fix-parser", 2_000).unwrap());
+        let listed = store.list_skills().unwrap();
+        assert!(listed.iter().all(|s| s.name != "auto-fix-parser"));
+        assert_eq!(listed.len(), 1);
+        assert_eq!(
+            store
+                .list_skill_records()
+                .unwrap()
+                .iter()
+                .find(|r| r.skill.name == "auto-fix-parser")
+                .map(|r| r.skill.archived_at_unix),
+            Some(2_000)
+        );
+
+        store
+            .set_meta("last_curator_run_unix", "1234567890")
+            .unwrap();
+        assert_eq!(
+            store.get_meta("last_curator_run_unix").unwrap().as_deref(),
+            Some("1234567890")
+        );
+
+        store
+            .save_session_record(&SessionRecord {
+                id: "session-recent".to_string(),
+                summary: String::new(),
+                status: SessionLifecycle::Done,
+                created_at_unix: 9_999,
+                updated_at_unix: 9_999,
+                workspace_root: PathBuf::from("/tmp"),
+                worktree_branch: None,
+                last_task: None,
+                total_tokens: 0,
+                total_cost_usd: 0.0,
+                turns_used: 0,
+            })
+            .unwrap();
+        assert_eq!(store.last_activity_unix().unwrap(), 9_999);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn saves_and_searches_skills_and_errors() {
         let root =
             std::env::temp_dir().join(format!("peridot-memory-skills-{}", std::process::id()));
@@ -644,6 +938,7 @@ mod tests {
             .save_skill(&StoredSkill {
                 name: "rust-fmt".to_string(),
                 body: "Run cargo fmt before clippy.".to_string(),
+                ..Default::default()
             })
             .unwrap();
         store
