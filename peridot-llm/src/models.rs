@@ -7,6 +7,13 @@
 //! unrecognised — recent unknown models almost always have at least
 //! 200k context. The match is prefix-based so versioned aliases like
 //! `claude-sonnet-4-6-20251022` resolve correctly.
+//!
+//! For OpenRouter slugs the runtime overlays this table with the
+//! catalog returned by [`crate::catalog::openrouter_context_lengths`]
+//! so the operator gets exact values (and picks up new models without
+//! waiting for a peridot release). Other providers (Anthropic, OpenAI)
+//! don't expose context length over their public APIs so this table
+//! stays authoritative for them.
 
 /// Returns the maximum input context window in tokens for `model`, or
 /// `None` when the name doesn't match any known entry. Callers
@@ -53,15 +60,30 @@ pub fn context_window_tokens(model: &str) -> Option<usize> {
     if lower.contains("gemini") {
         return Some(128_000);
     }
-    // DeepSeek / Qwen / Llama families
+    // DeepSeek / Qwen / Llama / other community models
     if lower.contains("deepseek") {
         return Some(128_000);
+    }
+    if lower.contains("qwen3") {
+        return Some(256_000);
     }
     if lower.contains("qwen") {
         return Some(128_000);
     }
+    if lower.contains("llama-4") {
+        return Some(200_000);
+    }
     if lower.contains("llama-3") {
         return Some(128_000);
+    }
+    if lower.contains("mistral-large") || lower.contains("mistral-medium") {
+        return Some(128_000);
+    }
+    if lower.contains("command-r") {
+        return Some(128_000);
+    }
+    if lower.contains("grok-2") || lower.contains("grok-3") || lower.contains("grok-4") {
+        return Some(131_072);
     }
     None
 }

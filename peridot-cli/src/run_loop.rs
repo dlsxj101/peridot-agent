@@ -137,6 +137,25 @@ pub(super) fn agent_task_options(cli: &Cli, config: &PeridotConfig) -> AgentTask
     }
 }
 
+/// Picks the active model's max input-token window for the dynamic
+/// compaction trigger. When `auth_primary == "openrouter-api"` we
+/// consult the cached OpenRouter catalog first (24h disk cache, no auth
+/// required) so slugs the static heuristic table doesn't recognise — or
+/// new releases whose context window grew — get the exact value. For
+/// every other path we fall straight through to the heuristic table and
+/// finally to a 200K floor so the 90%-of-window trigger always has a
+/// sensible threshold to compare against.
+pub(super) async fn resolve_model_window(model: &str, auth_primary: &str) -> usize {
+    if auth_primary == "openrouter-api"
+        && let Some(cache_dir) = peridot_llm::catalog::default_cache_dir()
+        && let Some(catalog) = peridot_llm::catalog::openrouter_context_lengths(&cache_dir).await
+        && let Some(window) = catalog.get(model).copied()
+    {
+        return window;
+    }
+    peridot_llm::context_window_tokens(model).unwrap_or(200_000)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn run_task_with_events<F>(
     task: String,
@@ -166,13 +185,20 @@ where
         &config.context,
     ));
     // Drive dynamic compaction off the active model's context window.
-    // peridot-llm::context_window_tokens covers the common Anthropic /
-    // OpenAI / Gemini / DeepSeek / Qwen families; anything the table
-    // doesn't recognise (custom OpenRouter slugs, brand-new releases)
-    // gets a conservative 200K window so the 90% auto-compaction
-    // trigger still fires before the model's real limit instead of
-    // falling back to the (often-too-tight) static 140K threshold.
-    let window = peridot_llm::context_window_tokens(&options.model).unwrap_or(200_000);
+    //
+    // For OpenRouter we fetch the live catalog from `/v1/models` (no auth
+    // required), which returns each slug's exact `context_length`. The
+    // result is disk-cached for 24h under `~/.peridot/cache/`, so the
+    // first run pays one HTTP round-trip and every subsequent run reads
+    // from disk. Stale cache is preferred over a network failure so the
+    // operator stays online when OpenRouter is briefly unreachable.
+    //
+    // For other providers (and as a fallback when the OpenRouter lookup
+    // misses the active slug) we use the static heuristic table in
+    // `peridot_llm::context_window_tokens`. Unknown models default to
+    // 200K so the 90% auto-compaction trigger fires at a sensible point
+    // instead of the old too-small 140K static threshold.
+    let window = resolve_model_window(&options.model, &config.auth.primary).await;
     context.set_model_window_tokens(Some(window));
     if let Some(path) = context_snapshot_path.as_ref()
         && let Ok(bytes) = std::fs::read(path)

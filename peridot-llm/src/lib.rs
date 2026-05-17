@@ -1,6 +1,7 @@
 //! LLM provider contracts and live provider implementations.
 
 mod anthropic;
+pub mod catalog;
 mod codex;
 mod models;
 mod openai;
