@@ -1228,9 +1228,13 @@ fn approval_panel_offers_four_scopes_and_returns_scope() {
     assert!(panel_text.contains("Approve always"));
     assert!(panel_text.contains("Deny"));
     assert!(panel_text.contains("Params:"));
-    assert!(panel_text.contains("Diff:"));
-    assert!(panel_text.contains("- fn old() {}"));
-    assert!(panel_text.contains("+ fn old() { 1 }"));
+    // file_patch parameters now flow through the per-hunk staging path:
+    // the panel renders a "Hunks:" header + per-hunk staged-state lines
+    // instead of the single combined Diff: preview.
+    assert!(panel_text.contains("Hunks:"));
+    assert!(panel_text.contains("hunk 1"));
+    assert_eq!(panel.hunks.len(), 1);
+    assert!(panel.all_hunks_accepted());
 
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     handle_key_event(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
@@ -1248,6 +1252,46 @@ fn approval_panel_offers_four_scopes_and_returns_scope() {
         }
         other => panic!("unexpected outcome: {other:?}"),
     }
+}
+
+#[test]
+fn approval_panel_synthesises_partial_patch_when_hunk_rejected() {
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    state.apply_runtime_event(TuiRuntimeEvent::ApprovalRequested {
+        tool_name: "file_patch".to_string(),
+        reason: "modifies src/lib.rs".to_string(),
+        parameters: serde_json::json!({
+            "path": "src/lib.rs",
+            "old_text": "a\nb\nc\nd\ne\n",
+            "new_text": "a\nB\nc\nd\nE\n"
+        }),
+    });
+
+    let panel = state
+        .approval
+        .as_mut()
+        .expect("approval panel populated from event");
+    assert_eq!(panel.hunks.len(), 2, "two non-adjacent hunks expected");
+    assert!(panel.all_hunks_accepted());
+
+    // Reject the second hunk.
+    panel.move_hunk_focus(1);
+    panel.toggle_focused_hunk();
+
+    assert!(panel.any_hunk_accepted());
+    assert!(!panel.all_hunks_accepted());
+
+    let partial = panel
+        .synthesised_new_text()
+        .expect("partial new_text synthesised");
+    // First hunk applied → "B"; second hunk rejected → trailing "e" preserved.
+    assert!(partial.contains("\nB\n"), "partial should keep accepted hunk: {partial}");
+    assert!(partial.contains("\ne"), "partial should keep rejected line: {partial}");
+    assert!(!partial.contains("\nE\n"), "partial should drop rejected hunk: {partial}");
 }
 
 #[test]

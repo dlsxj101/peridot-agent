@@ -1,4 +1,5 @@
 use super::*;
+use crate::diff_hunks::{DiffHunk, apply_selected_hunks, diff_hunks};
 
 /// Interactive ask-user prompt shown as a special TUI screen.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -55,6 +56,21 @@ pub struct ApprovalPanel {
     /// Optional pre-computed diff preview (file_patch / file_write).
     #[serde(default)]
     pub diff_preview: Option<String>,
+    /// Line-level hunks the operator can stage individually. Populated
+    /// for `file_patch` from `(old_text, new_text)`; empty otherwise.
+    /// Defaults to all-accepted so the legacy single-Approve UX still
+    /// works while the per-hunk keys land.
+    #[serde(default)]
+    pub hunks: Vec<DiffHunk>,
+    /// Per-hunk acceptance flags. `hunks.len() == hunk_accepted.len()`
+    /// once `with_hunks` has been called; default is all `true`.
+    #[serde(default)]
+    pub hunk_accepted: Vec<bool>,
+    /// Index of the currently highlighted hunk for per-hunk navigation
+    /// keys. `None` when there are no hunks or focus is on the bottom
+    /// Approve/Deny row.
+    #[serde(default)]
+    pub focused_hunk: Option<usize>,
 }
 
 /// User decision from an approval prompt.
@@ -88,11 +104,28 @@ impl ApprovalPanel {
             selected_index: 0,
             tool_params: serde_json::Value::Null,
             diff_preview: None,
+            hunks: Vec::new(),
+            hunk_accepted: Vec::new(),
+            focused_hunk: None,
         }
     }
 
-    /// Attaches the tool parameters that were about to execute.
+    /// Attaches the tool parameters that were about to execute. When
+    /// the parameters describe a `file_patch` with `old_text`/`new_text`,
+    /// this also populates per-hunk staging state (all accepted by
+    /// default).
     pub fn with_parameters(mut self, parameters: serde_json::Value) -> Self {
+        if self.tool_name == "file_patch"
+            && let Some(old_text) = parameters.get("old_text").and_then(|v| v.as_str())
+            && let Some(new_text) = parameters.get("new_text").and_then(|v| v.as_str())
+        {
+            let hunks = diff_hunks(old_text, new_text);
+            if !hunks.is_empty() {
+                self.hunk_accepted = vec![true; hunks.len()];
+                self.focused_hunk = Some(0);
+                self.hunks = hunks;
+            }
+        }
         self.tool_params = parameters;
         self
     }
@@ -119,6 +152,56 @@ impl ApprovalPanel {
             2 => (ApprovalDecision::Approve, ApprovalScope::Always),
             _ => (ApprovalDecision::Deny, ApprovalScope::Once),
         }
+    }
+
+    /// Toggles the acceptance flag of the currently focused hunk.
+    /// No-op when there are no hunks or focus is elsewhere.
+    pub fn toggle_focused_hunk(&mut self) {
+        if let Some(index) = self.focused_hunk
+            && index < self.hunk_accepted.len()
+        {
+            self.hunk_accepted[index] = !self.hunk_accepted[index];
+        }
+    }
+
+    /// Moves the per-hunk focus forward (`+1`) or backward (`-1`)
+    /// wrapping at the edges. No-op when there are no hunks.
+    pub fn move_hunk_focus(&mut self, delta: i32) {
+        if self.hunks.is_empty() {
+            self.focused_hunk = None;
+            return;
+        }
+        let len = self.hunks.len() as i32;
+        let current = self.focused_hunk.map(|i| i as i32).unwrap_or(0);
+        let next = ((current + delta).rem_euclid(len)) as usize;
+        self.focused_hunk = Some(next);
+    }
+
+    /// Returns true when at least one hunk is currently selected.
+    /// Approve with zero hunks accepted would be a no-op, so the caller
+    /// can use this to surface a Deny-like outcome.
+    pub fn any_hunk_accepted(&self) -> bool {
+        self.hunk_accepted.iter().any(|accepted| *accepted)
+    }
+
+    /// Returns true when every hunk is accepted. The legacy single-
+    /// Approve UX matches this case and can keep using the full
+    /// `new_text` payload.
+    pub fn all_hunks_accepted(&self) -> bool {
+        !self.hunk_accepted.is_empty() && self.hunk_accepted.iter().all(|accepted| *accepted)
+    }
+
+    /// Synthesises a partial `new_text` containing only the accepted
+    /// hunks, anchored on the original `old_text`. Returns `None` when
+    /// no hunks are present (callers should fall back to the original
+    /// parameters) or when the panel parameters don't carry an
+    /// `old_text` field.
+    pub fn synthesised_new_text(&self) -> Option<String> {
+        if self.hunks.is_empty() {
+            return None;
+        }
+        let old_text = self.tool_params.get("old_text")?.as_str()?;
+        apply_selected_hunks(old_text, &self.hunks, &self.hunk_accepted)
     }
 }
 

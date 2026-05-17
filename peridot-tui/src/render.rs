@@ -1539,7 +1539,31 @@ pub(super) fn render_approval_panel(panel: &ApprovalPanel) -> String {
         }
     }
 
-    if let Some(diff) = panel.diff_preview.as_ref() {
+    if !panel.hunks.is_empty() {
+        sections.push(String::new());
+        let accepted = panel
+            .hunk_accepted
+            .iter()
+            .filter(|accepted| **accepted)
+            .count();
+        sections.push(format!(
+            "Hunks: {accepted}/{total} staged  (Tab toggles, ←/→ navigates)",
+            total = panel.hunks.len()
+        ));
+        for (index, hunk) in panel.hunks.iter().enumerate() {
+            let focused = panel.focused_hunk == Some(index);
+            let cursor = if focused { ">" } else { " " };
+            let accepted = panel
+                .hunk_accepted
+                .get(index)
+                .copied()
+                .unwrap_or(true);
+            let stage = if accepted { "[x]" } else { "[ ]" };
+            sections.push(format!("  {cursor} {stage} hunk {idx}: {label}",
+                idx = index + 1,
+                label = hunk.label()));
+        }
+    } else if let Some(diff) = panel.diff_preview.as_ref() {
         sections.push(String::new());
         sections.push("Diff:".to_string());
         sections.push(

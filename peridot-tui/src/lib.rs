@@ -32,6 +32,7 @@ use serde::{Deserialize, Serialize};
 
 mod ask_user;
 mod at_picker;
+mod diff_hunks;
 #[cfg(test)]
 mod fixtures;
 mod i18n;
