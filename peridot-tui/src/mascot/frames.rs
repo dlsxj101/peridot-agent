@@ -31,7 +31,12 @@ pub const fn peridot_palette() -> [Color; 7] {
         Color::Rgb(213, 235, 153), // 1: body highlight
         Color::Rgb(139, 94, 60),   // 2: brown (legs, hooves)
         Color::Rgb(101, 178, 92),  // 3: deep peridot (antler gem tip)
-        Color::Rgb(28, 28, 32),    // 4: eye / outline black
+        // 4: eye — a warm dark brown rather than near-black. The previous
+        //    `Rgb(28, 28, 32)` blended into the terminal background on most
+        //    dark themes so the deer's eyes vanished; this brown stays
+        //    visibly distinct against both the light-green body highlight
+        //    and a black terminal cell.
+        Color::Rgb(60, 35, 20),
         Color::Rgb(255, 255, 255), // 5: eye shine
         Color::Rgb(255, 182, 193), // 6: nose pink
     ]
@@ -81,14 +86,17 @@ const BASE: MascotFrame = MascotFrame {
     ],
 };
 
-// Idle frame 2 — eyes closed (blink).
+// Idle frame 2 — eyes closed (blink). The eye row swaps from `K` (open
+// pupil) to `L` (light cheek-tone) so the eye actually disappears for a
+// frame; the original BLINK kept K at row 3 which made the animation
+// effectively a no-op visually.
 const BLINK: MascotFrame = MascotFrame {
     pixels: [
         [E, J, E, E, E, E, J, E],
         [E, B, E, G, G, E, B, E],
         [E, B, G, L, L, G, B, E],
-        [E, G, L, K, L, K, G, E],
-        [E, G, G, G, N, G, G, E],
+        [E, G, L, L, L, L, G, E],
+        [E, G, G, L, N, L, G, E],
         [E, G, G, G, G, G, G, E],
         [E, B, E, E, E, E, B, E],
         [E, B, E, E, E, E, B, E],
@@ -181,12 +189,17 @@ const ASK_FRAME: MascotFrame = MascotFrame {
 };
 const ASK_USER: [MascotFrame; 1] = [ASK_FRAME];
 
-// Done — happy ^_^ eyes + small bounce (one row up).
+// Done — visible ^_^ eyes (closed upward arcs) + small bounce. The
+// previous Done frames left the eye row as plain body green, so the
+// deer's face went blank when a task completed. The K (brown) pixels
+// at row 2 cols 3 & 5 now render as the top of a closed-smiling eye;
+// the bottom half of the eye-cell is body green (no K below) so the
+// shape reads as `^^`.
 const DONE_A: MascotFrame = MascotFrame {
     pixels: [
         [E, J, E, E, E, E, J, E],
         [E, B, E, G, G, E, B, E],
-        [E, B, G, L, L, G, B, E],
+        [E, B, G, K, L, K, B, E],
         [E, G, L, G, L, G, G, E],
         [E, G, G, L, N, L, G, E],
         [E, G, G, G, G, G, G, E],
@@ -197,7 +210,7 @@ const DONE_A: MascotFrame = MascotFrame {
 const DONE_B: MascotFrame = MascotFrame {
     pixels: [
         [E, J, E, E, E, E, J, E],
-        [E, B, G, L, L, G, B, E],
+        [E, B, G, K, L, K, B, E],
         [E, G, L, G, L, G, G, E],
         [E, G, G, L, N, L, G, E],
         [E, G, G, G, G, G, G, E],
@@ -208,13 +221,16 @@ const DONE_B: MascotFrame = MascotFrame {
 };
 const DONE: [MascotFrame; 2] = [DONE_A, DONE_B];
 
-// Failed — ears drooping, eyes shut.
+// Failed — ears drooping, eyes shut as `x_x`. The previous frame left
+// the eye row as plain body green so the deer's face vanished on
+// failure; now K pixels sit at row 3 cols 3 & 5 so the closed eyes
+// remain readable while the rest of the face still reads as defeated.
 const FAILED_FRAME: MascotFrame = MascotFrame {
     pixels: [
         [E, J, E, E, E, E, J, E],
         [E, B, E, E, E, E, B, E],
         [E, E, G, G, G, G, E, E],
-        [E, G, L, G, L, G, G, E],
+        [E, G, L, K, L, K, G, E],
         [E, G, G, L, N, L, G, E],
         [E, G, G, G, G, G, G, E],
         [E, B, E, E, E, E, B, E],
