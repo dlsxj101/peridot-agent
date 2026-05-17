@@ -171,6 +171,30 @@ pub fn slash_command_catalog() -> &'static [SlashCommandSpec] {
             category: "session",
         },
         SlashCommandSpec {
+            name: "/mcp list",
+            description: "list configured MCP servers from config.toml",
+            arg_hint: None,
+            category: "mcp",
+        },
+        SlashCommandSpec {
+            name: "/mcp add",
+            description: "register a new MCP server in config.toml",
+            arg_hint: Some("<name> <stdio|http> <command|url>"),
+            category: "mcp",
+        },
+        SlashCommandSpec {
+            name: "/mcp remove",
+            description: "remove an MCP server from config.toml",
+            arg_hint: Some("<name>"),
+            category: "mcp",
+        },
+        SlashCommandSpec {
+            name: "/mcp test",
+            description: "test connectivity to a configured MCP server",
+            arg_hint: Some("<name>"),
+            category: "mcp",
+        },
+        SlashCommandSpec {
             name: "/session new",
             description: "open a new session, optionally with an initial task",
             arg_hint: Some("[task]"),

@@ -491,6 +491,12 @@ pub enum TranscriptKind {
     /// see the conversation itself. Still serialised so headless / snapshot
     /// consumers and session journals retain the trace.
     Meta,
+    /// One diff line emitted alongside a `file_patch` (or future `file_edit`)
+    /// tool call. Each entry holds a single `- old` / `+ new` line so the
+    /// renderer can colour them independently and so long diffs can be
+    /// truncated cleanly. Visible in the chat view by default — unlike the
+    /// generic indented tool preview lines we hide for other tools.
+    Diff,
 }
 
 /// One transcript line plus its style classification.
@@ -695,6 +701,26 @@ pub enum SessionCommandEvent {
         /// Initial task text.
         task: String,
     },
+    /// `/mcp list` — read current `config.mcp` entries from disk and
+    /// render them in the transcript.
+    McpList,
+    /// `/mcp add <name> <transport> <target>` — append a new MCP server
+    /// entry to `config.toml`. The host loop validates the transport,
+    /// writes the file atomically, and posts a notice telling the user to
+    /// restart the session for the change to take effect.
+    McpAdd {
+        /// Unique server name.
+        name: String,
+        /// `stdio` or `http`.
+        transport: String,
+        /// Stdio command (with optional args) or HTTP endpoint URL.
+        target: String,
+    },
+    /// `/mcp remove <name>` — delete the named entry from `config.toml`.
+    McpRemove(String),
+    /// `/mcp test <name>` — run a one-shot connect-and-list-tools probe
+    /// against the named server, reporting tool count or failure.
+    McpTest(String),
 }
 
 /// Result produced when an interactive TUI session exits.
@@ -1237,6 +1263,14 @@ impl TuiState {
         self.push_transcript_entry(TranscriptKind::ToolStart, format!("{tool_name}  running"));
         for line in tool_parameter_preview(&tool_name, &parameters) {
             self.push_transcript_entry(TranscriptKind::ToolStart, line);
+        }
+        // file_patch (and any future inline-diff-producing tool) gets a
+        // dedicated stream of `Diff`-kind entries — one entry per diff line —
+        // so the chat view can colour `-` / `+` independently and clip long
+        // diffs without losing structure. Other tools' preview lines remain
+        // ToolStart and are hidden from the chat by default.
+        for line in tool_diff_lines(&tool_name, &parameters) {
+            self.push_transcript_entry(TranscriptKind::Diff, line);
         }
     }
 
@@ -1969,29 +2003,39 @@ fn file_patch_parameter_preview(parameters: &serde_json::Value) -> Vec<String> {
     if let Some(path) = parameters.get("path").and_then(serde_json::Value::as_str) {
         lines.push(format!("  path: {path}"));
     }
+    // The diff bodies themselves are emitted as `Diff`-kind entries by
+    // `tool_diff_lines`, so this preview only carries the path. Anything
+    // else here would double-render in the chat once Diff lines become
+    // visible.
+    lines
+}
+
+/// Emits one diff line per element for tools that produce a +/- diff. Each
+/// line is prefixed with `- ` (removed) or `+ ` (added) and trimmed to the
+/// preview cap so the chat doesn't drown in a 500-line patch. The caller
+/// pushes each as its own `TranscriptKind::Diff` entry so the renderer can
+/// colour them independently and wrap them per-line.
+fn tool_diff_lines(tool_name: &str, parameters: &serde_json::Value) -> Vec<String> {
+    const DIFF_PREVIEW_LIMIT: usize = 20;
+    if tool_name != "file_patch" {
+        return Vec::new();
+    }
+    let mut lines = Vec::new();
     if let Some(old_text) = parameters
         .get("old_text")
         .and_then(serde_json::Value::as_str)
     {
-        lines.push("  diff:".to_string());
-        lines.extend(
-            preview_lines(old_text, 4)
-                .into_iter()
-                .map(|line| format!("    - {line}")),
-        );
+        for line in preview_lines(old_text, DIFF_PREVIEW_LIMIT) {
+            lines.push(format!("- {line}"));
+        }
     }
     if let Some(new_text) = parameters
         .get("new_text")
         .and_then(serde_json::Value::as_str)
     {
-        if !lines.iter().any(|line| line == "  diff:") {
-            lines.push("  diff:".to_string());
+        for line in preview_lines(new_text, DIFF_PREVIEW_LIMIT) {
+            lines.push(format!("+ {line}"));
         }
-        lines.extend(
-            preview_lines(new_text, 4)
-                .into_iter()
-                .map(|line| format!("    + {line}")),
-        );
     }
     lines
 }

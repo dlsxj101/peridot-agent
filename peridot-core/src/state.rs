@@ -72,7 +72,11 @@ impl AgentState {
             | SlashCommand::SessionClose(_)
             | SlashCommand::SessionList
             | SlashCommand::SubagentModel(_)
-            | SlashCommand::Reasoning(_) => {}
+            | SlashCommand::Reasoning(_)
+            | SlashCommand::McpList
+            | SlashCommand::McpAdd { .. }
+            | SlashCommand::McpRemove(_)
+            | SlashCommand::McpTest(_) => {}
         }
     }
 }

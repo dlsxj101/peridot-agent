@@ -1115,6 +1115,7 @@ fn transcript_marker(kind: peridot_tui::TranscriptKind) -> &'static str {
         K::TurnSeparator => "—",
         K::Thinking => "…",
         K::Meta => "·",
+        K::Diff => "±",
     }
 }
 

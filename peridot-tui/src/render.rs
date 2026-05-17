@@ -476,7 +476,34 @@ fn style_transcript_entry(state: &TuiState, entry: &TranscriptEntry) -> Vec<Line
                 ))
             })
             .collect(),
+        TranscriptKind::Diff => entry
+            .text
+            .lines()
+            .map(|line| Line::from(style_diff_line(line)))
+            .collect(),
     }
+}
+
+/// Colours one `- foo` / `+ foo` / `... N more lines` diff line. We pick the
+/// style by the line's leading marker — Vec<Span> is returned so wrapped
+/// continuation rows keep the same colour without redrawing the marker.
+fn style_diff_line(line: &str) -> Vec<Span<'static>> {
+    let (style, marker, body) = if let Some(rest) = line.strip_prefix("- ") {
+        (Style::default().fg(Color::Red), "- ", rest)
+    } else if let Some(rest) = line.strip_prefix("+ ") {
+        (Style::default().fg(Color::Green), "+ ", rest)
+    } else {
+        return vec![Span::styled(
+            line.to_string(),
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::DIM),
+        )];
+    };
+    vec![
+        Span::styled(marker.to_string(), style.add_modifier(Modifier::BOLD)),
+        Span::styled(body.to_string(), style),
+    ]
 }
 
 /// User input: subtle `> ` quote prefix in cyan, content in white. Multi-line

@@ -903,6 +903,22 @@ fn apply_session_command(
                 project_template,
             );
         }
+        SessionCommandEvent::McpList => {
+            handle_mcp_list(state, project_template);
+        }
+        SessionCommandEvent::McpAdd {
+            name,
+            transport,
+            target,
+        } => {
+            handle_mcp_add(state, project_template, &name, &transport, &target);
+        }
+        SessionCommandEvent::McpRemove(name) => {
+            handle_mcp_remove(state, project_template, &name);
+        }
+        SessionCommandEvent::McpTest(name) => {
+            handle_mcp_test(handle, state, project_template, &name);
+        }
     }
     warn_on_shared_workspace_collisions(state, router, project_template);
 }
@@ -980,6 +996,263 @@ fn spawn_worktree_session(
         config_template,
         &worktree_path,
     );
+}
+
+/// Reads the project-local `config.toml` and renders one transcript line
+/// per configured MCP server (or "<none>"). Reads through `peridot_common`
+/// so we get the same `PeridotConfig` shape the live agent uses.
+fn handle_mcp_list(state: &mut TuiState, project_root: &Path) {
+    let path = project_root.join(".peridot/config.toml");
+    let config = match read_project_config(&path) {
+        Ok(config) => config,
+        Err(err) => {
+            state.push_error(format!("mcp list: {err}"));
+            return;
+        }
+    };
+    if config.mcp.is_empty() {
+        state.push_transcript("mcp: <none configured>");
+        return;
+    }
+    let mut lines = vec!["mcp servers:".to_string()];
+    for entry in &config.mcp {
+        let detail = match entry.transport {
+            peridot_common::McpTransport::Stdio => entry.command.clone().unwrap_or_default(),
+            peridot_common::McpTransport::Http => entry.url.clone().unwrap_or_default(),
+        };
+        lines.push(format!("  {} [{}] {}", entry.name, entry.transport, detail));
+    }
+    state.push_transcript(lines.join("\n"));
+}
+
+/// Appends a new `[[mcp]]` block to the project-local `config.toml`.
+/// We deliberately do NOT round-trip through `PeridotConfig` serialisation
+/// because that would expand every `#[serde(default)]` field and rewrite
+/// the user's hand-edited toml. Instead we render just the new block,
+/// optionally append it to the existing file, and validate against the
+/// already-loaded config to refuse duplicates.
+fn handle_mcp_add(
+    state: &mut TuiState,
+    project_root: &Path,
+    name: &str,
+    transport: &str,
+    target: &str,
+) {
+    let path = project_root.join(".peridot/config.toml");
+    let existing = match read_project_config(&path) {
+        Ok(config) => config,
+        Err(err) => {
+            state.push_error(format!("mcp add: {err}"));
+            return;
+        }
+    };
+    if existing.mcp.iter().any(|m| m.name == name) {
+        state.push_error(format!(
+            "mcp add: '{name}' already configured — use /mcp remove first"
+        ));
+        return;
+    }
+    let block = match transport.to_ascii_lowercase().as_str() {
+        "stdio" => {
+            let mut parts = target.split_whitespace();
+            let Some(command) = parts.next() else {
+                state.push_error("mcp add: stdio transport requires a command".to_string());
+                return;
+            };
+            let args: Vec<&str> = parts.collect();
+            let args_toml = if args.is_empty() {
+                String::new()
+            } else {
+                let quoted = args
+                    .iter()
+                    .map(|a| format!("\"{}\"", a.replace('"', "\\\"")))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("args = [{quoted}]\n")
+            };
+            format!(
+                "\n[[mcp]]\nname = \"{}\"\ntransport = \"stdio\"\ncommand = \"{}\"\n{}",
+                escape_toml_string(name),
+                escape_toml_string(command),
+                args_toml,
+            )
+        }
+        "http" | "sse" => format!(
+            "\n[[mcp]]\nname = \"{}\"\ntransport = \"http\"\nurl = \"{}\"\n",
+            escape_toml_string(name),
+            escape_toml_string(target),
+        ),
+        other => {
+            state.push_error(format!(
+                "mcp add: unknown transport '{other}' (use stdio or http)"
+            ));
+            return;
+        }
+    };
+    let existing_content = match std::fs::read_to_string(&path) {
+        Ok(content) => content,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(err) => {
+            state.push_error(format!("mcp add: read {}: {err}", path.display()));
+            return;
+        }
+    };
+    let new_content = if existing_content.is_empty() {
+        block.trim_start_matches('\n').to_string()
+    } else if existing_content.ends_with('\n') {
+        format!("{existing_content}{block}")
+    } else {
+        format!("{existing_content}\n{block}")
+    };
+    if let Err(err) = atomic_write(&path, &new_content) {
+        state.push_error(format!("mcp add: write {}: {err}", path.display()));
+        return;
+    }
+    state.push_transcript(format!(
+        "mcp: added '{name}' to {}. Restart this session for it to take effect.",
+        path.display()
+    ));
+}
+
+/// Removes the named MCP server from `config.toml` by scanning for the
+/// `[[mcp]]` block whose `name = "<name>"` line matches. Like
+/// `handle_mcp_add`, this works directly on the raw text so the rest of
+/// the operator's config keeps its original formatting / comments.
+fn handle_mcp_remove(state: &mut TuiState, project_root: &Path, name: &str) {
+    let path = project_root.join(".peridot/config.toml");
+    let content = match std::fs::read_to_string(&path) {
+        Ok(content) => content,
+        Err(err) => {
+            state.push_error(format!("mcp remove: read {}: {err}", path.display()));
+            return;
+        }
+    };
+    let Some(new_content) = remove_mcp_block(&content, name) else {
+        state.push_error(format!("mcp remove: no server named '{name}'"));
+        return;
+    };
+    if let Err(err) = atomic_write(&path, &new_content) {
+        state.push_error(format!("mcp remove: write {}: {err}", path.display()));
+        return;
+    }
+    state.push_transcript(format!(
+        "mcp: removed '{name}' from {}. Restart this session to drop its tools from the registry.",
+        path.display()
+    ));
+}
+
+/// Walks the toml text line by line and drops the `[[mcp]]` block whose
+/// `name = "<target>"` line matches. Returns `None` when no block names
+/// the target so the caller can surface a "no such server" error.
+fn remove_mcp_block(content: &str, target: &str) -> Option<String> {
+    let lines: Vec<&str> = content.lines().collect();
+    let mut blocks: Vec<(usize, usize, Option<String>)> = Vec::new();
+    let mut current_start: Option<usize> = None;
+    let mut current_name: Option<String> = None;
+    for (idx, line) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+        if trimmed == "[[mcp]]" {
+            if let Some(start) = current_start.take() {
+                blocks.push((start, idx, current_name.take()));
+            }
+            current_start = Some(idx);
+        } else if let Some(name_value) = trimmed
+            .strip_prefix("name")
+            .and_then(|s| s.trim_start().strip_prefix('='))
+            .map(|s| s.trim().trim_matches('"'))
+            && current_start.is_some()
+            && current_name.is_none()
+        {
+            current_name = Some(name_value.to_string());
+        } else if trimmed.starts_with("[[") || trimmed.starts_with("[") {
+            // New top-level block — close the current mcp block (if any).
+            if let Some(start) = current_start.take() {
+                blocks.push((start, idx, current_name.take()));
+            }
+        }
+    }
+    if let Some(start) = current_start.take() {
+        blocks.push((start, lines.len(), current_name.take()));
+    }
+    let (start, end, _) = blocks.into_iter().find(|(_, _, name)| {
+        name.as_deref() == Some(target)
+    })?;
+    let mut kept: Vec<&str> = Vec::with_capacity(lines.len());
+    kept.extend(lines.iter().take(start).copied());
+    kept.extend(lines.iter().skip(end).copied());
+    let mut result = kept.join("\n");
+    if content.ends_with('\n') {
+        result.push('\n');
+    }
+    Some(result)
+}
+
+/// Toml string-literal escaper covering the cases we encounter for MCP
+/// names / commands / URLs (`"` and `\`). Sufficient for the constrained
+/// inputs the slash command accepts — names are bare words, commands /
+/// URLs typically don't contain control characters.
+fn escape_toml_string(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+/// Writes `content` to `path` atomically via `<path>.tmp` + rename so a
+/// mid-write crash never leaves the live config truncated.
+fn atomic_write(path: &Path, content: &str) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|err| format!("create {}: {err}", parent.display()))?;
+    }
+    let temp = path.with_extension("toml.tmp");
+    std::fs::write(&temp, content).map_err(|err| format!("write {}: {err}", temp.display()))?;
+    std::fs::rename(&temp, path).map_err(|err| {
+        format!("rename {} -> {}: {err}", temp.display(), path.display())
+    })
+}
+
+/// One-shot connectivity probe: constructs `peridot_mcp::McpClient` from
+/// the named entry, calls `list_tools`, and reports the count or error.
+/// Spawned on the runtime handle so we don't block the TUI event loop on
+/// network I/O.
+fn handle_mcp_test(
+    handle: &tokio::runtime::Handle,
+    state: &mut TuiState,
+    project_root: &Path,
+    name: &str,
+) {
+    let path = project_root.join(".peridot/config.toml");
+    let config = match read_project_config(&path) {
+        Ok(config) => config,
+        Err(err) => {
+            state.push_error(format!("mcp test: {err}"));
+            return;
+        }
+    };
+    let Some(entry) = config.mcp.iter().find(|m| m.name == name).cloned() else {
+        state.push_error(format!("mcp test: no server named '{name}'"));
+        return;
+    };
+    let probe = handle.block_on(async move {
+        let client = peridot_mcp::McpClient::new(entry.clone());
+        client.list_tools().await.map(|tools| tools.len())
+    });
+    match probe {
+        Ok(count) => state.push_transcript(format!(
+            "mcp: '{name}' reachable — {count} tool(s) exposed"
+        )),
+        Err(err) => state.push_error(format!("mcp test '{name}': {err}")),
+    }
+}
+
+/// Loads the project-local `config.toml`, returning a default-populated
+/// `PeridotConfig` when the file is missing so subsequent writes create
+/// it from scratch. Surfaces a friendly error on malformed toml.
+fn read_project_config(path: &Path) -> Result<PeridotConfig, String> {
+    match std::fs::read_to_string(path) {
+        Ok(content) => toml::from_str::<PeridotConfig>(&content)
+            .map_err(|err| format!("failed to parse {}: {err}", path.display())),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(PeridotConfig::default()),
+        Err(err) => Err(format!("failed to read {}: {err}", path.display())),
+    }
 }
 
 fn warn_on_shared_workspace_collisions(

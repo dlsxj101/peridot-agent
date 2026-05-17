@@ -182,8 +182,11 @@ fn tool_started_preview_shows_patch_and_write_details() {
     let snapshot = render_text_snapshot(&state);
     assert!(snapshot.contains("tool file_patch: running"));
     assert!(snapshot.contains("  path: src/lib.rs"));
-    assert!(snapshot.contains("    - fn old() {"));
-    assert!(snapshot.contains("    + fn old() {"));
+    // Diff lines now flow through `TranscriptKind::Diff` so the chat can
+    // colour them — the `    - ` / `    + ` indented preview prefixes are
+    // gone in favour of plain `- ` / `+ ` lines under the Diff kind.
+    assert!(snapshot.contains("- fn old() {"));
+    assert!(snapshot.contains("+ fn old() {"));
     assert!(snapshot.contains("tool file_write: running"));
     assert!(snapshot.contains("  content:"));
     assert!(snapshot.contains("    # Peridot"));

@@ -803,6 +803,32 @@ pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
             state.reasoning_effort = effort;
             state.push_transcript(format!("reasoning: {from} -> {effort}"));
         }
+        SlashCommand::McpList => {
+            state.push_transcript("mcp: listing servers from config.toml…");
+            state.push_pending_session_command(SessionCommandEvent::McpList);
+        }
+        SlashCommand::McpAdd {
+            name,
+            transport,
+            target,
+        } => {
+            state.push_transcript(format!(
+                "mcp: adding server '{name}' ({transport}) → config.toml"
+            ));
+            state.push_pending_session_command(SessionCommandEvent::McpAdd {
+                name,
+                transport,
+                target,
+            });
+        }
+        SlashCommand::McpRemove(name) => {
+            state.push_transcript(format!("mcp: removing server '{name}' from config.toml"));
+            state.push_pending_session_command(SessionCommandEvent::McpRemove(name));
+        }
+        SlashCommand::McpTest(name) => {
+            state.push_transcript(format!("mcp: testing '{name}'…"));
+            state.push_pending_session_command(SessionCommandEvent::McpTest(name));
+        }
     }
 }
 

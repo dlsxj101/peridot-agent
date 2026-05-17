@@ -80,6 +80,26 @@ pub enum SlashCommand {
     /// Change the reasoning intensity applied to every model request.
     /// Cheap models without a reasoning channel ignore the setting.
     Reasoning(ReasoningEffort),
+    /// List MCP server entries currently configured in `config.toml`.
+    McpList,
+    /// Append a new MCP server entry to `config.toml`. The host loop
+    /// persists the new config and asks the user to restart the session
+    /// (or peridot) for the change to take effect.
+    McpAdd {
+        /// Server name (must be unique in the config).
+        name: String,
+        /// Transport kind: `stdio` or `http`.
+        transport: String,
+        /// Free-form connection target — interpreted per transport. For
+        /// `stdio` this is the command (optionally with `arg arg ...`); for
+        /// `http` it is the SSE / HTTP endpoint URL.
+        target: String,
+    },
+    /// Remove the named MCP server entry from `config.toml`.
+    McpRemove(String),
+    /// Spawn a one-shot connectivity test against the named MCP server,
+    /// reporting tool count / failure in the transcript.
+    McpTest(String),
 }
 
 /// Payload for `/subagent model <name|reset>`. Wrapped in a dedicated enum so
@@ -183,6 +203,47 @@ pub fn parse_slash_command(input: &str) -> Option<SlashCommand> {
         "reasoning" if !rest.is_empty() => {
             ReasoningEffort::parse(rest).map(SlashCommand::Reasoning)
         }
+        "mcp" => match rest {
+            "list" => Some(SlashCommand::McpList),
+            "" => None,
+            other if other.starts_with("add ") => {
+                // `/mcp add <name> <transport> <target...>` — split once
+                // after the leading "add ", then once more on name boundary,
+                // then once more on transport boundary so the remainder
+                // (which may itself contain spaces) becomes `target`.
+                let rest = other.strip_prefix("add ").unwrap_or("").trim();
+                let mut parts = rest.splitn(3, char::is_whitespace);
+                let name = parts.next().unwrap_or("").trim().to_string();
+                let transport = parts.next().unwrap_or("").trim().to_string();
+                let target = parts.next().unwrap_or("").trim().to_string();
+                if name.is_empty() || transport.is_empty() || target.is_empty() {
+                    None
+                } else {
+                    Some(SlashCommand::McpAdd {
+                        name,
+                        transport,
+                        target,
+                    })
+                }
+            }
+            other if other.starts_with("remove ") => {
+                let name = other.strip_prefix("remove ").unwrap_or("").trim();
+                if name.is_empty() {
+                    None
+                } else {
+                    Some(SlashCommand::McpRemove(name.to_string()))
+                }
+            }
+            other if other.starts_with("test ") => {
+                let name = other.strip_prefix("test ").unwrap_or("").trim();
+                if name.is_empty() {
+                    None
+                } else {
+                    Some(SlashCommand::McpTest(name.to_string()))
+                }
+            }
+            _ => None,
+        },
         _ => None,
     }
 }
