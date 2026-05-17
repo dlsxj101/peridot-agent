@@ -43,6 +43,14 @@ pub struct SubAgentResult {
     /// Optional isolated workspace path.
     #[serde(default)]
     pub workspace: Option<PathBuf>,
+    /// Captured `git diff` of the subagent's workspace at exit. Empty
+    /// when the runner only prepared the workspace (no inner agent
+    /// execution) or when `git` was unavailable. The parent harness
+    /// folds this into a `[sub-agent review]` PlanReminder so the
+    /// caller actually inspects the change instead of trusting the
+    /// summary text.
+    #[serde(default)]
+    pub diff: String,
 }
 
 /// Trait implemented by subagent runners.
@@ -78,6 +86,7 @@ impl SubAgent for LocalSubAgentRunner {
                 summary: format!("fork subagent prepared: {}", task.prompt),
                 kind: SubAgentKind::Fork,
                 workspace: Some(self.project_root.clone()),
+                diff: String::new(),
             }),
             SubAgentKind::Worktree => {
                 let plan =
@@ -94,6 +103,7 @@ impl SubAgent for LocalSubAgentRunner {
                     summary: format!("worktree subagent prepared on {}", plan.branch),
                     kind: SubAgentKind::Worktree,
                     workspace: Some(plan.path),
+                    diff: String::new(),
                 })
             }
             SubAgentKind::Teammate => Ok(SubAgentResult {
@@ -101,6 +111,7 @@ impl SubAgent for LocalSubAgentRunner {
                 summary: format!("teammate subagent queued: {}", task.prompt),
                 kind: SubAgentKind::Teammate,
                 workspace: Some(self.project_root.clone()),
+                diff: String::new(),
             }),
         }
     }

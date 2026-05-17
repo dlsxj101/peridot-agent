@@ -191,11 +191,24 @@ impl SubAgent for InnerLoopSubAgent {
             .filter(|text| !text.is_empty())
             .unwrap_or_else(|| format!("subagent stopped: {:?}", summary.stopped_reason));
 
+        // Capture the workspace diff so the parent harness can fold
+        // it into a [sub-agent review] PlanReminder instead of
+        // trusting the summary text. Best-effort: `git` may be
+        // missing or the workspace may not be a repo.
+        let diff = std::process::Command::new("git")
+            .args(["diff", "HEAD"])
+            .current_dir(&workspace)
+            .output()
+            .ok()
+            .map(|out| String::from_utf8_lossy(&out.stdout).to_string())
+            .unwrap_or_default();
+
         Ok(SubAgentResult {
             success,
             summary: summary_text,
             kind: prep.kind,
             workspace: Some(workspace),
+            diff,
         })
     }
 }

@@ -727,6 +727,18 @@ impl HarnessAgent {
                     }
                 }
             }
+            // Sub-agent review: after agent_delegate returns, parse
+            // the SubAgentResult payload and surface its workspace
+            // diff to the parent as a [sub-agent review] directive.
+            // Stops the parent from rubber-stamping a textual summary
+            // without ever looking at what actually changed.
+            if outcome.tool_name == "agent_delegate" && outcome.tool_result.success {
+                let review = build_subagent_review(&outcome.tool_result.output);
+                if !review.is_empty() {
+                    self.context
+                        .append(ContextEntry::trusted(ContextSource::PlanReminder, review));
+                }
+            }
             events(AgentRunEvent::UsageUpdated { usage: total_usage });
             events(AgentRunEvent::TurnEnded {
                 turn_index,
@@ -1007,6 +1019,45 @@ fn is_mutating_tool_name(name: &str) -> bool {
     matches!(name, "file_write" | "file_patch" | "shell_exec")
 }
 
+/// Builds the `[sub-agent review]` directive injected after a
+/// successful `agent_delegate` call. Extracts the workspace diff from
+/// the serialized `SubAgentResult` (under `output.diff`) and wraps it
+/// in an explicit "verify this" instruction. Empty diff → empty
+/// directive (the helper returns "" and the caller skips the append).
+fn build_subagent_review(output: &serde_json::Value) -> String {
+    let diff = output.get("diff").and_then(|v| v.as_str()).unwrap_or("");
+    let summary = output.get("summary").and_then(|v| v.as_str()).unwrap_or("");
+    let workspace = output
+        .get("workspace")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if diff.trim().is_empty() {
+        // No diff captured — happens for prepare-only LocalSubAgentRunner
+        // (no inner execution) or when `git diff` failed. Still surface
+        // a soft review reminder so the parent doesn't blindly trust
+        // the text summary.
+        return format!(
+            "[sub-agent review] Sub-agent reported: \"{summary}\". No diff captured. Inspect the workspace at {workspace} before declaring done."
+        );
+    }
+    // Cap the diff at 4000 chars so a giant refactor doesn't blow the
+    // parent's context window. The parent can always read individual
+    // files for detail.
+    let trimmed = if diff.chars().count() > 4000 {
+        let head: String = diff.chars().take(4000).collect();
+        format!("{head}\n…(diff truncated; read individual files for detail)")
+    } else {
+        diff.to_string()
+    };
+    format!(
+        "[sub-agent review] Sub-agent finished with summary: \"{summary}\".\n\
+         Workspace: {workspace}\n\
+         Captured diff:\n\
+         ```\n{trimmed}\n```\n\
+         Inspect this diff before declaring done. If the change looks wrong, fix it; do not trust the summary text alone."
+    )
+}
+
 /// Runs `git diff` in `project_root` and returns its stdout. Returns
 /// an empty string when git isn't available or the directory isn't a
 /// repo — auto-grade is best-effort, never blocks the run.
@@ -1103,6 +1154,62 @@ fn tool_invocation_parameters(invocation: &ToolInvocation) -> serde_json::Value 
         serde_json::Value::Null => serde_json::json!({}),
         serde_json::Value::String(raw) => serde_json::from_str(raw).unwrap_or(serde_json::json!({})),
         other => other.clone(),
+    }
+}
+
+#[cfg(test)]
+mod helpers_tests {
+    use super::*;
+
+    #[test]
+    fn is_mutating_tool_name_covers_the_canonical_list() {
+        assert!(is_mutating_tool_name("file_write"));
+        assert!(is_mutating_tool_name("file_patch"));
+        assert!(is_mutating_tool_name("shell_exec"));
+        assert!(!is_mutating_tool_name("verify_build"));
+        assert!(!is_mutating_tool_name("file_read"));
+        assert!(!is_mutating_tool_name("agent_done"));
+    }
+
+    #[test]
+    fn build_subagent_review_with_diff_carries_workspace_and_diff() {
+        let payload = serde_json::json!({
+            "summary": "added function foo",
+            "workspace": "/tmp/sub-1",
+            "diff": "+++ src/lib.rs\n+fn foo() {}\n",
+        });
+        let review = build_subagent_review(&payload);
+        assert!(review.contains("[sub-agent review]"));
+        assert!(review.contains("added function foo"));
+        assert!(review.contains("/tmp/sub-1"));
+        assert!(review.contains("fn foo()"));
+        assert!(review.contains("do not trust the summary"));
+    }
+
+    #[test]
+    fn build_subagent_review_without_diff_still_warns_to_inspect() {
+        let payload = serde_json::json!({
+            "summary": "task complete",
+            "workspace": "/tmp/sub-2",
+            "diff": "",
+        });
+        let review = build_subagent_review(&payload);
+        assert!(review.contains("[sub-agent review]"));
+        assert!(review.contains("No diff captured"));
+        assert!(review.contains("/tmp/sub-2"));
+    }
+
+    #[test]
+    fn build_subagent_review_truncates_giant_diffs() {
+        let big_diff = "a".repeat(8000);
+        let payload = serde_json::json!({
+            "summary": "",
+            "workspace": "/tmp/sub-3",
+            "diff": big_diff,
+        });
+        let review = build_subagent_review(&payload);
+        assert!(review.contains("diff truncated"));
+        assert!(review.chars().count() < 6000);
     }
 }
 
