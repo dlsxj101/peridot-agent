@@ -170,6 +170,9 @@ pub fn handle_key_event(state: &mut TuiState, key: KeyEvent) -> TuiEventOutcome 
     if state.approval.is_some() {
         return handle_approval_key_event(state, key);
     }
+    if state.branch_picker.is_some() {
+        return handle_branch_picker_key_event(state, key);
+    }
     if state.ask_user.is_some() {
         return handle_ask_user_key_event(state, key);
     }
@@ -369,6 +372,48 @@ pub(super) fn handle_menu_key_event(state: &mut TuiState, key: KeyEvent) -> TuiE
                 state.push_transcript_entry(TranscriptKind::Notice, format!("menu: {selected}"));
                 TuiEventOutcome::Continue
             }
+        }
+        _ => TuiEventOutcome::Continue,
+    }
+}
+
+/// Routes keystrokes while the branch picker overlay is open.
+/// `↑`/`↓` move the selection, `Enter` commits the chosen turn id
+/// (queues `SessionCommandEvent::BranchTurn`), `q` / `Esc` cancels.
+pub(super) fn handle_branch_picker_key_event(
+    state: &mut TuiState,
+    key: KeyEvent,
+) -> TuiEventOutcome {
+    let Some(picker) = state.branch_picker.as_mut() else {
+        return TuiEventOutcome::Continue;
+    };
+    match key.code {
+        KeyCode::Up => {
+            picker.move_selection(-1);
+            TuiEventOutcome::Continue
+        }
+        KeyCode::Down => {
+            picker.move_selection(1);
+            TuiEventOutcome::Continue
+        }
+        KeyCode::Enter => {
+            let turn_id = picker.selected_turn_id();
+            state.branch_picker = None;
+            match turn_id {
+                Some(id) => {
+                    state.push_transcript(format!("branch: forking at turn {id}…"));
+                    state.push_pending_session_command(SessionCommandEvent::BranchTurn(id));
+                }
+                None => {
+                    state.push_error("branch: nothing to fork from".to_string());
+                }
+            }
+            TuiEventOutcome::Continue
+        }
+        KeyCode::Esc | KeyCode::Char('q') => {
+            state.branch_picker = None;
+            state.push_transcript("branch: cancelled".to_string());
+            TuiEventOutcome::Continue
         }
         _ => TuiEventOutcome::Continue,
     }
@@ -947,6 +992,17 @@ pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
             } else {
                 state.push_transcript(format!("branch: forking at turn {turn_id}…"));
                 state.push_pending_session_command(SessionCommandEvent::BranchTurn(turn_id));
+            }
+        }
+        SlashCommand::BranchPicker => {
+            if state.is_agent_busy() {
+                state.push_error(
+                    "branch: refusing to open picker while agent is running — wait or interrupt first",
+                );
+            } else {
+                state.branch_picker = Some(crate::BranchPickerState::opening());
+                state.push_transcript("branch: opening picker…");
+                state.push_pending_session_command(SessionCommandEvent::BranchPickerOpen);
             }
         }
     }

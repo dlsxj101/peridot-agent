@@ -967,11 +967,93 @@ fn apply_session_command(
         SessionCommandEvent::BranchTurn(turn_id) => {
             handle_branch_turn(state, project_template, turn_id);
         }
+        SessionCommandEvent::BranchPickerOpen => {
+            handle_branch_picker_open(state, project_template, event_tx);
+        }
         SessionCommandEvent::CompactContext => {
             handle_compact_context(state, router);
         }
     }
     warn_on_shared_workspace_collisions(state, router, project_template);
+}
+
+/// Loads the session's context snapshot and pushes the resulting
+/// turn list back to the TUI as `BranchPickerTurns`. Each entry is
+/// summarised to a single short line (source + first 80 chars) so it
+/// fits cleanly on a list row.
+fn handle_branch_picker_open(
+    state: &mut TuiState,
+    project_root: &Path,
+    event_tx: &std::sync::mpsc::Sender<(String, TuiRuntimeEvent)>,
+) {
+    let session_id = state.current_session_id.clone();
+    if session_id.is_empty() {
+        state.push_error("branch picker: no active session id".to_string());
+        state.branch_picker = None;
+        return;
+    }
+    let snapshot_path = project_root
+        .join(".peridot/sessions")
+        .join(&session_id)
+        .join("context.bin");
+    if !snapshot_path.exists() {
+        state.push_error("branch picker: no snapshot to fork from".to_string());
+        state.branch_picker = None;
+        return;
+    }
+    let bytes = match std::fs::read(&snapshot_path) {
+        Ok(bytes) => bytes,
+        Err(err) => {
+            state.push_error(format!("branch picker: read error — {err}"));
+            state.branch_picker = None;
+            return;
+        }
+    };
+    let entries: Vec<peridot_context::ContextEntry> = match serde_json::from_slice(&bytes) {
+        Ok(entries) => entries,
+        Err(err) => {
+            state.push_error(format!("branch picker: parse error — {err}"));
+            state.branch_picker = None;
+            return;
+        }
+    };
+    let mut seen: std::collections::BTreeMap<u64, peridot_tui::BranchPickerTurn> =
+        std::collections::BTreeMap::new();
+    for entry in entries {
+        let id = entry.turn_id;
+        seen.entry(id).or_insert_with(|| peridot_tui::BranchPickerTurn {
+            turn_id: id,
+            source: source_label(&entry.source).to_string(),
+            preview: preview_line(&entry.content, 80),
+        });
+    }
+    let turns: Vec<peridot_tui::BranchPickerTurn> = seen.into_values().collect();
+    let _ = event_tx.send((
+        session_id,
+        TuiRuntimeEvent::BranchPickerTurns { turns },
+    ));
+}
+
+fn source_label(source: &peridot_context::ContextSource) -> &'static str {
+    match source {
+        peridot_context::ContextSource::User => "user",
+        peridot_context::ContextSource::Assistant => "assistant",
+        peridot_context::ContextSource::Tool => "tool",
+        peridot_context::ContextSource::PlanReminder => "plan",
+        peridot_context::ContextSource::ReviewerComment => "review",
+        peridot_context::ContextSource::External => "external",
+    }
+}
+
+fn preview_line(content: &str, max_chars: usize) -> String {
+    let single = content.replace(['\n', '\r', '\t'], " ");
+    let trimmed = single.trim();
+    if trimmed.chars().count() <= max_chars {
+        trimmed.to_string()
+    } else {
+        let head: String = trimmed.chars().take(max_chars).collect();
+        format!("{head}…")
+    }
 }
 
 /// Sets the active session's compact-request flag so the running

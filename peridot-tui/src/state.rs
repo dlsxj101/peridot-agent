@@ -285,6 +285,13 @@ pub enum TuiRuntimeEvent {
         #[serde(default)]
         parameters: serde_json::Value,
     },
+    /// Turn list response for an open branch picker. Sent by the CLI
+    /// after reading the session's context snapshot.
+    BranchPickerTurns {
+        /// Turns the operator can fork from. May be empty when the
+        /// session has no on-disk snapshot.
+        turns: Vec<BranchPickerTurn>,
+    },
     /// Provider usage changed.
     UsageUpdated {
         /// Total tokens.
@@ -587,6 +594,11 @@ pub struct TuiState {
     pub ask_user: Option<AskUserPanel>,
     /// Active approval panel, when a gated tool needs confirmation.
     pub approval: Option<ApprovalPanel>,
+    /// Active branch picker overlay, when the operator typed `/branch`
+    /// with no args. Populated asynchronously by the CLI handler
+    /// after reading the session's context snapshot.
+    #[serde(default)]
+    pub branch_picker: Option<BranchPickerState>,
     /// Active Esc menu.
     pub menu: Option<MenuState>,
     /// Lifecycle events recorded from local TUI commands.
@@ -751,6 +763,10 @@ pub enum SessionCommandEvent {
     /// so subsequent turns carry `parent_turn_id = id`. Refused while
     /// the agent is busy.
     BranchTurn(u64),
+    /// `/branch` (no args) — open the branch picker. The CLI handler
+    /// reads the session snapshot, builds the turn list, and feeds it
+    /// back via `TuiRuntimeEvent::BranchPickerTurns`.
+    BranchPickerOpen,
     /// `/compact` — request an LLM recap of the older portion of the
     /// conversation on the next agent turn boundary, bypassing the
     /// auto threshold. Fire-and-forget; the agent loop consumes the
@@ -822,6 +838,7 @@ impl TuiState {
             input_history_cursor: None,
             ask_user: None,
             approval: None,
+            branch_picker: None,
             menu: None,
             lifecycle_events: Vec::new(),
             scroll_offset: 0,
@@ -1604,6 +1621,11 @@ impl TuiState {
                 parameters,
             } => {
                 self.open_approval(tool_name, reason, parameters);
+            }
+            TuiRuntimeEvent::BranchPickerTurns { turns } => {
+                if let Some(picker) = self.branch_picker.as_mut() {
+                    picker.populate(turns);
+                }
             }
             TuiRuntimeEvent::UsageUpdated {
                 total_tokens,

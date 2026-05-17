@@ -1116,6 +1116,13 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
                 .wrap(Wrap { trim: false }),
             body_chunks[0],
         );
+    } else if let Some(picker) = &state.branch_picker {
+        frame.render_widget(
+            Paragraph::new(render_branch_picker(picker))
+                .block(body_block)
+                .wrap(Wrap { trim: false }),
+            body_chunks[0],
+        );
     } else if let Some(panel) = &state.ask_user {
         frame.render_widget(
             Paragraph::new(render_ask_user_panel(panel))
@@ -1497,6 +1504,34 @@ pub(super) fn render_ask_user_panel(panel: &AskUserPanel) -> String {
         sections.push(String::new());
         sections.push(f);
     }
+    sections.join("\n")
+}
+
+pub(super) fn render_branch_picker(picker: &crate::BranchPickerState) -> String {
+    let mut sections = vec!["Branch from turn".to_string(), String::new()];
+    if !picker.loaded {
+        sections.push("  loading turn list…".to_string());
+        sections.push(String::new());
+        sections.push("  q / Esc to cancel".to_string());
+        return sections.join("\n");
+    }
+    if picker.turns.is_empty() {
+        sections.push("  (no turns recorded in this session)".to_string());
+        sections.push(String::new());
+        sections.push("  q / Esc to cancel".to_string());
+        return sections.join("\n");
+    }
+    for (index, turn) in picker.turns.iter().enumerate() {
+        let cursor = if index == picker.selected { ">" } else { " " };
+        sections.push(format!(
+            "  {cursor} turn {id:>3}  [{source:<9}] {preview}",
+            id = turn.turn_id,
+            source = turn.source,
+            preview = turn.preview,
+        ));
+    }
+    sections.push(String::new());
+    sections.push("  ↑/↓ navigate  •  Enter fork  •  q / Esc cancel".to_string());
     sections.join("\n")
 }
 

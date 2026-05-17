@@ -124,6 +124,10 @@ pub enum SlashCommand {
     /// turn_id`. The dropped entries are surfaced to the caller so the
     /// session DAG can persist the abandoned limb.
     BranchTurn(u64),
+    /// `/branch` with no args — open the interactive branch picker.
+    /// The TUI overlay calls back into BranchTurn once the operator
+    /// picks a turn.
+    BranchPicker,
 }
 
 /// Payload for `/subagent model <name|reset>`. Wrapped in a dedicated enum so
@@ -238,6 +242,7 @@ pub fn parse_slash_command(input: &str) -> Option<SlashCommand> {
         "todos" if rest.is_empty() => Some(SlashCommand::Todos),
         "rewind" if rest.is_empty() => Some(SlashCommand::Rewind),
         "branch" => match rest {
+            "" => Some(SlashCommand::BranchPicker),
             "list" => Some(SlashCommand::BranchList),
             other if other.starts_with("save ") => {
                 let name = other.strip_prefix("save ").unwrap_or("").trim();
