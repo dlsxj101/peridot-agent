@@ -56,11 +56,19 @@ pub struct HarnessAgent {
     /// sidecar. The model is NOT re-asked; the run picks up from the
     /// point it stopped.
     pending_resume_path: Option<PathBuf>,
+    /// Pre-built tool definitions surfaced to the LLM. The registry is
+    /// frozen at `new()` time (the field below takes ownership), so the
+    /// provider-neutral descriptor list never changes during the session.
+    /// Caching it here avoids walking the `BTreeMap` and re-running each
+    /// tool's `parameters_schema()` (which often allocates a fresh JSON
+    /// tree) on every turn.
+    cached_tool_definitions: Vec<ToolDefinition>,
 }
 
 impl HarnessAgent {
     /// Creates a harness agent from state and dependencies.
     pub fn new(state: AgentState, context: ContextManager, tools: ToolRegistry) -> Self {
+        let cached_tool_definitions = registry_tool_definitions(&tools);
         Self {
             state,
             context,
@@ -75,6 +83,7 @@ impl HarnessAgent {
             auto_grade_on_done: false,
             compact_request: None,
             pending_resume_path: None,
+            cached_tool_definitions,
         }
     }
 
@@ -378,12 +387,12 @@ impl HarnessAgent {
         events(AgentRunEvent::AssistantStarted {
             label: "assistant".to_string(),
         });
-        let tool_definitions = registry_tool_definitions(&self.tools);
+        let tool_definitions = self.cached_tool_definitions.clone();
         let completion = stream_completion_with_chunks(
             provider,
             CompletionRequest {
                 model: request.model,
-                system: Some(system_prompt_for_role(self.state.mode, self.role)),
+                system: Some(system_prompt_for_role(self.state.mode, self.role).to_string()),
                 messages: self.context.to_messages(),
                 max_tokens: Some(request.max_tokens),
                 thinking: self.state.mode == ExecutionMode::Goal,

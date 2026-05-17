@@ -47,7 +47,7 @@ pub enum PeriError {
 }
 
 /// High-level execution mode selected for the active session.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExecutionMode {
     /// Read-only analysis and planning.

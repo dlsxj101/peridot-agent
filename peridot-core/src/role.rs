@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 
 /// One of the three roles a `HarnessAgent` can play inside the committee.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentRole {
     /// Read-only Planner that produces a task plan before the executor runs.

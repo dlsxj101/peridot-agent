@@ -1,11 +1,45 @@
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
+use std::sync::OnceLock;
 
 use peridot_common::ExecutionMode;
 
 use crate::role::AgentRole;
 
-pub(crate) fn system_prompt_for_role(mode: ExecutionMode, role: AgentRole) -> String {
+/// Returns the system prompt for a (mode, role) pair from a process-wide
+/// cache. The full 3 × 3 cross-product is built once on first access; later
+/// calls are a `HashMap` lookup. This avoids reallocating the ~1 KB prompt
+/// on every LLM round-trip and keeps the byte content identical across
+/// turns so provider prompt caches stay warm.
+pub(crate) fn system_prompt_for_role(mode: ExecutionMode, role: AgentRole) -> &'static str {
+    static CACHE: OnceLock<HashMap<(ExecutionMode, AgentRole), String>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| {
+        let modes = [
+            ExecutionMode::Plan,
+            ExecutionMode::Execute,
+            ExecutionMode::Goal,
+        ];
+        let roles = [
+            AgentRole::Planner,
+            AgentRole::Reviewer,
+            AgentRole::Executor,
+        ];
+        let mut map = HashMap::with_capacity(modes.len() * roles.len());
+        for m in modes {
+            for r in roles {
+                map.insert((m, r), build_system_prompt(m, r));
+            }
+        }
+        map
+    });
+    cache
+        .get(&(mode, role))
+        .map(String::as_str)
+        .unwrap_or_default()
+}
+
+fn build_system_prompt(mode: ExecutionMode, role: AgentRole) -> String {
     let mut prompt = system_prompt_for_mode(mode);
     let suffix = role.system_prompt_suffix();
     if !suffix.is_empty() {
