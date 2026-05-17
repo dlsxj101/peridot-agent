@@ -2228,10 +2228,14 @@ fn env_truthy(name: &str) -> bool {
 /// - the last activity is fresher than 7 days
 /// - the Curator already ran in the last 7 days
 ///
-/// When the 7-day idle threshold trips, the 30/90-day rules run inline
-/// (cheap, no network) and the LLM reflection pass is attempted on a
-/// best-effort basis — provider/auth failures are logged to stderr and
-/// the timestamp is stamped either way so we don't loop.
+/// When the 7-day idle threshold trips, `last_curator_run_unix` is
+/// stamped immediately so a follow-up fast-exit invocation doesn't
+/// race the gate, the cheap 30/90-day rules run inline, and the LLM
+/// reflection pass is spawned onto the tokio runtime as a detached
+/// task. Long-running commands (TUI, agent loops) keep the runtime
+/// alive long enough for the LLM pass to finish; fast-exit commands
+/// (`peridot version`) may drop the task mid-flight, which is the
+/// acceptable cost of not delaying every CLI run by a network call.
 async fn maybe_run_idle_curator(config: &PeridotConfig, project_root: &Path) {
     const SEVEN_DAYS: u64 = 7 * 24 * 3600;
     if !config.memory.auto_skills {
@@ -2257,7 +2261,13 @@ async fn maybe_run_idle_curator(config: &PeridotConfig, project_root: &Path) {
     if now.saturating_sub(last_curator) < SEVEN_DAYS {
         return;
     }
-    eprintln!("[curator] 7+ days idle — reviewing auto-skills...");
+
+    // Stamp the timestamp before doing anything else so a fast-exit
+    // command that races with the spawned task doesn't trip the same
+    // gate again on its next run.
+    let _ = store.set_meta("last_curator_run_unix", &now.to_string());
+
+    eprintln!("[curator] 7+ days idle — applying 30/90-day rules + spawning LLM pass");
     if let Ok(decisions) = store.apply_auto_rules(now, false) {
         for (name, verdict) in &decisions {
             if matches!(verdict, peridot_memory::AutoRuleVerdict::Archive) {
@@ -2265,22 +2275,35 @@ async fn maybe_run_idle_curator(config: &PeridotConfig, project_root: &Path) {
             }
         }
     }
-    let model = config.models.main.as_str();
-    match providers::live_provider(config, model, project_root).await {
-        Ok(provider) => {
-            match curator::run_llm_curator(provider.as_ref(), model, &store, project_root, now)
-                .await
+
+    let curator_model = config
+        .memory
+        .curator_model
+        .clone()
+        .unwrap_or_else(|| config.models.main.clone());
+    let project_root = project_root.to_path_buf();
+    let config = config.clone();
+    tokio::spawn(async move {
+        let store = MemoryStore::new(project_root.join(".peridot/memory.db"));
+        match providers::live_provider(&config, &curator_model, &project_root).await {
+            Ok(provider) => match curator::run_llm_curator(
+                provider.as_ref(),
+                &curator_model,
+                &store,
+                &project_root,
+                now,
+            )
+            .await
             {
                 Ok(report) => eprintln!(
-                    "[curator] evaluated {}, applied {}, ignored {}",
+                    "[curator] background pass done: evaluated {}, applied {}, ignored {}",
                     report.evaluated.len(),
                     report.applied.len(),
                     report.ignored.len(),
                 ),
-                Err(err) => eprintln!("[curator] LLM pass failed: {err}"),
-            }
+                Err(err) => eprintln!("[curator] background LLM failed: {err}"),
+            },
+            Err(err) => eprintln!("[curator] background provider unavailable: {err}"),
         }
-        Err(err) => eprintln!("[curator] provider unavailable: {err}"),
-    }
-    let _ = store.set_meta("last_curator_run_unix", &now.to_string());
+    });
 }

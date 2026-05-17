@@ -953,6 +953,12 @@ pub struct MemoryConfig {
     /// Maximum session summaries to keep.
     #[serde(default = "default_max_sessions_stored")]
     pub max_sessions_stored: usize,
+    /// Model the Curator uses for its LLM reflection pass. When unset,
+    /// the Curator falls back to `models.main`. A cheaper/faster model
+    /// here is usually right: the Curator's job is bookkeeping, not
+    /// novel generation.
+    #[serde(default)]
+    pub curator_model: Option<String>,
 }
 
 impl Default for MemoryConfig {
@@ -962,6 +968,7 @@ impl Default for MemoryConfig {
             auto_skills: true,
             skills_review: true,
             max_sessions_stored: default_max_sessions_stored(),
+            curator_model: None,
         }
     }
 }

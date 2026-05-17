@@ -60,6 +60,40 @@ pub(crate) async fn run_skill_command(
                 OutputFormat::Text => print!("{content}"),
             }
         }
+        SkillCommand::Restore { name } => {
+            let store = MemoryStore::new(project_root.join(".peridot/memory.db"));
+            let cleared = store
+                .set_skill_archived(name, 0)
+                .with_context(|| format!("failed to clear archived_at_unix for {name}"))?;
+            let archive_path = project_root
+                .join(".peridot/skills/archive")
+                .join(format!("{name}.md"));
+            let restored_file = if archive_path.exists() {
+                let target_dir = project_root.join(".peridot/skills/auto");
+                fs::create_dir_all(&target_dir)?;
+                let target = target_dir.join(format!("{name}.md"));
+                fs::rename(&archive_path, &target).with_context(|| {
+                    format!("rename {} -> {}", archive_path.display(), target.display())
+                })?;
+                Some(target)
+            } else {
+                None
+            };
+            if !cleared && restored_file.is_none() {
+                anyhow::bail!("no archived skill named {name}");
+            }
+            print_json_or_text_result(
+                serde_json::json!({
+                    "restored": true,
+                    "name": name,
+                    "db_row_updated": cleared,
+                    "file_moved": restored_file.is_some(),
+                    "path": restored_file,
+                }),
+                format!("restored skill {name}"),
+                output,
+            )?;
+        }
         SkillCommand::Curate { dry_run, llm } => {
             let store = MemoryStore::new(project_root.join(".peridot/memory.db"));
             let now = unix_timestamp();
@@ -84,7 +118,11 @@ pub(crate) async fn run_skill_command(
                 let config = config.context(
                     "--llm requires a loaded peridot config; run from inside a peridot project",
                 )?;
-                let model = config.models.main.as_str();
+                let model = config
+                    .memory
+                    .curator_model
+                    .as_deref()
+                    .unwrap_or(config.models.main.as_str());
                 let provider = crate::providers::live_provider(config, model, project_root).await?;
                 Some(
                     crate::curator::run_llm_curator(

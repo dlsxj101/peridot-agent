@@ -413,6 +413,16 @@ pub(crate) struct MemoryLayerSearchResult {
     pub(crate) error_resolution: Option<ErrorResolution>,
 }
 
+/// Body-free skill summary returned by `agent_memory_search`. The model
+/// reads these to decide which skill is worth pulling in full via
+/// `skill_view`.
+#[derive(Clone, Debug, Serialize)]
+struct SkillSearchSummary {
+    name: String,
+    scope: String,
+    description: String,
+}
+
 #[async_trait]
 impl Tool for AgentMemorySearchTool {
     fn name(&self) -> &str {
@@ -441,17 +451,33 @@ impl Tool for AgentMemorySearchTool {
     async fn execute(&self, params: Value, ctx: &ToolContext) -> PeriResult<ToolResult> {
         let query = required_str(&params, "query")?;
         let layers = search_memory_layers(&ctx.project_root, query)?;
-        let skills = layers
+        // L0 disclosure: return skill metadata only (name/scope/description)
+        // and let the model pull bodies via `skill_view` when needed. This
+        // keeps the token cost of a search proportional to skill count, not
+        // total body size.
+        let skills: Vec<SkillSearchSummary> = layers
             .iter()
-            .flat_map(|layer| layer.skills.clone())
-            .collect::<Vec<_>>();
+            .flat_map(|layer| layer.skills.iter())
+            .map(|skill| SkillSearchSummary {
+                name: skill.name.clone(),
+                scope: skill.scope.clone(),
+                description: skill
+                    .body
+                    .lines()
+                    .next()
+                    .unwrap_or("")
+                    .trim_start_matches('#')
+                    .trim()
+                    .to_string(),
+            })
+            .collect();
         let error_resolutions = layers
             .iter()
             .filter_map(|layer| layer.error_resolution.clone())
             .collect::<Vec<_>>();
         Ok(ToolResult::success(
             format!(
-                "memory search returned {} skills and {} error resolutions across {} layers",
+                "memory search returned {} skill summaries and {} error resolutions across {} layers (use skill_view for bodies)",
                 skills.len(),
                 error_resolutions.len(),
                 layers.len()

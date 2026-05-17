@@ -320,6 +320,14 @@ pub(crate) enum SkillCommand {
         /// Skill name or file stem.
         name: String,
     },
+    /// Restore an archived auto-skill: clears `archived_at_unix` in the
+    /// DB and moves `.peridot/skills/archive/<name>.md` back into
+    /// `.peridot/skills/auto/<name>.md`. Useful when the Curator was
+    /// over-zealous; manual auth/scope rules still apply.
+    Restore {
+        /// Skill name (file stem of `<name>.md`).
+        name: String,
+    },
     /// Run the Curator. With no flags this applies the 30/90-day stale/
     /// archive rules to agent-authored skills. `--llm` also invokes the
     /// Hermes-style LLM reflection pass (one batch of at most 8 skills,
