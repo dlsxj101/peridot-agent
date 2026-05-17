@@ -14,8 +14,9 @@ pub use tools::{
     AgentAskUserTool, AgentDelegateTool, AgentDoneTool, AgentMemorySearchTool, AgentScratchpadTool,
     FileListTool, FilePatchTool, FileReadTool, FileSearchTool, FileWriteTool, GhPrCreateTool,
     GhPrMergeTool, GhPrStatusTool, GitBranchTool, GitCommitTool, GitDiffTool, GitLogTool,
-    GitPushTool, GitStatusTool, PlanCreateTool, PlanUpdateTool, ShellExecTool, VerifyBuildTool,
-    VerifyLintTool, VerifyTestTool, WebFetchTool, WebSearchTool, register_builtin_tools,
+    GitPushTool, GitStatusTool, PlanCreateTool, PlanUpdateTool, ShellExecTool, SkillListTool,
+    SkillViewTool, VerifyBuildTool, VerifyLintTool, VerifyTestTool, WebFetchTool, WebSearchTool,
+    register_builtin_tools,
 };
 
 #[cfg(test)]

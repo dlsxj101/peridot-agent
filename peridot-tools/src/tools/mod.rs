@@ -4,6 +4,7 @@ mod file;
 mod git;
 pub(crate) mod plan;
 pub(crate) mod shell;
+mod skill;
 mod verify;
 mod web;
 
@@ -17,6 +18,7 @@ pub use git::{
 };
 pub use plan::{PlanCreateTool, PlanUpdateTool};
 pub use shell::ShellExecTool;
+pub use skill::{SkillListTool, SkillViewTool};
 pub use verify::{VerifyBuildTool, VerifyLintTool, VerifyTestTool};
 pub use web::{WebFetchTool, WebSearchTool};
 
@@ -52,6 +54,8 @@ pub fn register_builtin_tools(registry: &mut ToolRegistry) -> PeriResult<()> {
     registry.register(AgentAskUserTool)?;
     registry.register(AgentDelegateTool)?;
     registry.register(AgentMemorySearchTool)?;
+    registry.register(SkillListTool)?;
+    registry.register(SkillViewTool)?;
     registry.register(AgentDoneTool)?;
     Ok(())
 }
