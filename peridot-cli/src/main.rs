@@ -687,7 +687,6 @@ async fn main() -> Result<()> {
 }
 
 #[allow(clippy::too_many_arguments)]
-#[allow(clippy::too_many_arguments)]
 fn spawn_tui_agent_run(
     handle: tokio::runtime::Handle,
     event_tx: std::sync::mpsc::Sender<(String, TuiRuntimeEvent)>,

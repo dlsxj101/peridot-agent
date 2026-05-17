@@ -48,6 +48,14 @@ pub struct HarnessAgent {
     /// below the auto trigger. Atomic so the slash command thread and
     /// the agent loop can share it without locking.
     compact_request: Option<Arc<AtomicBool>>,
+    /// Sidecar path used to persist a pending tool call when the
+    /// previous run halted on `ApprovalRequired`. On the next session
+    /// start the harness reads the file, executes the exact tool call
+    /// (under whatever security/permission posture the operator
+    /// granted), folds the result into context, and deletes the
+    /// sidecar. The model is NOT re-asked; the run picks up from the
+    /// point it stopped.
+    pending_resume_path: Option<PathBuf>,
 }
 
 impl HarnessAgent {
@@ -66,7 +74,15 @@ impl HarnessAgent {
             auto_verify_after_mutation: false,
             auto_grade_on_done: false,
             compact_request: None,
+            pending_resume_path: None,
         }
+    }
+
+    /// Configures the file Pending tool calls are persisted to when an
+    /// approval halt fires, and re-loaded from on next session start.
+    /// Typically points at `.peridot/sessions/<id>/pending_resume.bin`.
+    pub fn set_pending_resume_path(&mut self, path: PathBuf) {
+        self.pending_resume_path = Some(path);
     }
 
     /// Attaches a shared atomic flag the operator can set (e.g. via
@@ -450,9 +466,16 @@ impl HarnessAgent {
                 parameters: tool_parameters.clone(),
             });
         }
+        let pending_for_resume = ToolCall {
+            name: tool_name.clone(),
+            parameters: tool_parameters.clone(),
+        };
         let tool_result = match self
             .execute_tool_call_with_runtime(
-                tool_call,
+                ToolCall {
+                    name: tool_name.clone(),
+                    parameters: tool_parameters.clone(),
+                },
                 request.project_root,
                 request.denied_paths,
                 request.hooks,
@@ -463,6 +486,18 @@ impl HarnessAgent {
             Ok(result) => result,
             Err(err) => {
                 if let PeriError::PermissionDenied(reason) = &err {
+                    // Persist the exact pending tool call so the next
+                    // session can resume from this point instead of
+                    // restarting the whole task. Best-effort: a write
+                    // failure just degrades to the legacy restart UX.
+                    if let Some(path) = self.pending_resume_path.as_ref()
+                        && let Ok(bytes) = serde_json::to_vec(&pending_for_resume)
+                    {
+                        if let Some(parent) = path.parent() {
+                            let _ = std::fs::create_dir_all(parent);
+                        }
+                        let _ = std::fs::write(path, &bytes);
+                    }
                     events(AgentRunEvent::ApprovalRequested {
                         tool_name,
                         reason: reason.clone(),
@@ -472,6 +507,11 @@ impl HarnessAgent {
                 return Err(err);
             }
         };
+        // Bind tool_call back for downstream code that reads from it.
+        let tool_call = pending_for_resume;
+        // Hold a reference so the compiler doesn't complain about the
+        // unused binding when only one branch consumes it.
+        let _ = &tool_call;
         if !suppress_done_ui {
             events(AgentRunEvent::ToolFinished {
                 name: tool_name.clone(),
@@ -536,6 +576,56 @@ impl HarnessAgent {
         // report how long the task took. Using `Instant` instead of
         // `SystemTime` keeps the measurement monotonic across NTP jumps.
         let started_at = std::time::Instant::now();
+        // Pending-resume check: when the previous run halted on
+        // ApprovalRequired we persisted the pending tool call to a
+        // sidecar. If that file is present, execute the call directly
+        // against the new (presumably relaxed) security posture so
+        // the run picks up exactly where it stopped instead of asking
+        // the model to redo everything that led up to the gated step.
+        let pending_resume = take_pending_resume(self.pending_resume_path.as_ref());
+        if let Some(call) = pending_resume {
+            let pending_name = call.name.clone();
+            let pending_params = call.parameters.clone();
+            events(AgentRunEvent::ToolStarted {
+                name: pending_name.clone(),
+                parameters: pending_params.clone(),
+            });
+            match self
+                .execute_tool_call_with_runtime(
+                    call,
+                    request.project_root.clone(),
+                    request.denied_paths.clone(),
+                    request.hooks.clone(),
+                    request.security.clone(),
+                )
+                .await
+            {
+                Ok(result) => {
+                    events(AgentRunEvent::ToolFinished {
+                        name: pending_name.clone(),
+                        result: result.clone(),
+                    });
+                    self.context.append(ContextEntry::trusted(
+                        ContextSource::PlanReminder,
+                        format!(
+                            "[resume] Operator approved {pending_name}. Result: {}",
+                            result.summary
+                        ),
+                    ));
+                }
+                Err(err) => {
+                    // Resume failed (still blocked, or environment changed).
+                    // Surface it but don't abort — the model can pick up
+                    // and try a different approach on its next turn.
+                    self.context.append(ContextEntry::trusted(
+                        ContextSource::PlanReminder,
+                        format!(
+                            "[resume] Tried to resume {pending_name} after approval but failed: {err}. Try a different approach."
+                        ),
+                    ));
+                }
+            }
+        }
         let mut outcomes = Vec::new();
         let mut total_usage = Usage::default();
         let mut stuck_detector = StuckDetector::new(3);
@@ -1019,6 +1109,23 @@ fn is_mutating_tool_name(name: &str) -> bool {
     matches!(name, "file_write" | "file_patch" | "shell_exec")
 }
 
+/// Reads + deletes the pending-resume sidecar. Returns `Some` only
+/// when the file exists, parses as a `ToolCall`, and was successfully
+/// removed afterward. Any I/O or parse failure returns `None` so the
+/// caller silently falls back to the legacy restart-from-scratch flow.
+fn take_pending_resume(path: Option<&PathBuf>) -> Option<ToolCall> {
+    let path = path?;
+    if !path.exists() {
+        return None;
+    }
+    let bytes = std::fs::read(path).ok()?;
+    let call: ToolCall = serde_json::from_slice(&bytes).ok()?;
+    // Best-effort delete: if the remove fails we still proceed —
+    // worst case the next session re-applies the same tool call.
+    let _ = std::fs::remove_file(path);
+    Some(call)
+}
+
 /// Builds the `[sub-agent review]` directive injected after a
 /// successful `agent_delegate` call. Extracts the workspace diff from
 /// the serialized `SubAgentResult` (under `output.diff`) and wraps it
@@ -1197,6 +1304,49 @@ mod helpers_tests {
         assert!(review.contains("[sub-agent review]"));
         assert!(review.contains("No diff captured"));
         assert!(review.contains("/tmp/sub-2"));
+    }
+
+    #[test]
+    fn take_pending_resume_returns_none_when_file_missing() {
+        let path = std::env::temp_dir().join(format!(
+            "peridot-pending-missing-{}.bin",
+            std::process::id()
+        ));
+        // Ensure the file does not exist.
+        let _ = std::fs::remove_file(&path);
+        assert!(take_pending_resume(Some(&path)).is_none());
+    }
+
+    #[test]
+    fn take_pending_resume_consumes_valid_sidecar() {
+        let path = std::env::temp_dir().join(format!(
+            "peridot-pending-valid-{}.bin",
+            std::process::id()
+        ));
+        let call = ToolCall::new(
+            "shell_exec",
+            serde_json::json!({ "command": "npm install left-pad" }),
+        );
+        std::fs::write(&path, serde_json::to_vec(&call).unwrap()).unwrap();
+        let recovered = take_pending_resume(Some(&path)).expect("recovered");
+        assert_eq!(recovered.name, "shell_exec");
+        assert_eq!(
+            recovered.parameters.get("command").and_then(|v| v.as_str()),
+            Some("npm install left-pad")
+        );
+        assert!(!path.exists(), "sidecar should be deleted after consumption");
+    }
+
+    #[test]
+    fn take_pending_resume_handles_unparseable_payload() {
+        let path = std::env::temp_dir().join(format!(
+            "peridot-pending-garbage-{}.bin",
+            std::process::id()
+        ));
+        std::fs::write(&path, b"not json at all").unwrap();
+        assert!(take_pending_resume(Some(&path)).is_none());
+        // garbage file is left on disk for the operator to inspect
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

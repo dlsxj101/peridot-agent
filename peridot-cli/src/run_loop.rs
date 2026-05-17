@@ -184,6 +184,15 @@ where
     if let Some(flag) = compact_request {
         agent.set_compact_request(flag);
     }
+    if let Some(path) = context_snapshot_path.as_ref() {
+        // Resume-after-approval sidecar lives next to context.bin.
+        // When the previous halt persisted a pending tool call here,
+        // the next session executes it under the new (presumably
+        // relaxed) security posture instead of restarting the task.
+        if let Some(parent) = path.parent() {
+            agent.set_pending_resume_path(parent.join("pending_resume.bin"));
+        }
+    }
     if let Some(path) = context_snapshot_path {
         agent.set_context_snapshot_path(path);
     }
