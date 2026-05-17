@@ -1326,7 +1326,7 @@ peri update --force      # 확인 없이 즉시 업데이트
 
 세션 시작 시 자동 체크 (config [updates] 섹션):
 ```
-💎 Peridot v0.2.1 사용 가능 (현재 v0.2.0). peri update로 업데이트.
+💎 Peridot v0.3.1 사용 가능 (현재 v0.3.0). peri update로 업데이트.
 ```
 한 줄 알림만. 작업 흐름 안 끊음.
 Homebrew 설치 감지 시 `brew upgrade peridot` 안내.
@@ -1907,9 +1907,9 @@ Job 4: coverage (main만)
 ### 21.3 릴리스 프로세스
 
 ```bash
-cargo set-version 0.2.0
-git tag v0.2.0
-git push origin v0.2.0
+cargo set-version 0.3.0
+git tag v0.3.0
+git push origin v0.3.0
 # → CI가 자동으로 빌드+릴리스+배포
 ```
 
