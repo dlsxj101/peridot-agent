@@ -20,11 +20,7 @@ pub(crate) fn system_prompt_for_role(mode: ExecutionMode, role: AgentRole) -> &'
             ExecutionMode::Execute,
             ExecutionMode::Goal,
         ];
-        let roles = [
-            AgentRole::Planner,
-            AgentRole::Reviewer,
-            AgentRole::Executor,
-        ];
+        let roles = [AgentRole::Planner, AgentRole::Reviewer, AgentRole::Executor];
         let mut map = HashMap::with_capacity(modes.len() * roles.len());
         for m in modes {
             for r in roles {
