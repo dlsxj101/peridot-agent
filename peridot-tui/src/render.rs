@@ -149,6 +149,14 @@ fn render_goal_block(state: &TuiState) -> String {
     let Some(status) = state.goal_status.as_ref() else {
         return String::new();
     };
+    // `/goal clear` sets the status to `Cleared` rather than removing it
+    // outright (the agent state machine wants to remember a goal was once
+    // active). For the side panel that's noise — once the operator cleared
+    // the goal the block should disappear, not linger with `<no
+    // objective>`. Treat Cleared as "no goal" for rendering purposes.
+    if matches!(status, GoalStatus::Cleared) {
+        return String::new();
+    }
     let status_label = goal_status_label(Some(status));
     // Objective truncated to fit in a typical 20-30 col side panel without
     // overflowing. The full text is still in `state.goal_text` and surfaced
