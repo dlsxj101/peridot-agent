@@ -68,9 +68,11 @@ pub(super) fn render_status_metrics(state: &TuiState) -> String {
     // refreshes every frame, so the status bar advances second by second
     // without the host loop having to broadcast tick events.
     if state.task_started_at_unix.is_some() || state.side_panel.stats.elapsed_seconds > 0 {
-        parts.push(format!(
-            "\u{23F1} {}",
-            state::format_duration_ms(state.side_panel.stats.elapsed_seconds * 1000)
+        // No prefix glyph — the stopwatch emoji `⏱` (U+23F1) is rendered as
+        // half-width in many WSL fonts and clipped the digits that followed.
+        // Bare digits with the trailing `s` suffix read fine on their own.
+        parts.push(state::format_duration_ms(
+            state.side_panel.stats.elapsed_seconds * 1000,
         ));
     }
     parts.join("  |  ")
@@ -1107,6 +1109,13 @@ pub fn render_text_snapshot(state: &TuiState) -> String {
 pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
     let area = frame.area();
     let tab_height = crate::tab_bar_height(state);
+    // Dynamic input height: grow with each `\n` so multi-line drafts are
+    // visible in the box (not just spaces). Floor 3 (one content row +
+    // top/bottom border), ceiling 10 so a long draft can't swallow the
+    // transcript. When content exceeds the visible window the cursor is
+    // kept visible by scrolling the inner Paragraph below.
+    let input_rows = state.input.split('\n').count() as u16;
+    let input_height = (input_rows + 2).clamp(3, 10);
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -1114,7 +1123,7 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
             Constraint::Length(tab_height),
             Constraint::Min(1),
             Constraint::Length(1),
-            Constraint::Length(3),
+            Constraint::Length(input_height),
         ])
         .split(area);
 
@@ -1453,32 +1462,67 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
     frame.render_widget(Paragraph::new(render_status_bar(state)), chunks[3]);
 
     let input_area = chunks[4];
-    let input_line = Line::from(vec![
-        Span::styled(
-            "\u{276F} ",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw(state.input.clone()),
-    ]);
+    let prompt_glyph = "\u{276F} "; // ❯ + space, two display columns
+    let prompt_style = Style::default()
+        .fg(Color::Cyan)
+        .add_modifier(Modifier::BOLD);
+    // Logical line / column of the cursor inside `state.input`. Computed
+    // once and reused for both the visible cursor position and the
+    // scroll offset that keeps the cursor on-screen.
+    let prefix_chars: String = state.input.chars().take(state.input_cursor).collect();
+    let cursor_line = prefix_chars.matches('\n').count();
+    let cursor_col_chars = prefix_chars
+        .rsplit('\n')
+        .next()
+        .map(|tail| tail.chars().count())
+        .unwrap_or(0);
+    // Render each logical line on its own visible row. The first row
+    // carries the `❯ ` glyph; continuation rows get a 2-space gutter so
+    // they align underneath the prompt content (and the cursor x maths
+    // works for both first-line and continuation columns).
+    let mut input_lines: Vec<Line<'static>> = Vec::new();
+    for (idx, line) in state.input.split('\n').enumerate() {
+        let mut spans = Vec::with_capacity(2);
+        if idx == 0 {
+            spans.push(Span::styled(prompt_glyph, prompt_style));
+        } else {
+            spans.push(Span::raw("  "));
+        }
+        spans.push(Span::raw(line.to_string()));
+        input_lines.push(Line::from(spans));
+    }
     let char_count = state.input.chars().count();
-    // Always display a small hint so new operators don't have to dig
-    // through `/help` to discover the multi-line chord. WSL conpty cannot
-    // distinguish Shift+Enter from bare Enter, so `Ctrl+J` is the chord
-    // we surface here — it works on every terminal.
+    let line_count = state.input.split('\n').count();
     let title = if char_count == 0 {
         " Enter sends · Ctrl+J newline ".to_string()
+    } else if line_count > 1 {
+        format!(" {char_count} chars · {line_count} lines · Ctrl+J newline ")
     } else {
         format!(" {char_count} chars · Ctrl+J newline ")
     };
+    // Inner content rows = total box height minus the two border rows.
+    let visible_rows = input_area.height.saturating_sub(2);
+    // Scroll the paragraph so the cursor row is always visible. When the
+    // draft fits in the box (rare overflow case still possible at the
+    // upper clamp of 10), scroll stays at 0.
+    let scroll = (cursor_line as u16).saturating_sub(visible_rows.saturating_sub(1));
     frame.render_widget(
-        Paragraph::new(input_line).block(Block::default().borders(Borders::ALL).title(title)),
+        Paragraph::new(input_lines)
+            .block(Block::default().borders(Borders::ALL).title(title))
+            .scroll((scroll, 0)),
         input_area,
     );
-    let cursor_x =
-        input_area.x + 2 + (state.input_cursor as u16).min(input_area.width.saturating_sub(4));
-    frame.set_cursor_position(Position::new(cursor_x, input_area.y + 1));
+    // Cursor sits inside the box, offset for the border and the prompt
+    // gutter. The y position accounts for the scroll above so multi-line
+    // drafts longer than `visible_rows` still anchor the cursor on-screen.
+    let cursor_indent = 2u16; // `❯ ` (line 0) and `  ` (continuation) both 2 cells
+    let cursor_x = input_area.x
+        + 1
+        + cursor_indent
+        + (cursor_col_chars as u16).min(input_area.width.saturating_sub(cursor_indent + 2));
+    let cursor_y_in_box = (cursor_line as u16).saturating_sub(scroll);
+    let cursor_y = input_area.y + 1 + cursor_y_in_box;
+    frame.set_cursor_position(Position::new(cursor_x, cursor_y));
 
     render_slash_picker(frame, state, input_area);
     render_at_picker(frame, state, input_area);

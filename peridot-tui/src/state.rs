@@ -1670,17 +1670,16 @@ impl TuiState {
                 }
                 // Use the Assistant kind for the visible completion stamp so
                 // it stays in the chat view (System entries are now hidden).
-                // Prefix with `⏱` so it visually reads as a meta line rather
-                // than agent prose, and include turn / token counts that the
-                // operator would otherwise have to read off the status bar.
+                // No glyph prefix — `⏱` (U+23F1) is half-width in many WSL
+                // fonts and clipped the duration digits that followed it.
                 let stamp = if success {
                     format!(
-                        "\u{23F1} completed in {duration} ({turns} turn{})",
+                        "completed in {duration} ({turns} turn{})",
                         if turns == 1 { "" } else { "s" }
                     )
                 } else {
                     format!(
-                        "\u{23F1} stopped: {stop_reason} after {duration} ({turns} turn{})",
+                        "stopped: {stop_reason} after {duration} ({turns} turn{})",
                         if turns == 1 { "" } else { "s" }
                     )
                 };

@@ -273,12 +273,21 @@ pub fn handle_key_event(state: &mut TuiState, key: KeyEvent) -> TuiEventOutcome 
             }
             TuiEventOutcome::Continue
         }
+        // For multi-line drafts (input contains `\n`) the arrow keys move
+        // the cursor between logical lines first; history navigation only
+        // kicks in when the cursor is already at the very top or bottom
+        // line. Single-line inputs fall straight through to history so
+        // existing muscle memory still works for chat replies.
         KeyCode::Up => {
-            state.previous_input_history();
+            if !try_move_cursor_up(state) {
+                state.previous_input_history();
+            }
             TuiEventOutcome::Continue
         }
         KeyCode::Down => {
-            state.next_input_history();
+            if !try_move_cursor_down(state) {
+                state.next_input_history();
+            }
             TuiEventOutcome::Continue
         }
         KeyCode::Left => {
@@ -1094,6 +1103,67 @@ pub(super) fn record_permission_switch(state: &mut TuiState, to: PermissionMode)
         from: state.header.permission.to_string(),
         to: to.to_string(),
     });
+}
+
+/// Computes the (line index, column-in-chars) of the input cursor inside
+/// `state.input`. Both indices are 0-based. Returns `(0, 0)` for an empty
+/// buffer or a cursor that sits at position 0.
+fn input_cursor_line_col(state: &TuiState) -> (usize, usize) {
+    let prefix: String = state.input.chars().take(state.input_cursor).collect();
+    let line = prefix.matches('\n').count();
+    let col = prefix
+        .rsplit('\n')
+        .next()
+        .map(|tail| tail.chars().count())
+        .unwrap_or(0);
+    (line, col)
+}
+
+/// Returns the character offset of the start of `target_line` (0-based)
+/// inside `state.input`. `target_line` past the end clamps to the last
+/// line so callers can dead-reckon a position even on overflow.
+fn line_start_char_offset(input: &str, target_line: usize) -> usize {
+    let mut count = 0usize;
+    let mut offset = 0usize;
+    for ch in input.chars() {
+        if count == target_line {
+            break;
+        }
+        offset += 1;
+        if ch == '\n' {
+            count += 1;
+        }
+    }
+    offset
+}
+
+/// Tries to move the cursor to the previous logical line, snapping the
+/// column to the line's length if it would overshoot. Returns `false`
+/// when the cursor is already on line 0 — callers fall back to history
+/// in that case.
+fn try_move_cursor_up(state: &mut TuiState) -> bool {
+    let (line, col) = input_cursor_line_col(state);
+    if line == 0 {
+        return false;
+    }
+    let lines: Vec<&str> = state.input.split('\n').collect();
+    let target_line = line - 1;
+    let target_col = col.min(lines[target_line].chars().count());
+    state.input_cursor = line_start_char_offset(&state.input, target_line) + target_col;
+    true
+}
+
+/// Mirror of [`try_move_cursor_up`] for the Down arrow.
+fn try_move_cursor_down(state: &mut TuiState) -> bool {
+    let (line, col) = input_cursor_line_col(state);
+    let lines: Vec<&str> = state.input.split('\n').collect();
+    if line + 1 >= lines.len() {
+        return false;
+    }
+    let target_line = line + 1;
+    let target_col = col.min(lines[target_line].chars().count());
+    state.input_cursor = line_start_char_offset(&state.input, target_line) + target_col;
+    true
 }
 
 /// Flips the Status side-panel visibility and reports the new state in the
