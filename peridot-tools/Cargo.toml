@@ -15,6 +15,7 @@ peridot-agents = { path = "../peridot-agents" }
 peridot-common = { path = "../peridot-common" }
 peridot-memory = { path = "../peridot-memory" }
 peridot-mcp = { path = "../peridot-mcp" }
+reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

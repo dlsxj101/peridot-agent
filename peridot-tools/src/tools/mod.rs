@@ -5,6 +5,7 @@ mod git;
 pub(crate) mod plan;
 pub(crate) mod shell;
 mod verify;
+mod web;
 
 pub use agent::{
     AgentAskUserTool, AgentDelegateTool, AgentDoneTool, AgentMemorySearchTool, AgentScratchpadTool,
@@ -17,6 +18,7 @@ pub use git::{
 pub use plan::{PlanCreateTool, PlanUpdateTool};
 pub use shell::ShellExecTool;
 pub use verify::{VerifyBuildTool, VerifyLintTool, VerifyTestTool};
+pub use web::{WebFetchTool, WebSearchTool};
 
 use peridot_common::PeriResult;
 
@@ -44,6 +46,8 @@ pub fn register_builtin_tools(registry: &mut ToolRegistry) -> PeriResult<()> {
     registry.register(VerifyBuildTool)?;
     registry.register(VerifyTestTool)?;
     registry.register(VerifyLintTool)?;
+    registry.register(WebSearchTool)?;
+    registry.register(WebFetchTool)?;
     registry.register(AgentScratchpadTool)?;
     registry.register(AgentAskUserTool)?;
     registry.register(AgentDelegateTool)?;
