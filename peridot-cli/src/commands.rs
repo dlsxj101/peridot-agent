@@ -320,6 +320,15 @@ pub(crate) enum SkillCommand {
         /// Skill name or file stem.
         name: String,
     },
+    /// Run the Curator's 30/90-day stale/archive pass over agent-authored
+    /// skills. With `--dry-run`, prints decisions without writing changes;
+    /// otherwise archives skills idle for 90+ days. The Hermes-style LLM
+    /// reflection stage runs separately when triggered by 7-day idle.
+    Curate {
+        /// Print decisions but don't persist archive writes.
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 /// MCP server subcommands.

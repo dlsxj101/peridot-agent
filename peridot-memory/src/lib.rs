@@ -135,6 +135,46 @@ pub struct SkillRecord {
     pub updated_at_unix: u64,
 }
 
+/// Outcome of the Curator's automatic age-based pipeline (no LLM input).
+/// Rules are predictable and offline-safe; they age `scope='auto'` skills
+/// against `last_used_at_unix` when set, otherwise `updated_at_unix`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AutoRuleVerdict {
+    /// Recently saved or used; leave alone.
+    Active,
+    /// Idle past `STALE_THRESHOLD_SECS`. Surface a warning, keep listed.
+    Stale,
+    /// Idle past `ARCHIVE_THRESHOLD_SECS`. Archive automatically.
+    Archive,
+}
+
+/// 30 days. Hermes-aligned stale window.
+pub const STALE_THRESHOLD_SECS: u64 = 30 * 24 * 3600;
+/// 90 days. Hermes-aligned archive window.
+pub const ARCHIVE_THRESHOLD_SECS: u64 = 90 * 24 * 3600;
+
+/// Pure 30/90-day verdict for one skill record. Archived rows are
+/// always reported as `Active` so the Curator never re-archives.
+pub fn auto_rule_verdict(record: &SkillRecord, now_unix: u64) -> AutoRuleVerdict {
+    if record.skill.archived_at_unix > 0 {
+        return AutoRuleVerdict::Active;
+    }
+    let reference = if record.skill.last_used_at_unix > 0 {
+        record.skill.last_used_at_unix
+    } else {
+        record.updated_at_unix
+    };
+    let elapsed = now_unix.saturating_sub(reference);
+    if elapsed >= ARCHIVE_THRESHOLD_SECS {
+        AutoRuleVerdict::Archive
+    } else if elapsed >= STALE_THRESHOLD_SECS {
+        AutoRuleVerdict::Stale
+    } else {
+        AutoRuleVerdict::Active
+    }
+}
+
 /// Stored error resolution.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ErrorResolution {
@@ -539,6 +579,32 @@ impl MemoryStore {
         Ok(changed > 0)
     }
 
+    /// Applies the 30/90-day Stale/Archive rules to every `scope='auto'`
+    /// row. Returns one `(name, verdict)` pair per auto skill so the caller
+    /// can render a report; bundled / community / empty-scope rows are
+    /// skipped entirely. When `dry_run = false`, rows reaching
+    /// `Archive` are persisted via `set_skill_archived(name, now_unix)`.
+    pub fn apply_auto_rules(
+        &self,
+        now_unix: u64,
+        dry_run: bool,
+    ) -> PeriResult<Vec<(String, AutoRuleVerdict)>> {
+        self.initialize()?;
+        let records = self.list_skill_records()?;
+        let mut decisions = Vec::with_capacity(records.len());
+        for record in records {
+            if record.skill.scope != "auto" {
+                continue;
+            }
+            let verdict = auto_rule_verdict(&record, now_unix);
+            if matches!(verdict, AutoRuleVerdict::Archive) && !dry_run {
+                self.set_skill_archived(&record.skill.name, now_unix)?;
+            }
+            decisions.push((record.skill.name, verdict));
+        }
+        Ok(decisions)
+    }
+
     /// Reads a Curator metadata value. Returns `None` when unset.
     pub fn get_meta(&self, key: &str) -> PeriResult<Option<String>> {
         self.initialize()?;
@@ -926,6 +992,92 @@ mod tests {
             .unwrap();
         assert_eq!(store.last_activity_unix().unwrap(), 9_999);
 
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn auto_rule_verdict_distinguishes_active_stale_archive() {
+        let record = |last_used: u64, updated: u64| SkillRecord {
+            skill: StoredSkill {
+                name: "x".into(),
+                body: "y".into(),
+                last_used_at_unix: last_used,
+                archived_at_unix: 0,
+                scope: "auto".into(),
+            },
+            updated_at_unix: updated,
+        };
+        let now: u64 = 100_000_000;
+        assert_eq!(
+            auto_rule_verdict(&record(now - 1, now - 1), now),
+            AutoRuleVerdict::Active
+        );
+        assert_eq!(
+            auto_rule_verdict(&record(0, now - 31 * 24 * 3600), now),
+            AutoRuleVerdict::Stale,
+            "31-day-old never-used skill reads stale from updated_at_unix"
+        );
+        assert_eq!(
+            auto_rule_verdict(&record(0, now - 95 * 24 * 3600), now),
+            AutoRuleVerdict::Archive,
+        );
+        // Already-archived rows are never re-archived.
+        let mut archived = record(0, now - 95 * 24 * 3600);
+        archived.skill.archived_at_unix = now - 1;
+        assert_eq!(auto_rule_verdict(&archived, now), AutoRuleVerdict::Active);
+    }
+
+    #[test]
+    fn apply_auto_rules_archives_only_old_auto_skills() {
+        let root = std::env::temp_dir().join(format!(
+            "peridot-memory-rules-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or_default()
+        ));
+        let store = MemoryStore::new(root.join("memory.db"));
+        let now: u64 = 100_000_000_000; // ~year 5138; safely in the future of any real save_skill timestamp
+        // Auto skill, never re-used after save — should archive.
+        store
+            .save_skill(&StoredSkill {
+                name: "old-auto".into(),
+                body: "old".into(),
+                last_used_at_unix: 1,
+                scope: "auto".into(),
+                ..Default::default()
+            })
+            .unwrap();
+        // Auto skill, last_used pinned right at `now` — should stay active.
+        store
+            .save_skill(&StoredSkill {
+                name: "fresh-auto".into(),
+                body: "fresh".into(),
+                last_used_at_unix: now,
+                scope: "auto".into(),
+                ..Default::default()
+            })
+            .unwrap();
+        // Bundled (empty scope) — never touched by Curator even if ancient.
+        store
+            .save_skill(&StoredSkill {
+                name: "bundled-old".into(),
+                body: "shipped".into(),
+                last_used_at_unix: 1,
+                ..Default::default()
+            })
+            .unwrap();
+        let decisions = store.apply_auto_rules(now, false).unwrap();
+        let by_name: std::collections::HashMap<_, _> = decisions.into_iter().collect();
+        assert_eq!(by_name.get("old-auto"), Some(&AutoRuleVerdict::Archive));
+        assert_eq!(by_name.get("fresh-auto"), Some(&AutoRuleVerdict::Active));
+        // bundled-old is filtered out entirely (not just Active).
+        assert!(!by_name.contains_key("bundled-old"));
+        // old-auto must actually be archived in storage.
+        let listed = store.list_skills().unwrap();
+        assert!(listed.iter().all(|s| s.name != "old-auto"));
+        assert!(listed.iter().any(|s| s.name == "bundled-old"));
         fs::remove_dir_all(root).unwrap();
     }
 

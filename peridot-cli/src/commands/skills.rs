@@ -59,6 +59,39 @@ pub(crate) async fn run_skill_command(
                 OutputFormat::Text => print!("{content}"),
             }
         }
+        SkillCommand::Curate { dry_run } => {
+            let store = MemoryStore::new(project_root.join(".peridot/memory.db"));
+            let now = unix_timestamp();
+            let decisions = store
+                .apply_auto_rules(now, *dry_run)
+                .with_context(|| "failed to apply Curator auto-rules")?;
+            match output {
+                OutputFormat::Json => println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "dry_run": *dry_run,
+                        "decisions": decisions
+                            .iter()
+                            .map(|(name, verdict)| serde_json::json!({
+                                "name": name,
+                                "verdict": format!("{verdict:?}").to_lowercase(),
+                            }))
+                            .collect::<Vec<_>>(),
+                    }))?
+                ),
+                OutputFormat::Text => {
+                    if decisions.is_empty() {
+                        println!("no auto-skills to curate");
+                    }
+                    for (name, verdict) in &decisions {
+                        println!("{:<8}\t{name}", format!("{verdict:?}").to_lowercase());
+                    }
+                    if *dry_run {
+                        println!("(dry run — no archive writes)");
+                    }
+                }
+            }
+        }
         SkillCommand::Remove { name } => {
             let skill = find_skill(project_root, name)?
                 .with_context(|| format!("skill not found: {name}"))?;
