@@ -717,17 +717,20 @@ fn default_primary_auth() -> String {
 }
 
 /// Model routing configuration.
+///
+/// Only `main` is operator-configurable. The goal-checker and compaction
+/// roles deliberately track `main` 1:1 so a single `models.main = "..."`
+/// switch reroutes every internal call site — no chance of a forgotten
+/// `models.goal_checker` quietly hitting an unrelated model after the
+/// operator thought they migrated. Accessors are exposed via
+/// [`ModelsConfig::goal_checker`] / [`ModelsConfig::compaction`] which
+/// always return `main`.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ModelsConfig {
-    /// Main agent model.
+    /// Main agent model. Also the implicit goal-checker and compaction
+    /// model (see struct docs).
     #[serde(default = "default_main_model")]
     pub main: String,
-    /// Goal checker model.
-    #[serde(default = "default_goal_checker_model")]
-    pub goal_checker: String,
-    /// Compaction model.
-    #[serde(default = "default_goal_checker_model")]
-    pub compaction: String,
     /// Reasoning intensity applied to every request the main agent sends.
     /// Cheap chat models ignore this; o-series / gpt-5 / Anthropic extended
     /// thinking models translate it to their native reasoning controls.
@@ -737,12 +740,22 @@ pub struct ModelsConfig {
     pub reasoning_effort: ReasoningEffort,
 }
 
+impl ModelsConfig {
+    /// Model used by the goal-checker / grader role. Always tracks `main`.
+    pub fn goal_checker(&self) -> &str {
+        &self.main
+    }
+
+    /// Model used by the context compaction step. Always tracks `main`.
+    pub fn compaction(&self) -> &str {
+        &self.main
+    }
+}
+
 impl Default for ModelsConfig {
     fn default() -> Self {
         Self {
             main: default_main_model(),
-            goal_checker: default_goal_checker_model(),
-            compaction: default_goal_checker_model(),
             reasoning_effort: ReasoningEffort::default(),
         }
     }
@@ -750,10 +763,6 @@ impl Default for ModelsConfig {
 
 fn default_main_model() -> String {
     "claude-sonnet-4-6".to_string()
-}
-
-fn default_goal_checker_model() -> String {
-    "claude-haiku-4-5".to_string()
 }
 
 /// Runtime default configuration.

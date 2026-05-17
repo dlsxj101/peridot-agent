@@ -487,7 +487,7 @@ where
             AgentRunRequest {
                 task: options.task.clone(),
                 model: options.model.clone(),
-                goal_checker_model: Some(options.config.models.goal_checker.clone()),
+                goal_checker_model: Some(options.config.models.goal_checker().to_string()),
                 max_turns: options.max_turns,
                 max_tokens: 4096,
                 reasoning_effort: options.config.models.reasoning_effort,

@@ -250,19 +250,30 @@ pub(crate) fn run_config_command(
 }
 
 fn print_model_catalog(config: &PeridotConfig, output: OutputFormat) -> Result<()> {
+    // goal_checker and compaction always mirror `main` — show them as
+    // derived (auto) so operators can see what each role will dispatch
+    // to without thinking they are separately tunable.
     match output {
         OutputFormat::Json => {
             println!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
                     "main": config.models.main,
-                    "goal_checker": config.models.goal_checker,
+                    "goal_checker": config.models.goal_checker(),
+                    "compaction": config.models.compaction(),
                 }))?
             );
         }
         OutputFormat::Text => {
             println!("main:         {}", config.models.main);
-            println!("goal_checker: {}", config.models.goal_checker);
+            println!(
+                "goal_checker: {} (auto, follows main)",
+                config.models.goal_checker()
+            );
+            println!(
+                "compaction:   {} (auto, follows main)",
+                config.models.compaction()
+            );
         }
     }
     Ok(())
@@ -487,12 +498,10 @@ fn run_config_wizard(result: &ConfigInitResult) -> Result<()> {
                 ],
                 "openai/gpt-4o-mini",
             )?;
-            let goal_checker = prompt_goal_checker_model(&model)?;
             ConfigWizardProfile {
                 auth_primary: "openrouter-api".to_string(),
                 api_base_url: "https://openrouter.ai/api".to_string(),
                 main_model: model,
-                goal_checker_model: goal_checker,
             }
         }
         2 => {
@@ -501,12 +510,10 @@ fn run_config_wizard(result: &ConfigInitResult) -> Result<()> {
                 &["gpt-5.5", "gpt-5.4", "gpt-5.4-mini"],
                 "gpt-5.5",
             )?;
-            let goal_checker = prompt_goal_checker_model(&model)?;
             ConfigWizardProfile {
                 auth_primary: "codex".to_string(),
                 api_base_url: PeridotConfig::default().api.base_url,
                 main_model: model,
-                goal_checker_model: goal_checker,
             }
         }
         3 => {
@@ -515,23 +522,19 @@ fn run_config_wizard(result: &ConfigInitResult) -> Result<()> {
                 &["claude-sonnet-4-6", "claude-haiku-4-5"],
                 "claude-sonnet-4-6",
             )?;
-            let goal_checker = prompt_goal_checker_model(&model)?;
             ConfigWizardProfile {
                 auth_primary: "claude-api".to_string(),
                 api_base_url: "https://api.anthropic.com".to_string(),
                 main_model: model,
-                goal_checker_model: goal_checker,
             }
         }
         4 => {
             let model =
                 prompt_model_choice("OpenAI main model", &["gpt-5.2", "gpt-4o-mini"], "gpt-5.2")?;
-            let goal_checker = prompt_goal_checker_model(&model)?;
             ConfigWizardProfile {
                 auth_primary: "openai-api".to_string(),
                 api_base_url: "https://api.openai.com".to_string(),
                 main_model: model,
-                goal_checker_model: goal_checker,
             }
         }
         _ => unreachable!("prompt_choice only returns listed choices"),
@@ -548,16 +551,15 @@ pub(super) struct ConfigWizardProfile {
     pub(super) auth_primary: String,
     pub(super) api_base_url: String,
     pub(super) main_model: String,
-    pub(super) goal_checker_model: String,
 }
 
 pub(super) fn config_from_wizard_profile(profile: ConfigWizardProfile) -> PeridotConfig {
     let mut config = PeridotConfig::default();
     config.auth.primary = profile.auth_primary;
     config.api.base_url = profile.api_base_url;
+    // `main` is the single model knob — goal_checker and compaction both
+    // read from it via `ModelsConfig::goal_checker()` / `::compaction()`.
     config.models.main = profile.main_model;
-    config.models.goal_checker = profile.goal_checker_model.clone();
-    config.models.compaction = profile.goal_checker_model;
     config
 }
 
@@ -576,8 +578,16 @@ pub(super) fn set_config_key(config: &mut PeridotConfig, key: &str, value: &str)
                 .with_context(|| "api.max_retries must be an integer")?;
         }
         "models.main" => config.models.main = value.to_string(),
-        "models.goal_checker" => config.models.goal_checker = value.to_string(),
-        "models.compaction" => config.models.compaction = value.to_string(),
+        "models.goal_checker" | "models.compaction" => {
+            // These roles deliberately track `models.main` so a single
+            // switch reroutes every internal call. Refuse the write so
+            // operators don't think they configured it independently
+            // when in fact the value will be ignored at read time.
+            anyhow::bail!(
+                "`{key}` is not separately configurable — it always follows `models.main`. \
+                 Set `models.main = \"{value}\"` instead."
+            );
+        }
         "defaults.mode" => config.defaults.mode = parse_env_mode("defaults.mode", value)?,
         "defaults.permission" => {
             config.defaults.permission = parse_env_permission("defaults.permission", value)?;
@@ -603,7 +613,7 @@ pub(super) fn set_config_key(config: &mut PeridotConfig, key: &str, value: &str)
             config.updates.auto_install = parse_bool_value("updates.auto_install", value)?;
         }
         _ => anyhow::bail!(
-            "unsupported config key `{key}`; supported examples: auth.primary, api.base_url, models.main, models.goal_checker, defaults.mode"
+            "unsupported config key `{key}`; supported examples: auth.primary, api.base_url, models.main, defaults.mode"
         ),
     }
     Ok(())
@@ -660,13 +670,6 @@ fn prompt_model_choice(label: &str, options: &[&str], default: &str) -> Result<S
     } else {
         Ok(choices[choice - 1].to_string())
     }
-}
-
-fn prompt_goal_checker_model(main_model: &str) -> Result<String> {
-    if prompt_yes_no("Use the same model for goal checking?", true)? {
-        return Ok(main_model.to_string());
-    }
-    prompt_text("Goal checker model id", main_model)
 }
 
 fn prompt_choice(label: &str, options: &[&str], default: usize) -> Result<usize> {

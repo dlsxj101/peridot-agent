@@ -7,12 +7,14 @@
 //! "is the change actually good?" gate that the deterministic checks
 //! cannot answer on their own.
 //!
-//! Callers supply the provider + model — typically the same model the
-//! main loop is using, or a smaller / cheaper one when the operator
-//! configures `models.goal_checker`. The grader is intentionally a
-//! plain async function rather than a tool so it never enters the
-//! agent's tool catalog (we don't want the model triggering its own
-//! grading via tool_call).
+//! Callers supply the provider + model. The grader pulls its model from
+//! `ModelsConfig::goal_checker()`, which always mirrors `models.main` —
+//! there is intentionally no separate `models.goal_checker` knob so a
+//! single switch reroutes both the main loop and the grader together
+//! (avoids the failure mode where one is updated and the other is
+//! quietly left on a stale model). The grader is a plain async function
+//! rather than a tool so it never enters the agent's tool catalog (we
+//! don't want the model triggering its own grading via tool_call).
 
 use peridot_common::{PeriError, PeriResult, ReasoningEffort};
 use peridot_llm::{CompletionRequest, LlmMessage, LlmProvider, MessageRole, ToolChoice, Usage};

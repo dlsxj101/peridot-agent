@@ -103,7 +103,8 @@ Or update individual settings without opening an editor:
 cargo run -p peridot-cli -- config set auth.primary openrouter-api
 cargo run -p peridot-cli -- config set api.base_url https://openrouter.ai/api
 cargo run -p peridot-cli -- config set models.main openai/gpt-4o-mini
-cargo run -p peridot-cli -- config set models.goal_checker openai/gpt-4o-mini
+# `models.goal_checker` and `models.compaction` are not separately
+# configurable — they always follow `models.main`.
 ```
 
 The resulting config uses the same values as:

@@ -55,7 +55,7 @@ Switchable per session via `/committee <mode>` slash (and by `[committee] mode =
 
 | Concern | Today | After |
 |---|---|---|
-| Active models | `models.main`, `models.goal_checker` | + `models.planner`, `models.reviewer`, `models.executor` (each defaults to `models.main`) |
+| Active models | `models.main` (goal_checker / compaction always mirror it) | + `models.planner`, `models.reviewer`, `models.executor` (each defaults to `models.main`) |
 | AgentRole | implicit "executor" | explicit `AgentRole::{Planner, Reviewer, Executor}` |
 | AgentRunEvent | 19 variants | + `PlannerPlanReady`, `ReviewerVerdict`, `ExecutorAction` |
 | TUI side panel | mascot · plan · subagents · budget · MCP | + committee status (which role just ran, verdict count) |

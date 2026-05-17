@@ -116,14 +116,25 @@ fn wizard_profile_writes_openrouter_config() {
         auth_primary: "openrouter-api".to_string(),
         api_base_url: "https://openrouter.ai/api".to_string(),
         main_model: "openai/gpt-4o-mini".to_string(),
-        goal_checker_model: "openai/gpt-4o-mini".to_string(),
     });
 
     assert_eq!(config.auth.primary, "openrouter-api");
     assert_eq!(config.api.base_url, "https://openrouter.ai/api");
     assert_eq!(config.models.main, "openai/gpt-4o-mini");
-    assert_eq!(config.models.goal_checker, "openai/gpt-4o-mini");
-    assert_eq!(config.models.compaction, "openai/gpt-4o-mini");
+    // goal_checker and compaction always mirror `main` — no separate field.
+    assert_eq!(config.models.goal_checker(), "openai/gpt-4o-mini");
+    assert_eq!(config.models.compaction(), "openai/gpt-4o-mini");
+}
+
+#[test]
+fn config_set_rejects_separate_goal_checker_or_compaction() {
+    let mut config = PeridotConfig::default();
+    let err = set_config_key(&mut config, "models.goal_checker", "openai/gpt-4o-mini")
+        .expect_err("goal_checker must not be settable independently");
+    assert!(err.to_string().contains("follows `models.main`"));
+    let err = set_config_key(&mut config, "models.compaction", "openai/gpt-4o-mini")
+        .expect_err("compaction must not be settable independently");
+    assert!(err.to_string().contains("follows `models.main`"));
 }
 
 #[test]
