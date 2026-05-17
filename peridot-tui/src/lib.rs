@@ -33,6 +33,7 @@ use serde::{Deserialize, Serialize};
 mod ask_user;
 mod at_picker;
 mod diff_hunks;
+mod settings_screen;
 #[cfg(test)]
 mod fixtures;
 mod i18n;
@@ -57,6 +58,9 @@ pub use session_directory::{
 pub use slash_picker::{SlashCommandSpec, filtered_specs, first_match, slash_command_catalog};
 
 pub use ask_user::{ApprovalDecision, ApprovalPanel, ApprovalScope, AskUserPanel, MenuState};
+pub use settings_screen::{
+    SettingItem, SettingValue, SettingsOutcome, run_settings_screen,
+};
 pub use input::{handle_key_event, run_interactive, run_interactive_with_events};
 use render::goal_status_label;
 pub use render::{draw, render_text_snapshot, select_layout};

@@ -12,8 +12,9 @@ use commands::{
     SessionCommand, SkillCommand, load_effective_config, maybe_print_update_notice,
     maybe_run_first_launch_wizard, print_scan, read_stored_api_key,
     read_stored_openai_oauth_access_token, run_agents_command, run_config_command, run_env_command,
-    run_login_command, run_logout_command, run_mcp_command, run_session_command, run_setup_command,
-    run_skill_command, run_update_command, run_verify_command,
+    run_login_command, run_logout_command, run_mcp_command, run_session_command,
+    run_setting_command, run_setup_command, run_skill_command, run_update_command,
+    run_verify_command,
 };
 use peridot_common::{
     ContextConfig, ExecutionMode, MemoryConfig, PeriError, PeriResult, PeridotConfig,
@@ -164,6 +165,13 @@ enum Command {
         #[command(subcommand)]
         command: ConfigCommand,
     },
+    /// Open the interactive settings screen.
+    ///
+    /// Lists every toggleable / cycleable option in a single TUI
+    /// screen. Saves to `.peridot/config.toml` on `s`, discards on
+    /// `q` / `Esc`. Use this instead of editing the config file by
+    /// hand.
+    Setting,
     /// Session persistence commands.
     Session {
         /// Session subcommand.
@@ -308,6 +316,10 @@ async fn main() -> Result<()> {
         }
         Some(Command::Config { command }) => {
             run_config_command(command, &config, &project_root, cli.output)?;
+            return Ok(());
+        }
+        Some(Command::Setting) => {
+            run_setting_command(&project_root, cli.output)?;
             return Ok(());
         }
         Some(Command::Session { command }) => {

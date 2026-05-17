@@ -32,6 +32,7 @@ mod mcp;
 mod output;
 mod project;
 mod session;
+mod settings;
 mod setup;
 mod skills;
 #[cfg(test)]
@@ -52,6 +53,7 @@ pub(crate) use mcp::run_mcp_command;
 use output::print_json_or_text_result;
 pub(crate) use project::print_scan;
 pub(crate) use session::run_session_command;
+pub(crate) use settings::run_setting_command;
 pub(crate) use setup::run_setup_command;
 pub(crate) use skills::run_skill_command;
 pub(crate) use update::{maybe_print_update_notice, run_update_command};
