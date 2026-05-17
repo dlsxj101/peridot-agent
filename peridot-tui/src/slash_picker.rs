@@ -201,6 +201,12 @@ pub fn slash_command_catalog() -> &'static [SlashCommandSpec] {
             category: "mcp",
         },
         SlashCommandSpec {
+            name: "/todos",
+            description: "list every TODO / FIXME / HACK / XXX / BUG comment in the project",
+            arg_hint: None,
+            category: "plan",
+        },
+        SlashCommandSpec {
             name: "/session new",
             description: "open a new session, optionally with an initial task",
             arg_hint: Some("[task]"),

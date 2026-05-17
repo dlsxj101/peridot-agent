@@ -76,7 +76,8 @@ impl AgentState {
             | SlashCommand::McpList
             | SlashCommand::McpAdd { .. }
             | SlashCommand::McpRemove(_)
-            | SlashCommand::McpTest(_) => {}
+            | SlashCommand::McpTest(_)
+            | SlashCommand::Todos => {}
         }
     }
 }

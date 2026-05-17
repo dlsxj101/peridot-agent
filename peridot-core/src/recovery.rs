@@ -107,10 +107,40 @@ fn recovery_hook_variables(root: &Path, recovery_type: &str, message: &str) -> H
 }
 
 pub(crate) fn recovery_message(error: &PeriError) -> String {
-    format!(
-        "Recovery directive: previous turn failed with {}: {error}. Preserve this error in context, avoid repeating the same action, and choose a concrete recovery strategy.",
-        classify_error(error)
-    )
+    let classification = classify_error(error);
+    // Verification failures get a stronger, narrower directive — the model
+    // tends to drift back to feature work after a single nudge, but
+    // failing tests need an explicit "fix this first" anchor. Other
+    // failure classes rotate through a small bank of phrasings so the
+    // model doesn't memorise one wording and overfit on subsequent
+    // recovery turns ("Structured Variation" from spec section 7.3).
+    if classification == "verification" {
+        return format!(
+            "Verification failed ({classification}): {error}. STOP all new work. Read the failing output above, find the smallest change that restores the failing check, and re-run the same verify tool to confirm. Do not add new features until the verifier passes."
+        );
+    }
+    let templates: [&str; 5] = [
+        "Recovery directive: previous turn failed with {kind}: {error}. Preserve this error in context, avoid repeating the same action, and choose a concrete recovery strategy.",
+        "Turn failed ({kind}: {error}). The same approach will not work twice. Read the prior failure, switch tactics, and explain the new strategy before re-attempting the tool.",
+        "Last attempt errored as {kind}: {error}. Do not repeat the call. Identify the root cause (typo, wrong path, missing arg) and address that before invoking any tool again.",
+        "Recovery: {kind} error ({error}) on the previous turn. The conversation history already shows this failure. Branch to a different tool, narrower argument, or a clarifying read before another write.",
+        "Caught {kind} failure: {error}. Treat the previous tool call as discarded. Restate your current goal in one sentence, then pick a new tool call that targets that goal differently.",
+    ];
+    let pick = recovery_template_index(error) % templates.len();
+    templates[pick]
+        .replace("{kind}", classification)
+        .replace("{error}", &error.to_string())
+}
+
+/// Deterministically picks a recovery-message template index from the
+/// error's text hash so identical failures keep the same phrasing within a
+/// run (stuck-detector signatures stay stable) while different failures
+/// rotate through different wordings.
+fn recovery_template_index(error: &PeriError) -> usize {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    error.to_string().hash(&mut hasher);
+    hasher.finish() as usize
 }
 
 pub(crate) fn format_reminder_message() -> String {

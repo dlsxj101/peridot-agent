@@ -733,6 +733,9 @@ pub enum SessionCommandEvent {
     /// `/mcp test <name>` — run a one-shot connect-and-list-tools probe
     /// against the named server, reporting tool count or failure.
     McpTest(String),
+    /// `/todos` — walk the project for TODO / FIXME / HACK / XXX / BUG
+    /// markers and dump the hit list (path:line: text) to the transcript.
+    ScanTodos,
 }
 
 /// Result produced when an interactive TUI session exits.

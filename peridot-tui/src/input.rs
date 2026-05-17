@@ -853,6 +853,10 @@ pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
             state.push_transcript(format!("mcp: testing '{name}'…"));
             state.push_pending_session_command(SessionCommandEvent::McpTest(name));
         }
+        SlashCommand::Todos => {
+            state.push_transcript("todos: scanning project…");
+            state.push_pending_session_command(SessionCommandEvent::ScanTodos);
+        }
     }
 }
 

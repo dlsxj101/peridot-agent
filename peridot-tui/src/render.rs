@@ -38,7 +38,18 @@ pub(super) fn render_status_metrics(state: &TuiState) -> String {
         parts.push(format!("{} tok", state.header.total_tokens));
     }
     if state.config.show_cost {
-        parts.push(format!("${:.4}", state.header.cost_usd));
+        // Avg-per-turn projection: when the run has accumulated at least
+        // one turn we surface `$total ($avg/turn)` so the operator can
+        // forecast the rest of a multi-turn task without doing the math
+        // themselves. Single-turn snapshots keep the original compact
+        // shape because the projection equals the total.
+        let total_turns = state.current_turn;
+        if total_turns > 1 && state.header.cost_usd > 0.0 {
+            let avg = state.header.cost_usd / total_turns as f64;
+            parts.push(format!("${:.4} (${avg:.4}/turn)", state.header.cost_usd));
+        } else {
+            parts.push(format!("${:.4}", state.header.cost_usd));
+        }
     }
     if state.config.show_cache_rate {
         parts.push(format!("cache {:.0}%", state.header.cache_hit_rate * 100.0));

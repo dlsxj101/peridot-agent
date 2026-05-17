@@ -100,6 +100,9 @@ pub enum SlashCommand {
     /// Spawn a one-shot connectivity test against the named MCP server,
     /// reporting tool count / failure in the transcript.
     McpTest(String),
+    /// Scan the project for TODO / FIXME / HACK / XXX / BUG comments and
+    /// list every hit in the transcript. Ad-hoc — no persistent index.
+    Todos,
 }
 
 /// Payload for `/subagent model <name|reset>`. Wrapped in a dedicated enum so
@@ -211,6 +214,7 @@ pub fn parse_slash_command(input: &str) -> Option<SlashCommand> {
             "off" | "stop" | "less" => Some(SlashCommand::Reasoning(ReasoningEffort::Off)),
             other => ReasoningEffort::parse(other).map(SlashCommand::Reasoning),
         },
+        "todos" if rest.is_empty() => Some(SlashCommand::Todos),
         "mcp" => match rest {
             "list" => Some(SlashCommand::McpList),
             "" => None,
