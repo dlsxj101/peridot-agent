@@ -1,10 +1,8 @@
-# Peridot local state
-.peridot/memory.db
-.peridot/mem/
-.peridot/sessions/
-.peridot/skills/auto/
-.peridot/logs/
-.peridot/auth/
+# Peridot local state (per-machine hooks/skills/config/sessions/memory).
+# Default hooks and skill templates that should ship with the binary are
+# tracked under `templates/peridot-init/` instead — the agent copies them
+# into a user's `.peridot/` on first run.
+.peridot/
 
 # Rust build output
 target/
