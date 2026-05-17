@@ -301,13 +301,21 @@ impl HarnessAgent {
         // appended below shares one id, enabling later `/branch turn`
         // forks at this exact point.
         self.context.bump_turn_id();
+        // Plan reminder is co-injected with a real user turn only.
+        // Re-injecting on every internal multi-step iteration (after a
+        // tool result, etc.) inflates the context by `todo.md`-sized
+        // chunks each step — the operator saw 956 tokens for a one-word
+        // "hi" because the same plan reminder was appended twice in a
+        // two-step run. The model already sees the reminder once via
+        // the previous turn's context, so a single injection per real
+        // user prompt is sufficient.
         if let Some(user_input) = request.user_input {
             self.context
                 .append(ContextEntry::trusted(ContextSource::User, user_input));
-        }
-        if let Some(plan) = read_plan_reminder(&request.project_root) {
-            self.context
-                .append(ContextEntry::trusted(ContextSource::PlanReminder, plan));
+            if let Some(plan) = read_plan_reminder(&request.project_root) {
+                self.context
+                    .append(ContextEntry::trusted(ContextSource::PlanReminder, plan));
+            }
         }
         let estimated_tokens = self.context.estimated_tokens();
         // Tier 3 first: ask the model to produce a structured recap.
