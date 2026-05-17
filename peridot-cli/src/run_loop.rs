@@ -329,6 +329,17 @@ where
     if task_chars < config.committee.min_task_chars {
         return Ok(());
     }
+    // LLM complexity gate (opt-in): when on, classify the task with a
+    // small model call and skip preflight unless it's complex or
+    // architectural. On classifier failure the helper returns Complex
+    // so the planner still fires — a missed planner is worse than an
+    // extra one.
+    if config.committee.use_llm_complexity_gate {
+        let verdict = peridot_core::classify_task_complexity(provider, &options.model, task).await?;
+        if !verdict.warrants_planner() {
+            return Ok(());
+        }
+    }
     let planner_model = if config.committee.planner_model.is_empty() {
         options.model.clone()
     } else {

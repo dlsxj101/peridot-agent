@@ -199,6 +199,16 @@ pub(crate) fn settings_registry(config: &PeridotConfig) -> Vec<SettingItem> {
             step: 1,
         },
     });
+    items.push(SettingItem {
+        id: "committee.use_llm_complexity_gate".into(),
+        group: "Committee".into(),
+        label: "Let the model decide task complexity".into(),
+        help: Some(
+            "Run a small LLM classifier before the planner. Skips planning for chat / simple tasks, fires for complex / architectural."
+                .into(),
+        ),
+        value: SettingValue::Bool(config.committee.use_llm_complexity_gate),
+    });
 
     // === Models ===
     items.push(SettingItem {
@@ -382,6 +392,9 @@ fn apply_one(item: &SettingItem, config: &mut PeridotConfig) {
         }
         ("committee.max_review_passes", SettingValue::U32 { value, .. }) => {
             config.committee.max_review_passes = *value;
+        }
+        ("committee.use_llm_complexity_gate", SettingValue::Bool(v)) => {
+            config.committee.use_llm_complexity_gate = *v;
         }
         ("models.reasoning_effort", SettingValue::Choice { options, selected }) => {
             if let Some(label) = options.get(*selected) {

@@ -437,6 +437,14 @@ pub struct CommitteeConfig {
     /// keeps the legacy always-on behaviour.
     #[serde(default)]
     pub min_task_chars: usize,
+    /// When `true`, the harness runs a cheap LLM classifier before the
+    /// planner preflight and skips planning unless the task is judged
+    /// `complex` or `architectural`. Replaces the brittle char-count
+    /// heuristic with a model verdict. Off by default to avoid the
+    /// extra round trip; turn on when the operator wants the planner
+    /// to fire selectively without manual tuning.
+    #[serde(default)]
+    pub use_llm_complexity_gate: bool,
 }
 
 impl Default for CommitteeConfig {
@@ -448,6 +456,7 @@ impl Default for CommitteeConfig {
             executor_model: String::new(),
             max_review_passes: default_max_review_passes(),
             min_task_chars: 0,
+            use_llm_complexity_gate: false,
         }
     }
 }
