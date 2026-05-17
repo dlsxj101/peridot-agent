@@ -958,8 +958,8 @@ fn validate_branch_name(name: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Copies the live session's `context.json` snapshot into
-/// `.peridot/branches/<name>/context.json` so it can be restored later.
+/// Copies the live session's `context.bin` snapshot into
+/// `.peridot/branches/<name>/context.bin` so it can be restored later.
 /// Refuses to overwrite an existing branch — operators must remove the
 /// old one explicitly to avoid clobbering work.
 fn handle_branch_save(state: &mut TuiState, project_root: &Path, name: &str) {
@@ -975,10 +975,10 @@ fn handle_branch_save(state: &mut TuiState, project_root: &Path, name: &str) {
     let src = project_root
         .join(".peridot/sessions")
         .join(&session_id)
-        .join("context.json");
+        .join("context.bin");
     if !src.exists() {
         state.push_error(format!(
-            "branch save: no context.json yet for session {session_id} — submit at least one turn first"
+            "branch save: no context.bin yet for session {session_id} — submit at least one turn first"
         ));
         return;
     }
@@ -996,7 +996,7 @@ fn handle_branch_save(state: &mut TuiState, project_root: &Path, name: &str) {
         ));
         return;
     }
-    let dst = dst_dir.join("context.json");
+    let dst = dst_dir.join("context.bin");
     if let Err(err) = std::fs::copy(&src, &dst) {
         state.push_error(format!("branch save: copy: {err}"));
         return;
@@ -1025,7 +1025,7 @@ fn handle_branch_restore(state: &mut TuiState, project_root: &Path, name: &str) 
     let src = project_root
         .join(".peridot/branches")
         .join(name)
-        .join("context.json");
+        .join("context.bin");
     if !src.exists() {
         state.push_error(format!("branch restore: no branch named '{name}'"));
         return;
@@ -1038,7 +1038,7 @@ fn handle_branch_restore(state: &mut TuiState, project_root: &Path, name: &str) 
         ));
         return;
     }
-    let dst = session_dir.join("context.json");
+    let dst = session_dir.join("context.bin");
     if let Err(err) = std::fs::copy(&src, &dst) {
         state.push_error(format!("branch restore: copy: {err}"));
         return;

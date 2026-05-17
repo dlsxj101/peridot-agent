@@ -897,6 +897,19 @@ fn apply_rewind(state: &mut TuiState) {
         state.push_error("rewind: refusing while agent is running");
         return;
     }
+    // `submit_input` pushes the slash command itself as a User entry
+    // before invoking the handler so the operator sees their own
+    // command land in the transcript. For `/rewind` that's a problem —
+    // rposition would land on "/rewind" instead of the prior real
+    // message. Pop it so the search targets the actual exchange we
+    // want to roll back.
+    if state
+        .transcript
+        .last()
+        .is_some_and(|e| e.kind == TranscriptKind::User && e.text.trim() == "/rewind")
+    {
+        state.transcript.pop();
+    }
     let Some(user_idx) = state
         .transcript
         .iter()
