@@ -43,6 +43,7 @@ use peridot_tui::{
 
 mod commands;
 mod context_limits;
+mod curator;
 mod interactive_io;
 mod providers;
 mod run_loop;
