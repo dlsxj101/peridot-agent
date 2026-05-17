@@ -207,6 +207,30 @@ pub fn slash_command_catalog() -> &'static [SlashCommandSpec] {
             category: "plan",
         },
         SlashCommandSpec {
+            name: "/rewind",
+            description: "pop the last user-agent exchange and restore the prompt to the input box",
+            arg_hint: None,
+            category: "session",
+        },
+        SlashCommandSpec {
+            name: "/branch save",
+            description: "snapshot the current session context under a name for later restore",
+            arg_hint: Some("<name>"),
+            category: "session",
+        },
+        SlashCommandSpec {
+            name: "/branch restore",
+            description: "restore a named branch snapshot into the current session (agent must be idle)",
+            arg_hint: Some("<name>"),
+            category: "session",
+        },
+        SlashCommandSpec {
+            name: "/branch list",
+            description: "list every saved branch snapshot",
+            arg_hint: None,
+            category: "session",
+        },
+        SlashCommandSpec {
             name: "/session new",
             description: "open a new session, optionally with an initial task",
             arg_hint: Some("[task]"),

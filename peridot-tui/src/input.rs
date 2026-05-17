@@ -857,7 +857,56 @@ pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
             state.push_transcript("todos: scanning project…");
             state.push_pending_session_command(SessionCommandEvent::ScanTodos);
         }
+        SlashCommand::Rewind => apply_rewind(state),
+        SlashCommand::BranchSave(name) => {
+            state.push_transcript(format!("branch: saving '{name}'…"));
+            state.push_pending_session_command(SessionCommandEvent::BranchSave(name));
+        }
+        SlashCommand::BranchRestore(name) => {
+            if state.is_agent_busy() {
+                state.push_error("branch restore: refusing while agent is running — wait for the task to finish or interrupt it first");
+            } else {
+                state.push_transcript(format!("branch: restoring '{name}'…"));
+                state.push_pending_session_command(SessionCommandEvent::BranchRestore(name));
+            }
+        }
+        SlashCommand::BranchList => {
+            state.push_transcript("branch: listing snapshots…");
+            state.push_pending_session_command(SessionCommandEvent::BranchList);
+        }
     }
+}
+
+/// Pops the visible transcript back to (but not including) the operator's
+/// last `User` entry and reloads that prompt into the input buffer for
+/// editing. Context (what the model sees on the next turn) is NOT
+/// rolled back — true semantic rewind needs per-turn context boundaries
+/// that we don't track yet; a notice in the transcript states this so
+/// the operator isn't surprised when the model still remembers the
+/// "rewound" turn on its next reply.
+fn apply_rewind(state: &mut TuiState) {
+    if state.is_agent_busy() {
+        state.push_error("rewind: refusing while agent is running");
+        return;
+    }
+    let Some(user_idx) = state
+        .transcript
+        .iter()
+        .rposition(|entry| entry.kind == TranscriptKind::User)
+    else {
+        state.push_error("rewind: no user message to roll back to");
+        return;
+    };
+    let prior_text = state.transcript[user_idx].text.clone();
+    state.transcript.truncate(user_idx);
+    state.input = prior_text;
+    state.input_cursor = state.input.chars().count();
+    state.input_history_cursor = None;
+    state.refresh_at_picker();
+    state.push_transcript_entry(
+        TranscriptKind::Notice,
+        "rewind: restored the last prompt to the input box. Context is not rolled back — the model still remembers the rewound turn on its next reply.",
+    );
 }
 
 pub(super) fn record_mode_switch(state: &mut TuiState, to: ExecutionMode) {

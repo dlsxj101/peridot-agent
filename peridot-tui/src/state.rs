@@ -736,6 +736,16 @@ pub enum SessionCommandEvent {
     /// `/todos` — walk the project for TODO / FIXME / HACK / XXX / BUG
     /// markers and dump the hit list (path:line: text) to the transcript.
     ScanTodos,
+    /// `/branch save <name>` — copy the active session's context
+    /// snapshot under `.peridot/branches/<name>/` for later restore.
+    BranchSave(String),
+    /// `/branch restore <name>` — overwrite the working context snapshot
+    /// with the named branch. Caller is expected to refuse the operation
+    /// when the agent is currently running.
+    BranchRestore(String),
+    /// `/branch list` — list every named branch saved under
+    /// `.peridot/branches/` with its creation time.
+    BranchList,
 }
 
 /// Result produced when an interactive TUI session exits.

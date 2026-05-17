@@ -103,6 +103,21 @@ pub enum SlashCommand {
     /// Scan the project for TODO / FIXME / HACK / XXX / BUG comments and
     /// list every hit in the transcript. Ad-hoc — no persistent index.
     Todos,
+    /// Pop the last user-agent exchange off the visible transcript and
+    /// reload the user's previous prompt into the input buffer so the
+    /// operator can edit and re-submit. Context is NOT rolled back — the
+    /// model still sees the prior turns on the next call. A pragmatic
+    /// "let me try that again" gesture, not a semantic rewind.
+    Rewind,
+    /// Save the current session context snapshot under `name` so it can
+    /// be restored later via `/branch restore <name>`. Snapshots live
+    /// under `.peridot/branches/<name>/`.
+    BranchSave(String),
+    /// Restore a previously-saved branch by name. Only valid when the
+    /// agent is idle — overwrites the working context snapshot.
+    BranchRestore(String),
+    /// List every named branch saved under `.peridot/branches/`.
+    BranchList,
 }
 
 /// Payload for `/subagent model <name|reset>`. Wrapped in a dedicated enum so
@@ -215,6 +230,27 @@ pub fn parse_slash_command(input: &str) -> Option<SlashCommand> {
             other => ReasoningEffort::parse(other).map(SlashCommand::Reasoning),
         },
         "todos" if rest.is_empty() => Some(SlashCommand::Todos),
+        "rewind" if rest.is_empty() => Some(SlashCommand::Rewind),
+        "branch" => match rest {
+            "list" => Some(SlashCommand::BranchList),
+            other if other.starts_with("save ") => {
+                let name = other.strip_prefix("save ").unwrap_or("").trim();
+                if name.is_empty() {
+                    None
+                } else {
+                    Some(SlashCommand::BranchSave(name.to_string()))
+                }
+            }
+            other if other.starts_with("restore ") => {
+                let name = other.strip_prefix("restore ").unwrap_or("").trim();
+                if name.is_empty() {
+                    None
+                } else {
+                    Some(SlashCommand::BranchRestore(name.to_string()))
+                }
+            }
+            _ => None,
+        },
         "mcp" => match rest {
             "list" => Some(SlashCommand::McpList),
             "" => None,

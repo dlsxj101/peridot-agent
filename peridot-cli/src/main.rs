@@ -927,8 +927,162 @@ fn apply_session_command(
         SessionCommandEvent::ScanTodos => {
             handle_scan_todos(state, project_template);
         }
+        SessionCommandEvent::BranchSave(name) => {
+            handle_branch_save(state, project_template, &name);
+        }
+        SessionCommandEvent::BranchRestore(name) => {
+            handle_branch_restore(state, project_template, &name);
+        }
+        SessionCommandEvent::BranchList => {
+            handle_branch_list(state, project_template);
+        }
     }
     warn_on_shared_workspace_collisions(state, router, project_template);
+}
+
+/// Validates a branch name — bare-word identifiers only so a malicious
+/// or fat-fingered `/branch save ../../etc/passwd` doesn't escape the
+/// `.peridot/branches/` directory.
+fn validate_branch_name(name: &str) -> Result<(), String> {
+    if name.is_empty() {
+        return Err("branch name must not be empty".to_string());
+    }
+    if name
+        .chars()
+        .any(|c| matches!(c, '/' | '\\' | '.' | ':' | ' '))
+    {
+        return Err(format!(
+            "branch name '{name}' contains forbidden character (only ASCII letters / digits / `-` / `_` allowed)"
+        ));
+    }
+    Ok(())
+}
+
+/// Copies the live session's `context.json` snapshot into
+/// `.peridot/branches/<name>/context.json` so it can be restored later.
+/// Refuses to overwrite an existing branch — operators must remove the
+/// old one explicitly to avoid clobbering work.
+fn handle_branch_save(state: &mut TuiState, project_root: &Path, name: &str) {
+    if let Err(err) = validate_branch_name(name) {
+        state.push_error(format!("branch save: {err}"));
+        return;
+    }
+    let session_id = state.current_session_id.clone();
+    if session_id.is_empty() {
+        state.push_error("branch save: no active session id".to_string());
+        return;
+    }
+    let src = project_root
+        .join(".peridot/sessions")
+        .join(&session_id)
+        .join("context.json");
+    if !src.exists() {
+        state.push_error(format!(
+            "branch save: no context.json yet for session {session_id} — submit at least one turn first"
+        ));
+        return;
+    }
+    let dst_dir = project_root.join(".peridot/branches").join(name);
+    if dst_dir.exists() {
+        state.push_error(format!(
+            "branch save: '{name}' already exists — remove it manually first"
+        ));
+        return;
+    }
+    if let Err(err) = std::fs::create_dir_all(&dst_dir) {
+        state.push_error(format!(
+            "branch save: create {}: {err}",
+            dst_dir.display()
+        ));
+        return;
+    }
+    let dst = dst_dir.join("context.json");
+    if let Err(err) = std::fs::copy(&src, &dst) {
+        state.push_error(format!("branch save: copy: {err}"));
+        return;
+    }
+    state.push_transcript(format!(
+        "branch: saved '{name}' from session {session_id}"
+    ));
+}
+
+/// Overwrites the active session's context snapshot with the named
+/// branch's context. The TUI checks `is_agent_busy()` before
+/// enqueueing, but we re-validate here so a racy command can't slip
+/// past — the agent might still be inside `Finished` cleanup when the
+/// queue drains, in which case the rename would race with the loop's
+/// own snapshot write.
+fn handle_branch_restore(state: &mut TuiState, project_root: &Path, name: &str) {
+    if let Err(err) = validate_branch_name(name) {
+        state.push_error(format!("branch restore: {err}"));
+        return;
+    }
+    let session_id = state.current_session_id.clone();
+    if session_id.is_empty() {
+        state.push_error("branch restore: no active session id".to_string());
+        return;
+    }
+    let src = project_root
+        .join(".peridot/branches")
+        .join(name)
+        .join("context.json");
+    if !src.exists() {
+        state.push_error(format!("branch restore: no branch named '{name}'"));
+        return;
+    }
+    let session_dir = project_root.join(".peridot/sessions").join(&session_id);
+    if let Err(err) = std::fs::create_dir_all(&session_dir) {
+        state.push_error(format!(
+            "branch restore: create {}: {err}",
+            session_dir.display()
+        ));
+        return;
+    }
+    let dst = session_dir.join("context.json");
+    if let Err(err) = std::fs::copy(&src, &dst) {
+        state.push_error(format!("branch restore: copy: {err}"));
+        return;
+    }
+    state.push_transcript(format!(
+        "branch: restored '{name}' into session {session_id}. Submit your next task to continue from that point."
+    ));
+}
+
+/// Lists every branch directory under `.peridot/branches/` along with
+/// its creation time (or modification time as a fallback). Sorts by
+/// name so the output is stable.
+fn handle_branch_list(state: &mut TuiState, project_root: &Path) {
+    let dir = project_root.join(".peridot/branches");
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        state.push_transcript("branches: <none>");
+        return;
+    };
+    let mut rows: Vec<(String, String)> = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let stamp = path
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs().to_string())
+            .unwrap_or_else(|| "?".to_string());
+        rows.push((name, stamp));
+    }
+    rows.sort();
+    if rows.is_empty() {
+        state.push_transcript("branches: <none>");
+        return;
+    }
+    let mut lines = vec!["branches:".to_string()];
+    for (name, stamp) in rows {
+        lines.push(format!("  {name} (unix {stamp})"));
+    }
+    state.push_transcript(lines.join("\n"));
 }
 
 /// Scans every text-ish file under `project_root` for the canonical
