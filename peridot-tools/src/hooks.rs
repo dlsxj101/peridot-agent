@@ -42,8 +42,29 @@ pub struct HookRunner {
 }
 
 impl HookRunner {
-    /// Creates a hook runner.
+    /// Creates a hook runner. Auto-discovers any scripts in
+    /// `.peridot/hooks/` whose filename matches the convention
+    /// (`pre-<tool>.sh`, `post-<tool>.sh`, `event-<name>.sh`,
+    /// `lifecycle-<name>.sh`) and merges them with the explicitly
+    /// configured `hooks`. Config-declared entries take precedence
+    /// when the same event already exists.
     pub fn new(project_root: impl Into<PathBuf>, hooks: HooksConfig) -> Self {
+        let project_root = project_root.into();
+        let mut merged = hooks;
+        merge_discovered_hooks(&project_root, &mut merged);
+        Self {
+            project_root,
+            hooks: merged,
+        }
+    }
+
+    /// Creates a hook runner without scanning the filesystem.
+    /// Useful for tests and minimal harnesses that want exact control
+    /// over which hooks fire.
+    pub fn new_without_discovery(
+        project_root: impl Into<PathBuf>,
+        hooks: HooksConfig,
+    ) -> Self {
         Self {
             project_root: project_root.into(),
             hooks,
@@ -164,6 +185,129 @@ impl HookRunner {
 }
 
 /// Builds standard tool-hook variables.
+/// Scans `.peridot/hooks/` and appends auto-discovered entries to
+/// `hooks`. The convention is filename-prefix-based:
+///
+/// - `pre-<tool>.sh`        → tool hook with `event = "pre:<tool>"`
+/// - `post-<tool>.sh`       → tool hook with `event = "post:<tool>"`
+/// - `event-<name>.sh`      → event hook with `event = "<name>"`
+/// - `lifecycle-<name>.sh`  → lifecycle hook with `event = "<name>"`
+///
+/// Files that don't match the convention (utility scripts shared by
+/// real hooks, `.md` notes, etc.) are silently ignored. Entries whose
+/// event is already declared explicitly in `hooks` are skipped, so
+/// `config.toml` declarations always win.
+pub fn merge_discovered_hooks(project_root: &Path, hooks: &mut HooksConfig) {
+    let hook_dir = project_root.join(".peridot").join("hooks");
+    let entries = match std::fs::read_dir(&hook_dir) {
+        Ok(entries) => entries,
+        Err(_) => return,
+    };
+    let mut tool_seen: std::collections::HashSet<String> =
+        hooks.tool.iter().map(|h| h.event.clone()).collect();
+    let mut event_seen: std::collections::HashSet<String> =
+        hooks.event.iter().map(|h| h.event.clone()).collect();
+    let mut lifecycle_seen: std::collections::HashSet<String> =
+        hooks.lifecycle.iter().map(|h| h.event.clone()).collect();
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        let Some(parsed) = parse_hook_filename(name) else {
+            continue;
+        };
+        let relative_run = format!(".peridot/hooks/{name}");
+        let new_hook = HookConfig {
+            event: parsed.event_name.clone(),
+            run: relative_run,
+            description: Some(format!("auto-discovered from {name}")),
+            on_failure: HookFailureMode::Warn,
+            only_paths: Vec::new(),
+        };
+        match parsed.kind {
+            DiscoveredKind::Tool => {
+                if tool_seen.insert(parsed.event_name) {
+                    hooks.tool.push(new_hook);
+                }
+            }
+            DiscoveredKind::Event => {
+                if event_seen.insert(parsed.event_name) {
+                    hooks.event.push(new_hook);
+                }
+            }
+            DiscoveredKind::Lifecycle => {
+                if lifecycle_seen.insert(parsed.event_name) {
+                    hooks.lifecycle.push(new_hook);
+                }
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DiscoveredKind {
+    Tool,
+    Event,
+    Lifecycle,
+}
+
+struct DiscoveredHook {
+    kind: DiscoveredKind,
+    event_name: String,
+}
+
+/// Returns `Some(DiscoveredHook)` when `filename` matches one of the
+/// four conventions, or `None` for utility scripts / non-hook files.
+/// The trailing `.sh` is stripped before matching; case-sensitive.
+fn parse_hook_filename(filename: &str) -> Option<DiscoveredHook> {
+    let stem = filename
+        .strip_suffix(".sh")
+        .or_else(|| filename.strip_suffix(".bash"))
+        .unwrap_or(filename);
+    if let Some(rest) = stem.strip_prefix("pre-") {
+        if rest.is_empty() {
+            return None;
+        }
+        return Some(DiscoveredHook {
+            kind: DiscoveredKind::Tool,
+            event_name: format!("pre:{rest}"),
+        });
+    }
+    if let Some(rest) = stem.strip_prefix("post-") {
+        if rest.is_empty() {
+            return None;
+        }
+        return Some(DiscoveredHook {
+            kind: DiscoveredKind::Tool,
+            event_name: format!("post:{rest}"),
+        });
+    }
+    if let Some(rest) = stem.strip_prefix("event-") {
+        if rest.is_empty() {
+            return None;
+        }
+        return Some(DiscoveredHook {
+            kind: DiscoveredKind::Event,
+            event_name: rest.to_string(),
+        });
+    }
+    if let Some(rest) = stem.strip_prefix("lifecycle-") {
+        if rest.is_empty() {
+            return None;
+        }
+        return Some(DiscoveredHook {
+            kind: DiscoveredKind::Lifecycle,
+            event_name: rest.to_string(),
+        });
+    }
+    None
+}
+
 pub fn tool_hook_variables(tool: &str, params: &Value) -> HookVariables {
     let mut variables = HookVariables::new();
     variables.insert("tool".to_string(), tool.to_string());
@@ -354,5 +498,99 @@ mod tests {
         assert_eq!(variables["mode"], "execute");
         assert_eq!(variables["permission"], "auto");
         assert_eq!(variables["status"], "done");
+    }
+
+    #[test]
+    fn parse_hook_filename_recognises_all_four_kinds() {
+        let pre = super::parse_hook_filename("pre-file_write.sh").unwrap();
+        assert_eq!(pre.kind, super::DiscoveredKind::Tool);
+        assert_eq!(pre.event_name, "pre:file_write");
+
+        let post = super::parse_hook_filename("post-shell_exec.sh").unwrap();
+        assert_eq!(post.kind, super::DiscoveredKind::Tool);
+        assert_eq!(post.event_name, "post:shell_exec");
+
+        let event = super::parse_hook_filename("event-context_compacted.sh").unwrap();
+        assert_eq!(event.kind, super::DiscoveredKind::Event);
+        assert_eq!(event.event_name, "context_compacted");
+
+        let lifecycle = super::parse_hook_filename("lifecycle-session_start.sh").unwrap();
+        assert_eq!(lifecycle.kind, super::DiscoveredKind::Lifecycle);
+        assert_eq!(lifecycle.event_name, "session_start");
+    }
+
+    #[test]
+    fn parse_hook_filename_rejects_utility_scripts() {
+        assert!(super::parse_hook_filename("common.sh").is_none());
+        assert!(super::parse_hook_filename("README.md").is_none());
+        assert!(super::parse_hook_filename("helpers.bash").is_none());
+        // Edge case: bare prefix with nothing after.
+        assert!(super::parse_hook_filename("pre-.sh").is_none());
+    }
+
+    #[test]
+    fn parse_hook_filename_accepts_bash_extension() {
+        let pre = super::parse_hook_filename("pre-file_write.bash").unwrap();
+        assert_eq!(pre.event_name, "pre:file_write");
+    }
+
+    #[test]
+    fn merge_discovered_hooks_picks_up_filesystem_scripts() {
+        let root = std::env::temp_dir().join(format!(
+            "peridot-hooks-discovery-{}",
+            std::process::id()
+        ));
+        let hook_dir = root.join(".peridot").join("hooks");
+        std::fs::create_dir_all(&hook_dir).unwrap();
+        std::fs::write(hook_dir.join("pre-file_write.sh"), "#!/bin/sh\necho hi\n").unwrap();
+        std::fs::write(
+            hook_dir.join("event-context_compacted.sh"),
+            "#!/bin/sh\necho hi\n",
+        )
+        .unwrap();
+        std::fs::write(hook_dir.join("common.sh"), "# utility, not a hook\n").unwrap();
+
+        let mut hooks = HooksConfig::default();
+        super::merge_discovered_hooks(&root, &mut hooks);
+
+        assert_eq!(hooks.tool.len(), 1);
+        assert_eq!(hooks.tool[0].event, "pre:file_write");
+        assert_eq!(hooks.tool[0].run, ".peridot/hooks/pre-file_write.sh");
+        assert_eq!(hooks.event.len(), 1);
+        assert_eq!(hooks.event[0].event, "context_compacted");
+        assert!(hooks.lifecycle.is_empty());
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn merge_discovered_hooks_does_not_override_config_declarations() {
+        let root = std::env::temp_dir().join(format!(
+            "peridot-hooks-precedence-{}",
+            std::process::id()
+        ));
+        let hook_dir = root.join(".peridot").join("hooks");
+        std::fs::create_dir_all(&hook_dir).unwrap();
+        std::fs::write(hook_dir.join("pre-file_write.sh"), "#!/bin/sh\necho fs\n").unwrap();
+
+        let mut hooks = HooksConfig {
+            tool: vec![HookConfig {
+                event: "pre:file_write".to_string(),
+                run: "echo from-config".to_string(),
+                description: None,
+                on_failure: HookFailureMode::Block,
+                only_paths: Vec::new(),
+            }],
+            ..HooksConfig::default()
+        };
+        super::merge_discovered_hooks(&root, &mut hooks);
+
+        // Config-declared entry wins; filesystem-discovered hook is
+        // not duplicated.
+        assert_eq!(hooks.tool.len(), 1);
+        assert_eq!(hooks.tool[0].run, "echo from-config");
+        assert_eq!(hooks.tool[0].on_failure, HookFailureMode::Block);
+
+        std::fs::remove_dir_all(root).unwrap();
     }
 }
