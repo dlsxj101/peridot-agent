@@ -1169,7 +1169,7 @@ show_thinking = true
 show_token_count = true
 show_cost = true
 show_cache_rate = true
-show_subagent_panel = true
+show_subagent_panel = false           # 기본 OFF — Ctrl+]로 토글
 stream_speed = "realtime"           # "realtime" / "fast" / "instant"
 
 # ── 업데이트 ──

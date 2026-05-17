@@ -302,7 +302,24 @@ pub fn handle_key_event(state: &mut TuiState, key: KeyEvent) -> TuiEventOutcome 
             state.delete_input_char();
             TuiEventOutcome::Continue
         }
-        KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => {
+        // Shift+Enter inserts a newline. Works when the terminal supports
+        // kitty-keyboard-protocol / CSI-u (negotiated in `terminal.rs` via
+        // `PushKeyboardEnhancementFlags`). Alt+Enter is a fallback for
+        // terminals that collapse Shift+Enter onto bare Enter (Windows
+        // conpty, legacy xterm), so the user always has at least one
+        // working multi-line keybind.
+        KeyCode::Enter
+            if key
+                .modifiers
+                .intersects(KeyModifiers::SHIFT | KeyModifiers::ALT) =>
+        {
+            state.insert_input_char('\n');
+            TuiEventOutcome::Continue
+        }
+        // Ctrl+J is the bare LF code point — emacs/readline convention for
+        // "insert a literal newline." Works in every terminal regardless of
+        // CSI-u support, so we accept it as a last-ditch fallback.
+        KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             state.insert_input_char('\n');
             TuiEventOutcome::Continue
         }

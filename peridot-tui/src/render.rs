@@ -843,34 +843,61 @@ pub(super) fn agent_status_summary(state: &TuiState) -> String {
     }
 }
 
-/// Renders a 1-line agent status bar (icon, label, queue depth, metrics).
-fn render_status_bar(state: &TuiState) -> Line<'static> {
-    let waiting_user = state.ask_user.is_some()
-        || state.approval.is_some()
-        || state.agent_run_status == AgentRunStatus::WaitingApproval;
-    let (icon, icon_style) = if waiting_user {
-        ("\u{25CF}", Style::default().fg(Color::Rgb(255, 165, 0)))
-    } else if !state.active_tools.is_empty() {
-        (
-            "\u{25CF}",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        )
-    } else if state.active_stream.is_some() || state.agent_run_status == AgentRunStatus::Running {
-        (
-            "\u{25CF}",
+/// Picks the status-bar mood glyph + color from the same state machine
+/// that drives the deer mascot, so the 1-cell indicator on the left of
+/// the status bar always tracks the mascot's current emotion. Using a
+/// distinct glyph per mood (not just a recoloured `●`) gives the operator
+/// a second visual channel — useful when the terminal palette is muted
+/// or when the colour itself is hard to distinguish.
+fn mood_indicator(state: &TuiState) -> (&'static str, Style) {
+    use crate::mascot::{MascotState, mascot_state_from};
+    match mascot_state_from(state) {
+        // ◔ quarter-fill — quietly waiting, low energy.
+        MascotState::Idle => (
+            "\u{25D4}",
+            Style::default().fg(Color::Gray).add_modifier(Modifier::DIM),
+        ),
+        // ◑ half-fill — thinking / streaming.
+        MascotState::Thinking => (
+            "\u{25D1}",
             Style::default()
                 .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
-        )
-    } else if state.agent_run_status == AgentRunStatus::Failed {
-        ("\u{25CF}", Style::default().fg(Color::Red))
-    } else if state.agent_run_status == AgentRunStatus::Interrupted {
-        ("\u{25CF}", Style::default().fg(Color::Magenta))
-    } else {
-        ("\u{25CF}", Style::default().fg(Color::Green))
-    };
+        ),
+        // ◉ targeted dot — focused tool execution.
+        MascotState::ToolRunning => (
+            "\u{25C9}",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+        // ◕ three-quarter — waiting on operator decision.
+        MascotState::ApprovalWaiting => ("\u{25D5}", Style::default().fg(Color::Rgb(255, 165, 0))),
+        MascotState::AskUser => ("\u{25D4}", Style::default().fg(Color::Magenta)),
+        // ◉ filled bullseye — task completed.
+        MascotState::Done => (
+            "\u{25C9}",
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        ),
+        // ◓ bottom-fill — failure (ears down).
+        MascotState::Failed => (
+            "\u{25D3}",
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        ),
+        MascotState::Interrupted => (
+            "\u{25D4}",
+            Style::default()
+                .fg(Color::Magenta)
+                .add_modifier(Modifier::BOLD),
+        ),
+    }
+}
+
+/// Renders a 1-line agent status bar (icon, label, queue depth, metrics).
+fn render_status_bar(state: &TuiState) -> Line<'static> {
+    let (icon, icon_style) = mood_indicator(state);
 
     let mut spans = vec![Span::styled(format!("{icon} "), icon_style)];
     let busy = state.is_agent_busy() || !state.active_tools.is_empty();
@@ -977,7 +1004,10 @@ pub fn render_text_snapshot(state: &TuiState) -> String {
     if state.config.show_mascot {
         let _ = writeln!(output, "mascot: {}", mascot::mascot_text_summary(state));
     }
-    if state.layout == LayoutMode::Full && state.config.show_subagent_panel {
+    // Diagnostic snapshot always emits plan/activity/subagent data — the
+    // live `show_subagent_panel` toggle only affects the on-screen UI; a
+    // headless preview needs the full state regardless of cosmetic flags.
+    if state.layout == LayoutMode::Full {
         let done = state
             .side_panel
             .plan
@@ -1058,6 +1088,10 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
         ])
         .split(area);
 
+    // Header packs the identity (PERIDOT + model) plus the most useful
+    // bits the side panel used to carry — session, steps, elapsed,
+    // subagent count — so the operator can run with the side panel
+    // toggled off (default) and still see what the deer is up to.
     let mut header_spans = vec![
         Span::styled(
             "PERIDOT",
@@ -1068,10 +1102,37 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
         Span::raw("  "),
         Span::styled(state.header.model.clone(), Style::default().fg(Color::Gray)),
     ];
+    let dim = Style::default()
+        .fg(Color::DarkGray)
+        .add_modifier(Modifier::DIM);
+    let mut push_dim = |label: String| {
+        header_spans.push(Span::styled(format!(" · {label}"), dim));
+    };
+    if !state.current_session_id.is_empty() {
+        push_dim(format!(
+            "session {}",
+            short_session_id(&state.current_session_id)
+        ));
+    }
+    if state.side_panel.stats.steps > 0 {
+        push_dim(format!("steps {}", state.side_panel.stats.steps));
+    }
+    if state.task_started_at_unix.is_some() || state.side_panel.stats.elapsed_seconds > 0 {
+        push_dim(state::format_duration_ms(
+            state.side_panel.stats.elapsed_seconds * 1000,
+        ));
+    }
+    let active_subagents = state
+        .subagents
+        .iter()
+        .filter(|item| matches!(item.status.as_str(), "running" | "starting"))
+        .count();
+    if active_subagents > 0 {
+        push_dim(format!("subagents {active_subagents}"));
+    }
     if let Some(version) = state.header.update_available.as_ref() {
-        header_spans.push(Span::raw("  "));
         header_spans.push(Span::styled(
-            format!("· update {version} :update"),
+            format!(" · update {version} :update"),
             Style::default()
                 .fg(Color::Yellow)
                 .add_modifier(Modifier::DIM),
@@ -1095,43 +1156,76 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
             .constraints([Constraint::Percentage(100)])
             .split(chunks[2])
     };
-    let body_block = Block::default()
-        .title(body_title(state))
-        .borders(Borders::ALL);
+    // Overlays (menu, approval, branch picker, ask_user) keep the bordered
+    // box look — they are modal popovers and benefit from a clear frame.
+    // The transcript itself and the welcome splash run borderless so
+    // (a) drag-selection grabs only chat content and (b) red ToolFail /
+    // Error spans can't leak SGR into adjacent border cells (ratatui 0.30
+    // doesn't emit a reset between cells with `fg=None`).
+    let overlay_block = || {
+        Block::default()
+            .title(body_title(state))
+            .borders(Borders::ALL)
+    };
     if let Some(menu) = &state.menu {
         frame.render_widget(
             Paragraph::new(render_menu(menu))
-                .block(body_block)
+                .block(overlay_block())
                 .wrap(Wrap { trim: false }),
             body_chunks[0],
         );
     } else if let Some(panel) = &state.approval {
         frame.render_widget(
             Paragraph::new(render_approval_panel(panel))
-                .block(body_block)
+                .block(overlay_block())
                 .wrap(Wrap { trim: false }),
             body_chunks[0],
         );
     } else if let Some(picker) = &state.branch_picker {
         frame.render_widget(
             Paragraph::new(render_branch_picker(picker))
-                .block(body_block)
+                .block(overlay_block())
                 .wrap(Wrap { trim: false }),
             body_chunks[0],
         );
     } else if let Some(panel) = &state.ask_user {
         frame.render_widget(
             Paragraph::new(render_ask_user_panel(panel))
-                .block(body_block)
+                .block(overlay_block())
                 .wrap(Wrap { trim: false }),
             body_chunks[0],
         );
     } else if should_render_welcome(state) {
+        // Welcome splash: render the full 8×4 mascot in the upper-left and
+        // place the welcome text to its right when the pane is wide enough.
+        // On very narrow terminals (<32 cols) the mascot is skipped so the
+        // text stays readable.
+        let area = body_chunks[0];
+        let mascot_block_w: u16 = 10; // 8 sprite cells + 2 col gap
+        let show_mascot_here = state.config.show_mascot && area.width >= 32 && area.height >= 6;
+        if show_mascot_here {
+            let mascot_area = Rect {
+                x: area.x + 1,
+                y: area.y + 1,
+                width: 8,
+                height: 4,
+            };
+            render_mascot(state, mascot_area, frame.buffer_mut());
+        }
+        let text_x_offset: u16 = if show_mascot_here {
+            mascot_block_w + 1
+        } else {
+            2
+        };
+        let text_area = Rect {
+            x: area.x + text_x_offset.min(area.width.saturating_sub(1)),
+            y: area.y,
+            width: area.width.saturating_sub(text_x_offset + 1),
+            height: area.height,
+        };
         frame.render_widget(
-            Paragraph::new(render_welcome(state))
-                .block(body_block)
-                .wrap(Wrap { trim: false }),
-            body_chunks[0],
+            Paragraph::new(render_welcome(state)).wrap(Wrap { trim: false }),
+            text_area,
         );
     } else {
         // Inline chat transcript (Claude Code / Codex CLI style): every visible
@@ -1141,11 +1235,30 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
         // window is computed wrap-aware via `Paragraph::line_count` + `.scroll`
         // so the tail of the agent's last reply never gets clipped just
         // because a line wrapped one row beyond our naive line-count estimate.
+        //
+        // No surrounding `Block` — instead we shrink the rect by one column
+        // on each side for a touch of breathing room. This is what makes the
+        // transcript copy-friendly: a terminal drag-select grabs only the
+        // text cells, not Unicode `│` border characters.
+        let body_area = body_chunks[0];
+        let content_area = Rect {
+            x: body_area.x + 1,
+            y: body_area.y,
+            width: body_area.width.saturating_sub(2),
+            height: body_area.height,
+        };
+        let inner_width = content_area.width;
+        let inner_height = content_area.height;
+        let title_line = Line::from(Span::styled(
+            format!("─── {} ", body_title(state)),
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::DIM),
+        ));
         let banner_lines = sticky_plan_banner(state);
-        let inner_width = body_chunks[0].width.saturating_sub(2);
-        let inner_height = body_chunks[0].height.saturating_sub(2);
         let following_tail = !state.is_scrolled_back();
-        let mut all_lines: Vec<Line<'static>> = banner_lines;
+        let mut all_lines: Vec<Line<'static>> = vec![title_line, Line::from("")];
+        all_lines.extend(banner_lines);
         for entry in state.transcript.iter() {
             if is_entry_hidden_in_chat(state, entry) {
                 continue;
@@ -1163,70 +1276,98 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
             all_lines.extend(render_streaming_inline(state, stream));
         }
         // Build once; we use it for both line counting and rendering.
-        let paragraph = Paragraph::new(all_lines)
-            .block(body_block)
-            .wrap(Wrap { trim: false });
+        let paragraph = Paragraph::new(all_lines).wrap(Wrap { trim: false });
         let total_rows = paragraph.line_count(inner_width) as u16;
         let max_scroll = total_rows.saturating_sub(inner_height);
         let scroll_rows = state.scroll_offset.min(max_scroll as usize) as u16;
         let scroll = max_scroll.saturating_sub(scroll_rows);
-        frame.render_widget(paragraph.scroll((scroll, 0)), body_chunks[0]);
-        if !following_tail {
+        frame.render_widget(paragraph.scroll((scroll, 0)), content_area);
+        if !following_tail && content_area.height >= 1 {
             // Floating hint pinned to the top of the transcript pane so the
-            // user always knows they're behind the tail. Painted last so it
-            // overlays the top border without nuking it: we keep the border
-            // row and write the hint on the row below.
-            let area = body_chunks[0];
-            if area.height >= 3 {
-                let hint_area = Rect {
-                    x: area.x + 1,
-                    y: area.y + 1,
-                    width: area.width.saturating_sub(2),
-                    height: 1,
-                };
-                let hint = Line::from(Span::styled(
-                    format!(
-                        "\u{2191} scrolled back {} row{} · PageDown or Shift+\u{2193} to follow",
-                        state.scroll_offset,
-                        if state.scroll_offset == 1 { "" } else { "s" }
-                    ),
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::DIM),
-                ));
-                frame.render_widget(Paragraph::new(hint), hint_area);
-            }
+            // user always knows they're behind the tail. Without a border
+            // there is no row to overlay, so we paint directly into the
+            // first content row — the paragraph below will be scrolled
+            // forward one row to keep the hint visible.
+            let hint_area = Rect {
+                x: content_area.x,
+                y: content_area.y,
+                width: content_area.width,
+                height: 1,
+            };
+            let hint = Line::from(Span::styled(
+                format!(
+                    "\u{2191} scrolled back {} row{} · PageDown or Shift+\u{2193} to follow",
+                    state.scroll_offset,
+                    if state.scroll_offset == 1 { "" } else { "s" }
+                ),
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::DIM),
+            ));
+            frame.render_widget(Paragraph::new(hint), hint_area);
         }
     }
 
     if state.layout == LayoutMode::Full && state.config.show_subagent_panel && body_chunks.len() > 1
     {
-        let side_block = Block::default().title("Status").borders(Borders::ALL);
+        // Side panel keeps a single dim `│` on the left edge — enough to
+        // visually separate it from the transcript without the four-sided
+        // box that historically dragged the transcript copy with it.
+        let side_block = Block::default().borders(Borders::LEFT).border_style(
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::DIM),
+        );
         let side_area = body_chunks[1];
         frame.render_widget(side_block, side_area);
         let inner = Rect {
-            x: side_area.x + 1,
-            y: side_area.y + 1,
-            width: side_area.width.saturating_sub(2),
-            height: side_area.height.saturating_sub(2),
+            // +2 = 1 col for the border, 1 col for a breathing-room gutter.
+            x: side_area.x + 2,
+            y: side_area.y,
+            width: side_area.width.saturating_sub(3),
+            height: side_area.height,
         };
-        let mascot_height = if state.config.show_mascot && inner.height >= 6 && inner.width >= 8 {
-            let mascot_area = Rect {
-                x: inner.x,
-                y: inner.y,
-                width: inner.width.min(8),
-                height: 4,
-            };
-            render_mascot(state, mascot_area, frame.buffer_mut());
-            5
-        } else {
-            0
-        };
-        let info_area = Rect {
+        // Dim "Status" title sits inline as the first row, since the block
+        // no longer carries a top border to host a title attribute.
+        let title_area = Rect {
             x: inner.x,
-            y: inner.y + mascot_height,
+            y: inner.y,
             width: inner.width,
-            height: inner.height.saturating_sub(mascot_height),
+            height: 1.min(inner.height),
+        };
+        if title_area.height > 0 {
+            let title_line = Line::from(Span::styled(
+                "Status",
+                Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::DIM),
+            ));
+            frame.render_widget(Paragraph::new(title_line), title_area);
+        }
+        let body_inner = Rect {
+            x: inner.x,
+            y: inner.y + 1.min(inner.height),
+            width: inner.width,
+            height: inner.height.saturating_sub(1),
+        };
+        let mascot_height =
+            if state.config.show_mascot && body_inner.height >= 6 && body_inner.width >= 8 {
+                let mascot_area = Rect {
+                    x: body_inner.x,
+                    y: body_inner.y,
+                    width: body_inner.width.min(8),
+                    height: 4,
+                };
+                render_mascot(state, mascot_area, frame.buffer_mut());
+                5
+            } else {
+                0
+            };
+        let info_area = Rect {
+            x: body_inner.x,
+            y: body_inner.y + mascot_height,
+            width: body_inner.width,
+            height: body_inner.height.saturating_sub(mascot_height),
         };
         let done = state
             .side_panel

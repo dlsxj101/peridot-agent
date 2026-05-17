@@ -518,8 +518,11 @@ pub struct TuiConfig {
     /// Whether prompt cache hit rate should be shown.
     #[serde(default = "default_true")]
     pub show_cache_rate: bool,
-    /// Whether the right-side status panel should be shown.
-    #[serde(default = "default_true")]
+    /// Whether the right-side status panel should be shown. Default is
+    /// OFF — the transcript runs full-width so drag-selection grabs only
+    /// chat content (no status chrome). Operator can summon it on demand
+    /// with `Ctrl+]`; the same key toggles it back.
+    #[serde(default = "default_false")]
     pub show_subagent_panel: bool,
     /// Streaming presentation speed: realtime, fast, or instant.
     #[serde(default = "default_stream_speed")]
@@ -538,7 +541,7 @@ impl Default for TuiConfig {
             show_token_count: true,
             show_cost: true,
             show_cache_rate: true,
-            show_subagent_panel: true,
+            show_subagent_panel: false,
             stream_speed: default_stream_speed(),
             show_mascot: true,
         }
@@ -956,6 +959,10 @@ impl Default for MemoryConfig {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_false() -> bool {
+    false
 }
 
 fn default_max_sessions_stored() -> usize {

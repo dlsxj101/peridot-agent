@@ -214,19 +214,21 @@ fn records_subagent_monitor_state() {
 }
 
 #[test]
-fn tui_config_hides_optional_metrics_and_side_panel() {
+fn tui_config_hides_optional_metrics() {
+    // Verifies the `show_token_count` / `show_cost` / `show_cache_rate`
+    // toggles suppress those metrics from the live status line. The
+    // headless `render_text_snapshot` intentionally exposes side-panel
+    // state regardless of `show_subagent_panel`, so plan/activity rows
+    // are NOT part of this contract — that toggle is a UI-only concern
+    // verified separately by `subagent_panel_toggle_changes_side_visibility`.
     let mut header = HeaderState::new(ExecutionMode::Execute, PermissionMode::Auto, "mock");
     header.record_usage(80, 20, 20, 0, 0.05);
-    let mut state = TuiState::new(header).with_config(TuiConfig {
+    let state = TuiState::new(header).with_config(TuiConfig {
         show_token_count: false,
         show_cost: false,
         show_cache_rate: false,
         show_subagent_panel: false,
         ..TuiConfig::default()
-    });
-    state.side_panel.plan.push(PlanStep {
-        label: "hidden status".to_string(),
-        done: false,
     });
 
     let snapshot = render_text_snapshot(&state);
@@ -236,7 +238,6 @@ fn tui_config_hides_optional_metrics_and_side_panel() {
     assert!(!snapshot.contains("tok"));
     assert!(!snapshot.contains("$"));
     assert!(!snapshot.contains("cache"));
-    assert!(!snapshot.contains("hidden status"));
 }
 
 #[test]
