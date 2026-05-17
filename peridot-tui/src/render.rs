@@ -843,6 +843,36 @@ pub(super) fn agent_status_summary(state: &TuiState) -> String {
     }
 }
 
+/// Tiny ASCII mascot face shown next to `PERIDOT` in the header. The
+/// pixel-sprite mascot lives in the side panel (which is opt-in); this
+/// 5-character face is the always-visible counterpart, so even with
+/// `show_subagent_panel = false` the operator sees the deer's mood.
+/// Glyph + colour are picked from the same `MascotState` that drives the
+/// full sprite, so the two stay in sync without a separate state machine.
+fn header_mascot_face(state: &TuiState) -> (String, Style) {
+    use crate::mascot::{MascotState, mascot_state_from};
+    let dim_accent = Style::default()
+        .fg(Color::Rgb(165, 199, 93))
+        .add_modifier(Modifier::DIM);
+    let bright = Style::default()
+        .fg(Color::Rgb(165, 199, 93))
+        .add_modifier(Modifier::BOLD);
+    let warn = Style::default()
+        .fg(Color::Rgb(255, 165, 0))
+        .add_modifier(Modifier::BOLD);
+    let red = Style::default().fg(Color::Red).add_modifier(Modifier::BOLD);
+    match mascot_state_from(state) {
+        MascotState::Idle => ("ʕ-‿-ʔ".to_string(), dim_accent),
+        MascotState::Thinking => ("ʕ◔_◔ʔ".to_string(), bright),
+        MascotState::ToolRunning => ("ʕ◉‿◉ʔ".to_string(), bright),
+        MascotState::ApprovalWaiting => ("ʕ◕_◕ʔ".to_string(), warn),
+        MascotState::AskUser => ("ʕ?‿?ʔ".to_string(), warn),
+        MascotState::Done => ("ʕ^‿^ʔ".to_string(), bright),
+        MascotState::Failed => ("ʕ◞‸◟ʔ".to_string(), red),
+        MascotState::Interrupted => ("ʕ•Д•ʔ".to_string(), warn),
+    }
+}
+
 /// Picks the status-bar mood glyph + color from the same state machine
 /// that drives the deer mascot, so the 1-cell indicator on the left of
 /// the status bar always tracks the mascot's current emotion. Using a
@@ -1092,7 +1122,15 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
     // bits the side panel used to carry — session, steps, elapsed,
     // subagent count — so the operator can run with the side panel
     // toggled off (default) and still see what the deer is up to.
+    // Tiny mood-aware ASCII mascot prefix. The full pixel sprite only
+    // fits in the side panel (4 rows tall); inlining it next to PERIDOT
+    // uses a 5-char `(•‿•)`-style face whose eyes/mouth shift with the
+    // mascot mood state. Operator sees the deer's emotion at a glance
+    // without needing the side panel visible.
+    let (mascot_face, mascot_face_style) = header_mascot_face(state);
     let mut header_spans = vec![
+        Span::styled(mascot_face, mascot_face_style),
+        Span::raw(" "),
         Span::styled(
             "PERIDOT",
             Style::default()
@@ -1425,10 +1463,14 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
         Span::raw(state.input.clone()),
     ]);
     let char_count = state.input.chars().count();
+    // Always display a small hint so new operators don't have to dig
+    // through `/help` to discover the multi-line chord. WSL conpty cannot
+    // distinguish Shift+Enter from bare Enter, so `Ctrl+J` is the chord
+    // we surface here — it works on every terminal.
     let title = if char_count == 0 {
-        String::new()
+        " Enter sends · Ctrl+J newline ".to_string()
     } else {
-        format!(" {char_count} chars ")
+        format!(" {char_count} chars · Ctrl+J newline ")
     };
     frame.render_widget(
         Paragraph::new(input_line).block(Block::default().borders(Borders::ALL).title(title)),

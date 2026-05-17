@@ -99,6 +99,12 @@ pub fn slash_command_catalog() -> &'static [SlashCommandSpec] {
             category: "session",
         },
         SlashCommandSpec {
+            name: "/sidepanel",
+            description: "toggle the Status side panel (same as Ctrl+] / F2)",
+            arg_hint: None,
+            category: "tui",
+        },
+        SlashCommandSpec {
             name: "/session save",
             description: "save the current session for later resume",
             arg_hint: None,

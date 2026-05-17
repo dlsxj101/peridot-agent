@@ -207,8 +207,19 @@ pub fn handle_key_event(state: &mut TuiState, key: KeyEvent) -> TuiEventOutcome 
             state.menu = Some(MenuState::default());
             TuiEventOutcome::Continue
         }
+        // Side panel toggle — three accepted shortcuts:
+        //   Ctrl+]  — historical chord (kept for terminals that deliver it
+        //             cleanly: iTerm2, Linux consoles, kitty, WezTerm…).
+        //   F2      — terminal-agnostic fallback. WSL conpty / Windows
+        //             Terminal sometimes swallows Ctrl+]; function keys are
+        //             always reported correctly.
+        //   /sidepanel slash command — discoverable via the slash picker.
         KeyCode::Char(']') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            state.config.show_subagent_panel = !state.config.show_subagent_panel;
+            toggle_sidepanel(state);
+            TuiEventOutcome::Continue
+        }
+        KeyCode::F(2) => {
+            toggle_sidepanel(state);
             TuiEventOutcome::Continue
         }
         KeyCode::Char('t') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -380,17 +391,7 @@ pub(super) fn handle_menu_key_event(state: &mut TuiState, key: KeyEvent) -> TuiE
                 .cloned()
                 .unwrap_or_default();
             state.menu = None;
-            if selected == "Quit" {
-                TuiEventOutcome::Quit
-            } else if selected == "Debug" {
-                state.debug_view = !state.debug_view;
-                let label = if state.debug_view { "on" } else { "off" };
-                state.push_transcript_entry(TranscriptKind::Notice, format!("debug: {label}"));
-                TuiEventOutcome::Continue
-            } else {
-                state.push_transcript_entry(TranscriptKind::Notice, format!("menu: {selected}"));
-                TuiEventOutcome::Continue
-            }
+            apply_menu_selection(state, &selected)
         }
         _ => TuiEventOutcome::Continue,
     }
@@ -872,6 +873,9 @@ pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
             state.push_transcript("compact: queued — will run on the next agent turn");
             state.push_pending_session_command(SessionCommandEvent::CompactContext);
         }
+        SlashCommand::SidepanelToggle => {
+            toggle_sidepanel(state);
+        }
         SlashCommand::SessionSave => {
             state.push_transcript("session: save requested");
         }
@@ -1090,4 +1094,133 @@ pub(super) fn record_permission_switch(state: &mut TuiState, to: PermissionMode)
         from: state.header.permission.to_string(),
         to: to.to_string(),
     });
+}
+
+/// Flips the Status side-panel visibility and reports the new state in the
+/// transcript so the operator gets immediate feedback. Wired to both the
+/// `Ctrl+]` / `F2` key handlers and the `/sidepanel` slash command — they
+/// all funnel through here so the user-visible behaviour stays identical
+/// regardless of how the toggle was triggered.
+pub(super) fn toggle_sidepanel(state: &mut TuiState) {
+    state.config.show_subagent_panel = !state.config.show_subagent_panel;
+    let label = if state.config.show_subagent_panel {
+        "on"
+    } else {
+        "off"
+    };
+    state.push_transcript_entry(
+        TranscriptKind::Notice,
+        format!("sidepanel: {label} (Ctrl+] / F2 / /sidepanel toggles)"),
+    );
+}
+
+/// Acts on the operator's menu choice. Each option resolves to an existing
+/// slash-command behaviour or a small in-place change so the menu finally
+/// does something instead of just echoing a `menu: …` notice. Unknown
+/// labels still produce a notice — that keeps custom menu options
+/// (if any) visible while developing.
+fn apply_menu_selection(state: &mut TuiState, selected: &str) -> TuiEventOutcome {
+    match selected {
+        "Quit" => TuiEventOutcome::Quit,
+        "Debug" => {
+            state.debug_view = !state.debug_view;
+            let label = if state.debug_view { "on" } else { "off" };
+            state.push_transcript_entry(TranscriptKind::Notice, format!("debug: {label}"));
+            TuiEventOutcome::Continue
+        }
+        "Mode" => {
+            // Cycle Plan → Execute → Goal → Plan. Each step also records a
+            // lifecycle event so the run-log keeps the transition trail.
+            let next = match state.header.mode {
+                ExecutionMode::Plan => ExecutionMode::Execute,
+                ExecutionMode::Execute => ExecutionMode::Goal,
+                ExecutionMode::Goal => ExecutionMode::Plan,
+            };
+            record_mode_switch(state, next);
+            state.header.mode = next;
+            state.push_transcript_entry(TranscriptKind::Notice, format!("mode: {next}"));
+            TuiEventOutcome::Continue
+        }
+        "Permission" => {
+            let next = match state.header.permission {
+                PermissionMode::Safe => PermissionMode::Auto,
+                PermissionMode::Auto => PermissionMode::Yolo,
+                PermissionMode::Yolo => PermissionMode::Safe,
+            };
+            record_permission_switch(state, next);
+            state.header.permission = next;
+            state.push_transcript_entry(TranscriptKind::Notice, format!("permission: {next}"));
+            TuiEventOutcome::Continue
+        }
+        "Save Session" => {
+            // Equivalent to `/session save` — file-backed save lives on
+            // the CLI side; for now we just surface the intent.
+            state.push_transcript_entry(
+                TranscriptKind::Notice,
+                "session: save requested (sessions auto-persist to disk every tick)",
+            );
+            TuiEventOutcome::Continue
+        }
+        "History" => {
+            if state.input_history.is_empty() {
+                state.push_transcript_entry(
+                    TranscriptKind::Notice,
+                    "history: <empty> — press Up/Down at the prompt to recall past inputs",
+                );
+            } else {
+                let recent: Vec<String> = state
+                    .input_history
+                    .iter()
+                    .rev()
+                    .take(10)
+                    .enumerate()
+                    .map(|(idx, entry)| format!("  {}. {}", idx + 1, entry))
+                    .collect();
+                state.push_transcript_entry(
+                    TranscriptKind::Notice,
+                    format!("history (10 most recent):\n{}", recent.join("\n")),
+                );
+            }
+            TuiEventOutcome::Continue
+        }
+        "Settings" => {
+            let body = format!(
+                "settings:\n\
+                 - config file: ~/.peridot/config.toml (global) and <project>/.peridot/config.toml\n\
+                 - inspect: `peridot config show` (text) or `peridot config show --output json`\n\
+                 - edit:    `peridot config set <key> <value>` (e.g. models.main, defaults.mode)\n\
+                 - theme / language / panel visibility live under the `[tui]` section.\n\
+                 current: theme={}, lang={}, sidepanel={}, mascot={}",
+                state.config.theme,
+                state.config.language,
+                state.config.show_subagent_panel,
+                state.config.show_mascot,
+            );
+            state.push_transcript_entry(TranscriptKind::Notice, body);
+            TuiEventOutcome::Continue
+        }
+        "Keybindings" => {
+            state.push_transcript_entry(
+                TranscriptKind::Notice,
+                "keybindings:\n\
+                 - Enter             submit\n\
+                 - Ctrl+J / Alt+Enter newline (Shift+Enter only on native CSI-u terminals)\n\
+                 - Esc               interrupt run / open menu\n\
+                 - Ctrl+P            menu\n\
+                 - Ctrl+] / F2 / /sidepanel  toggle Status side panel\n\
+                 - Ctrl+L            clear transcript\n\
+                 - Ctrl+U            clear input\n\
+                 - Ctrl+A / Ctrl+E   home / end\n\
+                 - Ctrl+T / Ctrl+W   cycle session\n\
+                 - PageUp / PageDown scroll transcript\n\
+                 - Shift+Up / Down   scroll by line\n\
+                 - Ctrl+C / Ctrl+D   quit",
+            );
+            TuiEventOutcome::Continue
+        }
+        other => {
+            state.push_transcript_entry(TranscriptKind::Notice, format!("menu: {other}"));
+            TuiEventOutcome::Continue
+        }
+    }
 }

@@ -128,6 +128,11 @@ pub enum SlashCommand {
     /// The TUI overlay calls back into BranchTurn once the operator
     /// picks a turn.
     BranchPicker,
+    /// `/sidepanel` — toggle the right-hand Status panel on/off. A
+    /// terminal-agnostic alternative to `Ctrl+]` / `F2` for the same
+    /// action; useful when the host terminal (WSL conpty has been the
+    /// case in practice) doesn't deliver Ctrl+] reliably.
+    SidepanelToggle,
 }
 
 /// Payload for `/subagent model <name|reset>`. Wrapped in a dedicated enum so
@@ -158,6 +163,8 @@ pub fn parse_slash_command(input: &str) -> Option<SlashCommand> {
         "help" if rest.is_empty() => Some(SlashCommand::Help),
         "cost" if rest.is_empty() => Some(SlashCommand::Cost),
         "compact" if rest.is_empty() => Some(SlashCommand::Compact),
+        "sidepanel" if rest.is_empty() => Some(SlashCommand::SidepanelToggle),
+        "status" if rest.is_empty() => Some(SlashCommand::SidepanelToggle),
         "diff" if rest.is_empty() => Some(SlashCommand::Diff),
         "undo" if rest.is_empty() => Some(SlashCommand::Undo),
         "model" if !rest.is_empty() => Some(SlashCommand::Model(rest.to_string())),
