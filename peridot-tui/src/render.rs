@@ -845,36 +845,6 @@ pub(super) fn agent_status_summary(state: &TuiState) -> String {
     }
 }
 
-/// Tiny ASCII mascot face shown next to `PERIDOT` in the header. The
-/// pixel-sprite mascot lives in the side panel (which is opt-in); this
-/// 5-character face is the always-visible counterpart, so even with
-/// `show_subagent_panel = false` the operator sees the deer's mood.
-/// Glyph + colour are picked from the same `MascotState` that drives the
-/// full sprite, so the two stay in sync without a separate state machine.
-fn header_mascot_face(state: &TuiState) -> (String, Style) {
-    use crate::mascot::{MascotState, mascot_state_from};
-    let dim_accent = Style::default()
-        .fg(Color::Rgb(165, 199, 93))
-        .add_modifier(Modifier::DIM);
-    let bright = Style::default()
-        .fg(Color::Rgb(165, 199, 93))
-        .add_modifier(Modifier::BOLD);
-    let warn = Style::default()
-        .fg(Color::Rgb(255, 165, 0))
-        .add_modifier(Modifier::BOLD);
-    let red = Style::default().fg(Color::Red).add_modifier(Modifier::BOLD);
-    match mascot_state_from(state) {
-        MascotState::Idle => ("ʕ-‿-ʔ".to_string(), dim_accent),
-        MascotState::Thinking => ("ʕ◔_◔ʔ".to_string(), bright),
-        MascotState::ToolRunning => ("ʕ◉‿◉ʔ".to_string(), bright),
-        MascotState::ApprovalWaiting => ("ʕ◕_◕ʔ".to_string(), warn),
-        MascotState::AskUser => ("ʕ?‿?ʔ".to_string(), warn),
-        MascotState::Done => ("ʕ^‿^ʔ".to_string(), bright),
-        MascotState::Failed => ("ʕ◞‸◟ʔ".to_string(), red),
-        MascotState::Interrupted => ("ʕ•Д•ʔ".to_string(), warn),
-    }
-}
-
 /// Picks the status-bar mood glyph + color from the same state machine
 /// that drives the deer mascot, so the 1-cell indicator on the left of
 /// the status bar always tracks the mascot's current emotion. Using a
@@ -1131,15 +1101,7 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
     // bits the side panel used to carry — session, steps, elapsed,
     // subagent count — so the operator can run with the side panel
     // toggled off (default) and still see what the deer is up to.
-    // Tiny mood-aware ASCII mascot prefix. The full pixel sprite only
-    // fits in the side panel (4 rows tall); inlining it next to PERIDOT
-    // uses a 5-char `(•‿•)`-style face whose eyes/mouth shift with the
-    // mascot mood state. Operator sees the deer's emotion at a glance
-    // without needing the side panel visible.
-    let (mascot_face, mascot_face_style) = header_mascot_face(state);
     let mut header_spans = vec![
-        Span::styled(mascot_face, mascot_face_style),
-        Span::raw(" "),
         Span::styled(
             "PERIDOT",
             Style::default()
@@ -1288,23 +1250,42 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
         // transcript copy-friendly: a terminal drag-select grabs only the
         // text cells, not Unicode `│` border characters.
         let body_area = body_chunks[0];
-        let content_area = Rect {
-            x: body_area.x + 1,
-            y: body_area.y,
-            width: body_area.width.saturating_sub(2),
-            height: body_area.height,
-        };
-        let inner_width = content_area.width;
-        let inner_height = content_area.height;
+        // When the operator runs with the side panel toggled off, the deer
+        // mascot floats in the top-right corner of the body area and the
+        // transcript starts five rows below the body top (1 title row +
+        // 4 mascot rows). When the side panel is on, the side panel owns
+        // the mascot and the transcript spans the full body area like
+        // before. The width/height clamps below keep the floating mascot
+        // off the screen on very narrow terminals so transcript content
+        // remains readable.
+        let inline_mascot = !state.config.show_subagent_panel
+            && state.config.show_mascot
+            && body_area.width >= 32
+            && body_area.height >= 8;
+        let mascot_strip_height: u16 = if inline_mascot { 5 } else { 0 };
         let title_line = Line::from(Span::styled(
             format!("─── {} ", body_title(state)),
             Style::default()
                 .fg(Color::DarkGray)
                 .add_modifier(Modifier::DIM),
         ));
+        let content_area = Rect {
+            x: body_area.x + 1,
+            y: body_area.y + mascot_strip_height,
+            width: body_area.width.saturating_sub(2),
+            height: body_area.height.saturating_sub(mascot_strip_height),
+        };
+        let inner_width = content_area.width;
+        let inner_height = content_area.height;
         let banner_lines = sticky_plan_banner(state);
         let following_tail = !state.is_scrolled_back();
-        let mut all_lines: Vec<Line<'static>> = vec![title_line, Line::from("")];
+        let mut all_lines: Vec<Line<'static>> = Vec::new();
+        if !inline_mascot {
+            // No mascot strip — keep the legacy layout: title is the very
+            // first row of the paragraph, with a blank line after it.
+            all_lines.push(title_line.clone());
+            all_lines.push(Line::from(""));
+        }
         all_lines.extend(banner_lines);
         for entry in state.transcript.iter() {
             if is_entry_hidden_in_chat(state, entry) {
@@ -1329,6 +1310,27 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
         let scroll_rows = state.scroll_offset.min(max_scroll as usize) as u16;
         let scroll = max_scroll.saturating_sub(scroll_rows);
         frame.render_widget(paragraph.scroll((scroll, 0)), content_area);
+
+        if inline_mascot {
+            // Title row sits to the left of the mascot, sharing body_area.y.
+            // We carve out 9 cells on the right (8 sprite + 1 padding).
+            let mascot_w: u16 = 8;
+            let right_pad: u16 = 1;
+            let title_area = Rect {
+                x: body_area.x + 1,
+                y: body_area.y,
+                width: body_area.width.saturating_sub(2 + mascot_w + right_pad),
+                height: 1,
+            };
+            frame.render_widget(Paragraph::new(title_line), title_area);
+            let mascot_area = Rect {
+                x: body_area.x + body_area.width.saturating_sub(mascot_w + right_pad),
+                y: body_area.y + 1,
+                width: mascot_w,
+                height: 4,
+            };
+            render_mascot(state, mascot_area, frame.buffer_mut());
+        }
         if !following_tail && content_area.height >= 1 {
             // Floating hint pinned to the top of the transcript pane so the
             // user always knows they're behind the tail. Without a border
