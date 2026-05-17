@@ -343,6 +343,17 @@ impl HarnessAgent {
                 estimated_tokens,
                 self.context.compaction_threshold_tokens(),
             )?;
+            // Surface the auto-compaction in the transcript so the
+            // operator can see that the 90%-of-window guard rail did
+            // fire. Without this, compaction is invisible — the hook
+            // path only spawns user-defined shell scripts.
+            let threshold = self.context.llm_compaction_threshold();
+            let post_tokens = self.context.estimated_tokens();
+            events(AgentRunEvent::Thinking {
+                text: format!(
+                    "context compacted: {estimated_tokens} tok → {post_tokens} tok (threshold {threshold})"
+                ),
+            });
         }
 
         events(AgentRunEvent::AssistantStarted {

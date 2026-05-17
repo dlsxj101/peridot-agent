@@ -165,11 +165,15 @@ where
         &project_root,
         &config.context,
     ));
-    // Drive dynamic compaction off the active model's context window
-    // when known. Unknown models keep the static thresholds from
-    // ContextLimits. peridot-llm::context_window_tokens covers the
-    // common Anthropic / OpenAI / Gemini / DeepSeek / Qwen families.
-    context.set_model_window_tokens(peridot_llm::context_window_tokens(&options.model));
+    // Drive dynamic compaction off the active model's context window.
+    // peridot-llm::context_window_tokens covers the common Anthropic /
+    // OpenAI / Gemini / DeepSeek / Qwen families; anything the table
+    // doesn't recognise (custom OpenRouter slugs, brand-new releases)
+    // gets a conservative 200K window so the 90% auto-compaction
+    // trigger still fires before the model's real limit instead of
+    // falling back to the (often-too-tight) static 140K threshold.
+    let window = peridot_llm::context_window_tokens(&options.model).unwrap_or(200_000);
+    context.set_model_window_tokens(Some(window));
     if let Some(path) = context_snapshot_path.as_ref()
         && let Ok(bytes) = std::fs::read(path)
         && let Ok(entries) = serde_json::from_slice::<Vec<peridot_context::ContextEntry>>(&bytes)
