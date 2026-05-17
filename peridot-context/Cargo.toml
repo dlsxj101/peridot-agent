@@ -13,6 +13,8 @@ e2e = []
 peridot-common = { path = "../peridot-common" }
 peridot-llm = { path = "../peridot-llm" }
 serde.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
-serde_json.workspace = true
+async-trait.workspace = true
+tokio.workspace = true

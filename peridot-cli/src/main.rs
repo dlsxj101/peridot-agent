@@ -537,7 +537,7 @@ async fn main() -> Result<()> {
                             let options_template = base_options.clone();
                             let config_template = run_config.clone();
                             let project_template = run_project_root.clone();
-                            move |decision, scope, _tool_name, reason, state| {
+                            move |decision, scope, _tool_name, reason, synthesised_parameters, state| {
                                 if decision != ApprovalDecision::Approve {
                                     return;
                                 }
@@ -556,6 +556,11 @@ async fn main() -> Result<()> {
                                     state.header.provider.as_deref(),
                                 );
                                 relax_security_for_approval(&mut config, &reason);
+                                if synthesised_parameters.is_some() {
+                                    state.push_transcript(
+                                        "approval: partial-hunk patch staged — re-running with selected hunks only",
+                                    );
+                                }
                                 if scope != peridot_tui::ApprovalScope::Once {
                                     state.push_transcript(format!(
                                         "approval: scope {scope:?} noted (persistence TBD)"
@@ -936,8 +941,72 @@ fn apply_session_command(
         SessionCommandEvent::BranchList => {
             handle_branch_list(state, project_template);
         }
+        SessionCommandEvent::BranchTurn(turn_id) => {
+            handle_branch_turn(state, project_template, turn_id);
+        }
     }
     warn_on_shared_workspace_collisions(state, router, project_template);
+}
+
+/// Forks the live session's context at the given turn id by rewriting
+/// the snapshot to contain only entries from turns `<= turn_id`. The
+/// agent picks the truncated context up on its next run; the dropped
+/// entries are surfaced in the transcript so the operator sees what
+/// was abandoned. Tied to slash command `/branch turn <id>`.
+fn handle_branch_turn(state: &mut TuiState, project_root: &Path, turn_id: u64) {
+    let session_id = state.current_session_id.clone();
+    if session_id.is_empty() {
+        state.push_error("branch turn: no active session id".to_string());
+        return;
+    }
+    let snapshot_path = project_root
+        .join(".peridot/sessions")
+        .join(&session_id)
+        .join("context.bin");
+    if !snapshot_path.exists() {
+        state.push_error("branch turn: no context snapshot to fork from".to_string());
+        return;
+    }
+    let bytes = match std::fs::read(&snapshot_path) {
+        Ok(bytes) => bytes,
+        Err(err) => {
+            state.push_error(format!("branch turn: failed to read snapshot — {err}"));
+            return;
+        }
+    };
+    let entries: Vec<peridot_context::ContextEntry> = match serde_json::from_slice(&bytes) {
+        Ok(entries) => entries,
+        Err(err) => {
+            state.push_error(format!("branch turn: snapshot parse error — {err}"));
+            return;
+        }
+    };
+    let last_keep = entries
+        .iter()
+        .rposition(|entry| entry.turn_id <= turn_id);
+    let Some(last_keep) = last_keep else {
+        state.push_error(format!(
+            "branch turn: turn id {turn_id} not found in snapshot"
+        ));
+        return;
+    };
+    let kept = &entries[..=last_keep];
+    let dropped = entries.len() - kept.len();
+    let serialized = match serde_json::to_vec(kept) {
+        Ok(bytes) => bytes,
+        Err(err) => {
+            state.push_error(format!("branch turn: serialise error — {err}"));
+            return;
+        }
+    };
+    if let Err(err) = std::fs::write(&snapshot_path, &serialized) {
+        state.push_error(format!("branch turn: write error — {err}"));
+        return;
+    }
+    state.push_transcript(format!(
+        "branch turn: forked at turn {turn_id} ({} dropped entries)",
+        dropped
+    ));
 }
 
 /// Validates a branch name — bare-word identifiers only so a malicious

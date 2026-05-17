@@ -247,6 +247,10 @@ impl HarnessAgent {
         P: LlmProvider + ?Sized,
         F: FnMut(AgentRunEvent),
     {
+        // Start of a new turn: bump the turn id so every entry
+        // appended below shares one id, enabling later `/branch turn`
+        // forks at this exact point.
+        self.context.bump_turn_id();
         if let Some(user_input) = request.user_input {
             self.context
                 .append(ContextEntry::trusted(ContextSource::User, user_input));
@@ -256,7 +260,23 @@ impl HarnessAgent {
                 .append(ContextEntry::trusted(ContextSource::PlanReminder, plan));
         }
         let estimated_tokens = self.context.estimated_tokens();
-        if self.context.compact_if_needed() {
+        // Tier 3 first: ask the model to produce a structured recap.
+        // Falls back to Tier 1 (deterministic summary) if the LLM call
+        // errors or produces no compaction. We deliberately swallow
+        // provider errors here so a compaction hiccup never aborts the
+        // run — the user's task continues with the longer context.
+        let mut compacted = match self
+            .context
+            .compact_with_llm(provider, &request.model)
+            .await
+        {
+            Ok(did) => did,
+            Err(_) => false,
+        };
+        if !compacted {
+            compacted = self.context.compact_if_needed();
+        }
+        if compacted {
             run_context_compacted_hook(
                 &request.project_root,
                 &request.hooks,

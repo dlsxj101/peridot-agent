@@ -310,6 +310,12 @@ where
     if config.committee.mode == CommitteeMode::Off {
         return Ok(());
     }
+    // Length gate: chat-style inputs below the threshold skip planner
+    // preflight — planning overhead dwarfs the value for trivial asks.
+    let task_chars = task.trim().chars().count();
+    if task_chars < config.committee.min_task_chars {
+        return Ok(());
+    }
     let planner_model = if config.committee.planner_model.is_empty() {
         options.model.clone()
     } else {

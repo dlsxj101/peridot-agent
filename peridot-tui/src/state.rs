@@ -746,6 +746,11 @@ pub enum SessionCommandEvent {
     /// `/branch list` — list every named branch saved under
     /// `.peridot/branches/` with its creation time.
     BranchList,
+    /// `/branch turn <id>` — fork the conversation at a specific past
+    /// turn id. Truncates context to turns `<= id` and records lineage
+    /// so subsequent turns carry `parent_turn_id = id`. Refused while
+    /// the agent is busy.
+    BranchTurn(u64),
 }
 
 /// Result produced when an interactive TUI session exits.
@@ -776,6 +781,12 @@ pub enum TuiEventOutcome {
         tool_name: String,
         /// Approval reason.
         reason: String,
+        /// Optional partial-patch parameters synthesised from the
+        /// operator's per-hunk selection. When `Some`, the caller
+        /// should re-execute the tool with these parameters instead
+        /// of the original ones (a subset of hunks was rejected); when
+        /// `None`, the original full-patch parameters still apply.
+        synthesised_parameters: Option<serde_json::Value>,
     },
     /// The user pressed Esc while the agent was busy; the run should be cancelled.
     Interrupt,

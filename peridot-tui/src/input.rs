@@ -52,7 +52,14 @@ pub fn run_interactive_with_events<F>(
     mut state: TuiState,
     runtime_events: std::sync::mpsc::Receiver<(String, TuiRuntimeEvent)>,
     mut on_submit: F,
-    mut on_approval: impl FnMut(ApprovalDecision, ApprovalScope, String, String, &mut TuiState),
+    mut on_approval: impl FnMut(
+        ApprovalDecision,
+        ApprovalScope,
+        String,
+        String,
+        Option<serde_json::Value>,
+        &mut TuiState,
+    ),
     mut on_interrupt: impl FnMut(&mut TuiState),
     mut on_session_command: impl FnMut(SessionCommandEvent, &mut TuiState),
     mut on_persist: impl FnMut(&mut TuiState),
@@ -103,7 +110,15 @@ where
                         scope,
                         tool_name,
                         reason,
-                    } => on_approval(decision, scope, tool_name, reason, &mut state),
+                        synthesised_parameters,
+                    } => on_approval(
+                        decision,
+                        scope,
+                        tool_name,
+                        reason,
+                        synthesised_parameters,
+                        &mut state,
+                    ),
                     TuiEventOutcome::Interrupt => on_interrupt(&mut state),
                 },
                 Event::Resize(width, height) => state.resize(width, height),
@@ -452,9 +467,11 @@ pub(super) fn handle_approval_key_event(state: &mut TuiState, key: KeyEvent) -> 
                 scope: ApprovalScope::Once,
                 tool_name,
                 reason,
+                synthesised_parameters: None,
             }
         }
         KeyCode::Char('y') | KeyCode::Char('a') => {
+            let synthesised = panel_synthesised_parameters(panel);
             let tool_name = panel.tool_name.clone();
             let reason = panel.reason.clone();
             state.record_approval_decision(ApprovalDecision::Approve);
@@ -463,6 +480,7 @@ pub(super) fn handle_approval_key_event(state: &mut TuiState, key: KeyEvent) -> 
                 scope: ApprovalScope::Once,
                 tool_name,
                 reason,
+                synthesised_parameters: synthesised,
             }
         }
         KeyCode::Up => {
@@ -473,8 +491,27 @@ pub(super) fn handle_approval_key_event(state: &mut TuiState, key: KeyEvent) -> 
             panel.selected_index = (panel.selected_index + 1).min(panel.choices().len() - 1);
             TuiEventOutcome::Continue
         }
+        // Per-hunk staging: ←/→ moves the focused hunk, Tab/Space toggles
+        // the focused hunk's acceptance flag. No-op when no hunks present.
+        KeyCode::Left => {
+            panel.move_hunk_focus(-1);
+            TuiEventOutcome::Continue
+        }
+        KeyCode::Right => {
+            panel.move_hunk_focus(1);
+            TuiEventOutcome::Continue
+        }
+        KeyCode::Tab | KeyCode::Char(' ') => {
+            panel.toggle_focused_hunk();
+            TuiEventOutcome::Continue
+        }
         KeyCode::Enter => {
             let (decision, scope) = panel.selected_decision();
+            let synthesised = if decision == ApprovalDecision::Approve {
+                panel_synthesised_parameters(panel)
+            } else {
+                None
+            };
             let tool_name = panel.tool_name.clone();
             let reason = panel.reason.clone();
             state.record_approval_decision(decision.clone());
@@ -483,9 +520,28 @@ pub(super) fn handle_approval_key_event(state: &mut TuiState, key: KeyEvent) -> 
                 scope,
                 tool_name,
                 reason,
+                synthesised_parameters: synthesised,
             }
         }
         _ => TuiEventOutcome::Continue,
+    }
+}
+
+/// Builds the partial-patch parameter object when the operator
+/// rejected at least one hunk. Returns `None` when there are no hunks,
+/// when every hunk is accepted (the original parameters still hold),
+/// or when synthesis fails (missing `old_text` field).
+fn panel_synthesised_parameters(panel: &ApprovalPanel) -> Option<serde_json::Value> {
+    if panel.hunks.is_empty() || panel.all_hunks_accepted() {
+        return None;
+    }
+    let partial = panel.synthesised_new_text()?;
+    let mut params = panel.tool_params.clone();
+    if let Some(obj) = params.as_object_mut() {
+        obj.insert("new_text".to_string(), serde_json::Value::String(partial));
+        Some(params)
+    } else {
+        None
     }
 }
 
@@ -881,6 +937,16 @@ pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
         SlashCommand::BranchList => {
             state.push_transcript("branch: listing snapshots…");
             state.push_pending_session_command(SessionCommandEvent::BranchList);
+        }
+        SlashCommand::BranchTurn(turn_id) => {
+            if state.is_agent_busy() {
+                state.push_error(
+                    "branch turn: refusing while agent is running — wait or interrupt first",
+                );
+            } else {
+                state.push_transcript(format!("branch: forking at turn {turn_id}…"));
+                state.push_pending_session_command(SessionCommandEvent::BranchTurn(turn_id));
+            }
         }
     }
 }

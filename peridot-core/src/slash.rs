@@ -118,6 +118,12 @@ pub enum SlashCommand {
     BranchRestore(String),
     /// List every named branch saved under `.peridot/branches/`.
     BranchList,
+    /// Fork the conversation at a specific past turn id. Truncates the
+    /// context to entries from turns `<= turn_id` and records the
+    /// lineage so future turns are stamped with `parent_turn_id =
+    /// turn_id`. The dropped entries are surfaced to the caller so the
+    /// session DAG can persist the abandoned limb.
+    BranchTurn(u64),
 }
 
 /// Payload for `/subagent model <name|reset>`. Wrapped in a dedicated enum so
@@ -249,6 +255,10 @@ pub fn parse_slash_command(input: &str) -> Option<SlashCommand> {
                     Some(SlashCommand::BranchRestore(name.to_string()))
                 }
             }
+            other if other.starts_with("turn ") => {
+                let id = other.strip_prefix("turn ").unwrap_or("").trim();
+                id.parse::<u64>().ok().map(SlashCommand::BranchTurn)
+            }
             _ => None,
         },
         "mcp" => match rest {
@@ -293,5 +303,25 @@ pub fn parse_slash_command(input: &str) -> Option<SlashCommand> {
             _ => None,
         },
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_branch_turn_with_valid_id() {
+        assert_eq!(parse_slash_command("/branch turn 42"), Some(SlashCommand::BranchTurn(42)));
+    }
+
+    #[test]
+    fn rejects_branch_turn_with_non_numeric_id() {
+        assert_eq!(parse_slash_command("/branch turn abc"), None);
+    }
+
+    #[test]
+    fn rejects_branch_turn_with_missing_id() {
+        assert_eq!(parse_slash_command("/branch turn"), None);
     }
 }

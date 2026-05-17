@@ -81,7 +81,8 @@ impl AgentState {
             | SlashCommand::Rewind
             | SlashCommand::BranchSave(_)
             | SlashCommand::BranchRestore(_)
-            | SlashCommand::BranchList => {}
+            | SlashCommand::BranchList
+            | SlashCommand::BranchTurn(_) => {}
         }
     }
 }

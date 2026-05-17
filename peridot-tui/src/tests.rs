@@ -1255,6 +1255,105 @@ fn approval_panel_offers_four_scopes_and_returns_scope() {
 }
 
 #[test]
+fn approval_panel_tab_toggles_focused_hunk_and_arrow_keys_move_focus() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    state.apply_runtime_event(TuiRuntimeEvent::ApprovalRequested {
+        tool_name: "file_patch".to_string(),
+        reason: "modifies src/lib.rs".to_string(),
+        parameters: serde_json::json!({
+            "path": "src/lib.rs",
+            "old_text": "a\nb\nc\nd\ne\n",
+            "new_text": "a\nB\nc\nd\nE\n"
+        }),
+    });
+
+    // Two hunks expected; focus starts at hunk 0, both accepted by default.
+    {
+        let panel = state.approval.as_ref().expect("approval panel");
+        assert_eq!(panel.hunks.len(), 2);
+        assert_eq!(panel.focused_hunk, Some(0));
+        assert!(panel.all_hunks_accepted());
+    }
+
+    // Right arrow moves focus to hunk 1.
+    handle_key_event(&mut state, KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
+    assert_eq!(state.approval.as_ref().unwrap().focused_hunk, Some(1));
+
+    // Tab toggles hunk 1 off.
+    handle_key_event(&mut state, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    assert!(!state.approval.as_ref().unwrap().hunk_accepted[1]);
+    assert!(!state.approval.as_ref().unwrap().all_hunks_accepted());
+
+    // Enter on "Approve once" (default selected_index = 0) returns the
+    // synthesised partial parameters.
+    let outcome = handle_key_event(
+        &mut state,
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+    );
+    match outcome {
+        TuiEventOutcome::Approval {
+            decision,
+            synthesised_parameters,
+            ..
+        } => {
+            assert_eq!(decision, ApprovalDecision::Approve);
+            let params = synthesised_parameters
+                .expect("partial parameters should be returned when a hunk is rejected");
+            let new_text = params.get("new_text").and_then(|v| v.as_str()).unwrap();
+            assert!(new_text.contains("\nB\n"), "accepted hunk applied: {new_text}");
+            assert!(new_text.contains("\ne"), "rejected hunk preserved: {new_text}");
+            assert!(!new_text.contains("E\n"), "rejected hunk dropped: {new_text}");
+        }
+        other => panic!("unexpected outcome: {other:?}"),
+    }
+}
+
+#[test]
+fn approval_panel_returns_no_synthesised_parameters_when_all_hunks_accepted() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    state.apply_runtime_event(TuiRuntimeEvent::ApprovalRequested {
+        tool_name: "file_patch".to_string(),
+        reason: "modifies src/lib.rs".to_string(),
+        parameters: serde_json::json!({
+            "path": "src/lib.rs",
+            "old_text": "a\nb\n",
+            "new_text": "a\nB\n"
+        }),
+    });
+
+    let outcome = handle_key_event(
+        &mut state,
+        KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE),
+    );
+    match outcome {
+        TuiEventOutcome::Approval {
+            decision,
+            synthesised_parameters,
+            ..
+        } => {
+            assert_eq!(decision, ApprovalDecision::Approve);
+            assert!(
+                synthesised_parameters.is_none(),
+                "all-accepted case should reuse the original parameters: {synthesised_parameters:?}"
+            );
+        }
+        other => panic!("unexpected outcome: {other:?}"),
+    }
+}
+
+#[test]
 fn approval_panel_synthesises_partial_patch_when_hunk_rejected() {
     let mut state = TuiState::new(HeaderState::new(
         ExecutionMode::Execute,

@@ -3,8 +3,10 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use peridot_common::{PeriError, PeriResult};
-use peridot_llm::{LlmMessage, MessageRole, ToolInvocation};
+use peridot_common::{PeriError, PeriResult, ReasoningEffort};
+use peridot_llm::{
+    CompletionRequest, LlmMessage, LlmProvider, MessageRole, ToolChoice, ToolInvocation,
+};
 use serde::{Deserialize, Serialize};
 
 /// Source category for a context entry.
@@ -46,6 +48,17 @@ pub struct ContextEntry {
     /// produced by tool execution); matches one of the assistant's `tool_calls` ids.
     #[serde(default)]
     pub tool_call_id: Option<String>,
+    /// Monotonic per-session turn id this entry belongs to. Stamped by
+    /// `ContextManager` when the entry is appended. Defaults to `0` for
+    /// snapshots that pre-date turn lineage so old sessions still load.
+    #[serde(default)]
+    pub turn_id: u64,
+    /// Optional id of the turn this turn was branched from. `None` on
+    /// the original linear path; populated when the operator forks the
+    /// conversation via `/branch turn <id>`, so the DAG can render the
+    /// abandoned and active limbs side by side.
+    #[serde(default)]
+    pub parent_turn_id: Option<u64>,
 }
 
 impl ContextEntry {
@@ -57,6 +70,8 @@ impl ContextEntry {
             untrusted: false,
             tool_calls: Vec::new(),
             tool_call_id: None,
+            turn_id: 0,
+            parent_turn_id: None,
         }
     }
 
@@ -68,6 +83,8 @@ impl ContextEntry {
             untrusted: true,
             tool_calls: Vec::new(),
             tool_call_id: None,
+            turn_id: 0,
+            parent_turn_id: None,
         }
     }
 
@@ -83,6 +100,8 @@ impl ContextEntry {
             untrusted: false,
             tool_calls,
             tool_call_id: None,
+            turn_id: 0,
+            parent_turn_id: None,
         }
     }
 
@@ -102,6 +121,13 @@ pub struct ContextLimits {
     pub hard_limit_tokens: usize,
     /// Estimated token threshold that triggers deterministic compaction.
     pub compaction_threshold_tokens: usize,
+    /// Estimated token threshold that triggers LLM-driven (Tier 3)
+    /// compaction. Higher than `compaction_threshold_tokens` so the
+    /// cheap deterministic path runs first; the expensive LLM call
+    /// only fires when the buffer is so large that a structured
+    /// summary materially helps. Defaults to 1.4x of the Tier 1
+    /// threshold.
+    pub llm_compaction_threshold_tokens: usize,
     /// Character threshold above which observations are offloaded.
     pub offload_threshold_chars: usize,
     /// Directory where offloaded observations are written.
@@ -113,6 +139,7 @@ impl Default for ContextLimits {
         Self {
             hard_limit_tokens: 160_000,
             compaction_threshold_tokens: 100_000,
+            llm_compaction_threshold_tokens: 140_000,
             // Disable offload by default. Modern models all support 200K+ context, and
             // offloading tool output to disk confuses smaller models into recursively
             // re-reading the offload file instead of using the result the harness just
@@ -131,6 +158,14 @@ pub struct ContextManager {
     entries: Vec<ContextEntry>,
     limits: ContextLimits,
     offload_counter: usize,
+    /// Monotonic turn id stamped on every appended entry. Incremented
+    /// once per agent turn by `bump_turn_id`. Entries appended between
+    /// turns inherit the most recent value.
+    current_turn_id: u64,
+    /// When the current path was forked from another turn (via
+    /// `branch_from`), this records the source turn id so the DAG can
+    /// reconstruct lineage.
+    branched_from: Option<u64>,
 }
 
 impl ContextManager {
@@ -145,11 +180,60 @@ impl ContextManager {
             entries: Vec::new(),
             limits,
             offload_counter: 0,
+            current_turn_id: 0,
+            branched_from: None,
         }
     }
 
-    /// Appends an entry without mutating previous entries.
-    pub fn append(&mut self, entry: ContextEntry) {
+    /// Returns the current turn id stamped on newly-appended entries.
+    pub fn current_turn_id(&self) -> u64 {
+        self.current_turn_id
+    }
+
+    /// Advances to the next turn id. Call at the start of each agent
+    /// turn so entries appended during that turn share a turn id.
+    pub fn bump_turn_id(&mut self) -> u64 {
+        self.current_turn_id = self.current_turn_id.saturating_add(1);
+        self.current_turn_id
+    }
+
+    /// Returns the turn id this path was forked from, if any.
+    pub fn branched_from(&self) -> Option<u64> {
+        self.branched_from
+    }
+
+    /// Truncates the entry log to the slice belonging to turns up to
+    /// and including `turn_id`, then advances the counter so the next
+    /// appended turn is recorded as a fork of the requested turn. The
+    /// pruned entries are returned so the caller can persist them as a
+    /// sibling branch in the session DAG.
+    ///
+    /// Returns `None` when `turn_id` does not appear in the log (the
+    /// state is left untouched).
+    pub fn branch_from(&mut self, turn_id: u64) -> Option<Vec<ContextEntry>> {
+        if !self.entries.iter().any(|entry| entry.turn_id == turn_id) {
+            return None;
+        }
+        let last_keep = self
+            .entries
+            .iter()
+            .rposition(|entry| entry.turn_id <= turn_id)?;
+        let dropped = self.entries.split_off(last_keep + 1);
+        self.branched_from = Some(turn_id);
+        self.current_turn_id = turn_id;
+        Some(dropped)
+    }
+
+    /// Appends an entry without mutating previous entries. Stamps the
+    /// current turn id and inherited `parent_turn_id` so the DAG
+    /// reconstruction works without callers having to remember.
+    pub fn append(&mut self, mut entry: ContextEntry) {
+        if entry.turn_id == 0 {
+            entry.turn_id = self.current_turn_id;
+        }
+        if entry.parent_turn_id.is_none() {
+            entry.parent_turn_id = self.branched_from;
+        }
         self.entries.push(entry);
     }
 
@@ -232,6 +316,62 @@ impl ContextManager {
         compacted.extend_from_slice(&self.entries[keep_from..]);
         self.entries = compacted;
         true
+    }
+
+    /// LLM-driven Tier 3 compaction. Replaces the older portion of the
+    /// conversation with a structured summary written by `provider`
+    /// (`{key_facts, current_plan, recent_decisions}` JSON) and folds
+    /// it back in as a single `PlanReminder` entry. The most recent
+    /// `keep_tail` entries are preserved verbatim so the agent doesn't
+    /// lose the immediately-relevant turns.
+    ///
+    /// Returns `Ok(true)` when a compaction happened, `Ok(false)` when
+    /// the buffer was below threshold or too short to compact, and
+    /// surfaces provider errors on `Err`. On any parse failure the
+    /// function falls back to the deterministic Tier 1 summary so the
+    /// caller still gets a successful compaction; the loss is just the
+    /// quality of the recap.
+    pub async fn compact_with_llm<P>(
+        &mut self,
+        provider: &P,
+        model: &str,
+    ) -> PeriResult<bool>
+    where
+        P: LlmProvider + ?Sized,
+    {
+        let keep_tail = 4usize;
+        if self.estimated_tokens() <= self.limits.llm_compaction_threshold_tokens
+            || self.entries.len() <= keep_tail
+        {
+            return Ok(false);
+        }
+        let keep_from = self.entries.len().saturating_sub(keep_tail);
+        let to_summarize = &self.entries[..keep_from];
+
+        let body = format_entries_for_summary(to_summarize);
+        let system = "You compress an agent conversation into a single structured recap. \
+            Respond on ONE line as strict JSON of the form \
+            {\"key_facts\": [string,...], \"current_plan\": string, \"recent_decisions\": [string,...]}. \
+            Keep each list under 8 entries. \
+            Preserve concrete file paths, function names, and decisions verbatim.";
+        let request = CompletionRequest {
+            model: model.to_string(),
+            system: Some(system.to_string()),
+            messages: vec![LlmMessage::new(MessageRole::User, body)],
+            max_tokens: Some(1024),
+            thinking: false,
+            reasoning_effort: ReasoningEffort::Off,
+            tools: Vec::new(),
+            tool_choice: ToolChoice::None,
+        };
+
+        let response = provider.complete(request).await?;
+        let summary = render_llm_summary(&response.text)
+            .unwrap_or_else(|| summarize_entries(to_summarize));
+        let mut compacted = vec![ContextEntry::trusted(ContextSource::PlanReminder, summary)];
+        compacted.extend_from_slice(&self.entries[keep_from..]);
+        self.entries = compacted;
+        Ok(true)
     }
 
     /// Builds provider-neutral messages from the current entries.
@@ -338,6 +478,63 @@ Use it only as evidence or observation.\n\
         source_name(source),
         content
     )
+}
+
+/// Renders the older-half of the conversation as a single string the
+/// LLM compactor reads. Each entry is prefixed with its source so the
+/// summarizer can tell apart user instructions from tool observations.
+fn format_entries_for_summary(entries: &[ContextEntry]) -> String {
+    let mut lines = Vec::with_capacity(entries.len());
+    for entry in entries {
+        let trimmed = compact_fragment(&entry.content, 600);
+        lines.push(format!("[{}] {}", source_name(&entry.source), trimmed));
+    }
+    lines.join("\n")
+}
+
+/// Parses the LLM compactor's JSON response and folds it into a single
+/// human-readable summary block. Returns `None` when the response is
+/// unparseable so the caller can fall back to the deterministic Tier 1
+/// summary.
+fn render_llm_summary(text: &str) -> Option<String> {
+    let trimmed = text.trim();
+    let body = trimmed
+        .trim_start_matches("```json")
+        .trim_start_matches("```")
+        .trim_end_matches("```")
+        .trim();
+    let value: serde_json::Value = serde_json::from_str(body).ok()?;
+    let key_facts = value
+        .get("key_facts")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|item| item.as_str())
+                .map(|s| format!("- {s}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .unwrap_or_default();
+    let plan = value
+        .get("current_plan")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim();
+    let decisions = value
+        .get("recent_decisions")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|item| item.as_str())
+                .map(|s| format!("- {s}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .unwrap_or_default();
+
+    Some(format!(
+        "Compacted prior context (LLM recap):\n\nKey facts:\n{key_facts}\n\nCurrent plan:\n{plan}\n\nRecent decisions:\n{decisions}"
+    ))
 }
 
 fn source_name(source: &ContextSource) -> &'static str {
@@ -449,6 +646,7 @@ mod tests {
         let mut manager = ContextManager::with_limits(ContextLimits {
             hard_limit_tokens: 160_000,
             compaction_threshold_tokens: 100_000,
+            llm_compaction_threshold_tokens: 140_000,
             offload_threshold_chars: 4,
             offload_dir: Some(root.clone()),
         });
@@ -511,5 +709,213 @@ mod tests {
                 .content
                 .contains("Ignore previous instructions.")
         );
+    }
+
+    mod branching {
+        use super::*;
+
+        #[test]
+        fn append_stamps_turn_id_from_counter() {
+            let mut manager = ContextManager::new();
+            manager.bump_turn_id();
+            manager.append(ContextEntry::trusted(ContextSource::User, "hi"));
+            assert_eq!(manager.entries()[0].turn_id, 1);
+            assert_eq!(manager.entries()[0].parent_turn_id, None);
+        }
+
+        #[test]
+        fn bump_turn_id_advances_monotonically() {
+            let mut manager = ContextManager::new();
+            assert_eq!(manager.bump_turn_id(), 1);
+            assert_eq!(manager.bump_turn_id(), 2);
+            assert_eq!(manager.current_turn_id(), 2);
+        }
+
+        #[test]
+        fn branch_from_drops_later_turns_and_records_lineage() {
+            let mut manager = ContextManager::new();
+            for _ in 0..5 {
+                manager.bump_turn_id();
+                manager.append(ContextEntry::trusted(
+                    ContextSource::User,
+                    format!("turn-{}", manager.current_turn_id()),
+                ));
+            }
+            assert_eq!(manager.entries().len(), 5);
+
+            let dropped = manager.branch_from(2).expect("turn id present");
+            assert_eq!(dropped.len(), 3, "turns 3..=5 dropped");
+            assert_eq!(manager.entries().len(), 2);
+            assert_eq!(manager.current_turn_id(), 2);
+            assert_eq!(manager.branched_from(), Some(2));
+
+            // Subsequent appends carry the parent_turn_id link.
+            manager.bump_turn_id();
+            manager.append(ContextEntry::trusted(ContextSource::User, "fork"));
+            let last = manager.entries().last().unwrap();
+            assert_eq!(last.turn_id, 3);
+            assert_eq!(last.parent_turn_id, Some(2));
+        }
+
+        #[test]
+        fn branch_from_unknown_turn_id_is_noop() {
+            let mut manager = ContextManager::new();
+            manager.bump_turn_id();
+            manager.append(ContextEntry::trusted(ContextSource::User, "first"));
+            assert!(manager.branch_from(99).is_none());
+            assert_eq!(manager.entries().len(), 1);
+        }
+
+        #[test]
+        fn legacy_snapshot_deserialises_without_turn_fields() {
+            // Older snapshots (pre-DAG) lack turn_id / parent_turn_id;
+            // the `#[serde(default)]` annotations make them load.
+            let legacy = serde_json::json!([{
+                "source": "user",
+                "content": "old entry",
+                "untrusted": false,
+                "tool_calls": [],
+                "tool_call_id": null
+            }]);
+            let entries: Vec<ContextEntry> = serde_json::from_value(legacy).unwrap();
+            assert_eq!(entries[0].turn_id, 0);
+            assert!(entries[0].parent_turn_id.is_none());
+        }
+    }
+
+    mod tier3 {
+        use super::*;
+        use async_trait::async_trait;
+        use peridot_llm::{
+            AuthMethod, CompletionRequest, CompletionResponse, PricingTable, Usage,
+        };
+        use std::sync::Mutex;
+
+        struct ScriptedSummaryProvider {
+            response: Mutex<Option<String>>,
+        }
+
+        impl ScriptedSummaryProvider {
+            fn new(text: impl Into<String>) -> Self {
+                Self {
+                    response: Mutex::new(Some(text.into())),
+                }
+            }
+        }
+
+        #[async_trait]
+        impl LlmProvider for ScriptedSummaryProvider {
+            async fn complete(
+                &self,
+                _req: CompletionRequest,
+            ) -> PeriResult<CompletionResponse> {
+                let text = self
+                    .response
+                    .lock()
+                    .unwrap()
+                    .take()
+                    .unwrap_or_default();
+                Ok(CompletionResponse {
+                    text,
+                    tool_calls: Vec::new(),
+                    reasoning_content: None,
+                    usage: Usage::default(),
+                })
+            }
+            fn supports_cache(&self) -> bool {
+                false
+            }
+            fn supports_prefill(&self) -> bool {
+                false
+            }
+            fn supports_thinking(&self) -> bool {
+                false
+            }
+            fn pricing(&self) -> PricingTable {
+                PricingTable::default()
+            }
+            fn auth_method(&self) -> AuthMethod {
+                AuthMethod::ApiKey
+            }
+        }
+
+        fn loaded_manager() -> ContextManager {
+            let mut manager = ContextManager::with_limits(ContextLimits {
+                hard_limit_tokens: 1_000_000,
+                compaction_threshold_tokens: 1,
+                llm_compaction_threshold_tokens: 1,
+                offload_threshold_chars: usize::MAX,
+                offload_dir: None,
+            });
+            // 10 entries — more than `keep_tail = 4` so compaction has
+            // something to fold.
+            for i in 0..10 {
+                manager.append(ContextEntry::trusted(
+                    ContextSource::User,
+                    format!("entry {i}"),
+                ));
+            }
+            manager
+        }
+
+        #[tokio::test]
+        async fn compacts_with_llm_when_threshold_exceeded() {
+            let mut manager = loaded_manager();
+            let before = manager.entries().len();
+            let provider = ScriptedSummaryProvider::new(
+                r#"{"key_facts": ["touched src/lib.rs"], "current_plan": "ship release", "recent_decisions": ["bumped version"]}"#,
+            );
+
+            let compacted = manager
+                .compact_with_llm(&provider, "test-model")
+                .await
+                .unwrap();
+
+            assert!(compacted, "expected compaction to happen");
+            assert!(manager.entries().len() < before);
+            assert_eq!(manager.entries()[0].source, ContextSource::PlanReminder);
+            assert!(manager.entries()[0].content.contains("touched src/lib.rs"));
+            assert!(manager.entries()[0].content.contains("ship release"));
+        }
+
+        #[tokio::test]
+        async fn falls_back_to_deterministic_summary_on_unparseable_response() {
+            let mut manager = loaded_manager();
+            let provider = ScriptedSummaryProvider::new("not json at all");
+
+            let compacted = manager
+                .compact_with_llm(&provider, "test-model")
+                .await
+                .unwrap();
+
+            assert!(compacted);
+            // Tier 1 summary header should appear in the fallback.
+            assert!(
+                manager.entries()[0]
+                    .content
+                    .contains("Compacted prior context: entries=")
+            );
+        }
+
+        #[tokio::test]
+        async fn no_compaction_when_below_threshold() {
+            let mut manager = ContextManager::with_limits(ContextLimits {
+                hard_limit_tokens: 1_000_000,
+                compaction_threshold_tokens: 1_000_000,
+                llm_compaction_threshold_tokens: 1_000_000,
+                offload_threshold_chars: usize::MAX,
+                offload_dir: None,
+            });
+            manager.append(ContextEntry::trusted(ContextSource::User, "tiny"));
+            let provider = ScriptedSummaryProvider::new("{}");
+
+            let compacted = manager
+                .compact_with_llm(&provider, "test-model")
+                .await
+                .unwrap();
+
+            assert!(!compacted);
+            assert_eq!(manager.entries().len(), 1);
+        }
     }
 }

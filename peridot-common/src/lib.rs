@@ -430,6 +430,13 @@ pub struct CommitteeConfig {
     /// Maximum number of reviewer re-passes before auto-`Block` fires.
     #[serde(default = "default_max_review_passes")]
     pub max_review_passes: u32,
+    /// Minimum task length (UTF-8 chars) that triggers the planner
+    /// preflight pass. Short chat-style inputs ("hi", "what does this
+    /// do") below this threshold skip planning even when the committee
+    /// is enabled, since planning overhead would dominate. `0` (default)
+    /// keeps the legacy always-on behaviour.
+    #[serde(default)]
+    pub min_task_chars: usize,
 }
 
 impl Default for CommitteeConfig {
@@ -440,6 +447,7 @@ impl Default for CommitteeConfig {
             reviewer_model: String::new(),
             executor_model: String::new(),
             max_review_passes: default_max_review_passes(),
+            min_task_chars: 0,
         }
     }
 }

@@ -1673,10 +1673,12 @@ dependencies = [
 name = "peridot-context"
 version = "0.2.0"
 dependencies = [
+ "async-trait",
  "peridot-common",
  "peridot-llm",
  "serde",
  "serde_json",
+ "tokio",
 ]
 
 [[package]]
