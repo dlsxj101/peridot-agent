@@ -55,7 +55,7 @@ pub(crate) use project::print_scan;
 pub(crate) use session::run_session_command;
 pub(crate) use settings::run_setting_command;
 pub(crate) use setup::run_setup_command;
-pub(crate) use skills::run_skill_command;
+pub(crate) use skills::{move_auto_skill_to_archive, run_skill_command};
 pub(crate) use update::{maybe_print_update_notice, run_update_command};
 pub(crate) use verify::run_verify_command;
 
@@ -320,14 +320,18 @@ pub(crate) enum SkillCommand {
         /// Skill name or file stem.
         name: String,
     },
-    /// Run the Curator's 30/90-day stale/archive pass over agent-authored
-    /// skills. With `--dry-run`, prints decisions without writing changes;
-    /// otherwise archives skills idle for 90+ days. The Hermes-style LLM
-    /// reflection stage runs separately when triggered by 7-day idle.
+    /// Run the Curator. With no flags this applies the 30/90-day stale/
+    /// archive rules to agent-authored skills. `--llm` also invokes the
+    /// Hermes-style LLM reflection pass (one batch of at most 8 skills,
+    /// keep/patch/consolidate/archive). `--dry-run` skips the LLM call
+    /// and prints rule-only decisions.
     Curate {
         /// Print decisions but don't persist archive writes.
         #[arg(long)]
         dry_run: bool,
+        /// Also run the Hermes-style LLM reflection pass.
+        #[arg(long)]
+        llm: bool,
     },
 }
 

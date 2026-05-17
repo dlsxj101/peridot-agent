@@ -4,6 +4,7 @@ pub(crate) async fn run_skill_command(
     command: &SkillCommand,
     project_root: &Path,
     output: OutputFormat,
+    config: Option<&PeridotConfig>,
 ) -> Result<()> {
     match command {
         SkillCommand::List => {
@@ -59,35 +60,89 @@ pub(crate) async fn run_skill_command(
                 OutputFormat::Text => print!("{content}"),
             }
         }
-        SkillCommand::Curate { dry_run } => {
+        SkillCommand::Curate { dry_run, llm } => {
             let store = MemoryStore::new(project_root.join(".peridot/memory.db"));
             let now = unix_timestamp();
-            let decisions = store
+            // 30/90-day automatic rules run first. When a row graduates
+            // to Archive we also move its .md from auto/ into archive/.
+            let rule_decisions = store
                 .apply_auto_rules(now, *dry_run)
                 .with_context(|| "failed to apply Curator auto-rules")?;
+            if !*dry_run {
+                for (name, verdict) in &rule_decisions {
+                    if matches!(verdict, peridot_memory::AutoRuleVerdict::Archive) {
+                        move_auto_skill_to_archive(project_root, name).with_context(|| {
+                            format!("moving archived auto-skill file for {name}")
+                        })?;
+                    }
+                }
+            }
+
+            // LLM reflection pass — opt-in, costs tokens. dry-run skips
+            // it so operators can preview the cheap rule-only pass.
+            let llm_report = if *llm && !*dry_run {
+                let config = config.context(
+                    "--llm requires a loaded peridot config; run from inside a peridot project",
+                )?;
+                let model = config.models.main.as_str();
+                let provider = crate::providers::live_provider(config, model, project_root).await?;
+                Some(
+                    crate::curator::run_llm_curator(
+                        provider.as_ref(),
+                        model,
+                        &store,
+                        project_root,
+                        now,
+                    )
+                    .await?,
+                )
+            } else {
+                None
+            };
+
             match output {
                 OutputFormat::Json => println!(
                     "{}",
                     serde_json::to_string_pretty(&serde_json::json!({
                         "dry_run": *dry_run,
-                        "decisions": decisions
+                        "llm": *llm,
+                        "rule_decisions": rule_decisions
                             .iter()
                             .map(|(name, verdict)| serde_json::json!({
                                 "name": name,
                                 "verdict": format!("{verdict:?}").to_lowercase(),
                             }))
                             .collect::<Vec<_>>(),
+                        "llm_report": llm_report.as_ref().map(|report| serde_json::json!({
+                            "evaluated": report.evaluated,
+                            "applied": report.applied
+                                .iter()
+                                .map(|(name, action)| serde_json::json!({"name": name, "action": action}))
+                                .collect::<Vec<_>>(),
+                            "ignored": report.ignored,
+                        })),
                     }))?
                 ),
                 OutputFormat::Text => {
-                    if decisions.is_empty() {
+                    if rule_decisions.is_empty() {
                         println!("no auto-skills to curate");
                     }
-                    for (name, verdict) in &decisions {
+                    for (name, verdict) in &rule_decisions {
                         println!("{:<8}\t{name}", format!("{verdict:?}").to_lowercase());
                     }
+                    if let Some(report) = &llm_report {
+                        println!(
+                            "\nLLM curator: evaluated {}, applied {}, ignored {}",
+                            report.evaluated.len(),
+                            report.applied.len(),
+                            report.ignored.len(),
+                        );
+                        for (name, action) in &report.applied {
+                            println!("{action:<14}\t{name}");
+                        }
+                    }
                     if *dry_run {
-                        println!("(dry run — no archive writes)");
+                        println!("(dry run — no writes)");
                     }
                 }
             }
@@ -265,6 +320,26 @@ pub(super) fn find_skill(project_root: &Path, name: &str) -> Result<Option<Skill
     Ok(collect_skills(project_root)?.into_iter().find(|skill| {
         skill.name == name || skill.path.file_stem().and_then(|stem| stem.to_str()) == Some(name)
     }))
+}
+
+/// Renames `.peridot/skills/auto/<name>.md` to
+/// `.peridot/skills/archive/<name>.md` so the on-disk catalog matches
+/// the DB's `archived_at_unix` stamp. A missing source file is fine;
+/// only fs errors during create_dir_all / rename surface as failures.
+pub(crate) fn move_auto_skill_to_archive(project_root: &Path, name: &str) -> Result<()> {
+    let source = project_root
+        .join(".peridot/skills/auto")
+        .join(format!("{name}.md"));
+    if !source.exists() {
+        return Ok(());
+    }
+    let archive_dir = project_root.join(".peridot/skills/archive");
+    fs::create_dir_all(&archive_dir)
+        .with_context(|| format!("failed to create {}", archive_dir.display()))?;
+    let target = archive_dir.join(format!("{name}.md"));
+    fs::rename(&source, &target)
+        .with_context(|| format!("rename {} -> {}", source.display(), target.display()))?;
+    Ok(())
 }
 
 pub(super) fn skill_json(skill: &SkillEntry) -> serde_json::Value {

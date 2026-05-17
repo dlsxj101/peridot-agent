@@ -10,7 +10,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use commands::{
     AgentsCommand, AuthProvider, ConfigCommand, EnvCommand, McpCommand, OutputFormat,
     SessionCommand, SkillCommand, load_effective_config, maybe_print_update_notice,
-    maybe_run_first_launch_wizard, print_scan, read_stored_api_key,
+    maybe_run_first_launch_wizard, move_auto_skill_to_archive, print_scan, read_stored_api_key,
     read_stored_openai_oauth_access_token, run_agents_command, run_config_command, run_env_command,
     run_login_command, run_logout_command, run_mcp_command, run_session_command,
     run_setting_command, run_setup_command, run_skill_command, run_update_command,
@@ -288,6 +288,12 @@ async fn main() -> Result<()> {
     }
     let config = load_effective_config(&project_root, cli.config.as_deref())?;
 
+    // Hermes-style 7-day idle Curator. Cheap when not due (one SQLite
+    // SELECT), otherwise refines `scope='auto'` skills before the user's
+    // command continues. We run inline rather than spawning so the rare
+    // 7-day fire isn't lost to a fast-exit command like `peridot version`.
+    maybe_run_idle_curator(&config, &project_root).await;
+
     match &cli.command {
         Some(Command::Version { detailed }) => {
             if *detailed {
@@ -332,7 +338,7 @@ async fn main() -> Result<()> {
             return Ok(());
         }
         Some(Command::Skill { command }) => {
-            run_skill_command(command, &project_root, cli.output).await?;
+            run_skill_command(command, &project_root, cli.output, Some(&config)).await?;
             return Ok(());
         }
         Some(Command::Mcp { command }) => {
@@ -2211,4 +2217,70 @@ fn env_truthy(name: &str) -> bool {
             )
         })
         .unwrap_or(false)
+}
+
+/// Hermes-style 7-day idle Curator entry point.
+///
+/// Returns immediately when any of the following hold so peridot stays
+/// snappy on every invocation:
+/// - `memory.auto_skills = false` (opt-out)
+/// - no session activity has been recorded yet
+/// - the last activity is fresher than 7 days
+/// - the Curator already ran in the last 7 days
+///
+/// When the 7-day idle threshold trips, the 30/90-day rules run inline
+/// (cheap, no network) and the LLM reflection pass is attempted on a
+/// best-effort basis — provider/auth failures are logged to stderr and
+/// the timestamp is stamped either way so we don't loop.
+async fn maybe_run_idle_curator(config: &PeridotConfig, project_root: &Path) {
+    const SEVEN_DAYS: u64 = 7 * 24 * 3600;
+    if !config.memory.auto_skills {
+        return;
+    }
+    let store = MemoryStore::new(project_root.join(".peridot/memory.db"));
+    let Ok(last_activity) = store.last_activity_unix() else {
+        return;
+    };
+    if last_activity == 0 {
+        return;
+    }
+    let last_curator: u64 = store
+        .get_meta("last_curator_run_unix")
+        .ok()
+        .flatten()
+        .and_then(|raw| raw.parse().ok())
+        .unwrap_or(0);
+    let now = run_state::unix_timestamp();
+    if now.saturating_sub(last_activity) < SEVEN_DAYS {
+        return;
+    }
+    if now.saturating_sub(last_curator) < SEVEN_DAYS {
+        return;
+    }
+    eprintln!("[curator] 7+ days idle — reviewing auto-skills...");
+    if let Ok(decisions) = store.apply_auto_rules(now, false) {
+        for (name, verdict) in &decisions {
+            if matches!(verdict, peridot_memory::AutoRuleVerdict::Archive) {
+                let _ = move_auto_skill_to_archive(project_root, name);
+            }
+        }
+    }
+    let model = config.models.main.as_str();
+    match providers::live_provider(config, model, project_root).await {
+        Ok(provider) => {
+            match curator::run_llm_curator(provider.as_ref(), model, &store, project_root, now)
+                .await
+            {
+                Ok(report) => eprintln!(
+                    "[curator] evaluated {}, applied {}, ignored {}",
+                    report.evaluated.len(),
+                    report.applied.len(),
+                    report.ignored.len(),
+                ),
+                Err(err) => eprintln!("[curator] LLM pass failed: {err}"),
+            }
+        }
+        Err(err) => eprintln!("[curator] provider unavailable: {err}"),
+    }
+    let _ = store.set_meta("last_curator_run_unix", &now.to_string());
 }

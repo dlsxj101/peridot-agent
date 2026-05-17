@@ -1,7 +1,7 @@
 use super::*;
 use crate::commands::read_managed_env_var;
 
-pub(super) async fn live_provider(
+pub(crate) async fn live_provider(
     config: &PeridotConfig,
     model: &str,
     project_root: &Path,

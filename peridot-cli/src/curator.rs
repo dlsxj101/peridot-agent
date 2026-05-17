@@ -2,11 +2,8 @@
 //!
 //! Sub-agent that periodically reviews `scope='auto'` skills produced by
 //! the harness. The CLI command (`peridot skill curate --llm`) and the
-//! 7-day idle auto-trigger both call into `run_llm_curator` — the wiring
-//! lands in the next commit, so dead-code warnings are suppressed here
-//! for now rather than scattering `#[allow]`s on each helper.
-//!
-//! Each pass picks one of four actions per skill:
+//! 7-day idle auto-trigger both call into `run_llm_curator`. Each pass
+//! picks one of four actions per skill:
 //!
 //! - `keep` — skill is still useful, leave it alone.
 //! - `patch` — rewrite the body for clarity/correctness; metadata stays.
@@ -18,8 +15,12 @@
 //! most [`MAX_SKILLS_PER_RUN`] skills so the LLM cost stays bounded —
 //! this mirrors Hermes Agent's 8-iteration cap. Older entries come first
 //! so the long tail eventually gets cleaned up across multiple runs.
+//!
+//! Archived rows have their `.md` files moved from `.peridot/skills/auto/`
+//! to `.peridot/skills/archive/` so the operator can restore by hand if
+//! the Curator made a bad call.
 
-#![allow(dead_code)]
+use std::path::Path;
 
 use anyhow::{Context, Result, anyhow};
 
@@ -87,6 +88,7 @@ pub async fn run_llm_curator(
     provider: &dyn LlmProvider,
     model: &str,
     store: &MemoryStore,
+    project_root: &Path,
     now_unix: u64,
 ) -> Result<CuratorReport> {
     let batch = select_batch(store)?;
@@ -110,7 +112,36 @@ pub async fn run_llm_curator(
         .with_context(|| "Curator LLM call failed")?;
     let parsed = parse_curator_response(&response.text)
         .with_context(|| format!("invalid Curator JSON: {}", response.text))?;
-    apply_actions(store, &batch, parsed, now_unix)
+    apply_actions(store, project_root, &batch, parsed, now_unix)
+}
+
+/// Archives a single skill atomically: stamps the DB row and moves
+/// `.peridot/skills/auto/<name>.md` to `.peridot/skills/archive/<name>.md`
+/// when the file exists. fs operations are best-effort — a missing
+/// source file is fine (manual cleanup), but a rename failure surfaces
+/// as an error so the caller can decide whether to roll back the DB.
+pub(crate) fn archive_skill_with_file(
+    store: &MemoryStore,
+    project_root: &Path,
+    name: &str,
+    now_unix: u64,
+) -> Result<()> {
+    store
+        .set_skill_archived(name, now_unix)
+        .map_err(|err| anyhow!("set_skill_archived({name}): {err}"))?;
+    let source = project_root
+        .join(".peridot/skills/auto")
+        .join(format!("{name}.md"));
+    if !source.exists() {
+        return Ok(());
+    }
+    let archive_dir = project_root.join(".peridot/skills/archive");
+    std::fs::create_dir_all(&archive_dir)
+        .with_context(|| format!("creating {}", archive_dir.display()))?;
+    let target = archive_dir.join(format!("{name}.md"));
+    std::fs::rename(&source, &target)
+        .with_context(|| format!("renaming {} -> {}", source.display(), target.display()))?;
+    Ok(())
 }
 
 fn select_batch(store: &MemoryStore) -> Result<Vec<SkillRecord>> {
@@ -156,6 +187,7 @@ fn parse_curator_response(text: &str) -> Result<CuratorResponse> {
 
 fn apply_actions(
     store: &MemoryStore,
+    project_root: &Path,
     batch: &[SkillRecord],
     response: CuratorResponse,
     now_unix: u64,
@@ -199,17 +231,13 @@ fn apply_actions(
                         .save_skill(&updated)
                         .map_err(|err| anyhow!("consolidate target save_skill: {err}"))?;
                 }
-                store
-                    .set_skill_archived(&action.name, now_unix)
-                    .map_err(|err| anyhow!("consolidate archive: {err}"))?;
+                archive_skill_with_file(store, project_root, &action.name, now_unix)?;
                 report
                     .applied
                     .push((action.name, format!("consolidate→{target_name}")));
             }
             "archive" => {
-                store
-                    .set_skill_archived(&action.name, now_unix)
-                    .map_err(|err| anyhow!("archive: {err}"))?;
+                archive_skill_with_file(store, project_root, &action.name, now_unix)?;
                 report.applied.push((action.name, "archive".into()));
             }
             _ => report.ignored.push(action.name),
@@ -319,7 +347,7 @@ mod tests {
                 },
             ],
         };
-        let report = apply_actions(&store, &batch, response, 9_999).unwrap();
+        let report = apply_actions(&store, &root, &batch, response, 9_999).unwrap();
         assert_eq!(report.evaluated.len(), 3);
         assert_eq!(report.applied.len(), 3, "patch + consolidate + archive");
         assert!(report.ignored.iter().any(|n| n == "ghost"));
