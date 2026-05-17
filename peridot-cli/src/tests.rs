@@ -183,13 +183,20 @@ fn saves_run_summary_for_resume() {
 #[test]
 fn completed_run_saves_auto_skill_when_enabled() {
     let root = std::env::temp_dir().join(format!("peridot-cli-auto-skill-{}", std::process::id()));
+    // Three distinct tool names trip the workflow-breadth branch of the
+    // Hermes 4-condition gate, so the run earns an auto-skill.
+    let outcome = |name: &str, done: bool| peridot_core::AgentTurnOutcome {
+        tool_name: name.to_string(),
+        tool_result: peridot_common::ToolResult::success("ok", serde_json::json!({})),
+        usage: Usage::default(),
+        done,
+    };
     let summary = AgentRunSummary {
-        turns: vec![peridot_core::AgentTurnOutcome {
-            tool_name: "verify_test".to_string(),
-            tool_result: peridot_common::ToolResult::success("tests passed", serde_json::json!({})),
-            usage: Usage::default(),
-            done: true,
-        }],
+        turns: vec![
+            outcome("file_read", false),
+            outcome("file_write", false),
+            outcome("verify_test", true),
+        ],
         usage: Usage::default(),
         stopped_reason: StopReason::Done,
         duration_ms: 0,

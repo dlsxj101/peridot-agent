@@ -47,7 +47,10 @@ pub(super) fn save_run_session(
     };
     let store = MemoryStore::new(project_root.join(".peridot/memory.db"));
     store.save_session(&session)?;
-    if memory.auto_skills && summary.stopped_reason == StopReason::Done {
+    if memory.auto_skills
+        && summary.stopped_reason == StopReason::Done
+        && skill_worth_saving(summary)
+    {
         save_auto_skill(
             project_root,
             &store,
@@ -58,6 +61,32 @@ pub(super) fn save_run_session(
         )?;
     }
     Ok(())
+}
+
+/// Hermes-style 4-condition OR gate. Skip auto-skill capture for trivial
+/// sessions ("hi", quick lookups) so `.peridot/skills/auto/` stays
+/// signal-rich. A run earns a skill when it shows complexity, recovery,
+/// user collaboration, or workflow breadth — any one is enough.
+pub(super) fn skill_worth_saving(summary: &AgentRunSummary) -> bool {
+    const MIN_TURNS_FOR_COMPLEX: usize = 5;
+    const MIN_DISTINCT_TOOLS: usize = 3;
+
+    let turns = &summary.turns;
+    if turns.len() >= MIN_TURNS_FOR_COMPLEX {
+        return true;
+    }
+    if turns.iter().any(|t| !t.tool_result.success) {
+        return true;
+    }
+    if turns.iter().any(|t| t.tool_name == "agent_ask_user") {
+        return true;
+    }
+    turns
+        .iter()
+        .map(|t| t.tool_name.as_str())
+        .collect::<std::collections::HashSet<_>>()
+        .len()
+        >= MIN_DISTINCT_TOOLS
 }
 
 pub(super) fn save_auto_skill(
@@ -204,4 +233,69 @@ pub(super) fn unix_timestamp() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs())
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use peridot_common::ToolResult;
+    use peridot_core::AgentTurnOutcome;
+    use peridot_llm::Usage;
+    use serde_json::json;
+
+    fn turn(name: &str, success: bool) -> AgentTurnOutcome {
+        AgentTurnOutcome {
+            tool_name: name.to_string(),
+            tool_result: if success {
+                ToolResult::success("ok", json!(null))
+            } else {
+                ToolResult::failure("err")
+            },
+            usage: Usage::default(),
+            done: false,
+        }
+    }
+
+    fn summary_for(turns: Vec<AgentTurnOutcome>) -> AgentRunSummary {
+        AgentRunSummary {
+            turns,
+            usage: Usage::default(),
+            stopped_reason: StopReason::Done,
+            duration_ms: 0,
+        }
+    }
+
+    #[test]
+    fn trivial_two_turn_session_is_not_saved() {
+        let s = summary_for(vec![turn("file_read", true), turn("file_read", true)]);
+        assert!(!skill_worth_saving(&s));
+    }
+
+    #[test]
+    fn five_turn_session_passes_complexity_gate() {
+        let s = summary_for((0..5).map(|_| turn("file_read", true)).collect());
+        assert!(skill_worth_saving(&s));
+    }
+
+    #[test]
+    fn any_failed_turn_unlocks_recovery_gate() {
+        let s = summary_for(vec![turn("file_read", true), turn("shell_exec", false)]);
+        assert!(skill_worth_saving(&s));
+    }
+
+    #[test]
+    fn ask_user_call_unlocks_correction_gate() {
+        let s = summary_for(vec![turn("file_read", true), turn("agent_ask_user", true)]);
+        assert!(skill_worth_saving(&s));
+    }
+
+    #[test]
+    fn three_distinct_tools_unlocks_breadth_gate() {
+        let s = summary_for(vec![
+            turn("file_read", true),
+            turn("file_write", true),
+            turn("shell_exec", true),
+        ]);
+        assert!(skill_worth_saving(&s));
+    }
 }
