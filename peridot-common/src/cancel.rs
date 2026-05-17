@@ -2,7 +2,10 @@
 //!
 //! The TUI's Esc interrupt path flips a shared atomic so the agent loop can
 //! observe the request between turns (or, for cancellation-aware operations,
-//! mid-call via `is_cancelled()`).
+//! mid-call via `is_cancelled()`). Lives in `peridot-common` so both
+//! `peridot-core` (agent loop) and `peridot-tools` (long-running tool
+//! executions like `shell_exec`) can read the same flag without a circular
+//! crate dependency.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};

@@ -1,5 +1,9 @@
 //! Shared domain types for Peridot crates.
 
+mod cancel;
+
+pub use cancel::CancelToken;
+
 use std::collections::BTreeMap;
 use std::fmt;
 use std::path::PathBuf;

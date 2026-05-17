@@ -11,7 +11,7 @@ use peridot_tools::audit::{AuditEvent, append_audit_event};
 use peridot_tools::hooks::{HookRunner, tool_hook_variables};
 use peridot_tools::{ToolContext, ToolRegistry};
 
-use crate::cancel::CancelToken;
+use peridot_common::CancelToken;
 use crate::goal::check_goal_satisfied;
 use crate::permissions::ensure_tool_allowed;
 use crate::prompt::{read_plan_reminder, system_prompt_for_role};
@@ -163,10 +163,13 @@ impl HarnessAgent {
             .ok_or_else(|| PeriError::Tool(format!("unknown tool: {}", call.name)))?;
         ensure_tool_allowed(self.state.mode, self.state.phase, tool.group(), &call.name)?;
         let project_root = project_root.into();
-        let ctx = ToolContext::new(project_root.clone(), self.state.permission)
+        let mut ctx = ToolContext::new(project_root.clone(), self.state.permission)
             .with_denied_paths(denied_paths)
             .with_hooks(hooks)
             .with_security(security);
+        if let Some(token) = self.cancel.clone() {
+            ctx = ctx.with_cancel(token);
+        }
         tool.validate_params(&call.parameters)?;
         let runner = HookRunner::new(&project_root, ctx.hooks.clone());
         let mut variables = tool_hook_variables(&call.name, &call.parameters);
@@ -459,6 +462,14 @@ impl HarnessAgent {
         let mut stuck_detector = StuckDetector::new(3);
         let mut budget_warning_sent = false;
         let mut consecutive_parse_failures = 0usize;
+        // Auto-fix loop counter. Increments every time a `verify_*` tool
+        // (build / test / lint) returns a non-success ToolResult; resets
+        // on any other outcome. When it crosses the cap we abort the run
+        // so a perpetually-failing checker can't burn the budget while
+        // the model thrashes — operators can re-run after fixing the
+        // root cause manually.
+        let mut consecutive_verify_failures = 0u32;
+        const VERIFY_FIX_CAP: u32 = 3;
         for turn_index in 0..request.max_turns {
             if self
                 .cancel
@@ -540,6 +551,54 @@ impl HarnessAgent {
                 }
             };
             let turn_success = outcome.tool_result.success;
+            // Auto-fix loop: when verify_* fails, inject a hard "fix
+            // this first" directive so the model anchors on the
+            // failing check instead of drifting back to feature work.
+            // Cap at `VERIFY_FIX_CAP` consecutive failures so a
+            // permanently-broken checker doesn't blow the budget.
+            let is_verify_tool = outcome.tool_name.starts_with("verify_");
+            if is_verify_tool && !turn_success {
+                consecutive_verify_failures += 1;
+                if consecutive_verify_failures >= VERIFY_FIX_CAP {
+                    let message = format!(
+                        "Auto-fix loop circuit breaker: {} failed {} times in a row. Aborting so the operator can intervene.",
+                        outcome.tool_name, consecutive_verify_failures
+                    );
+                    self.state.phase = AgentPhase::Recovering;
+                    run_recovery_event_hook(
+                        &request.project_root,
+                        &request.hooks,
+                        "auto_fix_abort",
+                        &message,
+                    )?;
+                    events(AgentRunEvent::Recovery {
+                        message: message.clone(),
+                    });
+                    outcomes.push(outcome);
+                    let summary = AgentRunSummary {
+                        turns: outcomes,
+                        usage: total_usage,
+                        stopped_reason: StopReason::Interrupted,
+                        duration_ms: started_at.elapsed().as_millis() as u64,
+                    };
+                    events(AgentRunEvent::Finished {
+                        summary: summary.clone(),
+                    });
+                    return Ok(summary);
+                }
+                self.context.append(ContextEntry::trusted(
+                    ContextSource::PlanReminder,
+                    format!(
+                        "Auto-fix directive ({}/{}): {} reported failure. STOP all new work. Read the failing output above, make the smallest change that restores the check, and re-run the same `{}` to confirm. Do not proceed to other tasks until the verifier passes.",
+                        consecutive_verify_failures,
+                        VERIFY_FIX_CAP,
+                        outcome.tool_name,
+                        outcome.tool_name,
+                    ),
+                ));
+            } else {
+                consecutive_verify_failures = 0;
+            }
             accumulate_usage(&mut total_usage, outcome.usage);
             events(AgentRunEvent::UsageUpdated { usage: total_usage });
             events(AgentRunEvent::TurnEnded {

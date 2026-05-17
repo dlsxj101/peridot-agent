@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use peridot_common::{
-    HooksConfig, PeriError, PeriResult, PermissionLevel, PermissionMode, SecurityConfig, ToolGroup,
-    ToolResult,
+    CancelToken, HooksConfig, PeriError, PeriResult, PermissionLevel, PermissionMode,
+    SecurityConfig, ToolGroup, ToolResult,
 };
 use serde_json::Value;
 
@@ -22,6 +22,11 @@ pub struct ToolContext {
     pub hooks: HooksConfig,
     /// Security and sandbox settings active for this tool call.
     pub security: SecurityConfig,
+    /// Cancellation handle propagated from the agent loop. Long-running
+    /// tools (notably `shell_exec`) poll this between sub-steps so the
+    /// operator's Esc interrupt aborts the in-flight command instead of
+    /// only landing between turns.
+    pub cancel: Option<CancelToken>,
 }
 
 impl ToolContext {
@@ -33,6 +38,7 @@ impl ToolContext {
             denied_paths: Vec::new(),
             hooks: HooksConfig::default(),
             security: SecurityConfig::default(),
+            cancel: None,
         }
     }
 
@@ -51,6 +57,14 @@ impl ToolContext {
     /// Adds security configuration to the context.
     pub fn with_security(mut self, security: SecurityConfig) -> Self {
         self.security = security;
+        self
+    }
+
+    /// Attaches the agent loop's cancel token. Used by `shell_exec` (and
+    /// any future long-running tool) to abort mid-flight when the user
+    /// hits Esc.
+    pub fn with_cancel(mut self, cancel: CancelToken) -> Self {
+        self.cancel = Some(cancel);
         self
     }
 }

@@ -1,7 +1,6 @@
 //! Core harness state and high-level agent orchestration.
 
 mod agent;
-mod cancel;
 mod goal;
 mod permissions;
 mod prompt;
@@ -15,7 +14,7 @@ mod tests;
 mod usage;
 
 pub use agent::HarnessAgent;
-pub use cancel::CancelToken;
+pub use peridot_common::CancelToken;
 pub use goal::{GoalController, GoalStatus};
 pub use permissions::allowed_tool_groups;
 pub use requests::{

@@ -44,9 +44,7 @@ impl Tool for ShellExecTool {
         let command = required_str(&params, "command")?;
         reject_hard_blocked_command(command)?;
         enforce_shell_approval_policy(command, ctx)?;
-        let output = shell_command(command, ctx)?
-            .output()
-            .map_err(|err| PeriError::Tool(format!("failed to run command: {err}")))?;
+        let output = spawn_and_wait_interruptible(shell_command(command, ctx)?, ctx, command)?;
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
         let summary = if output.status.success() {
@@ -73,6 +71,55 @@ impl Tool for ShellExecTool {
 
     fn can_run_concurrent(&self) -> bool {
         false
+    }
+}
+
+/// Spawns the prepared shell command as a child and waits for it to exit
+/// while polling the agent loop's `cancel` token. When the operator hits
+/// Esc the loop receives a fresh cancellation and we send the child a
+/// kill signal, then return an `interrupted` error rather than blocking
+/// forever inside `Command::output()`. Without a cancel token attached
+/// to the context we fall back to a simple blocking `output()` so the
+/// behaviour is unchanged outside the live TUI.
+pub(crate) fn spawn_and_wait_interruptible(
+    mut command: std::process::Command,
+    ctx: &ToolContext,
+    label: &str,
+) -> PeriResult<std::process::Output> {
+    let Some(cancel) = ctx.cancel.clone() else {
+        return command
+            .output()
+            .map_err(|err| PeriError::Tool(format!("failed to run command: {err}")));
+    };
+    let mut child = command
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|err| PeriError::Tool(format!("failed to spawn command: {err}")))?;
+    loop {
+        match child
+            .try_wait()
+            .map_err(|err| PeriError::Tool(format!("failed to poll command: {err}")))?
+        {
+            Some(_status) => {
+                return child.wait_with_output().map_err(|err| {
+                    PeriError::Tool(format!("failed to read command output: {err}"))
+                });
+            }
+            None => {
+                if cancel.is_cancelled() {
+                    // Best-effort kill; ignore the error so we never
+                    // double-report a failure that the cancellation
+                    // already explains.
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(PeriError::Tool(format!(
+                        "{label}: interrupted by user before completion"
+                    )));
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+        }
     }
 }
 
