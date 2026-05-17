@@ -6,8 +6,7 @@ use peridot_common::{PeriError, PeriResult};
 use serde_json::{Value, json};
 
 use crate::transport::{
-    estimate_cost, read_streaming_response, should_retry_status, sse_data_events,
-    stream_sse_events,
+    estimate_cost, read_streaming_response, should_retry_status, sse_data_events, stream_sse_events,
 };
 use crate::{
     AuthMethod, CompletionRequest, CompletionResponse, CompletionStreamChunk, LlmProvider,
@@ -372,14 +371,13 @@ pub(crate) fn openai_chat_payload(request: &CompletionRequest) -> Value {
     // models ignore the field silently, so it's safe to send unconditionally
     // when the operator opts in. Legacy `thinking: true` callers fall
     // through to Medium when they leave `reasoning_effort` at its default.
-    let effective_effort =
-        if request.reasoning_effort != peridot_common::ReasoningEffort::Off {
-            request.reasoning_effort
-        } else if request.thinking {
-            peridot_common::ReasoningEffort::Medium
-        } else {
-            peridot_common::ReasoningEffort::Off
-        };
+    let effective_effort = if request.reasoning_effort != peridot_common::ReasoningEffort::Off {
+        request.reasoning_effort
+    } else if request.thinking {
+        peridot_common::ReasoningEffort::Medium
+    } else {
+        peridot_common::ReasoningEffort::Off
+    };
     if let Some(label) = effective_effort.openai_effort_label() {
         payload["reasoning"] = json!({ "effort": label });
     }
@@ -706,9 +704,7 @@ pub(crate) fn parse_openai_stream(
         .into_iter()
         .filter_map(|index| {
             let entry = tool_accumulators.remove(&index)?;
-            let id = entry
-                .id
-                .unwrap_or_else(|| format!("tool_call_{index}"));
+            let id = entry.id.unwrap_or_else(|| format!("tool_call_{index}"));
             if entry.name.is_empty() {
                 return None;
             }

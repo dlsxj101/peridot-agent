@@ -285,9 +285,7 @@ impl AskUserPanel {
             let real_only = self
                 .selected_set
                 .iter()
-                .filter(|&&idx| {
-                    Some(idx) != self.other_index && Some(idx) != self.explain_index
-                })
+                .filter(|&&idx| Some(idx) != self.other_index && Some(idx) != self.explain_index)
                 .filter_map(|&idx| self.choices.get(idx).cloned())
                 .collect::<Vec<_>>();
             return real_only.join(", ");

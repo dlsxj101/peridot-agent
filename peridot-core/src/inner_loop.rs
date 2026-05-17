@@ -22,15 +22,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use peridot_agents::{
-    LocalSubAgentRunner, ModelTier, SubAgent, SubAgentResult, SubAgentTask,
-};
+use peridot_agents::{LocalSubAgentRunner, ModelTier, SubAgent, SubAgentResult, SubAgentTask};
 use peridot_common::{
     ExecutionMode, HooksConfig, PeriResult, PermissionMode, ReasoningEffort, SecurityConfig,
 };
 use peridot_context::ContextManager;
 use peridot_llm::LlmProvider;
-use peridot_tools::{register_builtin_tools, ToolRegistry};
+use peridot_tools::{ToolRegistry, register_builtin_tools};
 
 use crate::agent::HarnessAgent;
 use crate::requests::{AgentRunRequest, StopReason};
@@ -237,11 +235,7 @@ mod tests {
     #[async_trait]
     impl LlmProvider for ScriptedProvider {
         async fn complete(&self, _req: CompletionRequest) -> PeriResult<CompletionResponse> {
-            Ok(self
-                .responses
-                .lock()
-                .unwrap()
-                .remove(0))
+            Ok(self.responses.lock().unwrap().remove(0))
         }
 
         fn supports_cache(&self) -> bool {

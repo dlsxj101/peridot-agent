@@ -706,7 +706,7 @@ fn runtime_events_update_tui_without_exiting() {
         stop_reason: "Done".to_string(),
         turns: 1,
         success: true,
-    duration_ms: 0,
+        duration_ms: 0,
     });
 
     let snapshot = render_text_snapshot(&state);
@@ -1075,7 +1075,7 @@ fn interrupted_status_survives_finished_event() {
         stop_reason: "Interrupted".to_string(),
         turns: 1,
         success: false,
-    duration_ms: 0,
+        duration_ms: 0,
     });
     assert_eq!(
         state.agent_run_status,
@@ -1282,7 +1282,10 @@ fn approval_panel_tab_toggles_focused_hunk_and_arrow_keys_move_focus() {
     }
 
     // Right arrow moves focus to hunk 1.
-    handle_key_event(&mut state, KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
+    handle_key_event(
+        &mut state,
+        KeyEvent::new(KeyCode::Right, KeyModifiers::NONE),
+    );
     assert_eq!(state.approval.as_ref().unwrap().focused_hunk, Some(1));
 
     // Tab toggles hunk 1 off.
@@ -1306,9 +1309,18 @@ fn approval_panel_tab_toggles_focused_hunk_and_arrow_keys_move_focus() {
             let params = synthesised_parameters
                 .expect("partial parameters should be returned when a hunk is rejected");
             let new_text = params.get("new_text").and_then(|v| v.as_str()).unwrap();
-            assert!(new_text.contains("\nB\n"), "accepted hunk applied: {new_text}");
-            assert!(new_text.contains("\ne"), "rejected hunk preserved: {new_text}");
-            assert!(!new_text.contains("E\n"), "rejected hunk dropped: {new_text}");
+            assert!(
+                new_text.contains("\nB\n"),
+                "accepted hunk applied: {new_text}"
+            );
+            assert!(
+                new_text.contains("\ne"),
+                "rejected hunk preserved: {new_text}"
+            );
+            assert!(
+                !new_text.contains("E\n"),
+                "rejected hunk dropped: {new_text}"
+            );
         }
         other => panic!("unexpected outcome: {other:?}"),
     }
@@ -1388,9 +1400,18 @@ fn approval_panel_synthesises_partial_patch_when_hunk_rejected() {
         .synthesised_new_text()
         .expect("partial new_text synthesised");
     // First hunk applied → "B"; second hunk rejected → trailing "e" preserved.
-    assert!(partial.contains("\nB\n"), "partial should keep accepted hunk: {partial}");
-    assert!(partial.contains("\ne"), "partial should keep rejected line: {partial}");
-    assert!(!partial.contains("\nE\n"), "partial should drop rejected hunk: {partial}");
+    assert!(
+        partial.contains("\nB\n"),
+        "partial should keep accepted hunk: {partial}"
+    );
+    assert!(
+        partial.contains("\ne"),
+        "partial should keep rejected line: {partial}"
+    );
+    assert!(
+        !partial.contains("\nE\n"),
+        "partial should drop rejected hunk: {partial}"
+    );
 }
 
 #[test]
@@ -1494,7 +1515,7 @@ fn busy_agent_queues_input_and_drains_when_idle() {
         stop_reason: "Done".to_string(),
         turns: 1,
         success: true,
-    duration_ms: 0,
+        duration_ms: 0,
     });
     let mut submitted: Vec<String> = Vec::new();
     let mut on_submit = |task: String, state: &mut TuiState| {
@@ -1612,7 +1633,7 @@ fn approval_runtime_event_opens_panel_and_records_decision() {
         stop_reason: "ApprovalRequired".to_string(),
         turns: 0,
         success: false,
-    duration_ms: 0,
+        duration_ms: 0,
     });
     assert_eq!(state.agent_run_status, AgentRunStatus::WaitingApproval);
     assert!(state.approval.is_some());
@@ -2307,7 +2328,7 @@ fn record_background_event_marks_finished_status_per_stop_reason() {
             stop_reason: "Done".to_string(),
             turns: 1,
             success: true,
-        duration_ms: 0,
+            duration_ms: 0,
         },
     );
     state.record_background_event(
@@ -2316,7 +2337,7 @@ fn record_background_event_marks_finished_status_per_stop_reason() {
             stop_reason: "Interrupted".to_string(),
             turns: 1,
             success: false,
-        duration_ms: 0,
+            duration_ms: 0,
         },
     );
     state.record_background_event(

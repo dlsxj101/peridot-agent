@@ -251,7 +251,11 @@ mod tests {
         let hunks = diff_hunks(old, new);
         // Trailing newline produces an empty trailing line that
         // matches; the addition is then a single hunk.
-        assert!(hunks.iter().any(|h| h.new_lines.contains(&"gamma".to_string())));
+        assert!(
+            hunks
+                .iter()
+                .any(|h| h.new_lines.contains(&"gamma".to_string()))
+        );
     }
 
     #[test]
@@ -282,9 +286,18 @@ mod tests {
         // accept only the first hunk
         let accepted = vec![true, false];
         let result = apply_selected_hunks(old, &hunks, &accepted).unwrap();
-        assert!(result.contains("B"), "first hunk should be applied: {result}");
-        assert!(result.contains("\ne"), "second hunk should be rejected: {result}");
-        assert!(!result.contains("E\n"), "second hunk should not appear: {result}");
+        assert!(
+            result.contains("B"),
+            "first hunk should be applied: {result}"
+        );
+        assert!(
+            result.contains("\ne"),
+            "second hunk should be rejected: {result}"
+        );
+        assert!(
+            !result.contains("E\n"),
+            "second hunk should not appear: {result}"
+        );
     }
 
     #[test]

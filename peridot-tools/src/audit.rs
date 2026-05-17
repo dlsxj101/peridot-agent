@@ -116,8 +116,8 @@ mod tests {
     /// rotated one — that's the smoke test that rotation actually fired.
     #[test]
     fn rotates_audit_log_when_oversized() {
-        let root = std::env::temp_dir()
-            .join(format!("peridot-audit-rotate-{}", std::process::id()));
+        let root =
+            std::env::temp_dir().join(format!("peridot-audit-rotate-{}", std::process::id()));
         let logs_dir = root.join(".peridot/logs");
         fs::create_dir_all(&logs_dir).unwrap();
         let path = logs_dir.join("audit.jsonl");

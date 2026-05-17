@@ -317,7 +317,10 @@ mod tests {
 
     #[test]
     fn parses_branch_turn_with_valid_id() {
-        assert_eq!(parse_slash_command("/branch turn 42"), Some(SlashCommand::BranchTurn(42)));
+        assert_eq!(
+            parse_slash_command("/branch turn 42"),
+            Some(SlashCommand::BranchTurn(42))
+        );
     }
 
     #[test]

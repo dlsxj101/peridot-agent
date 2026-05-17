@@ -29,7 +29,7 @@ pub struct BranchPickerTurn {
 /// of [`crate::ApprovalPanel`]: created when the operator opens the
 /// picker, populated asynchronously when the CLI hands back the turn
 /// list, dropped when the operator commits or cancels.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct BranchPickerState {
     /// Turns the operator can fork from. Empty until the CLI sends
     /// `TuiRuntimeEvent::BranchPickerTurns`.
@@ -39,16 +39,6 @@ pub struct BranchPickerState {
     /// `true` once the turn list has been populated. Used by the
     /// render path to distinguish "loading" from "no turns".
     pub loaded: bool,
-}
-
-impl Default for BranchPickerState {
-    fn default() -> Self {
-        Self {
-            turns: Vec::new(),
-            selected: 0,
-            loaded: false,
-        }
-    }
 }
 
 impl BranchPickerState {
@@ -104,7 +94,10 @@ mod tests {
         let mut state = BranchPickerState::opening();
         state.populate(vec![turn(2, "user"), turn(5, "tool"), turn(1, "user")]);
         assert!(state.loaded);
-        assert_eq!(state.turns.iter().map(|t| t.turn_id).collect::<Vec<_>>(), vec![1, 2, 5]);
+        assert_eq!(
+            state.turns.iter().map(|t| t.turn_id).collect::<Vec<_>>(),
+            vec![1, 2, 5]
+        );
         assert_eq!(state.selected, 2);
         assert_eq!(state.selected_turn_id(), Some(5));
     }

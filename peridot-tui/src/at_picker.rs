@@ -21,7 +21,14 @@ pub const AT_PICKER_LIMIT: usize = 8;
 /// Files we never want to expose in the picker even when they match by
 /// suffix. Hidden directories and build artefacts blow the index up with
 /// noise the operator would never `@`-mention.
-const SKIP_DIRS: &[&str] = &[".git", "target", "node_modules", ".peridot", ".idea", ".vscode"];
+const SKIP_DIRS: &[&str] = &[
+    ".git",
+    "target",
+    "node_modules",
+    ".peridot",
+    ".idea",
+    ".vscode",
+];
 
 /// Active state of the `@file` overlay. Cleared as soon as the user
 /// leaves the `@token` region (types a space, deletes the `@`, etc.).

@@ -5,6 +5,10 @@
 // reported upstream bug. We disable the lint at the crate level until the
 // fix lands so the workspace clippy gate stays usable.
 #![allow(clippy::doc_lazy_continuation)]
+// Clippy 0.1.95's `needless_borrows_for_generic_args` lint ICEs while
+// rendering a diagnostic against expressions in this crate ("slice index
+// starts at 45 but ends at 44"). Disable until upstream clippy ships a fix.
+#![allow(clippy::needless_borrows_for_generic_args)]
 
 use std::fmt::Write as FmtWrite;
 use std::io::{self, Stdout};
@@ -34,7 +38,6 @@ mod ask_user;
 mod at_picker;
 mod branch_picker;
 mod diff_hunks;
-mod settings_screen;
 #[cfg(test)]
 mod fixtures;
 mod i18n;
@@ -42,6 +45,7 @@ mod input;
 mod mascot;
 mod render;
 mod session_directory;
+mod settings_screen;
 mod slash_picker;
 mod state;
 mod terminal;
@@ -60,12 +64,10 @@ pub use slash_picker::{SlashCommandSpec, filtered_specs, first_match, slash_comm
 
 pub use ask_user::{ApprovalDecision, ApprovalPanel, ApprovalScope, AskUserPanel, MenuState};
 pub use branch_picker::{BranchPickerState, BranchPickerTurn};
-pub use settings_screen::{
-    SettingItem, SettingValue, SettingsOutcome, run_settings_screen,
-};
 pub use input::{handle_key_event, run_interactive, run_interactive_with_events};
 use render::goal_status_label;
 pub use render::{draw, render_text_snapshot, select_layout};
+pub use settings_screen::{SettingItem, SettingValue, SettingsOutcome, run_settings_screen};
 pub use state::{
     ActivityKind, AgentRunStatus, AgentsSummary, BudgetGauge, HeaderState, LayoutMode,
     McpServerSummary, PlanStep, PlanStepUpdate, RuntimeActivity, SessionCommandEvent, SessionStats,

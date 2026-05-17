@@ -14,7 +14,6 @@ use peridot_tools::audit::{AuditEvent, append_audit_event};
 use peridot_tools::hooks::{HookRunner, tool_hook_variables};
 use peridot_tools::{ToolContext, ToolRegistry};
 
-use peridot_common::CancelToken;
 use crate::goal::check_goal_satisfied;
 use crate::permissions::ensure_tool_allowed;
 use crate::prompt::{read_plan_reminder, system_prompt_for_role};
@@ -29,6 +28,7 @@ use crate::requests::{
 use crate::role::AgentRole;
 use crate::state::AgentState;
 use crate::usage::{accumulate_usage, stream_completion_with_chunks};
+use peridot_common::CancelToken;
 
 /// Peridot harness agent shell.
 pub struct HarnessAgent {
@@ -458,8 +458,7 @@ impl HarnessAgent {
         // <summary>` lines. When the model used `agent_done` AS the response
         // channel (no preceding text), the events DO fire so the summary
         // reaches the user — that's the only signal they'd otherwise see.
-        let suppress_done_ui =
-            tool_name == "agent_done" && !completion.text.trim().is_empty();
+        let suppress_done_ui = tool_name == "agent_done" && !completion.text.trim().is_empty();
         if !suppress_done_ui {
             events(AgentRunEvent::ToolStarted {
                 name: tool_name.clone(),
@@ -523,12 +522,10 @@ impl HarnessAgent {
         // entry as untrusted and offload-eligible; here we want the provider to
         // receive it through the native tool message channel instead, so the
         // model sees its own past action and result without re-running them.
-        let observation = serde_json::to_string(&tool_result).map_err(|err| {
-            PeriError::Parse(format!("failed to serialize tool result: {err}"))
-        })?;
+        let observation = serde_json::to_string(&tool_result)
+            .map_err(|err| PeriError::Parse(format!("failed to serialize tool result: {err}")))?;
         self.context.append(
-            ContextEntry::trusted(ContextSource::Tool, observation)
-                .with_tool_call_id(tool_call_id),
+            ContextEntry::trusted(ContextSource::Tool, observation).with_tool_call_id(tool_call_id),
         );
 
         if tool_name == "agent_done" && tool_result.success {
@@ -653,7 +650,7 @@ impl HarnessAgent {
                     turns: outcomes,
                     usage: total_usage,
                     stopped_reason: StopReason::Interrupted,
-                duration_ms: started_at.elapsed().as_millis() as u64,
+                    duration_ms: started_at.elapsed().as_millis() as u64,
                 };
                 events(AgentRunEvent::Finished {
                     summary: summary.clone(),
@@ -689,7 +686,7 @@ impl HarnessAgent {
                             turns: outcomes,
                             usage: total_usage,
                             stopped_reason: StopReason::ApprovalRequired,
-                        duration_ms: started_at.elapsed().as_millis() as u64,
+                            duration_ms: started_at.elapsed().as_millis() as u64,
                         };
                         events(AgentRunEvent::Finished {
                             summary: summary.clone(),
@@ -801,10 +798,8 @@ impl HarnessAgent {
                                 result.summary
                             )
                         };
-                        self.context.append(ContextEntry::trusted(
-                            ContextSource::PlanReminder,
-                            note,
-                        ));
+                        self.context
+                            .append(ContextEntry::trusted(ContextSource::PlanReminder, note));
                     }
                     Err(err) => {
                         // Verify infrastructure isn't available
@@ -895,7 +890,7 @@ impl HarnessAgent {
                         turns: outcomes,
                         usage: total_usage,
                         stopped_reason: StopReason::Interrupted,
-                    duration_ms: started_at.elapsed().as_millis() as u64,
+                        duration_ms: started_at.elapsed().as_millis() as u64,
                     };
                     events(AgentRunEvent::Finished {
                         summary: summary.clone(),
@@ -942,8 +937,7 @@ impl HarnessAgent {
                 // off; the gate is `auto_grade_on_done`.
                 if self.auto_grade_on_done {
                     let diff = collect_git_diff(&request.project_root);
-                    let verify_summary =
-                        recent_verify_summary(&self.context).unwrap_or_default();
+                    let verify_summary = recent_verify_summary(&self.context).unwrap_or_default();
                     match crate::grader::grade_work(
                         provider,
                         &request.model,
@@ -975,10 +969,7 @@ impl HarnessAgent {
                                     directive,
                                 ));
                                 events(AgentRunEvent::Recovery {
-                                    message: format!(
-                                        "auto-grade failed: {}",
-                                        verdict.summary
-                                    ),
+                                    message: format!("auto-grade failed: {}", verdict.summary),
                                 });
                                 continue;
                             }
@@ -1006,7 +997,7 @@ impl HarnessAgent {
                     turns: outcomes,
                     usage: total_usage,
                     stopped_reason: StopReason::Done,
-                duration_ms: started_at.elapsed().as_millis() as u64,
+                    duration_ms: started_at.elapsed().as_millis() as u64,
                 };
                 events(AgentRunEvent::Finished {
                     summary: summary.clone(),
@@ -1023,7 +1014,7 @@ impl HarnessAgent {
                     turns: outcomes,
                     usage: total_usage,
                     stopped_reason: StopReason::Budget,
-                duration_ms: started_at.elapsed().as_millis() as u64,
+                    duration_ms: started_at.elapsed().as_millis() as u64,
                 };
                 events(AgentRunEvent::Finished {
                     summary: summary.clone(),
@@ -1036,7 +1027,7 @@ impl HarnessAgent {
             turns: outcomes,
             usage: total_usage,
             stopped_reason: StopReason::MaxTurns,
-        duration_ms: started_at.elapsed().as_millis() as u64,
+            duration_ms: started_at.elapsed().as_millis() as u64,
         };
         events(AgentRunEvent::Finished {
             summary: summary.clone(),
@@ -1259,7 +1250,9 @@ fn registry_tool_definitions(registry: &ToolRegistry) -> Vec<ToolDefinition> {
 fn tool_invocation_parameters(invocation: &ToolInvocation) -> serde_json::Value {
     match &invocation.arguments {
         serde_json::Value::Null => serde_json::json!({}),
-        serde_json::Value::String(raw) => serde_json::from_str(raw).unwrap_or(serde_json::json!({})),
+        serde_json::Value::String(raw) => {
+            serde_json::from_str(raw).unwrap_or(serde_json::json!({}))
+        }
         other => other.clone(),
     }
 }
@@ -1319,10 +1312,8 @@ mod helpers_tests {
 
     #[test]
     fn take_pending_resume_consumes_valid_sidecar() {
-        let path = std::env::temp_dir().join(format!(
-            "peridot-pending-valid-{}.bin",
-            std::process::id()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("peridot-pending-valid-{}.bin", std::process::id()));
         let call = ToolCall::new(
             "shell_exec",
             serde_json::json!({ "command": "npm install left-pad" }),
@@ -1334,7 +1325,10 @@ mod helpers_tests {
             recovered.parameters.get("command").and_then(|v| v.as_str()),
             Some("npm install left-pad")
         );
-        assert!(!path.exists(), "sidecar should be deleted after consumption");
+        assert!(
+            !path.exists(),
+            "sidecar should be deleted after consumption"
+        );
     }
 
     #[test]
@@ -1362,4 +1356,3 @@ mod helpers_tests {
         assert!(review.chars().count() < 6000);
     }
 }
-

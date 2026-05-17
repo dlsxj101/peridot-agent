@@ -553,7 +553,12 @@ async fn main() -> Result<()> {
                             let options_template = base_options.clone();
                             let config_template = run_config.clone();
                             let project_template = run_project_root.clone();
-                            move |decision, scope, _tool_name, reason, synthesised_parameters, state| {
+                            move |decision,
+                                  scope,
+                                  _tool_name,
+                                  reason,
+                                  synthesised_parameters,
+                                  state| {
                                 if decision != ApprovalDecision::Approve {
                                     return;
                                 }
@@ -1020,17 +1025,15 @@ fn handle_branch_picker_open(
         std::collections::BTreeMap::new();
     for entry in entries {
         let id = entry.turn_id;
-        seen.entry(id).or_insert_with(|| peridot_tui::BranchPickerTurn {
-            turn_id: id,
-            source: source_label(&entry.source).to_string(),
-            preview: preview_line(&entry.content, 80),
-        });
+        seen.entry(id)
+            .or_insert_with(|| peridot_tui::BranchPickerTurn {
+                turn_id: id,
+                source: source_label(&entry.source).to_string(),
+                preview: preview_line(&entry.content, 80),
+            });
     }
     let turns: Vec<peridot_tui::BranchPickerTurn> = seen.into_values().collect();
-    let _ = event_tx.send((
-        session_id,
-        TuiRuntimeEvent::BranchPickerTurns { turns },
-    ));
+    let _ = event_tx.send((session_id, TuiRuntimeEvent::BranchPickerTurns { turns }));
 }
 
 fn source_label(source: &peridot_context::ContextSource) -> &'static str {
@@ -1119,9 +1122,7 @@ fn handle_branch_turn(state: &mut TuiState, project_root: &Path, turn_id: u64) {
             return;
         }
     };
-    let last_keep = entries
-        .iter()
-        .rposition(|entry| entry.turn_id <= turn_id);
+    let last_keep = entries.iter().rposition(|entry| entry.turn_id <= turn_id);
     let Some(last_keep) = last_keep else {
         state.push_error(format!(
             "branch turn: turn id {turn_id} not found in snapshot"
@@ -1197,10 +1198,7 @@ fn handle_branch_save(state: &mut TuiState, project_root: &Path, name: &str) {
         return;
     }
     if let Err(err) = std::fs::create_dir_all(&dst_dir) {
-        state.push_error(format!(
-            "branch save: create {}: {err}",
-            dst_dir.display()
-        ));
+        state.push_error(format!("branch save: create {}: {err}", dst_dir.display()));
         return;
     }
     let dst = dst_dir.join("context.bin");
@@ -1208,9 +1206,7 @@ fn handle_branch_save(state: &mut TuiState, project_root: &Path, name: &str) {
         state.push_error(format!("branch save: copy: {err}"));
         return;
     }
-    state.push_transcript(format!(
-        "branch: saved '{name}' from session {session_id}"
-    ));
+    state.push_transcript(format!("branch: saved '{name}' from session {session_id}"));
 }
 
 /// Overwrites the active session's context snapshot with the named
@@ -1327,10 +1323,7 @@ fn handle_scan_todos(state: &mut TuiState, project_root: &Path) {
         ));
         return;
     }
-    let mut body = format!(
-        "todos: {} hit(s) across {walked} file(s):\n",
-        hits.len()
-    );
+    let mut body = format!("todos: {} hit(s) across {walked} file(s):\n", hits.len());
     body.push_str(&hits.join("\n"));
     if hits.len() == MAX_HITS {
         body.push_str("\n(further hits truncated)");
@@ -1654,9 +1647,9 @@ fn remove_mcp_block(content: &str, target: &str) -> Option<String> {
     if let Some(start) = current_start.take() {
         blocks.push((start, lines.len(), current_name.take()));
     }
-    let (start, end, _) = blocks.into_iter().find(|(_, _, name)| {
-        name.as_deref() == Some(target)
-    })?;
+    let (start, end, _) = blocks
+        .into_iter()
+        .find(|(_, _, name)| name.as_deref() == Some(target))?;
     let mut kept: Vec<&str> = Vec::with_capacity(lines.len());
     kept.extend(lines.iter().take(start).copied());
     kept.extend(lines.iter().skip(end).copied());
@@ -1684,9 +1677,8 @@ fn atomic_write(path: &Path, content: &str) -> Result<(), String> {
     }
     let temp = path.with_extension("toml.tmp");
     std::fs::write(&temp, content).map_err(|err| format!("write {}: {err}", temp.display()))?;
-    std::fs::rename(&temp, path).map_err(|err| {
-        format!("rename {} -> {}: {err}", temp.display(), path.display())
-    })
+    std::fs::rename(&temp, path)
+        .map_err(|err| format!("rename {} -> {}: {err}", temp.display(), path.display()))
 }
 
 /// One-shot connectivity probe: constructs `peridot_mcp::McpClient` from
@@ -1716,9 +1708,9 @@ fn handle_mcp_test(
         client.list_tools().await.map(|tools| tools.len())
     });
     match probe {
-        Ok(count) => state.push_transcript(format!(
-            "mcp: '{name}' reachable — {count} tool(s) exposed"
-        )),
+        Ok(count) => {
+            state.push_transcript(format!("mcp: '{name}' reachable — {count} tool(s) exposed"))
+        }
         Err(err) => state.push_error(format!("mcp test '{name}': {err}")),
     }
 }

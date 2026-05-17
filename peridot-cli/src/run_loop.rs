@@ -67,8 +67,7 @@ pub(super) async fn run_task(
     let profile = ProjectScanner::new().scan(project_root)?;
     let denied_paths = profile.boundaries.into_iter().map(PathBuf::from).collect();
     let provider_box = live_provider(config, &model, project_root).await?;
-    let provider: std::sync::Arc<dyn peridot_llm::LlmProvider> =
-        std::sync::Arc::from(provider_box);
+    let provider: std::sync::Arc<dyn peridot_llm::LlmProvider> = std::sync::Arc::from(provider_box);
     agent.set_subagent_runner(std::sync::Arc::new(
         peridot_core::InnerLoopSubAgent::new(
             provider.clone(),
@@ -252,8 +251,7 @@ where
 
     let _live_flag_kept_for_compatibility = options.live;
     let provider_box = live_provider(&config, &options.model, &project_root).await?;
-    let provider: std::sync::Arc<dyn peridot_llm::LlmProvider> =
-        std::sync::Arc::from(provider_box);
+    let provider: std::sync::Arc<dyn peridot_llm::LlmProvider> = std::sync::Arc::from(provider_box);
     agent.set_subagent_runner(std::sync::Arc::new(
         peridot_core::InnerLoopSubAgent::new(
             provider.clone(),
@@ -344,7 +342,8 @@ where
     // so the planner still fires — a missed planner is worse than an
     // extra one.
     if config.committee.use_llm_complexity_gate {
-        let verdict = peridot_core::classify_task_complexity(provider, &options.model, task).await?;
+        let verdict =
+            peridot_core::classify_task_complexity(provider, &options.model, task).await?;
         if !verdict.warrants_planner() {
             return Ok(());
         }

@@ -408,9 +408,9 @@ fn is_entry_hidden_in_chat(state: &TuiState, entry: &TranscriptEntry) -> bool {
         // Notice entries DO show, because that's where slash-command output
         // (`/help`, `/info`, `/cost`, approvals, queued tasks) lands and the
         // operator explicitly asked for it.
-        TranscriptKind::Meta
-        | TranscriptKind::TurnSeparator
-        | TranscriptKind::ToolStart => !state.debug_view,
+        TranscriptKind::Meta | TranscriptKind::TurnSeparator | TranscriptKind::ToolStart => {
+            !state.debug_view
+        }
         _ => false,
     }
 }
@@ -626,8 +626,7 @@ fn is_table_row(line: &str) -> bool {
 /// data row that happens to be `|-|-|` for a separator.
 fn is_table_separator(line: &str) -> bool {
     let trimmed = line.trim();
-    trimmed.chars().all(|c| matches!(c, '|' | '-' | ':' | ' '))
-        && trimmed.matches('-').count() >= 3
+    trimmed.chars().all(|c| matches!(c, '|' | '-' | ':' | ' ')) && trimmed.matches('-').count() >= 3
 }
 
 /// Replaces the cell separators in a pipe-table row with `│` (data row) or
@@ -645,10 +644,7 @@ fn style_table_row(line: &str, base_style: Style) -> Vec<Span<'static>> {
                 other => other,
             })
             .collect::<String>();
-        return vec![Span::styled(
-            rule,
-            border.add_modifier(Modifier::DIM),
-        )];
+        return vec![Span::styled(rule, border.add_modifier(Modifier::DIM))];
     }
     let parts: Vec<&str> = trimmed.split('|').collect();
     let last_index = parts.len().saturating_sub(1);
@@ -1163,9 +1159,7 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
             }
             all_lines.extend(entry_lines);
         }
-        if following_tail
-            && let Some(stream) = state.active_stream.as_ref()
-        {
+        if following_tail && let Some(stream) = state.active_stream.as_ref() {
             all_lines.extend(render_streaming_inline(state, stream));
         }
         // Build once; we use it for both line counting and rendering.
@@ -1388,7 +1382,11 @@ fn render_at_picker(frame: &mut Frame<'_>, state: &TuiState, input_area: Rect) {
         .iter()
         .enumerate()
         .map(|(idx, path)| {
-            let marker = if idx == picker.selected { "\u{25B8}" } else { " " };
+            let marker = if idx == picker.selected {
+                "\u{25B8}"
+            } else {
+                " "
+            };
             let style = if idx == picker.selected {
                 highlight
             } else {
@@ -1588,15 +1586,13 @@ pub(super) fn render_approval_panel(panel: &ApprovalPanel) -> String {
         for (index, hunk) in panel.hunks.iter().enumerate() {
             let focused = panel.focused_hunk == Some(index);
             let cursor = if focused { ">" } else { " " };
-            let accepted = panel
-                .hunk_accepted
-                .get(index)
-                .copied()
-                .unwrap_or(true);
+            let accepted = panel.hunk_accepted.get(index).copied().unwrap_or(true);
             let stage = if accepted { "[x]" } else { "[ ]" };
-            sections.push(format!("  {cursor} {stage} hunk {idx}: {label}",
+            sections.push(format!(
+                "  {cursor} {stage} hunk {idx}: {label}",
                 idx = index + 1,
-                label = hunk.label()));
+                label = hunk.label()
+            ));
         }
     } else if let Some(diff) = panel.diff_preview.as_ref() {
         sections.push(String::new());

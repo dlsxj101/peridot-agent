@@ -18,10 +18,10 @@ mod usage;
 
 pub use agent::HarnessAgent;
 pub use complexity::{TaskComplexity, classify_task_complexity};
-pub use peridot_common::CancelToken;
 pub use goal::{GoalController, GoalStatus};
 pub use grader::{GraderVerdict, grade_work};
 pub use inner_loop::InnerLoopSubAgent;
+pub use peridot_common::CancelToken;
 pub use permissions::allowed_tool_groups;
 pub use requests::{
     AgentRunEvent, AgentRunRequest, AgentRunSummary, AgentTurnOutcome, AgentTurnRequest,

@@ -911,7 +911,11 @@ fn default_offload_threshold_chars() -> usize {
     // Effectively disabled. See peridot_context::ContextLimits::default() for the
     // rationale: modern models support large enough contexts that disk offload causes
     // more harm (recursive re-reads on smaller models) than memory benefit.
-    usize::MAX
+    //
+    // `i64::MAX` (≈9.2 × 10¹⁸) is chosen instead of `usize::MAX` so the value
+    // round-trips through TOML, whose integer spec is signed 64-bit. Still
+    // larger than any realistic observation size.
+    i64::MAX as usize
 }
 
 fn default_observation_max_chars() -> usize {

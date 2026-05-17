@@ -142,6 +142,35 @@ pub(super) fn parse_mock_completion_response(line: String) -> PeriResult<Complet
             usage: Usage::default(),
         });
     };
+    let usage_from = |obj: &serde_json::Map<String, serde_json::Value>| -> PeriResult<Usage> {
+        obj.get("usage")
+            .cloned()
+            .map(serde_json::from_value)
+            .transpose()
+            .map_err(|err| PeriError::Provider(format!("invalid mock response usage: {err}")))
+            .map(Option::unwrap_or_default)
+    };
+    // Top-level peridot action: {"action": "...", "parameters": {...}}
+    // Previously the harness parsed this from response text. Since the
+    // native-tool-call refactor, the LLM is expected to emit tool_calls
+    // directly; the mock provider mirrors that contract so the fixtures
+    // do not need to be rewritten.
+    if let (Some(action), Some(parameters)) = (
+        object.get("action").and_then(serde_json::Value::as_str),
+        object.get("parameters"),
+    ) {
+        let usage = usage_from(object)?;
+        return Ok(CompletionResponse {
+            text: String::new(),
+            tool_calls: vec![peridot_llm::ToolInvocation {
+                id: format!("mock_{action}"),
+                name: action.to_string(),
+                arguments: parameters.clone(),
+            }],
+            reasoning_content: None,
+            usage,
+        });
+    }
     let Some(text) = object.get("text").and_then(serde_json::Value::as_str) else {
         return Ok(CompletionResponse {
             text: line,
@@ -150,13 +179,27 @@ pub(super) fn parse_mock_completion_response(line: String) -> PeriResult<Complet
             usage: Usage::default(),
         });
     };
-    let usage = object
-        .get("usage")
-        .cloned()
-        .map(serde_json::from_value)
-        .transpose()
-        .map_err(|err| PeriError::Provider(format!("invalid mock response usage: {err}")))?
-        .unwrap_or_default();
+    let usage = usage_from(object)?;
+    // Text envelope whose inner text is itself a peridot action JSON
+    // (used by budget tests so usage rides alongside a tool call).
+    if let Ok(inner) = serde_json::from_str::<serde_json::Value>(text)
+        && let Some(inner_obj) = inner.as_object()
+        && let (Some(action), Some(parameters)) = (
+            inner_obj.get("action").and_then(serde_json::Value::as_str),
+            inner_obj.get("parameters"),
+        )
+    {
+        return Ok(CompletionResponse {
+            text: String::new(),
+            tool_calls: vec![peridot_llm::ToolInvocation {
+                id: format!("mock_{action}"),
+                name: action.to_string(),
+                arguments: parameters.clone(),
+            }],
+            reasoning_content: None,
+            usage,
+        });
+    }
     Ok(CompletionResponse {
         text: text.to_string(),
         tool_calls: Vec::new(),

@@ -373,11 +373,7 @@ impl ContextManager {
     /// function falls back to the deterministic Tier 1 summary so the
     /// caller still gets a successful compaction; the loss is just the
     /// quality of the recap.
-    pub async fn compact_with_llm<P>(
-        &mut self,
-        provider: &P,
-        model: &str,
-    ) -> PeriResult<bool>
+    pub async fn compact_with_llm<P>(&mut self, provider: &P, model: &str) -> PeriResult<bool>
     where
         P: LlmProvider + ?Sized,
     {
@@ -394,11 +390,7 @@ impl ContextManager {
     /// recap even when the buffer is well below the auto trigger.
     /// Still requires more than `COMPACTION_KEEP_TAIL` entries to
     /// have anything to fold.
-    pub async fn force_compact_with_llm<P>(
-        &mut self,
-        provider: &P,
-        model: &str,
-    ) -> PeriResult<bool>
+    pub async fn force_compact_with_llm<P>(&mut self, provider: &P, model: &str) -> PeriResult<bool>
     where
         P: LlmProvider + ?Sized,
     {
@@ -408,11 +400,7 @@ impl ContextManager {
         self.compact_with_llm_inner(provider, model).await
     }
 
-    async fn compact_with_llm_inner<P>(
-        &mut self,
-        provider: &P,
-        model: &str,
-    ) -> PeriResult<bool>
+    async fn compact_with_llm_inner<P>(&mut self, provider: &P, model: &str) -> PeriResult<bool>
     where
         P: LlmProvider + ?Sized,
     {
@@ -437,8 +425,8 @@ impl ContextManager {
         };
 
         let response = provider.complete(request).await?;
-        let summary = render_llm_summary(&response.text)
-            .unwrap_or_else(|| summarize_entries(to_summarize));
+        let summary =
+            render_llm_summary(&response.text).unwrap_or_else(|| summarize_entries(to_summarize));
         let preserved_anchor = self.preserved_initial_user_entry();
         let mut compacted = Vec::new();
         if let Some(anchor) = preserved_anchor {
@@ -894,9 +882,7 @@ mod tests {
     mod tier3 {
         use super::*;
         use async_trait::async_trait;
-        use peridot_llm::{
-            AuthMethod, CompletionRequest, CompletionResponse, PricingTable, Usage,
-        };
+        use peridot_llm::{AuthMethod, CompletionRequest, CompletionResponse, PricingTable, Usage};
         use std::sync::Mutex;
 
         struct ScriptedSummaryProvider {
@@ -913,16 +899,8 @@ mod tests {
 
         #[async_trait]
         impl LlmProvider for ScriptedSummaryProvider {
-            async fn complete(
-                &self,
-                _req: CompletionRequest,
-            ) -> PeriResult<CompletionResponse> {
-                let text = self
-                    .response
-                    .lock()
-                    .unwrap()
-                    .take()
-                    .unwrap_or_default();
+            async fn complete(&self, _req: CompletionRequest) -> PeriResult<CompletionResponse> {
+                let text = self.response.lock().unwrap().take().unwrap_or_default();
                 Ok(CompletionResponse {
                     text,
                     tool_calls: Vec::new(),

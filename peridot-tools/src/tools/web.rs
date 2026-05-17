@@ -17,13 +17,12 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use peridot_common::{PeriError, PeriResult, PermissionLevel, ToolGroup, ToolResult};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::path::required_str;
 use crate::{Tool, ToolContext};
 
-const USER_AGENT: &str =
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) peridot-agent/0.2 Safari/537.36";
+const USER_AGENT: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) peridot-agent/0.2 Safari/537.36";
 const DDG_HTML_URL: &str = "https://html.duckduckgo.com/html/";
 const DEFAULT_MAX_RESULTS: usize = 10;
 const MAX_RESULTS_CAP: u64 = 25;
@@ -333,12 +332,13 @@ fn url_decode(s: &str) -> String {
     let mut i = 0;
     while i < bytes.len() {
         let b = bytes[i];
-        if b == b'%' && i + 2 < bytes.len() {
-            if let (Some(h), Some(l)) = (hex_val(bytes[i + 1]), hex_val(bytes[i + 2])) {
-                buf.push((h << 4) | l);
-                i += 3;
-                continue;
-            }
+        if b == b'%'
+            && i + 2 < bytes.len()
+            && let (Some(h), Some(l)) = (hex_val(bytes[i + 1]), hex_val(bytes[i + 2]))
+        {
+            buf.push((h << 4) | l);
+            i += 3;
+            continue;
         }
         if b == b'+' {
             buf.push(b' ');

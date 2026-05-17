@@ -349,7 +349,11 @@ impl Tool for GitPushTool {
         {
             args.push("-u".to_string());
         }
-        if params.get("force").and_then(Value::as_bool).unwrap_or(false) {
+        if params
+            .get("force")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
             // Use --force-with-lease over --force so we never overwrite a
             // remote update we haven't seen — peridot is a coding agent,
             // not a release manager.
@@ -428,7 +432,11 @@ impl Tool for GhPrCreateTool {
             args.push("--base");
             args.push(base);
         }
-        if params.get("draft").and_then(Value::as_bool).unwrap_or(false) {
+        if params
+            .get("draft")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
             args.push("--draft");
         }
         run_binary("gh", &args, ctx, "gh pr create")

@@ -33,7 +33,10 @@ impl TaskComplexity {
     /// Returns `true` when the committee planner preflight should
     /// fire for a task with this complexity.
     pub fn warrants_planner(self) -> bool {
-        matches!(self, TaskComplexity::Complex | TaskComplexity::Architectural)
+        matches!(
+            self,
+            TaskComplexity::Complex | TaskComplexity::Architectural
+        )
     }
 
     /// Parses a single label string. Unknown values fall through to
@@ -44,9 +47,7 @@ impl TaskComplexity {
         match input.trim().to_ascii_lowercase().as_str() {
             "chat" | "smalltalk" | "greeting" | "question" => TaskComplexity::Chat,
             "simple" | "trivial" | "small" | "easy" => TaskComplexity::Simple,
-            "complex" | "multistep" | "multi-step" | "medium" | "hard" => {
-                TaskComplexity::Complex
-            }
+            "complex" | "multistep" | "multi-step" | "medium" | "hard" => TaskComplexity::Complex,
             "architectural" | "architecture" | "design" | "refactor" | "migration" => {
                 TaskComplexity::Architectural
             }
@@ -95,9 +96,7 @@ where
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use peridot_llm::{
-        AuthMethod, CompletionResponse, PricingTable, Usage,
-    };
+    use peridot_llm::{AuthMethod, CompletionResponse, PricingTable, Usage};
     use std::sync::Mutex;
 
     struct StaticProvider {
@@ -114,16 +113,8 @@ mod tests {
 
     #[async_trait]
     impl LlmProvider for StaticProvider {
-        async fn complete(
-            &self,
-            _req: CompletionRequest,
-        ) -> PeriResult<CompletionResponse> {
-            let text = self
-                .responses
-                .lock()
-                .unwrap()
-                .pop()
-                .unwrap_or_default();
+        async fn complete(&self, _req: CompletionRequest) -> PeriResult<CompletionResponse> {
+            let text = self.responses.lock().unwrap().pop().unwrap_or_default();
             Ok(CompletionResponse {
                 text,
                 tool_calls: Vec::new(),
@@ -158,7 +149,10 @@ mod tests {
             TaskComplexity::parse("architectural"),
             TaskComplexity::Architectural
         );
-        assert_eq!(TaskComplexity::parse("design"), TaskComplexity::Architectural);
+        assert_eq!(
+            TaskComplexity::parse("design"),
+            TaskComplexity::Architectural
+        );
     }
 
     #[test]

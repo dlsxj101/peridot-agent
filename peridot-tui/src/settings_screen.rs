@@ -252,11 +252,7 @@ fn handle_key(key: KeyEvent, items: &mut [SettingItem], focused: &mut usize) -> 
     KeyOutcome::Continue
 }
 
-fn draw_settings(
-    frame: &mut ratatui::Frame<'_>,
-    items: &[SettingItem],
-    focused: usize,
-) {
+fn draw_settings(frame: &mut ratatui::Frame<'_>, items: &[SettingItem], focused: usize) {
     let area = frame.area();
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -283,12 +279,7 @@ fn draw_header(frame: &mut ratatui::Frame<'_>, area: Rect) {
     frame.render_widget(body, area);
 }
 
-fn draw_list(
-    frame: &mut ratatui::Frame<'_>,
-    area: Rect,
-    items: &[SettingItem],
-    focused: usize,
-) {
+fn draw_list(frame: &mut ratatui::Frame<'_>, area: Rect, items: &[SettingItem], focused: usize) {
     let value_col_width: usize = 14;
     let mut last_group: Option<&str> = None;
     let mut list_items: Vec<ListItem> = Vec::with_capacity(items.len() * 2);
@@ -330,22 +321,14 @@ fn draw_list(
     frame.render_widget(list, area);
 }
 
-fn draw_footer(
-    frame: &mut ratatui::Frame<'_>,
-    area: Rect,
-    items: &[SettingItem],
-    focused: usize,
-) {
+fn draw_footer(frame: &mut ratatui::Frame<'_>, area: Rect, items: &[SettingItem], focused: usize) {
     let help_line = items
         .get(focused)
         .and_then(|item| item.help.clone())
         .unwrap_or_else(|| "Use ↑/↓ to navigate.".to_string());
     let key_hint = "  ↑/↓ navigate  •  ←/→ / Space change  •  s save  •  q quit";
     let body = Paragraph::new(vec![
-        Line::from(Span::styled(
-            help_line,
-            Style::default().fg(Color::Gray),
-        )),
+        Line::from(Span::styled(help_line, Style::default().fg(Color::Gray))),
         Line::from(Span::styled(
             key_hint.to_string(),
             Style::default().fg(Color::DarkGray),

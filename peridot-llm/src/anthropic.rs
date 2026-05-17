@@ -6,8 +6,7 @@ use peridot_common::{PeriError, PeriResult, ReasoningEffort};
 use serde_json::{Value, json};
 
 use crate::transport::{
-    estimate_cost, read_streaming_response, should_retry_status, sse_data_events,
-    stream_sse_events,
+    estimate_cost, read_streaming_response, should_retry_status, sse_data_events, stream_sse_events,
 };
 use crate::{
     AuthMethod, CompletionRequest, CompletionResponse, CompletionStreamChunk, LlmProvider,
@@ -538,10 +537,7 @@ async fn drive_anthropic_stream(
                 };
                 if block.get("type").and_then(Value::as_str) == Some("tool_use") {
                     let entry = tool_accumulators.entry(index).or_default();
-                    entry.id = block
-                        .get("id")
-                        .and_then(Value::as_str)
-                        .map(str::to_string);
+                    entry.id = block.get("id").and_then(Value::as_str).map(str::to_string);
                     entry.name = block
                         .get("name")
                         .and_then(Value::as_str)
@@ -681,10 +677,7 @@ pub(crate) fn parse_anthropic_stream(
                 };
                 if block.get("type").and_then(Value::as_str) == Some("tool_use") {
                     let entry = tool_accumulators.entry(index).or_default();
-                    entry.id = block
-                        .get("id")
-                        .and_then(Value::as_str)
-                        .map(str::to_string);
+                    entry.id = block.get("id").and_then(Value::as_str).map(str::to_string);
                     entry.name = block
                         .get("name")
                         .and_then(Value::as_str)

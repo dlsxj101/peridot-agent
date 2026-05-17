@@ -1463,9 +1463,7 @@ impl TuiState {
                         | TranscriptKind::TurnSeparator
                 )
             })
-            .map(|entry| {
-                entry.kind == TranscriptKind::Assistant && entry.text.trim() == candidate
-            })
+            .map(|entry| entry.kind == TranscriptKind::Assistant && entry.text.trim() == candidate)
             .unwrap_or(false)
     }
 
@@ -1658,9 +1656,7 @@ impl TuiState {
                 if self.approval.is_some() {
                     self.push_transcript_entry(
                         TranscriptKind::Meta,
-                        format!(
-                            "run: stopped={stop_reason} turns={turns} duration={duration}"
-                        ),
+                        format!("run: stopped={stop_reason} turns={turns} duration={duration}"),
                     );
                     self.agent_run_status = AgentRunStatus::WaitingApproval;
                     return;
@@ -1668,9 +1664,7 @@ impl TuiState {
                 if self.agent_run_status == AgentRunStatus::Interrupted {
                     self.push_transcript_entry(
                         TranscriptKind::Meta,
-                        format!(
-                            "run: stopped={stop_reason} turns={turns} duration={duration}"
-                        ),
+                        format!("run: stopped={stop_reason} turns={turns} duration={duration}"),
                     );
                     return;
                 }

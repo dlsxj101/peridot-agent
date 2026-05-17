@@ -927,9 +927,7 @@ pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
                     .clone()
                     .unwrap_or_else(|| "<inherit caller>".to_string());
                 state.subagent_default_model = None;
-                state.push_transcript(format!(
-                    "subagent model: {from} -> <inherit caller>"
-                ));
+                state.push_transcript(format!("subagent model: {from} -> <inherit caller>"));
             }
         },
         SlashCommand::Reasoning(effort) => {

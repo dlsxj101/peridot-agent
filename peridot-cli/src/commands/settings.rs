@@ -29,21 +29,19 @@ use super::output::print_json_or_text_result;
 /// the interactive screen, and persists the result on save.
 pub(crate) fn run_setting_command(project_root: &Path, output: OutputFormat) -> Result<()> {
     let result = init_project_config_value(project_root)?;
-    let mut config: PeridotConfig =
-        toml::from_str(&fs::read_to_string(&result.config_path).with_context(|| {
-            format!("failed to read {}", result.config_path.display())
-        })?)
-        .with_context(|| format!("failed to parse {}", result.config_path.display()))?;
+    let mut config: PeridotConfig = toml::from_str(
+        &fs::read_to_string(&result.config_path)
+            .with_context(|| format!("failed to read {}", result.config_path.display()))?,
+    )
+    .with_context(|| format!("failed to parse {}", result.config_path.display()))?;
     let mut items = settings_registry(&config);
-    let outcome = run_settings_screen(&mut items)
-        .with_context(|| "failed to run settings screen")?;
+    let outcome =
+        run_settings_screen(&mut items).with_context(|| "failed to run settings screen")?;
     match outcome {
         SettingsOutcome::Save => {
             apply_settings_to_config(&items, &mut config);
             fs::write(&result.config_path, toml::to_string_pretty(&config)?)
-                .with_context(|| {
-                    format!("failed to write {}", result.config_path.display())
-                })?;
+                .with_context(|| format!("failed to write {}", result.config_path.display()))?;
             print_json_or_text_result(
                 serde_json::json!({
                     "config_path": result.config_path,
@@ -96,7 +94,9 @@ pub(crate) fn settings_registry(config: &PeridotConfig) -> Vec<SettingItem> {
         id: "defaults.mode".into(),
         group: "Defaults".into(),
         label: "Default execution mode".into(),
-        help: Some("Plan = read-only planning; Execute = normal coding; Goal = long autonomous run".into()),
+        help: Some(
+            "Plan = read-only planning; Execute = normal coding; Goal = long autonomous run".into(),
+        ),
         value: SettingValue::Choice {
             options: vec!["plan".into(), "execute".into(), "goal".into()],
             selected: match config.defaults.mode {
@@ -110,7 +110,9 @@ pub(crate) fn settings_registry(config: &PeridotConfig) -> Vec<SettingItem> {
         id: "defaults.permission".into(),
         group: "Defaults".into(),
         label: "Default permission posture".into(),
-        help: Some("Safe = confirm every write; Auto = confirm only destructive; Yolo = no prompts".into()),
+        help: Some(
+            "Safe = confirm every write; Auto = confirm only destructive; Yolo = no prompts".into(),
+        ),
         value: SettingValue::Choice {
             options: vec!["safe".into(), "auto".into(), "yolo".into()],
             selected: match config.defaults.permission {
@@ -215,7 +217,9 @@ pub(crate) fn settings_registry(config: &PeridotConfig) -> Vec<SettingItem> {
         id: "models.reasoning_effort".into(),
         group: "Models".into(),
         label: "Reasoning effort".into(),
-        help: Some("How hard the model thinks: off / low / medium / high (cost grows with depth).".into()),
+        help: Some(
+            "How hard the model thinks: off / low / medium / high (cost grows with depth).".into(),
+        ),
         value: SettingValue::Choice {
             options: vec!["off".into(), "low".into(), "medium".into(), "high".into()],
             selected: match config.models.reasoning_effort {
@@ -232,9 +236,7 @@ pub(crate) fn settings_registry(config: &PeridotConfig) -> Vec<SettingItem> {
         id: "security.sandbox".into(),
         group: "Security".into(),
         label: "Sandbox mode".into(),
-        help: Some(
-            "None = run tools directly; Docker / Firejail = isolate tool execution.".into(),
-        ),
+        help: Some("None = run tools directly; Docker / Firejail = isolate tool execution.".into()),
         value: SettingValue::Choice {
             options: vec!["none".into(), "docker".into(), "firejail".into()],
             selected: match config.security.sandbox {
@@ -255,7 +257,9 @@ pub(crate) fn settings_registry(config: &PeridotConfig) -> Vec<SettingItem> {
         id: "security.ask_before_delete".into(),
         group: "Security".into(),
         label: "Confirm before destructive shell commands".into(),
-        help: Some("Block `rm`, `git clean`, `git reset --hard`, etc. until the operator approves.".into()),
+        help: Some(
+            "Block `rm`, `git clean`, `git reset --hard`, etc. until the operator approves.".into(),
+        ),
         value: SettingValue::Bool(config.security.ask_before_delete),
     });
 
@@ -398,8 +402,8 @@ fn apply_one(item: &SettingItem, config: &mut PeridotConfig) {
         }
         ("models.reasoning_effort", SettingValue::Choice { options, selected }) => {
             if let Some(label) = options.get(*selected) {
-                config.models.reasoning_effort = ReasoningEffort::parse(label)
-                    .unwrap_or(ReasoningEffort::Off);
+                config.models.reasoning_effort =
+                    ReasoningEffort::parse(label).unwrap_or(ReasoningEffort::Off);
             }
         }
         ("security.sandbox", SettingValue::Choice { options, selected }) => {

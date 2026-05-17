@@ -148,10 +148,7 @@ async fn run_until_done_emits_ui_events() {
 /// is silenced.
 #[tokio::test]
 async fn text_only_completion_does_not_emit_synthetic_tool_events() {
-    let root = std::env::temp_dir().join(format!(
-        "peridot-core-text-only-{}",
-        std::process::id()
-    ));
+    let root = std::env::temp_dir().join(format!("peridot-core-text-only-{}", std::process::id()));
     std::fs::create_dir_all(&root).unwrap();
     let mut registry = ToolRegistry::new();
     register_builtin_tools(&mut registry).unwrap();
@@ -220,10 +217,7 @@ async fn text_only_completion_does_not_emit_synthetic_tool_events() {
 /// the UI events stay quiet.
 #[tokio::test]
 async fn text_plus_agent_done_suppresses_redundant_tool_events() {
-    let root = std::env::temp_dir().join(format!(
-        "peridot-core-done-dedup-{}",
-        std::process::id()
-    ));
+    let root = std::env::temp_dir().join(format!("peridot-core-done-dedup-{}", std::process::id()));
     std::fs::create_dir_all(&root).unwrap();
     let mut registry = ToolRegistry::new();
     register_builtin_tools(&mut registry).unwrap();
@@ -264,9 +258,9 @@ async fn text_plus_agent_done_suppresses_redundant_tool_events() {
         .unwrap();
     assert_eq!(summary.stopped_reason, StopReason::Done);
     assert!(
-        !events
-            .iter()
-            .any(|event| matches!(event, AgentRunEvent::ToolStarted { name, .. } if name == "agent_done")),
+        !events.iter().any(
+            |event| matches!(event, AgentRunEvent::ToolStarted { name, .. } if name == "agent_done")
+        ),
         "text + agent_done should suppress ToolStarted: {events:?}"
     );
     assert!(
@@ -585,10 +579,8 @@ async fn run_turn_emits_context_compacted_hook() {
 async fn auto_verify_after_mutation_appends_plan_reminder() {
     // file_write succeeds → harness auto-runs verify_build → the
     // result lands as a PlanReminder so the next turn sees it.
-    let root = std::env::temp_dir().join(format!(
-        "peridot-core-auto-verify-{}",
-        std::process::id()
-    ));
+    let root =
+        std::env::temp_dir().join(format!("peridot-core-auto-verify-{}", std::process::id()));
     std::fs::create_dir_all(&root).unwrap();
     let mut registry = ToolRegistry::new();
     register_builtin_tools(&mut registry).unwrap();
@@ -644,10 +636,7 @@ async fn auto_verify_after_mutation_appends_plan_reminder() {
 async fn auto_grade_failure_keeps_loop_running() {
     // Grader rejects the first agent_done → recommendations injected
     // into context, loop continues, second agent_done passes.
-    let root = std::env::temp_dir().join(format!(
-        "peridot-core-auto-grade-{}",
-        std::process::id()
-    ));
+    let root = std::env::temp_dir().join(format!("peridot-core-auto-grade-{}", std::process::id()));
     std::fs::create_dir_all(&root).unwrap();
     let mut registry = ToolRegistry::new();
     register_builtin_tools(&mut registry).unwrap();

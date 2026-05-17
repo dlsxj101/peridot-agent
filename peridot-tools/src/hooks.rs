@@ -61,10 +61,7 @@ impl HookRunner {
     /// Creates a hook runner without scanning the filesystem.
     /// Useful for tests and minimal harnesses that want exact control
     /// over which hooks fire.
-    pub fn new_without_discovery(
-        project_root: impl Into<PathBuf>,
-        hooks: HooksConfig,
-    ) -> Self {
+    pub fn new_without_discovery(project_root: impl Into<PathBuf>, hooks: HooksConfig) -> Self {
         Self {
             project_root: project_root.into(),
             hooks,
@@ -536,10 +533,8 @@ mod tests {
 
     #[test]
     fn merge_discovered_hooks_picks_up_filesystem_scripts() {
-        let root = std::env::temp_dir().join(format!(
-            "peridot-hooks-discovery-{}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("peridot-hooks-discovery-{}", std::process::id()));
         let hook_dir = root.join(".peridot").join("hooks");
         std::fs::create_dir_all(&hook_dir).unwrap();
         std::fs::write(hook_dir.join("pre-file_write.sh"), "#!/bin/sh\necho hi\n").unwrap();
@@ -565,10 +560,8 @@ mod tests {
 
     #[test]
     fn merge_discovered_hooks_does_not_override_config_declarations() {
-        let root = std::env::temp_dir().join(format!(
-            "peridot-hooks-precedence-{}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("peridot-hooks-precedence-{}", std::process::id()));
         let hook_dir = root.join(".peridot").join("hooks");
         std::fs::create_dir_all(&hook_dir).unwrap();
         std::fs::write(hook_dir.join("pre-file_write.sh"), "#!/bin/sh\necho fs\n").unwrap();

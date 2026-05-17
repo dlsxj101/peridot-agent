@@ -15,7 +15,10 @@
 pub fn context_window_tokens(model: &str) -> Option<usize> {
     let lower = model.to_ascii_lowercase();
     // Anthropic
-    if lower.contains("claude-opus") || lower.contains("claude-sonnet") || lower.contains("claude-haiku") {
+    if lower.contains("claude-opus")
+        || lower.contains("claude-sonnet")
+        || lower.contains("claude-haiku")
+    {
         return Some(200_000);
     }
     if lower.starts_with("claude-3") {
@@ -91,10 +94,7 @@ mod tests {
 
     #[test]
     fn gemini_resolves_to_1m() {
-        assert_eq!(
-            context_window_tokens("gemini-2.5-pro"),
-            Some(1_000_000)
-        );
+        assert_eq!(context_window_tokens("gemini-2.5-pro"), Some(1_000_000));
     }
 
     #[test]
@@ -104,9 +104,6 @@ mod tests {
 
     #[test]
     fn case_insensitive_match() {
-        assert_eq!(
-            context_window_tokens("Claude-Sonnet-4-6"),
-            Some(200_000)
-        );
+        assert_eq!(context_window_tokens("Claude-Sonnet-4-6"), Some(200_000));
     }
 }

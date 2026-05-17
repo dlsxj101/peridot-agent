@@ -123,9 +123,7 @@ impl LlmProvider for StaticProvider {
         // Pre-baked completions take priority — drained FIFO so tests can chain
         // a `text + agent_done` shape without going through the legacy
         // string-envelope parser.
-        if let Some((response_text, tool_calls)) =
-            self.custom_completions.lock().unwrap().pop()
-        {
+        if let Some((response_text, tool_calls)) = self.custom_completions.lock().unwrap().pop() {
             self.call_counter.fetch_add(1, Ordering::SeqCst);
             return Ok(CompletionResponse {
                 text: response_text,
