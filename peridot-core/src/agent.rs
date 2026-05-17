@@ -1,5 +1,7 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 
+use peridot_agents::SubAgent;
 use peridot_common::{
     AgentPhase, ExecutionMode, PeriError, PeriResult, SecurityConfig, ToolCall, ToolResult,
 };
@@ -37,6 +39,7 @@ pub struct HarnessAgent {
     agents_md_path: Option<PathBuf>,
     agents_md_signature: Option<(u64, u64)>,
     role: AgentRole,
+    subagent_runner: Option<Arc<dyn SubAgent>>,
 }
 
 impl HarnessAgent {
@@ -51,7 +54,16 @@ impl HarnessAgent {
             agents_md_path: None,
             agents_md_signature: None,
             role: AgentRole::default(),
+            subagent_runner: None,
         }
+    }
+
+    /// Installs a subagent runner. The harness injects this into every
+    /// `ToolContext` it builds so `agent_delegate` dispatches through it
+    /// (typically an `InnerLoopSubAgent` running a bounded child harness)
+    /// instead of only preparing a workspace.
+    pub fn set_subagent_runner(&mut self, runner: Arc<dyn SubAgent>) {
+        self.subagent_runner = Some(runner);
     }
 
     /// Assigns the committee role this agent plays. Defaults to
@@ -169,6 +181,9 @@ impl HarnessAgent {
             .with_security(security);
         if let Some(token) = self.cancel.clone() {
             ctx = ctx.with_cancel(token);
+        }
+        if let Some(runner) = self.subagent_runner.clone() {
+            ctx = ctx.with_subagent_runner(runner);
         }
         tool.validate_params(&call.parameters)?;
         let runner = HookRunner::new(&project_root, ctx.hooks.clone());

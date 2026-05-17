@@ -66,7 +66,21 @@ pub(super) async fn run_task(
     let _live_flag_kept_for_compatibility = cli.live;
     let profile = ProjectScanner::new().scan(project_root)?;
     let denied_paths = profile.boundaries.into_iter().map(PathBuf::from).collect();
-    let provider = live_provider(config, &model, project_root).await?;
+    let provider_box = live_provider(config, &model, project_root).await?;
+    let provider: std::sync::Arc<dyn peridot_llm::LlmProvider> =
+        std::sync::Arc::from(provider_box);
+    agent.set_subagent_runner(std::sync::Arc::new(
+        peridot_core::InnerLoopSubAgent::new(
+            provider.clone(),
+            project_root.to_path_buf(),
+            model.clone(),
+        )
+        .with_max_turns(max_turns.clamp(1, 8))
+        .with_max_tokens(4096)
+        .with_permission(permission)
+        .with_security(config.security.clone())
+        .with_reasoning_effort(config.models.reasoning_effort),
+    ));
     let summary = run_agent_loop(
         &mut agent,
         provider.as_ref(),
@@ -217,7 +231,21 @@ where
     }
 
     let _live_flag_kept_for_compatibility = options.live;
-    let provider = live_provider(&config, &options.model, &project_root).await?;
+    let provider_box = live_provider(&config, &options.model, &project_root).await?;
+    let provider: std::sync::Arc<dyn peridot_llm::LlmProvider> =
+        std::sync::Arc::from(provider_box);
+    agent.set_subagent_runner(std::sync::Arc::new(
+        peridot_core::InnerLoopSubAgent::new(
+            provider.clone(),
+            project_root.clone(),
+            options.model.clone(),
+        )
+        .with_max_turns(options.max_turns.clamp(1, 8))
+        .with_max_tokens(4096)
+        .with_permission(options.permission)
+        .with_security(config.security.clone())
+        .with_reasoning_effort(config.models.reasoning_effort),
+    ));
     run_planner_preflight_if_enabled(
         &mut agent,
         provider.as_ref(),

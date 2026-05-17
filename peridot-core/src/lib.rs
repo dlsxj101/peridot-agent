@@ -3,6 +3,7 @@
 mod agent;
 mod goal;
 mod grader;
+mod inner_loop;
 mod permissions;
 mod prompt;
 mod recovery;
@@ -18,6 +19,7 @@ pub use agent::HarnessAgent;
 pub use peridot_common::CancelToken;
 pub use goal::{GoalController, GoalStatus};
 pub use grader::{GraderVerdict, grade_work};
+pub use inner_loop::InnerLoopSubAgent;
 pub use permissions::allowed_tool_groups;
 pub use requests::{
     AgentRunEvent, AgentRunRequest, AgentRunSummary, AgentTurnOutcome, AgentTurnRequest,

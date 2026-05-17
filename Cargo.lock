@@ -1684,6 +1684,7 @@ name = "peridot-core"
 version = "0.2.0"
 dependencies = [
  "async-trait",
+ "peridot-agents",
  "peridot-common",
  "peridot-context",
  "peridot-llm",

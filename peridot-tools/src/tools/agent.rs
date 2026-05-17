@@ -285,18 +285,12 @@ impl Tool for AgentDelegateTool {
     async fn execute(&self, params: Value, ctx: &ToolContext) -> PeriResult<ToolResult> {
         let prompt = required_str(&params, "prompt")?.to_string();
         let (kind, model_tier) = subagent_selection(&params, &prompt)?;
-        let runner = LocalSubAgentRunner::new(
-            &ctx.project_root,
-            ctx.project_root.join(".peridot/worktrees"),
-        );
-        let result = match runner
-            .run(SubAgentTask {
-                prompt: prompt.clone(),
-                kind: kind.clone(),
-                model_tier: Some(model_tier),
-            })
-            .await
-        {
+        let task = SubAgentTask {
+            prompt: prompt.clone(),
+            kind: kind.clone(),
+            model_tier: Some(model_tier),
+        };
+        let result = match dispatch_subagent(ctx, task).await {
             Ok(result) => result,
             Err(err) => {
                 run_subagent_failed_hook(ctx, &kind, &prompt, &err.to_string())?;
@@ -322,6 +316,20 @@ impl Tool for AgentDelegateTool {
     fn can_run_concurrent(&self) -> bool {
         false
     }
+}
+
+async fn dispatch_subagent(
+    ctx: &ToolContext,
+    task: SubAgentTask,
+) -> PeriResult<peridot_agents::SubAgentResult> {
+    if let Some(runner) = ctx.runner.clone() {
+        return runner.run(task).await;
+    }
+    let fallback = LocalSubAgentRunner::new(
+        &ctx.project_root,
+        ctx.project_root.join(".peridot/worktrees"),
+    );
+    fallback.run(task).await
 }
 
 fn subagent_selection(params: &Value, prompt: &str) -> PeriResult<(SubAgentKind, ModelTier)> {

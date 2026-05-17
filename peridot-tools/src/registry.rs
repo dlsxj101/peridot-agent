@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use peridot_agents::SubAgent;
 use peridot_common::{
     CancelToken, HooksConfig, PeriError, PeriResult, PermissionLevel, PermissionMode,
     SecurityConfig, ToolGroup, ToolResult,
@@ -10,7 +11,7 @@ use peridot_common::{
 use serde_json::Value;
 
 /// Runtime context passed to tool implementations.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ToolContext {
     /// Project root used for sandbox and hook execution.
     pub project_root: PathBuf,
@@ -27,6 +28,26 @@ pub struct ToolContext {
     /// operator's Esc interrupt aborts the in-flight command instead of
     /// only landing between turns.
     pub cancel: Option<CancelToken>,
+    /// Optional subagent runner injected by the harness. When set,
+    /// `AgentDelegateTool` runs the prompt through this runner (typically
+    /// a bounded inner HarnessAgent loop) instead of only preparing a
+    /// workspace via `LocalSubAgentRunner`. Tests and minimal harnesses
+    /// leave it `None`, which keeps the legacy prepare-only behaviour.
+    pub runner: Option<Arc<dyn SubAgent>>,
+}
+
+impl std::fmt::Debug for ToolContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ToolContext")
+            .field("project_root", &self.project_root)
+            .field("permission_mode", &self.permission_mode)
+            .field("denied_paths", &self.denied_paths)
+            .field("hooks", &self.hooks)
+            .field("security", &self.security)
+            .field("cancel", &self.cancel)
+            .field("runner", &self.runner.as_ref().map(|_| "Arc<dyn SubAgent>"))
+            .finish()
+    }
 }
 
 impl ToolContext {
@@ -39,6 +60,7 @@ impl ToolContext {
             hooks: HooksConfig::default(),
             security: SecurityConfig::default(),
             cancel: None,
+            runner: None,
         }
     }
 
@@ -65,6 +87,16 @@ impl ToolContext {
     /// hits Esc.
     pub fn with_cancel(mut self, cancel: CancelToken) -> Self {
         self.cancel = Some(cancel);
+        self
+    }
+
+    /// Attaches a subagent runner. When present, `AgentDelegateTool`
+    /// dispatches through this runner instead of only preparing a
+    /// workspace. The harness wires in `InnerLoopSubAgent` here so
+    /// `agent_delegate` actually executes the delegated task; tests
+    /// leave it `None` to keep the deterministic prepare-only path.
+    pub fn with_subagent_runner(mut self, runner: Arc<dyn SubAgent>) -> Self {
+        self.runner = Some(runner);
         self
     }
 }
