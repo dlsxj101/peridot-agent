@@ -251,11 +251,11 @@ pub(super) fn render_welcome(state: &TuiState) -> String {
          1. Type a task  →  Enter to run\n\
          2. Slash commands  →  `/` opens the picker (Tab autocompletes)\n\
          3. Need to stop?  →  Esc interrupts the active run\n\
-         4. Multi-line input  →  Shift+Enter for a newline\n\n\
+         4. Multi-line input  →  Ctrl+J (or Alt+Enter) for a newline\n\n\
          Slash commands\n\
          /plan  /execute  /goal <objective>  /safe  /auto  /yolo  /help  /lang en|ko\n\n\
          Keys\n\
-         Enter sends  |  Shift+Enter newline  |  Esc interrupts/menu  |  Ctrl+P menu  |  Ctrl+] side panel  |  Ctrl-C quits",
+         Enter sends  |  Ctrl+J / Alt+Enter newline  |  Esc interrupts/menu  |  Ctrl+P menu  |  Ctrl+] side panel  |  Ctrl-C quits",
         state.header.model, state.header.mode, state.header.permission, workspace
     )
 }

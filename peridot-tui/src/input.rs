@@ -302,12 +302,17 @@ pub fn handle_key_event(state: &mut TuiState, key: KeyEvent) -> TuiEventOutcome 
             state.delete_input_char();
             TuiEventOutcome::Continue
         }
-        // Shift+Enter inserts a newline. Works when the terminal supports
-        // kitty-keyboard-protocol / CSI-u (negotiated in `terminal.rs` via
-        // `PushKeyboardEnhancementFlags`). Alt+Enter is a fallback for
-        // terminals that collapse Shift+Enter onto bare Enter (Windows
-        // conpty, legacy xterm), so the user always has at least one
-        // working multi-line keybind.
+        // Multi-line input. Three accepted shapes, in order of how reliable
+        // each is across terminals:
+        //   - Ctrl+J     — bare LF code point, works everywhere (emacs/readline
+        //                  convention). Recommended default.
+        //   - Alt+Enter  — works on most terminals (Windows Terminal, iTerm,
+        //                  gnome-terminal, etc).
+        //   - Shift+Enter — only fires when the host terminal already speaks
+        //                  CSI-u natively (kitty, WezTerm, recent xterm). We
+        //                  intentionally do NOT push the protocol from the
+        //                  app because doing so broke `Ctrl+]` on Windows
+        //                  Terminal under WSL.
         KeyCode::Enter
             if key
                 .modifiers
@@ -316,9 +321,6 @@ pub fn handle_key_event(state: &mut TuiState, key: KeyEvent) -> TuiEventOutcome 
             state.insert_input_char('\n');
             TuiEventOutcome::Continue
         }
-        // Ctrl+J is the bare LF code point — emacs/readline convention for
-        // "insert a literal newline." Works in every terminal regardless of
-        // CSI-u support, so we accept it as a last-ditch fallback.
         KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             state.insert_input_char('\n');
             TuiEventOutcome::Continue
