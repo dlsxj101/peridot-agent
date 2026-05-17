@@ -533,7 +533,9 @@ async fn run_turn_emits_context_compacted_hook() {
         compaction_threshold_tokens: 1,
         ..peridot_context::ContextLimits::default()
     });
-    for index in 0..5 {
+    // Compaction now preserves the last COMPACTION_KEEP_TAIL=6 entries,
+    // so seed more than that or there's nothing to fold.
+    for index in 0..12 {
         context.append(ContextEntry::trusted(
             ContextSource::User,
             format!("large prior message {index}"),

@@ -146,6 +146,7 @@ pub(super) async fn run_task_with_events<F>(
     config: PeridotConfig,
     project_root: PathBuf,
     cancel: Option<peridot_core::CancelToken>,
+    compact_request: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     context_snapshot_path: Option<PathBuf>,
     events: F,
 ) -> Result<peridot_core::AgentRunSummary>
@@ -165,6 +166,11 @@ where
         &project_root,
         &config.context,
     ));
+    // Drive dynamic compaction off the active model's context window
+    // when known. Unknown models keep the static thresholds from
+    // ContextLimits. peridot-llm::context_window_tokens covers the
+    // common Anthropic / OpenAI / Gemini / DeepSeek / Qwen families.
+    context.set_model_window_tokens(peridot_llm::context_window_tokens(&options.model));
     if let Some(path) = context_snapshot_path.as_ref()
         && let Ok(bytes) = std::fs::read(path)
         && let Ok(entries) = serde_json::from_slice::<Vec<peridot_context::ContextEntry>>(&bytes)
@@ -174,6 +180,9 @@ where
     let mut agent = HarnessAgent::new(state, context, registry);
     if let Some(token) = cancel {
         agent.set_cancel_token(token);
+    }
+    if let Some(flag) = compact_request {
+        agent.set_compact_request(flag);
     }
     if let Some(path) = context_snapshot_path {
         agent.set_context_snapshot_path(path);

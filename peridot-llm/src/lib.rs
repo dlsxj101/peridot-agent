@@ -2,6 +2,7 @@
 
 mod anthropic;
 mod codex;
+mod models;
 mod openai;
 mod provider;
 mod transport;
@@ -9,6 +10,7 @@ mod types;
 
 pub use anthropic::ClaudeProvider;
 pub use codex::CodexAppServerProvider;
+pub use models::context_window_tokens;
 pub use openai::OpenAiProvider;
 pub use provider::{LlmProvider, PricingTable};
 pub use types::{

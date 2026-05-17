@@ -518,12 +518,15 @@ async fn main() -> Result<()> {
                                 options.permission = state.header.permission;
                                 options.model = state.header.model.clone();
                                 let token = peridot_core::CancelToken::new();
-                                {
+                                let compact_flag = {
                                     let mut router = router.lock().unwrap();
                                     if let Some(handle) = router.get_mut(&foreground) {
                                         handle.cancel = token.clone();
+                                        Some(handle.compact_request.clone())
+                                    } else {
+                                        None
                                     }
-                                }
+                                };
                                 let effective_config = config_with_provider(
                                     &config_template,
                                     state.header.provider.as_deref(),
@@ -539,6 +542,7 @@ async fn main() -> Result<()> {
                                     effective_config,
                                     project_template.clone(),
                                     Some(token),
+                                    compact_flag,
                                 );
                             }
                         },
@@ -579,12 +583,15 @@ async fn main() -> Result<()> {
                                     ));
                                 }
                                 let token = peridot_core::CancelToken::new();
-                                {
+                                let compact_flag = {
                                     let mut router = router.lock().unwrap();
                                     if let Some(handle) = router.get_mut(&foreground) {
                                         handle.cancel = token.clone();
+                                        Some(handle.compact_request.clone())
+                                    } else {
+                                        None
                                     }
-                                }
+                                };
                                 spawn_tui_agent_run(
                                     handle.clone(),
                                     event_tx.clone(),
@@ -596,6 +603,7 @@ async fn main() -> Result<()> {
                                     config,
                                     project_template.clone(),
                                     Some(token),
+                                    compact_flag,
                                 );
                             }
                         },
@@ -679,6 +687,7 @@ async fn main() -> Result<()> {
 }
 
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 fn spawn_tui_agent_run(
     handle: tokio::runtime::Handle,
     event_tx: std::sync::mpsc::Sender<(String, TuiRuntimeEvent)>,
@@ -690,6 +699,7 @@ fn spawn_tui_agent_run(
     config: PeridotConfig,
     project_root: PathBuf,
     cancel: Option<peridot_core::CancelToken>,
+    compact_request: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) {
     let context_snapshot_path = Some(
         project_root
@@ -709,6 +719,7 @@ fn spawn_tui_agent_run(
             config,
             project_root,
             cancel,
+            compact_request,
             context_snapshot_path,
             move |event| {
                 let evt = tui_runtime_event_from_agent(event);
@@ -956,8 +967,42 @@ fn apply_session_command(
         SessionCommandEvent::BranchTurn(turn_id) => {
             handle_branch_turn(state, project_template, turn_id);
         }
+        SessionCommandEvent::CompactContext => {
+            handle_compact_context(state, router);
+        }
     }
     warn_on_shared_workspace_collisions(state, router, project_template);
+}
+
+/// Sets the active session's compact-request flag so the running
+/// agent loop performs a forced LLM recap on its next turn boundary.
+/// No-op when there is no active session — the operator gets a
+/// transcript notice either way.
+fn handle_compact_context(
+    state: &mut TuiState,
+    router: &std::sync::Arc<std::sync::Mutex<SessionRouter>>,
+) {
+    let session_id = state.current_session_id.clone();
+    if session_id.is_empty() {
+        state.push_error("compact: no active session".to_string());
+        return;
+    }
+    let queued = {
+        let mut router = router.lock().unwrap();
+        if let Some(handle) = router.get_mut(&session_id) {
+            handle
+                .compact_request
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            true
+        } else {
+            false
+        }
+    };
+    if queued {
+        state.push_transcript("compact: flag set — will fire on next turn");
+    } else {
+        state.push_error(format!("compact: session {session_id} not found"));
+    }
 }
 
 /// Forks the live session's context at the given turn id by rewriting
@@ -1894,9 +1939,13 @@ fn spawn_session_task(
     options.permission = permission;
     options.model = model;
     let token = peridot_core::CancelToken::new();
-    if let Some(session_handle) = router.lock().unwrap().get_mut(&session_id) {
-        session_handle.cancel = token.clone();
-    }
+    let compact_flag = {
+        let mut router = router.lock().unwrap();
+        router.get_mut(&session_id).map(|h| {
+            h.cancel = token.clone();
+            h.compact_request.clone()
+        })
+    };
     spawn_tui_agent_run(
         handle.clone(),
         event_tx.clone(),
@@ -1908,6 +1957,7 @@ fn spawn_session_task(
         config_template.clone(),
         project_template.to_path_buf(),
         Some(token),
+        compact_flag,
     );
 }
 

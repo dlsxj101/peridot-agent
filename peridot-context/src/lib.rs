@@ -115,7 +115,7 @@ impl ContextEntry {
 }
 
 /// Context manager limits and offload configuration.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ContextLimits {
     /// Hard token limit for message construction.
     pub hard_limit_tokens: usize,
@@ -128,6 +128,14 @@ pub struct ContextLimits {
     /// summary materially helps. Defaults to 1.4x of the Tier 1
     /// threshold.
     pub llm_compaction_threshold_tokens: usize,
+    /// Fraction of the active model's context window that should
+    /// trigger automatic LLM compaction when the harness installs a
+    /// concrete model-window size via
+    /// [`ContextManager::set_model_window_tokens`]. Falls back to
+    /// the static thresholds above when no window is installed.
+    /// Defaults to 0.9 — compact at 90% so the next model call still
+    /// has 10% headroom for its own output.
+    pub auto_compaction_pct: f64,
     /// Character threshold above which observations are offloaded.
     pub offload_threshold_chars: usize,
     /// Directory where offloaded observations are written.
@@ -140,6 +148,7 @@ impl Default for ContextLimits {
             hard_limit_tokens: 160_000,
             compaction_threshold_tokens: 100_000,
             llm_compaction_threshold_tokens: 140_000,
+            auto_compaction_pct: 0.9,
             // Disable offload by default. Modern models all support 200K+ context, and
             // offloading tool output to disk confuses smaller models into recursively
             // re-reading the offload file instead of using the result the harness just
@@ -151,6 +160,13 @@ impl Default for ContextLimits {
         }
     }
 }
+
+/// Number of trailing turns/entries compaction preserves verbatim.
+/// Anything older gets folded into the summary block. Tuned upward
+/// from 4 to 6 so the immediate working context stays warm — the
+/// model rarely needs more than 6 turns of detail, but losing the
+/// last 4 hurts when an interruption splits a logical unit.
+pub const COMPACTION_KEEP_TAIL: usize = 6;
 
 /// Append-only context manager.
 #[derive(Clone, Debug, Default)]
@@ -166,6 +182,11 @@ pub struct ContextManager {
     /// `branch_from`), this records the source turn id so the DAG can
     /// reconstruct lineage.
     branched_from: Option<u64>,
+    /// Active model's max context window in tokens. When set, this
+    /// drives a dynamic compaction threshold (window * auto_compaction_pct)
+    /// instead of the fixed `llm_compaction_threshold_tokens`. The
+    /// harness installs this per session from the configured model.
+    model_window_tokens: Option<usize>,
 }
 
 impl ContextManager {
@@ -182,6 +203,7 @@ impl ContextManager {
             offload_counter: 0,
             current_turn_id: 0,
             branched_from: None,
+            model_window_tokens: None,
         }
     }
 
@@ -306,16 +328,36 @@ impl ContextManager {
     /// Compacts old entries into a structured reminder when the soft limit is exceeded.
     pub fn compact_if_needed(&mut self) -> bool {
         if self.estimated_tokens() <= self.limits.compaction_threshold_tokens
-            || self.entries.len() <= 4
+            || self.entries.len() <= COMPACTION_KEEP_TAIL
         {
             return false;
         }
-        let keep_from = self.entries.len().saturating_sub(4);
+        self.compact_tier1();
+        true
+    }
+
+    fn compact_tier1(&mut self) {
+        let keep_from = self.entries.len().saturating_sub(COMPACTION_KEEP_TAIL);
         let summary = summarize_entries(&self.entries[..keep_from]);
-        let mut compacted = vec![ContextEntry::trusted(ContextSource::PlanReminder, summary)];
+        let preserved_anchor = self.preserved_initial_user_entry();
+        let mut compacted = Vec::new();
+        if let Some(anchor) = preserved_anchor {
+            compacted.push(anchor);
+        }
+        compacted.push(ContextEntry::trusted(ContextSource::PlanReminder, summary));
         compacted.extend_from_slice(&self.entries[keep_from..]);
         self.entries = compacted;
-        true
+    }
+
+    /// Returns a clone of the very first `User` entry — almost always
+    /// the operator's original task. Compaction restores it intact so
+    /// the agent never loses the anchoring instruction even after
+    /// multiple recap passes.
+    fn preserved_initial_user_entry(&self) -> Option<ContextEntry> {
+        self.entries
+            .iter()
+            .find(|entry| entry.source == ContextSource::User)
+            .cloned()
     }
 
     /// LLM-driven Tier 3 compaction. Replaces the older portion of the
@@ -339,13 +381,42 @@ impl ContextManager {
     where
         P: LlmProvider + ?Sized,
     {
-        let keep_tail = 4usize;
-        if self.estimated_tokens() <= self.limits.llm_compaction_threshold_tokens
-            || self.entries.len() <= keep_tail
+        if self.estimated_tokens() <= self.llm_compaction_threshold()
+            || self.entries.len() <= COMPACTION_KEEP_TAIL
         {
             return Ok(false);
         }
-        let keep_from = self.entries.len().saturating_sub(keep_tail);
+        self.compact_with_llm_inner(provider, model).await
+    }
+
+    /// Like [`compact_with_llm`] but ignores the threshold — used by
+    /// the `/compact` slash command so the operator can force a
+    /// recap even when the buffer is well below the auto trigger.
+    /// Still requires more than `COMPACTION_KEEP_TAIL` entries to
+    /// have anything to fold.
+    pub async fn force_compact_with_llm<P>(
+        &mut self,
+        provider: &P,
+        model: &str,
+    ) -> PeriResult<bool>
+    where
+        P: LlmProvider + ?Sized,
+    {
+        if self.entries.len() <= COMPACTION_KEEP_TAIL {
+            return Ok(false);
+        }
+        self.compact_with_llm_inner(provider, model).await
+    }
+
+    async fn compact_with_llm_inner<P>(
+        &mut self,
+        provider: &P,
+        model: &str,
+    ) -> PeriResult<bool>
+    where
+        P: LlmProvider + ?Sized,
+    {
+        let keep_from = self.entries.len().saturating_sub(COMPACTION_KEEP_TAIL);
         let to_summarize = &self.entries[..keep_from];
 
         let body = format_entries_for_summary(to_summarize);
@@ -368,10 +439,36 @@ impl ContextManager {
         let response = provider.complete(request).await?;
         let summary = render_llm_summary(&response.text)
             .unwrap_or_else(|| summarize_entries(to_summarize));
-        let mut compacted = vec![ContextEntry::trusted(ContextSource::PlanReminder, summary)];
+        let preserved_anchor = self.preserved_initial_user_entry();
+        let mut compacted = Vec::new();
+        if let Some(anchor) = preserved_anchor {
+            compacted.push(anchor);
+        }
+        compacted.push(ContextEntry::trusted(ContextSource::PlanReminder, summary));
         compacted.extend_from_slice(&self.entries[keep_from..]);
         self.entries = compacted;
         Ok(true)
+    }
+
+    /// Effective threshold for LLM compaction. If the operator (or
+    /// the harness) installed a model window via [`set_model_window_tokens`]
+    /// the threshold becomes `model_window * auto_compaction_pct`,
+    /// scaling automatically across 16k/200k/1M models. Otherwise
+    /// falls back to the static `llm_compaction_threshold_tokens`.
+    pub fn llm_compaction_threshold(&self) -> usize {
+        if let Some(window) = self.model_window_tokens {
+            let pct = self.limits.auto_compaction_pct.clamp(0.1, 0.99);
+            return ((window as f64) * pct) as usize;
+        }
+        self.limits.llm_compaction_threshold_tokens
+    }
+
+    /// Installs the active model's max context window so threshold
+    /// scales automatically. The harness sets this once per session
+    /// from the configured model name; `None` keeps the static
+    /// threshold from `ContextLimits`.
+    pub fn set_model_window_tokens(&mut self, window: Option<usize>) {
+        self.model_window_tokens = window;
     }
 
     /// Builds provider-neutral messages from the current entries.
@@ -647,6 +744,7 @@ mod tests {
             hard_limit_tokens: 160_000,
             compaction_threshold_tokens: 100_000,
             llm_compaction_threshold_tokens: 140_000,
+            auto_compaction_pct: 0.9,
             offload_threshold_chars: 4,
             offload_dir: Some(root.clone()),
         });
@@ -665,7 +763,9 @@ mod tests {
             compaction_threshold_tokens: 4,
             ..ContextLimits::default()
         });
-        for index in 0..6 {
+        // Seed more than COMPACTION_KEEP_TAIL=6 so compaction has
+        // entries to fold.
+        for index in 0..12 {
             manager.append(ContextEntry::trusted(
                 ContextSource::User,
                 format!("entry {index} with enough text"),
@@ -674,14 +774,22 @@ mod tests {
 
         assert!(manager.compact_if_needed());
 
-        assert_eq!(manager.entries().len(), 5);
+        // Layout: [original anchor (User), summary (PlanReminder),
+        // tail of last KEEP_TAIL entries].
+        assert_eq!(manager.entries().len(), 2 + COMPACTION_KEEP_TAIL);
+        assert_eq!(manager.entries()[0].source, ContextSource::User);
+        assert!(manager.entries()[0].content.contains("entry 0"));
+        assert_eq!(manager.entries()[1].source, ContextSource::PlanReminder);
         assert!(
-            manager.entries()[0]
+            manager.entries()[1]
                 .content
                 .contains("Compacted prior context")
         );
-        assert!(manager.entries()[0].content.contains("entries=2"));
-        assert_eq!(manager.entries()[1].content, "entry 2 with enough text");
+        // First tail entry is the most recent of the dropped+kept boundary.
+        assert_eq!(
+            manager.entries()[2].content,
+            format!("entry {} with enough text", 12 - COMPACTION_KEEP_TAIL)
+        );
     }
 
     #[test]
@@ -844,10 +952,11 @@ mod tests {
                 hard_limit_tokens: 1_000_000,
                 compaction_threshold_tokens: 1,
                 llm_compaction_threshold_tokens: 1,
+                auto_compaction_pct: 0.9,
                 offload_threshold_chars: usize::MAX,
                 offload_dir: None,
             });
-            // 10 entries — more than `keep_tail = 4` so compaction has
+            // 10 entries — more than `COMPACTION_KEEP_TAIL` so compaction has
             // something to fold.
             for i in 0..10 {
                 manager.append(ContextEntry::trusted(
@@ -873,9 +982,12 @@ mod tests {
 
             assert!(compacted, "expected compaction to happen");
             assert!(manager.entries().len() < before);
-            assert_eq!(manager.entries()[0].source, ContextSource::PlanReminder);
-            assert!(manager.entries()[0].content.contains("touched src/lib.rs"));
-            assert!(manager.entries()[0].content.contains("ship release"));
+            // entries[0] is the preserved original-task anchor; the
+            // summary lands at entries[1].
+            assert_eq!(manager.entries()[0].source, ContextSource::User);
+            assert_eq!(manager.entries()[1].source, ContextSource::PlanReminder);
+            assert!(manager.entries()[1].content.contains("touched src/lib.rs"));
+            assert!(manager.entries()[1].content.contains("ship release"));
         }
 
         #[tokio::test]
@@ -889,12 +1001,108 @@ mod tests {
                 .unwrap();
 
             assert!(compacted);
-            // Tier 1 summary header should appear in the fallback.
+            // Tier 1 summary header lands at [1]; [0] is the
+            // preserved original-task anchor.
             assert!(
-                manager.entries()[0]
+                manager.entries()[1]
                     .content
                     .contains("Compacted prior context: entries=")
             );
+        }
+
+        #[tokio::test]
+        async fn force_compaction_bypasses_threshold() {
+            // Big static threshold means compact_with_llm returns false,
+            // but force_compact_with_llm still folds older entries.
+            let mut manager = ContextManager::with_limits(ContextLimits {
+                hard_limit_tokens: 1_000_000,
+                compaction_threshold_tokens: 1_000_000,
+                llm_compaction_threshold_tokens: 1_000_000,
+                auto_compaction_pct: 0.9,
+                offload_threshold_chars: usize::MAX,
+                offload_dir: None,
+            });
+            for i in 0..10 {
+                manager.append(ContextEntry::trusted(
+                    ContextSource::User,
+                    format!("entry {i}"),
+                ));
+            }
+            let before = manager.entries().len();
+            let provider = ScriptedSummaryProvider::new(
+                r#"{"key_facts": ["touched something"], "current_plan": "keep going", "recent_decisions": []}"#,
+            );
+            let did = manager
+                .force_compact_with_llm(&provider, "test-model")
+                .await
+                .unwrap();
+            assert!(did, "force_compact should fire even below threshold");
+            assert!(manager.entries().len() < before);
+        }
+
+        #[tokio::test]
+        async fn dynamic_threshold_scales_with_model_window() {
+            // 200k window * 0.9 = 180k threshold. We seed under that
+            // and confirm no compaction. Then drop the threshold and
+            // confirm it fires.
+            let mut manager = ContextManager::with_limits(ContextLimits::default());
+            manager.set_model_window_tokens(Some(200_000));
+            for i in 0..10 {
+                manager.append(ContextEntry::trusted(
+                    ContextSource::User,
+                    format!("entry {i}"),
+                ));
+            }
+            assert_eq!(manager.llm_compaction_threshold(), 180_000);
+            assert!(
+                manager.estimated_tokens() < manager.llm_compaction_threshold(),
+                "tiny buffer should be far below 180k threshold"
+            );
+            // 1-token window forces threshold to 0 — any non-empty
+            // buffer past KEEP_TAIL triggers compaction.
+            manager.set_model_window_tokens(Some(1));
+            assert!(manager.estimated_tokens() > manager.llm_compaction_threshold());
+            let provider = ScriptedSummaryProvider::new(
+                r#"{"key_facts": [], "current_plan": "", "recent_decisions": []}"#,
+            );
+            let did = manager
+                .compact_with_llm(&provider, "test-model")
+                .await
+                .unwrap();
+            assert!(did, "tiny dynamic threshold should trigger compaction");
+        }
+
+        #[tokio::test]
+        async fn compaction_preserves_initial_user_entry() {
+            let mut manager = ContextManager::with_limits(ContextLimits {
+                hard_limit_tokens: 1_000_000,
+                compaction_threshold_tokens: 1,
+                llm_compaction_threshold_tokens: 1,
+                auto_compaction_pct: 0.9,
+                offload_threshold_chars: usize::MAX,
+                offload_dir: None,
+            });
+            manager.append(ContextEntry::trusted(
+                ContextSource::User,
+                "ORIGINAL TASK: build the homepage",
+            ));
+            for i in 0..15 {
+                manager.append(ContextEntry::trusted(
+                    ContextSource::Tool,
+                    format!("intermediate observation {i}"),
+                ));
+            }
+            let provider = ScriptedSummaryProvider::new(
+                r#"{"key_facts": ["foo"], "current_plan": "bar", "recent_decisions": []}"#,
+            );
+            manager
+                .force_compact_with_llm(&provider, "test-model")
+                .await
+                .unwrap();
+            // First entry should still be the original task.
+            let first = &manager.entries()[0];
+            assert_eq!(first.source, ContextSource::User);
+            assert!(first.content.contains("ORIGINAL TASK"));
         }
 
         #[tokio::test]
@@ -903,6 +1111,7 @@ mod tests {
                 hard_limit_tokens: 1_000_000,
                 compaction_threshold_tokens: 1_000_000,
                 llm_compaction_threshold_tokens: 1_000_000,
+                auto_compaction_pct: 0.9,
                 offload_threshold_chars: usize::MAX,
                 offload_dir: None,
             });

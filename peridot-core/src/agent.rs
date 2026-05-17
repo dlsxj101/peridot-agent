@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use peridot_agents::SubAgent;
 use peridot_common::{
@@ -42,6 +43,11 @@ pub struct HarnessAgent {
     subagent_runner: Option<Arc<dyn SubAgent>>,
     auto_verify_after_mutation: bool,
     auto_grade_on_done: bool,
+    /// Optional flag the operator sets via `/compact` to force an LLM
+    /// recap on the next turn boundary, even when the buffer is well
+    /// below the auto trigger. Atomic so the slash command thread and
+    /// the agent loop can share it without locking.
+    compact_request: Option<Arc<AtomicBool>>,
 }
 
 impl HarnessAgent {
@@ -59,7 +65,14 @@ impl HarnessAgent {
             subagent_runner: None,
             auto_verify_after_mutation: false,
             auto_grade_on_done: false,
+            compact_request: None,
         }
+    }
+
+    /// Attaches a shared atomic flag the operator can set (e.g. via
+    /// `/compact`) to force an LLM recap on the next turn boundary.
+    pub fn set_compact_request(&mut self, flag: Arc<AtomicBool>) {
+        self.compact_request = Some(flag);
     }
 
     /// Installs a subagent runner. The harness injects this into every
@@ -282,15 +295,28 @@ impl HarnessAgent {
         }
         let estimated_tokens = self.context.estimated_tokens();
         // Tier 3 first: ask the model to produce a structured recap.
-        // Falls back to Tier 1 (deterministic summary) if the LLM call
-        // errors or produces no compaction. We deliberately swallow
-        // provider errors here so a compaction hiccup never aborts the
-        // run — the user's task continues with the longer context.
-        let mut compacted = self
-            .context
-            .compact_with_llm(provider, &request.model)
-            .await
-            .unwrap_or_default();
+        // When the operator queued `/compact` we bypass the threshold
+        // entirely; otherwise the dynamic threshold (auto_compaction_pct
+        // of the active model window) decides. Falls back to Tier 1
+        // (deterministic summary) if the LLM call errors or produces
+        // no compaction. Provider errors are swallowed so a compaction
+        // hiccup never aborts the run.
+        let force_compact = self
+            .compact_request
+            .as_ref()
+            .map(|flag| flag.swap(false, Ordering::SeqCst))
+            .unwrap_or(false);
+        let mut compacted = if force_compact {
+            self.context
+                .force_compact_with_llm(provider, &request.model)
+                .await
+                .unwrap_or_default()
+        } else {
+            self.context
+                .compact_with_llm(provider, &request.model)
+                .await
+                .unwrap_or_default()
+        };
         if !compacted {
             compacted = self.context.compact_if_needed();
         }

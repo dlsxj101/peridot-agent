@@ -20,6 +20,7 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -50,6 +51,10 @@ pub struct SessionHandle {
     pub parent_id: Option<String>,
     /// Cancellation handle, fired by Esc / `/session close`.
     pub cancel: CancelToken,
+    /// Force-compaction flag the TUI sets via `/compact`. The agent
+    /// loop swaps it to `false` on consumption, so the slash command
+    /// is fire-and-forget and never double-fires.
+    pub compact_request: Arc<AtomicBool>,
     /// Workspace isolation policy used when the session started.
     pub isolation: WorkspaceIsolation,
     /// Latest lifecycle stage observed by the router.
@@ -79,6 +84,7 @@ impl SessionHandle {
             id,
             parent_id: None,
             cancel: CancelToken::new(),
+            compact_request: Arc::new(AtomicBool::new(false)),
             isolation,
             lifecycle: SessionLifecycle::Idle,
             workspace_root: workspace_root.into(),

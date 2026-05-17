@@ -805,7 +805,8 @@ pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
             state.push_transcript(format!("lang: {locale}"));
         }
         SlashCommand::Compact => {
-            state.push_transcript("compact: queued for next agent turn");
+            state.push_transcript("compact: queued — will run on the next agent turn");
+            state.push_pending_session_command(SessionCommandEvent::CompactContext);
         }
         SlashCommand::SessionSave => {
             state.push_transcript("session: save requested");

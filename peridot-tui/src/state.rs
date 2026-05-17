@@ -751,6 +751,11 @@ pub enum SessionCommandEvent {
     /// so subsequent turns carry `parent_turn_id = id`. Refused while
     /// the agent is busy.
     BranchTurn(u64),
+    /// `/compact` — request an LLM recap of the older portion of the
+    /// conversation on the next agent turn boundary, bypassing the
+    /// auto threshold. Fire-and-forget; the agent loop consumes the
+    /// flag and resets it.
+    CompactContext,
 }
 
 /// Result produced when an interactive TUI session exits.
