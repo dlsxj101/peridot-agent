@@ -355,6 +355,17 @@ impl HarnessAgent {
                 ),
             });
         }
+        // Always emit the current context size so the TUI can render a
+        // `ctx used/window` indicator in the status line. The window we
+        // report is the LLM compaction threshold (`model_window * 0.9`)
+        // since that is what governs when auto-compaction triggers and
+        // therefore the "effective" budget for any single turn.
+        let window = self.context.llm_compaction_threshold();
+        let tokens_now = self.context.estimated_tokens();
+        events(AgentRunEvent::ContextUtilizationChanged {
+            tokens_used: tokens_now as u64,
+            threshold: window as u64,
+        });
 
         events(AgentRunEvent::AssistantStarted {
             label: "assistant".to_string(),

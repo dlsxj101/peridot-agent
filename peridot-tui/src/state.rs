@@ -177,6 +177,17 @@ pub struct SidePanelState {
     /// Approximate context utilization in 0.0..=1.0 (1.0 means at threshold).
     #[serde(default)]
     pub context_pct: f32,
+    /// Raw token count of the current context (estimated). Kept alongside
+    /// `context_pct` so the status bar can render `used/window` directly
+    /// instead of having to back-derive the count from the percentage.
+    #[serde(default)]
+    pub context_tokens_used: usize,
+    /// Threshold the percentage was computed against — usually the active
+    /// model window the dynamic compaction trigger uses (`window * 0.9`).
+    /// Surfaced verbatim in the status line so the operator can confirm
+    /// which window peridot resolved for the active model.
+    #[serde(default)]
+    pub context_tokens_window: usize,
     /// Budget and turn-count gauge.
     #[serde(default)]
     pub budget: BudgetGauge,
@@ -1765,6 +1776,8 @@ impl TuiState {
                 tokens_used,
                 threshold,
             } => {
+                self.side_panel.context_tokens_used = tokens_used as usize;
+                self.side_panel.context_tokens_window = threshold as usize;
                 if threshold > 0 {
                     self.side_panel.context_pct =
                         (tokens_used as f32 / threshold as f32).clamp(0.0, 1.0);

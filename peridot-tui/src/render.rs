@@ -938,6 +938,35 @@ fn render_status_bar(state: &TuiState) -> Line<'static> {
                 .add_modifier(Modifier::BOLD),
         ));
     }
+    // Context utilisation gauge — sits between the activity blurb and
+    // the run metrics so the operator can see how close the current
+    // turn is to the 90%-of-window auto-compaction trigger without
+    // turning on the side panel. Yellow once we're past 75% so the
+    // approaching threshold catches the eye.
+    let ctx_used = state.side_panel.context_tokens_used;
+    let ctx_window = state.side_panel.context_tokens_window;
+    if ctx_used > 0 && ctx_window > 0 {
+        let pct = (ctx_used as f32 / ctx_window as f32 * 100.0).clamp(0.0, 999.0);
+        let style = if pct >= 90.0 {
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
+        } else if pct >= 75.0 {
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::DIM)
+        };
+        spans.push(Span::styled(
+            format!(
+                "  · ctx {}/{} ({pct:.0}%)",
+                format_token_count(ctx_used),
+                format_token_count(ctx_window),
+            ),
+            style,
+        ));
+    }
     spans.push(Span::styled(
         format!("  · {}", render_status_metrics(state)),
         Style::default()
@@ -945,6 +974,19 @@ fn render_status_bar(state: &TuiState) -> Line<'static> {
             .add_modifier(Modifier::DIM),
     ));
     Line::from(spans)
+}
+
+/// Renders a token count in compact form — `48000` becomes `48k`,
+/// `1048576` becomes `1.0M`. Below 1000 the raw number is shown so
+/// small contexts don't lose precision.
+fn format_token_count(tokens: usize) -> String {
+    if tokens >= 1_000_000 {
+        format!("{:.1}M", tokens as f64 / 1_000_000.0)
+    } else if tokens >= 1_000 {
+        format!("{}k", tokens / 1_000)
+    } else {
+        tokens.to_string()
+    }
 }
 
 /// Renders a deterministic text snapshot for tests and headless previews.
