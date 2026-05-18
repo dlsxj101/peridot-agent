@@ -85,8 +85,12 @@ impl AgentState {
             | SlashCommand::BranchRestore(_)
             | SlashCommand::BranchList
             | SlashCommand::BranchTurn(_)
+            | SlashCommand::BranchTree
+            | SlashCommand::BranchSwitch(_)
             | SlashCommand::BranchPicker
-            | SlashCommand::SidepanelToggle => {}
+            | SlashCommand::SidepanelToggle
+            | SlashCommand::Collapse
+            | SlashCommand::AutoFix(_) => {}
         }
     }
 }

@@ -114,6 +114,116 @@ impl ContextEntry {
     }
 }
 
+/// One abandoned limb in the conversation DAG. Created when the operator
+/// forks via `/branch turn <id>` — the entries that were dropped from the
+/// active path are preserved here so they can be explored or restored.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct BranchLimb {
+    /// Turn id the fork originated from.
+    pub parent_turn_id: u64,
+    /// Entries that were on the active path *after* `parent_turn_id` and
+    /// got dropped when the operator forked.
+    pub entries: Vec<ContextEntry>,
+    /// Unix timestamp (seconds) when the fork happened.
+    #[serde(default)]
+    pub created_at: u64,
+}
+
+/// Persistent DAG journal that accumulates every limb dropped by
+/// `/branch turn`. Serialised alongside the session's `context.bin`
+/// as `branches.json`.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct BranchJournal {
+    pub limbs: Vec<BranchLimb>,
+}
+
+impl BranchJournal {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Records a set of dropped entries as a new limb.
+    pub fn record(&mut self, parent_turn_id: u64, entries: Vec<ContextEntry>) {
+        let created_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        self.limbs.push(BranchLimb {
+            parent_turn_id,
+            entries,
+            created_at,
+        });
+    }
+
+    /// Loads the journal from disk, returning an empty journal on any error.
+    pub fn load(path: &Path) -> Self {
+        fs::read(path)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .unwrap_or_default()
+    }
+
+    /// Persists the journal to disk.
+    pub fn save(&self, path: &Path) -> PeriResult<()> {
+        let bytes = serde_json::to_vec(self)
+            .map_err(|e| PeriError::Config(format!("serialise branch journal: {e}")))?;
+        fs::write(path, bytes)
+            .map_err(|e| PeriError::Config(format!("write branch journal: {e}")))?;
+        Ok(())
+    }
+
+    /// Removes and returns a limb by index, or `None` if out of range.
+    pub fn take_limb(&mut self, index: usize) -> Option<BranchLimb> {
+        if index < self.limbs.len() {
+            Some(self.limbs.remove(index))
+        } else {
+            None
+        }
+    }
+
+    /// Builds a concise DAG summary for display. Each limb shows its fork
+    /// point, entry count, and max turn id.
+    pub fn tree_summary(&self) -> Vec<String> {
+        self.limbs
+            .iter()
+            .enumerate()
+            .map(|(i, limb)| {
+                let max_turn = limb.entries.iter().map(|e| e.turn_id).max().unwrap_or(0);
+                let ts = if limb.created_at > 0 {
+                    format_unix_ts(limb.created_at)
+                } else {
+                    "unknown".to_string()
+                };
+                format!(
+                    "  [{i}] fork@turn {} → {} entries (turns {}..{}) created {}",
+                    limb.parent_turn_id,
+                    limb.entries.len(),
+                    limb.parent_turn_id + 1,
+                    max_turn,
+                    ts,
+                )
+            })
+            .collect()
+    }
+}
+
+fn format_unix_ts(secs: u64) -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let ago = now.saturating_sub(secs);
+    if ago < 60 {
+        "just now".to_string()
+    } else if ago < 3600 {
+        format!("{}m ago", ago / 60)
+    } else if ago < 86400 {
+        format!("{}h ago", ago / 3600)
+    } else {
+        format!("{}d ago", ago / 86400)
+    }
+}
+
 /// Context manager limits and offload configuration.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ContextLimits {
@@ -1337,5 +1447,58 @@ mod tests {
             assert!(!compacted);
             assert_eq!(manager.entries().len(), 1);
         }
+    }
+
+    #[test]
+    fn branch_journal_record_and_tree_summary() {
+        let mut journal = BranchJournal::new();
+        assert!(journal.limbs.is_empty());
+
+        let entries: Vec<ContextEntry> = (3..=5)
+            .map(|i| {
+                let mut e = ContextEntry::trusted(ContextSource::Assistant, format!("turn {i}"));
+                e.turn_id = i;
+                e
+            })
+            .collect();
+        journal.record(2, entries);
+
+        assert_eq!(journal.limbs.len(), 1);
+        assert_eq!(journal.limbs[0].parent_turn_id, 2);
+        assert_eq!(journal.limbs[0].entries.len(), 3);
+
+        let summary = journal.tree_summary();
+        assert_eq!(summary.len(), 1);
+        assert!(summary[0].contains("fork@turn 2"));
+        assert!(summary[0].contains("3 entries"));
+    }
+
+    #[test]
+    fn branch_journal_take_limb() {
+        let mut journal = BranchJournal::new();
+        let e1 = ContextEntry::trusted(ContextSource::User, "a");
+        let e2 = ContextEntry::trusted(ContextSource::User, "b");
+        journal.record(1, vec![e1]);
+        journal.record(3, vec![e2]);
+        assert_eq!(journal.limbs.len(), 2);
+
+        let limb = journal.take_limb(0).unwrap();
+        assert_eq!(limb.parent_turn_id, 1);
+        assert_eq!(journal.limbs.len(), 1);
+        assert_eq!(journal.limbs[0].parent_turn_id, 3);
+
+        assert!(journal.take_limb(99).is_none());
+    }
+
+    #[test]
+    fn branch_journal_round_trip_serde() {
+        let mut journal = BranchJournal::new();
+        let mut entry = ContextEntry::trusted(ContextSource::Assistant, "hello");
+        entry.turn_id = 7;
+        journal.record(5, vec![entry]);
+
+        let bytes = serde_json::to_vec(&journal).unwrap();
+        let loaded: BranchJournal = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(loaded, journal);
     }
 }

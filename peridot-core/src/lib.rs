@@ -28,6 +28,6 @@ pub use requests::{
     McpStatusUpdate, PlanStepUpdate, ReviewerVerdict, StopReason,
 };
 pub use role::AgentRole;
-pub use slash::{SlashCommand, SubagentModelChange, parse_slash_command};
+pub use slash::{AutoFixAction, SlashCommand, SubagentModelChange, parse_slash_command};
 pub use state::AgentState;
 pub use usage::accumulate_usage;

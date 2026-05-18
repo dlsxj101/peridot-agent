@@ -160,6 +160,17 @@ pub enum AgentRunEvent {
         /// Verdict body.
         verdict: ReviewerVerdict,
     },
+    /// An auto-fix verification attempt completed.
+    AutoFixAttempt {
+        /// One-based attempt number.
+        attempt: u32,
+        /// Configured maximum attempts.
+        max: u32,
+        /// Verification tool that was checked.
+        tool_name: String,
+        /// Whether the check passed.
+        passed: bool,
+    },
     /// One non-executor committee role consumed provider tokens. The
     /// executor's per-turn cost is already covered by `UsageUpdated`; this
     /// event only fires for Planner and Reviewer so the TUI can split per

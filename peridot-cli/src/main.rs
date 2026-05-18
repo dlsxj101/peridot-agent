@@ -635,10 +635,25 @@ async fn main() -> Result<()> {
                                 {
                                     state.approval_grants.push(grant.clone());
                                 }
-                                if synthesised_parameters.is_some() {
+                                if let Some(ref synth) = synthesised_parameters {
                                     state.push_transcript(
-                                        "approval: partial-hunk patch staged — re-running with selected hunks only",
+                                        "approval: partial-hunk patch staged \u{2014} re-running with selected hunks only",
                                     );
+                                    let resume_path = project_template
+                                        .join(".peridot/sessions")
+                                        .join(&foreground)
+                                        .join("pending_resume.bin");
+                                    if resume_path.exists()
+                                        && let Ok(bytes) = std::fs::read(&resume_path)
+                                        && let Ok(mut call) =
+                                            serde_json::from_slice::<peridot_common::ToolCall>(
+                                                &bytes,
+                                            )
+                                    {
+                                        call.parameters = synth.clone();
+                                        let _ = serde_json::to_vec(&call)
+                                            .map(|b| std::fs::write(&resume_path, b));
+                                    }
                                 }
                                 if scope != ApprovalScope::Once {
                                     state.push_transcript(format!(
@@ -1188,6 +1203,12 @@ fn apply_session_command(
         SessionCommandEvent::BranchTurn(turn_id) => {
             handle_branch_turn(state, project_template, turn_id);
         }
+        SessionCommandEvent::BranchTree => {
+            handle_branch_tree(state, project_template);
+        }
+        SessionCommandEvent::BranchSwitch(index) => {
+            handle_branch_switch(state, project_template, index);
+        }
         SessionCommandEvent::BranchPickerOpen => {
             handle_branch_picker_open(state, project_template, event_tx);
         }
@@ -1209,6 +1230,13 @@ fn context_snapshot_path(project_root: &Path, session_id: &str) -> PathBuf {
         .join(".peridot/sessions")
         .join(session_id)
         .join("context.bin")
+}
+
+fn branch_journal_path(project_root: &Path, session_id: &str) -> PathBuf {
+    project_root
+        .join(".peridot/sessions")
+        .join(session_id)
+        .join("branches.json")
 }
 
 fn read_context_snapshot(
@@ -1460,7 +1488,16 @@ fn handle_branch_turn(state: &mut TuiState, project_root: &Path, turn_id: u64) {
         return;
     };
     let kept = &entries[..=last_keep];
-    let dropped = entries.len() - kept.len();
+    let dropped_entries: Vec<peridot_context::ContextEntry> = entries[last_keep + 1..].to_vec();
+    let dropped_count = dropped_entries.len();
+    if !dropped_entries.is_empty() {
+        let journal_path = branch_journal_path(project_root, &session_id);
+        let mut journal = peridot_context::BranchJournal::load(&journal_path);
+        journal.record(turn_id, dropped_entries);
+        if let Err(err) = journal.save(&journal_path) {
+            state.push_error(format!("branch turn: journal write error — {err}"));
+        }
+    }
     let serialized = match serde_json::to_vec(kept) {
         Ok(bytes) => bytes,
         Err(err) => {
@@ -1473,8 +1510,97 @@ fn handle_branch_turn(state: &mut TuiState, project_root: &Path, turn_id: u64) {
         return;
     }
     state.push_transcript(format!(
-        "branch turn: forked at turn {turn_id} ({} dropped entries)",
-        dropped
+        "branch turn: forked at turn {turn_id} ({dropped_count} entries saved to journal)"
+    ));
+}
+
+fn handle_branch_tree(state: &mut TuiState, project_root: &Path) {
+    let session_id = state.current_session_id.clone();
+    if session_id.is_empty() {
+        state.push_error("branch tree: no active session id".to_string());
+        return;
+    }
+    let journal_path = branch_journal_path(project_root, &session_id);
+    let journal = peridot_context::BranchJournal::load(&journal_path);
+    if journal.limbs.is_empty() {
+        state.push_transcript(
+            "branch tree: no abandoned limbs yet — fork with `/branch turn <id>` first",
+        );
+        return;
+    }
+    let mut lines = vec![format!("branch tree: {} limb(s)", journal.limbs.len())];
+    lines.extend(journal.tree_summary());
+    state.push_transcript(lines.join("\n"));
+}
+
+fn handle_branch_switch(state: &mut TuiState, project_root: &Path, index: usize) {
+    let session_id = state.current_session_id.clone();
+    if session_id.is_empty() {
+        state.push_error("branch switch: no active session id".to_string());
+        return;
+    }
+    let snapshot_path = context_snapshot_path(project_root, &session_id);
+    if !snapshot_path.exists() {
+        state.push_error("branch switch: no context snapshot".to_string());
+        return;
+    }
+    let journal_path = branch_journal_path(project_root, &session_id);
+    let mut journal = peridot_context::BranchJournal::load(&journal_path);
+    let Some(limb) = journal.take_limb(index) else {
+        state.push_error(format!(
+            "branch switch: limb [{index}] not found (have {} limbs)",
+            journal.limbs.len()
+        ));
+        return;
+    };
+    let bytes = match std::fs::read(&snapshot_path) {
+        Ok(b) => b,
+        Err(err) => {
+            state.push_error(format!("branch switch: read snapshot — {err}"));
+            return;
+        }
+    };
+    let current_entries: Vec<peridot_context::ContextEntry> = match serde_json::from_slice(&bytes) {
+        Ok(e) => e,
+        Err(err) => {
+            state.push_error(format!("branch switch: parse snapshot — {err}"));
+            return;
+        }
+    };
+    let fork_turn = limb.parent_turn_id;
+    let last_keep = current_entries
+        .iter()
+        .rposition(|entry| entry.turn_id <= fork_turn);
+    let Some(last_keep) = last_keep else {
+        state.push_error(format!(
+            "branch switch: fork point turn {fork_turn} not in current snapshot"
+        ));
+        journal.limbs.insert(index, limb);
+        return;
+    };
+    let current_tail: Vec<peridot_context::ContextEntry> =
+        current_entries[last_keep + 1..].to_vec();
+    if !current_tail.is_empty() {
+        journal.record(fork_turn, current_tail);
+    }
+    let mut new_entries = current_entries[..=last_keep].to_vec();
+    new_entries.extend(limb.entries);
+    let serialized = match serde_json::to_vec(&new_entries) {
+        Ok(b) => b,
+        Err(err) => {
+            state.push_error(format!("branch switch: serialise — {err}"));
+            return;
+        }
+    };
+    if let Err(err) = std::fs::write(&snapshot_path, &serialized) {
+        state.push_error(format!("branch switch: write — {err}"));
+        return;
+    }
+    if let Err(err) = journal.save(&journal_path) {
+        state.push_error(format!("branch switch: journal write — {err}"));
+    }
+    state.push_transcript(format!(
+        "branch switch: swapped to limb [{index}] (fork@turn {fork_turn}). Submit your next task to continue."
     ));
 }
 
@@ -2610,6 +2736,17 @@ fn tui_runtime_event_from_agent(event: AgentRunEvent) -> TuiRuntimeEvent {
                 cost_usd: usage.estimated_cost_usd,
             }
         }
+        AgentRunEvent::AutoFixAttempt {
+            attempt,
+            max,
+            tool_name,
+            passed,
+        } => TuiRuntimeEvent::AutoFixAttempt {
+            attempt,
+            max,
+            tool_name,
+            passed,
+        },
         AgentRunEvent::Recovery { message } => TuiRuntimeEvent::Recovery { message },
         AgentRunEvent::Finished { summary } => TuiRuntimeEvent::Finished {
             success: summary.stopped_reason == StopReason::Done,

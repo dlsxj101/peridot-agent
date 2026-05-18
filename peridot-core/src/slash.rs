@@ -128,6 +128,12 @@ pub enum SlashCommand {
     /// turn_id`. The dropped entries are surfaced to the caller so the
     /// session DAG can persist the abandoned limb.
     BranchTurn(u64),
+    /// `/branch tree` — print the DAG journal showing all abandoned limbs.
+    BranchTree,
+    /// `/branch switch <index>` — swap the active path with a saved limb
+    /// from the DAG journal. The current path becomes a new limb and the
+    /// selected limb's entries are appended to the snapshot.
+    BranchSwitch(usize),
     /// `/branch` with no args — open the interactive branch picker.
     /// The TUI overlay calls back into BranchTurn once the operator
     /// picks a turn.
@@ -137,6 +143,22 @@ pub enum SlashCommand {
     /// action; useful when the host terminal (WSL conpty has been the
     /// case in practice) doesn't deliver Ctrl+] reliably.
     SidepanelToggle,
+    /// `/collapse` — toggle global collapse of tool/diff transcript blocks.
+    Collapse,
+    /// `/autofix` — toggle or configure the auto-fix loop.
+    /// `on` / `off` enables or disables; a bare number sets max attempts.
+    AutoFix(AutoFixAction),
+}
+
+/// Payload for `/autofix`.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum AutoFixAction {
+    /// Toggle on (with default max attempts).
+    On,
+    /// Toggle off.
+    Off,
+    /// Set max attempts (and enable).
+    MaxAttempts(u32),
 }
 
 /// Payload for `/subagent model <name|reset>`. Wrapped in a dedicated enum so
@@ -257,11 +279,21 @@ pub fn parse_slash_command(input: &str) -> Option<SlashCommand> {
             "off" | "stop" | "less" => Some(SlashCommand::Reasoning(ReasoningEffort::Off)),
             other => ReasoningEffort::parse(other).map(SlashCommand::Reasoning),
         },
+        "collapse" if rest.is_empty() => Some(SlashCommand::Collapse),
+        "autofix" => match rest {
+            "" | "on" | "true" | "1" => Some(SlashCommand::AutoFix(AutoFixAction::On)),
+            "off" | "false" | "0" => Some(SlashCommand::AutoFix(AutoFixAction::Off)),
+            n => n
+                .parse::<u32>()
+                .ok()
+                .map(|max| SlashCommand::AutoFix(AutoFixAction::MaxAttempts(max))),
+        },
         "todos" if rest.is_empty() => Some(SlashCommand::Todos),
         "rewind" if rest.is_empty() => Some(SlashCommand::Rewind),
         "branch" => match rest {
             "" => Some(SlashCommand::BranchPicker),
             "list" => Some(SlashCommand::BranchList),
+            "tree" => Some(SlashCommand::BranchTree),
             other if other.starts_with("save ") => {
                 let name = other.strip_prefix("save ").unwrap_or("").trim();
                 if name.is_empty() {
@@ -281,6 +313,10 @@ pub fn parse_slash_command(input: &str) -> Option<SlashCommand> {
             other if other.starts_with("turn ") => {
                 let id = other.strip_prefix("turn ").unwrap_or("").trim();
                 id.parse::<u64>().ok().map(SlashCommand::BranchTurn)
+            }
+            other if other.starts_with("switch ") => {
+                let idx = other.strip_prefix("switch ").unwrap_or("").trim();
+                idx.parse::<usize>().ok().map(SlashCommand::BranchSwitch)
             }
             _ => None,
         },
@@ -349,5 +385,42 @@ mod tests {
     #[test]
     fn rejects_branch_turn_with_missing_id() {
         assert_eq!(parse_slash_command("/branch turn"), None);
+    }
+
+    #[test]
+    fn parses_branch_tree() {
+        assert_eq!(
+            parse_slash_command("/branch tree"),
+            Some(SlashCommand::BranchTree)
+        );
+    }
+
+    #[test]
+    fn parses_branch_switch_with_valid_index() {
+        assert_eq!(
+            parse_slash_command("/branch switch 2"),
+            Some(SlashCommand::BranchSwitch(2))
+        );
+    }
+
+    #[test]
+    fn rejects_branch_switch_with_non_numeric() {
+        assert_eq!(parse_slash_command("/branch switch abc"), None);
+    }
+
+    #[test]
+    fn parses_autofix_on_off_max() {
+        assert_eq!(
+            parse_slash_command("/autofix"),
+            Some(SlashCommand::AutoFix(AutoFixAction::On))
+        );
+        assert_eq!(
+            parse_slash_command("/autofix off"),
+            Some(SlashCommand::AutoFix(AutoFixAction::Off))
+        );
+        assert_eq!(
+            parse_slash_command("/autofix 5"),
+            Some(SlashCommand::AutoFix(AutoFixAction::MaxAttempts(5)))
+        );
     }
 }

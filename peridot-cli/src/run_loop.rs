@@ -86,6 +86,7 @@ pub(super) async fn run_task(
     ));
     agent.set_auto_verify_after_mutation(config.defaults.auto_verify_after_mutation);
     agent.set_auto_grade_on_done(config.defaults.auto_grade_on_done);
+    agent.set_auto_fix_cap(config.auto_fix.max_attempts);
     let summary = run_agent_loop(
         &mut agent,
         provider.as_ref(),
@@ -357,6 +358,7 @@ where
     ));
     agent.set_auto_verify_after_mutation(config.defaults.auto_verify_after_mutation);
     agent.set_auto_grade_on_done(config.defaults.auto_grade_on_done);
+    agent.set_auto_fix_cap(config.auto_fix.max_attempts);
     run_planner_preflight_if_enabled(
         &mut agent,
         provider.as_ref(),
@@ -782,14 +784,43 @@ where
                             events(AgentRunEvent::Recovery {
                                 message: format!("committee reviewer blocked: {reason}"),
                             });
-                            if let Some(token) = cancel_token.as_ref() {
-                                token.cancel();
+                            let overridden = if let Some(port) = executor.ask_user_port() {
+                                let answer = port
+                                    .ask(peridot_common::AskUserRequest::SingleSelect {
+                                        question: format!(
+                                            "Reviewer blocked this change:\n{reason}\n\nOverride and continue, or accept the block?"
+                                        ),
+                                        options: vec![
+                                            "Override and continue".to_string(),
+                                            "Accept block and stop".to_string(),
+                                        ],
+                                        default_index: Some(1),
+                                    })
+                                    .await;
+                                matches!(
+                                    answer,
+                                    peridot_common::AskUserAnswer::Selected { index: 0, .. }
+                                )
+                            } else {
+                                false
+                            };
+                            if overridden {
+                                executor.context_mut().append(Entry::trusted(
+                                    Source::PlanReminder,
+                                    format!(
+                                        "Operator overrode reviewer block (reason: {reason}). Proceed with caution."
+                                    ),
+                                ));
+                            } else {
+                                if let Some(token) = cancel_token.as_ref() {
+                                    token.cancel();
+                                }
+                                stop_reason = StopReason::Interrupted;
+                                events(AgentRunEvent::Interrupted {
+                                    stage: "committee_review_block".to_string(),
+                                });
+                                break;
                             }
-                            stop_reason = StopReason::Interrupted;
-                            events(AgentRunEvent::Interrupted {
-                                stage: "committee_review_block".to_string(),
-                            });
-                            break;
                         }
                     }
                 }

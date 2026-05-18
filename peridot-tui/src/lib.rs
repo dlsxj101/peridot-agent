@@ -36,6 +36,7 @@ use serde::{Deserialize, Serialize};
 
 mod ask_user;
 mod at_picker;
+pub(crate) mod blocks;
 mod branch_picker;
 mod diff_hunks;
 #[cfg(test)]

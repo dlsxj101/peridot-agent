@@ -38,17 +38,15 @@ pub(super) fn render_status_metrics(state: &TuiState) -> String {
         parts.push(format!("{} tok", state.header.total_tokens));
     }
     if state.config.show_cost {
-        // Avg-per-turn projection: when the run has accumulated at least
-        // one turn we surface `$total ($avg/turn)` so the operator can
-        // forecast the rest of a multi-turn task without doing the math
-        // themselves. Single-turn snapshots keep the original compact
-        // shape because the projection equals the total.
         let total_turns = state.current_turn;
         if total_turns > 1 && state.header.cost_usd > 0.0 {
             let avg = state.header.cost_usd / total_turns as f64;
             parts.push(format!("${:.4} (${avg:.4}/turn)", state.header.cost_usd));
         } else {
             parts.push(format!("${:.4}", state.header.cost_usd));
+        }
+        if state.sessions.len() > 1 {
+            parts.push(format!("all ${:.4}", state.aggregate_cost_usd()));
         }
     }
     if state.config.show_cache_rate {
@@ -379,6 +377,48 @@ fn is_entry_hidden(state: &TuiState, entry: &TranscriptEntry) -> bool {
 /// itself, `ToolOk` / `ToolFail` for the tool actions taken between turns,
 /// and `Error` for real failures the operator must see. Everything else
 /// (system bookkeeping, queue notices, turn separators, pre-tool-run
+/// Builds the set of transcript entry indices that should be hidden because
+/// their enclosing block is collapsed.
+fn build_collapsed_set(
+    state: &TuiState,
+    blocks: &[crate::blocks::TranscriptBlock],
+) -> std::collections::HashSet<usize> {
+    let mut hidden = std::collections::HashSet::new();
+    for block in blocks {
+        let is_collapsed = state.collapse_all_tool_blocks
+            || state.collapsed_blocks.contains(&block.header_index)
+            || block.body_line_count > state.collapse_threshold;
+        if is_collapsed {
+            for idx in block.body_range.clone() {
+                hidden.insert(idx);
+            }
+        }
+    }
+    hidden
+}
+
+/// For each collapsed block, maps the header index to a `[+N lines]` indicator
+/// string that the render loop appends after the header entry.
+fn build_collapse_indicators(
+    blocks: &[crate::blocks::TranscriptBlock],
+    collapsed: &std::collections::HashSet<usize>,
+) -> std::collections::HashMap<usize, String> {
+    let mut indicators = std::collections::HashMap::new();
+    for block in blocks {
+        if block.body_range.is_empty() {
+            continue;
+        }
+        let any_hidden = block.body_range.clone().any(|i| collapsed.contains(&i));
+        if any_hidden {
+            indicators.insert(
+                block.header_index,
+                format!("  [+{} lines · Ctrl+E to expand]", block.body_line_count),
+            );
+        }
+    }
+    indicators
+}
+
 /// preambles, thinking/debug toggles) is meta-information and would just
 /// clutter the chat. The text snapshot used by tests keeps the looser
 /// [`is_entry_hidden`] filter so existing assertions on those entries stay
@@ -403,16 +443,8 @@ fn is_entry_hidden_in_chat(state: &TuiState, entry: &TranscriptEntry) -> bool {
         return true;
     }
     match entry.kind {
-        // Run-lifecycle bookkeeping ("task: foo", "run: stopped=Done", "session: saved")
-        // and turn separators are pure noise in the chat view. Tool-start
-        // preambles are likewise hidden — the spinner + the matching
-        // ToolOk/ToolFail line already convey what's happening. System and
-        // Notice entries DO show, because that's where slash-command output
-        // (`/help`, `/info`, `/cost`, approvals, queued tasks) lands and the
-        // operator explicitly asked for it.
-        TranscriptKind::Meta | TranscriptKind::TurnSeparator | TranscriptKind::ToolStart => {
-            !state.debug_view
-        }
+        TranscriptKind::Meta | TranscriptKind::ToolStart => !state.debug_view,
+        TranscriptKind::TurnSeparator => false,
         _ => false,
     }
 }
@@ -508,7 +540,12 @@ fn style_transcript_entry(state: &TuiState, entry: &TranscriptEntry) -> Vec<Line
                 .fg(Color::DarkGray)
                 .add_modifier(Modifier::DIM | Modifier::ITALIC),
         ),
-        TranscriptKind::TurnSeparator => vec![Line::from("")],
+        TranscriptKind::TurnSeparator => vec![Line::from(Span::styled(
+            "\u{2500}".repeat(40),
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::DIM),
+        ))],
         TranscriptKind::Meta => entry
             .text
             .lines()
@@ -1329,18 +1366,29 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
             all_lines.push(Line::from(""));
         }
         all_lines.extend(banner_lines);
-        for entry in state.transcript.iter() {
+        let blocks = crate::blocks::identify_transcript_blocks(&state.transcript);
+        let collapsed_indices = build_collapsed_set(state, &blocks);
+        let collapse_indicators = build_collapse_indicators(&blocks, &collapsed_indices);
+        for (idx, entry) in state.transcript.iter().enumerate() {
             if is_entry_hidden_in_chat(state, entry) {
                 continue;
             }
+            if collapsed_indices.contains(&idx) {
+                continue;
+            }
             let mut entry_lines = style_transcript_entry(state, entry);
-            // A blank line after each User message acts as a visual breath
-            // between the user's prompt and the agent's reply, matching the
-            // turn separation Claude Code uses. Other kinds flow tight.
             if entry.kind == TranscriptKind::User {
                 entry_lines.push(Line::from(""));
             }
             all_lines.extend(entry_lines);
+            if let Some(indicator) = collapse_indicators.get(&idx) {
+                all_lines.push(Line::from(Span::styled(
+                    indicator.clone(),
+                    Style::default()
+                        .fg(Color::DarkGray)
+                        .add_modifier(Modifier::DIM),
+                )));
+            }
         }
         if following_tail && let Some(stream) = state.active_stream.as_ref() {
             all_lines.extend(render_streaming_inline(state, stream));
@@ -1851,7 +1899,7 @@ pub(super) fn render_approval_panel(panel: &ApprovalPanel) -> String {
             .filter(|accepted| **accepted)
             .count();
         sections.push(format!(
-            "Hunks: {accepted}/{total} staged  (Tab toggles, ←/→ navigates)",
+            "Hunks: {accepted}/{total} staged  (Tab/Space toggles, \u{2190}/\u{2192} navigates)",
             total = panel.hunks.len()
         ));
         for (index, hunk) in panel.hunks.iter().enumerate() {
@@ -1864,6 +1912,16 @@ pub(super) fn render_approval_panel(panel: &ApprovalPanel) -> String {
                 idx = index + 1,
                 label = hunk.label()
             ));
+            if focused {
+                let preview = hunk.unified_preview();
+                for line in preview.lines().take(12) {
+                    sections.push(format!("      {line}"));
+                }
+                let total_lines = preview.lines().count();
+                if total_lines > 12 {
+                    sections.push(format!("      ... +{} more lines", total_lines - 12));
+                }
+            }
         }
     } else if let Some(diff) = panel.diff_preview.as_ref() {
         sections.push(String::new());

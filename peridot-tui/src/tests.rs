@@ -2442,3 +2442,70 @@ fn record_background_event_marks_finished_status_per_stop_reason() {
     assert_eq!(by_id("b"), AgentRunStatus::Interrupted);
     assert_eq!(by_id("c"), AgentRunStatus::Failed);
 }
+
+#[test]
+fn aggregate_cost_with_no_sessions_uses_header() {
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    state.header.cost_usd = 0.05;
+    state.header.total_tokens = 1000;
+    assert!((state.aggregate_cost_usd() - 0.05).abs() < 1e-9);
+    assert_eq!(state.aggregate_tokens(), 1000);
+}
+
+#[test]
+fn aggregate_cost_sums_multiple_sessions() {
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    state.current_session_id = "s1".to_string();
+    state.header.cost_usd = 0.10;
+    state.header.total_tokens = 2000;
+    state
+        .sessions
+        .push(crate::SessionDirectoryItem::new("s1", "main"));
+    state.sessions.last_mut().unwrap().cost_usd = 0.08;
+    state.sessions.last_mut().unwrap().tokens = 1800;
+    let mut bg = crate::SessionDirectoryItem::new("s2", "background");
+    bg.cost_usd = 0.04;
+    bg.tokens = 500;
+    state.sessions.push(bg);
+    // Foreground uses max(header, item): max(0.10, 0.08) = 0.10
+    // Background: 0.04
+    assert!((state.aggregate_cost_usd() - 0.14).abs() < 1e-9);
+    // Foreground tokens: max(2000, 1800) = 2000; background: 500
+    assert_eq!(state.aggregate_tokens(), 2500);
+}
+
+#[test]
+fn cost_command_shows_aggregate_for_multi_session() {
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    state.current_session_id = "s1".to_string();
+    state.header.cost_usd = 0.10;
+    state.header.total_tokens = 2000;
+    state
+        .sessions
+        .push(crate::SessionDirectoryItem::new("s1", "main"));
+    let mut bg = crate::SessionDirectoryItem::new("s2", "bg");
+    bg.cost_usd = 0.05;
+    bg.tokens = 700;
+    state.sessions.push(bg);
+    apply_slash_command(&mut state, SlashCommand::Cost);
+    let text: String = state
+        .transcript
+        .iter()
+        .map(|e| e.text.clone())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(text.contains("aggregate"));
+    assert!(text.contains("2 sessions"));
+}

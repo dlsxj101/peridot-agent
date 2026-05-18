@@ -329,6 +329,9 @@ pub struct PeridotConfig {
     /// Sub-agent (fork / worktree / teammate) spawn defaults.
     #[serde(default)]
     pub subagents: SubAgentsConfig,
+    /// Auto-fix loop settings (verify-after-mutation behaviour).
+    #[serde(default)]
+    pub auto_fix: AutoFixConfig,
 }
 
 /// Defaults applied when the main agent spawns a sub-agent via
@@ -346,6 +349,36 @@ pub struct SubAgentsConfig {
     /// as the main agent unless an explicit value is set here.
     #[serde(default)]
     pub default_model: Option<String>,
+}
+
+/// Auto-fix loop configuration. Controls the verify-after-mutation
+/// behaviour in the agent harness.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AutoFixConfig {
+    /// Maximum identical-failure attempts before the circuit breaker fires.
+    #[serde(default = "default_auto_fix_max_attempts")]
+    pub max_attempts: u32,
+    /// Verification commands to run after each mutation, in order. An empty
+    /// list means "use the built-in `verify_build` tool only" (the default).
+    #[serde(default)]
+    pub commands: Vec<String>,
+    /// Whether auto-fix is enabled by default when a session starts.
+    #[serde(default)]
+    pub enabled: bool,
+}
+
+fn default_auto_fix_max_attempts() -> u32 {
+    3
+}
+
+impl Default for AutoFixConfig {
+    fn default() -> Self {
+        Self {
+            max_attempts: default_auto_fix_max_attempts(),
+            commands: Vec::new(),
+            enabled: false,
+        }
+    }
 }
 
 /// Provider-neutral reasoning intensity dial. Maps to: Anthropic

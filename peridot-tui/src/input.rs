@@ -866,6 +866,14 @@ pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
                     state.committee_reviewer_tokens,
                 ));
             }
+            if state.sessions.len() > 1 {
+                state.push_transcript(format!(
+                    "aggregate: ${:.4} · {} tok across {} sessions",
+                    state.aggregate_cost_usd(),
+                    state.aggregate_tokens(),
+                    state.sessions.len(),
+                ));
+            }
         }
         SlashCommand::PlanShow => {
             if state.side_panel.plan.is_empty() {
@@ -962,6 +970,37 @@ pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
         }
         SlashCommand::SidepanelToggle => {
             toggle_sidepanel(state);
+        }
+        SlashCommand::Collapse => {
+            state.collapse_all_tool_blocks = !state.collapse_all_tool_blocks;
+            state.collapsed_blocks.clear();
+            let label = if state.collapse_all_tool_blocks {
+                "collapsed"
+            } else {
+                "expanded"
+            };
+            state.push_transcript(format!("transcript: tool blocks {label}"));
+        }
+        SlashCommand::AutoFix(action) => {
+            use peridot_core::AutoFixAction;
+            match action {
+                AutoFixAction::On => {
+                    state.auto_fix_enabled = true;
+                    state.push_transcript(format!(
+                        "autofix: enabled (max {} attempts)",
+                        state.auto_fix_max_attempts
+                    ));
+                }
+                AutoFixAction::Off => {
+                    state.auto_fix_enabled = false;
+                    state.push_transcript("autofix: disabled".to_string());
+                }
+                AutoFixAction::MaxAttempts(n) => {
+                    state.auto_fix_enabled = true;
+                    state.auto_fix_max_attempts = n;
+                    state.push_transcript(format!("autofix: enabled (max {n} attempts)"));
+                }
+            }
         }
         SlashCommand::SessionSave => {
             state.push_transcript("session: save requested");
@@ -1111,6 +1150,20 @@ pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
             } else {
                 state.push_transcript(format!("branch: forking at turn {turn_id}…"));
                 state.push_pending_session_command(SessionCommandEvent::BranchTurn(turn_id));
+            }
+        }
+        SlashCommand::BranchTree => {
+            state.push_transcript("branch: loading DAG journal…");
+            state.push_pending_session_command(SessionCommandEvent::BranchTree);
+        }
+        SlashCommand::BranchSwitch(index) => {
+            if state.is_agent_busy() {
+                state.push_error(
+                    "branch switch: refusing while agent is running — wait or interrupt first",
+                );
+            } else {
+                state.push_transcript(format!("branch: switching to limb [{index}]…"));
+                state.push_pending_session_command(SessionCommandEvent::BranchSwitch(index));
             }
         }
         SlashCommand::BranchPicker => {

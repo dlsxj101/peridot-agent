@@ -427,6 +427,17 @@ pub enum TuiRuntimeEvent {
         /// Reviewer comments or blocking reason (empty on plain approve).
         comments: String,
     },
+    /// An auto-fix verification attempt completed.
+    AutoFixAttempt {
+        /// One-based attempt number.
+        attempt: u32,
+        /// Configured maximum.
+        max: u32,
+        /// Verification tool name.
+        tool_name: String,
+        /// Whether the check passed.
+        passed: bool,
+    },
     /// One non-executor committee role (planner / reviewer) used tokens.
     CommitteeRoleUsage {
         /// Role label ("planner" or "reviewer").
@@ -574,6 +585,14 @@ pub struct SlashPicker {
     pub query: String,
     /// Highlighted suggestion index.
     pub selected: usize,
+}
+
+fn default_collapse_threshold() -> usize {
+    8
+}
+
+fn default_auto_fix_max() -> u32 {
+    3
 }
 
 /// Main TUI state independent from the terminal backend.
@@ -735,6 +754,21 @@ pub struct TuiState {
     /// scan happens lazily on a freshly resumed session anyway.
     #[serde(default, skip)]
     pub at_picker_index: Vec<String>,
+    /// Whether the auto-fix loop is enabled for this session.
+    #[serde(default)]
+    pub auto_fix_enabled: bool,
+    /// Maximum identical-failure attempts before circuit-breaker fires.
+    #[serde(default = "default_auto_fix_max")]
+    pub auto_fix_max_attempts: u32,
+    /// Indices of transcript block headers the user explicitly toggled.
+    #[serde(default)]
+    pub collapsed_blocks: std::collections::HashSet<usize>,
+    /// Global toggle: when true all tool/diff blocks are collapsed.
+    #[serde(default)]
+    pub collapse_all_tool_blocks: bool,
+    /// Line-count threshold above which a tool/diff block auto-collapses.
+    #[serde(default = "default_collapse_threshold")]
+    pub collapse_threshold: usize,
 }
 
 /// A session-router intent emitted by a slash command. The TUI itself does not
@@ -797,6 +831,10 @@ pub enum SessionCommandEvent {
     /// so subsequent turns carry `parent_turn_id = id`. Refused while
     /// the agent is busy.
     BranchTurn(u64),
+    /// `/branch tree` — print the DAG journal.
+    BranchTree,
+    /// `/branch switch <index>` — swap the active path with a journal limb.
+    BranchSwitch(usize),
     /// `/branch` (no args) — open the branch picker. The CLI handler
     /// reads the session snapshot, builds the turn list, and feeds it
     /// back via `TuiRuntimeEvent::BranchPickerTurns`.
@@ -933,6 +971,11 @@ impl TuiState {
             service_tier: None,
             at_picker: None,
             at_picker_index: Vec::new(),
+            auto_fix_enabled: false,
+            auto_fix_max_attempts: default_auto_fix_max(),
+            collapsed_blocks: std::collections::HashSet::new(),
+            collapse_all_tool_blocks: false,
+            collapse_threshold: default_collapse_threshold(),
         }
     }
 
@@ -1049,6 +1092,43 @@ impl TuiState {
             .iter()
             .filter(|item| item.id != self.current_session_id && item.pending_attention)
             .count()
+    }
+
+    /// Sum of `cost_usd` across all tracked sessions.  For the live
+    /// foreground session the header value is used (it updates on every
+    /// `UsageUpdated` event) while directory items may lag.
+    pub fn aggregate_cost_usd(&self) -> f64 {
+        if self.sessions.is_empty() {
+            return self.header.cost_usd;
+        }
+        self.sessions
+            .iter()
+            .map(|item| {
+                if item.id == self.current_session_id {
+                    self.header.cost_usd.max(item.cost_usd)
+                } else {
+                    item.cost_usd
+                }
+            })
+            .sum()
+    }
+
+    /// Sum of `tokens` across all tracked sessions (same live-vs-directory
+    /// strategy as `aggregate_cost_usd`).
+    pub fn aggregate_tokens(&self) -> u64 {
+        if self.sessions.is_empty() {
+            return self.header.total_tokens;
+        }
+        self.sessions
+            .iter()
+            .map(|item| {
+                if item.id == self.current_session_id {
+                    self.header.total_tokens.max(item.tokens)
+                } else {
+                    item.tokens
+                }
+            })
+            .sum()
     }
 
     /// Removes and returns every queued session-router intent in FIFO order.
@@ -1903,6 +1983,27 @@ impl TuiState {
                     "kind": "planner_plan_ready",
                     "plan_text": plan_text,
                 }));
+            }
+            TuiRuntimeEvent::AutoFixAttempt {
+                attempt,
+                max,
+                tool_name,
+                passed,
+            } => {
+                let status = if passed { "passed" } else { "FAILED" };
+                self.push_transcript_entry(
+                    if passed {
+                        TranscriptKind::System
+                    } else {
+                        TranscriptKind::Notice
+                    },
+                    format!("autofix: {tool_name} {status} (attempt {attempt}/{max})"),
+                );
+                self.push_activity(
+                    ActivityKind::Verification,
+                    "autofix",
+                    format!("{attempt}/{max} {status}"),
+                );
             }
             TuiRuntimeEvent::CommitteeRoleUsage {
                 role,

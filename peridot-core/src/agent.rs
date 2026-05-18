@@ -44,6 +44,7 @@ pub struct HarnessAgent {
     ask_user_port: Option<Arc<dyn AskUserPort>>,
     auto_verify_after_mutation: bool,
     auto_grade_on_done: bool,
+    auto_fix_cap: u32,
     /// Optional flag the operator sets via `/compact` to force an LLM
     /// recap on the next turn boundary, even when the buffer is well
     /// below the auto trigger. Atomic so the slash command thread and
@@ -83,6 +84,7 @@ impl HarnessAgent {
             ask_user_port: None,
             auto_verify_after_mutation: false,
             auto_grade_on_done: false,
+            auto_fix_cap: 3,
             compact_request: None,
             pending_resume_path: None,
             cached_tool_definitions,
@@ -136,6 +138,12 @@ impl HarnessAgent {
         self.auto_grade_on_done = enabled;
     }
 
+    /// Sets the maximum identical-failure attempts before the auto-fix
+    /// circuit breaker fires. Sourced from `config.auto_fix.max_attempts`.
+    pub fn set_auto_fix_cap(&mut self, cap: u32) {
+        self.auto_fix_cap = cap;
+    }
+
     /// Assigns the committee role this agent plays. Defaults to
     /// `AgentRole::Executor`, which keeps the legacy single-agent behaviour.
     pub fn set_role(&mut self, role: AgentRole) {
@@ -173,6 +181,13 @@ impl HarnessAgent {
     /// executor turns and reviewer passes.
     pub fn cancel_token(&self) -> Option<CancelToken> {
         self.cancel.clone()
+    }
+
+    /// Returns a clone of the attached ask-user port, if any. Used by the
+    /// committee loop to surface `Block` verdicts through the interactive
+    /// front-end so the operator can override or accept.
+    pub fn ask_user_port(&self) -> Option<Arc<dyn AskUserPort>> {
+        self.ask_user_port.clone()
     }
 
     /// Configures the on-disk path the agent loop should snapshot its
@@ -695,7 +710,7 @@ impl HarnessAgent {
         // same attempted fix" apart from a new failure uncovered by
         // progress.
         let mut verify_failure_state: Option<VerifyFailureState> = None;
-        const VERIFY_FIX_CAP: u32 = 3;
+        let fix_cap = self.auto_fix_cap;
         for turn_index in 0..request.max_turns {
             if self
                 .cancel
@@ -807,7 +822,13 @@ impl HarnessAgent {
             if is_verify_tool && !turn_success {
                 let failure =
                     update_verify_failure_state(&mut verify_failure_state, &outcome).clone();
-                if failure.attempts >= VERIFY_FIX_CAP {
+                events(AgentRunEvent::AutoFixAttempt {
+                    attempt: failure.attempts,
+                    max: fix_cap,
+                    tool_name: failure.tool_name.clone(),
+                    passed: false,
+                });
+                if failure.attempts >= fix_cap {
                     let message = format!(
                         "Auto-fix loop circuit breaker: {} failed {} times with signature `{}`. Aborting so the operator can intervene.",
                         failure.tool_name, failure.attempts, failure.signature
@@ -836,9 +857,20 @@ impl HarnessAgent {
                 }
                 self.context.append(ContextEntry::trusted(
                     ContextSource::PlanReminder,
-                    verify_failure_directive(&failure, VERIFY_FIX_CAP),
+                    verify_failure_directive(&failure, fix_cap),
                 ));
             } else {
+                if is_verify_tool && turn_success && verify_failure_state.is_some() {
+                    events(AgentRunEvent::AutoFixAttempt {
+                        attempt: verify_failure_state
+                            .as_ref()
+                            .map(|s| s.attempts + 1)
+                            .unwrap_or(1),
+                        max: fix_cap,
+                        tool_name: outcome.tool_name.clone(),
+                        passed: true,
+                    });
+                }
                 verify_failure_state = None;
             }
             accumulate_usage(&mut total_usage, outcome.usage);

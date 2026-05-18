@@ -111,6 +111,12 @@ pub fn slash_command_catalog() -> &'static [SlashCommandSpec] {
             category: "tui",
         },
         SlashCommandSpec {
+            name: "/collapse",
+            description: "toggle collapse of tool/diff transcript blocks",
+            arg_hint: None,
+            category: "tui",
+        },
+        SlashCommandSpec {
             name: "/session save",
             description: "save the current session for later resume",
             arg_hint: None,
@@ -249,6 +255,18 @@ pub fn slash_command_catalog() -> &'static [SlashCommandSpec] {
             category: "session",
         },
         SlashCommandSpec {
+            name: "/branch tree",
+            description: "show the DAG journal of abandoned conversation limbs",
+            arg_hint: None,
+            category: "session",
+        },
+        SlashCommandSpec {
+            name: "/branch switch",
+            description: "swap the active path with a saved limb from the DAG journal",
+            arg_hint: Some("<index>"),
+            category: "session",
+        },
+        SlashCommandSpec {
             name: "/session new",
             description: "open a new session, optionally with an initial task",
             arg_hint: Some("[task]"),
@@ -270,6 +288,12 @@ pub fn slash_command_catalog() -> &'static [SlashCommandSpec] {
             name: "/session list",
             description: "list all sessions",
             arg_hint: None,
+            category: "session",
+        },
+        SlashCommandSpec {
+            name: "/autofix",
+            description: "toggle or configure the auto-fix loop (on|off|<max>)",
+            arg_hint: Some("[on|off|<N>]"),
             category: "session",
         },
     ]
