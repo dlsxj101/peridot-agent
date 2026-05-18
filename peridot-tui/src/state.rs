@@ -436,6 +436,13 @@ pub enum TuiRuntimeEvent {
         /// Approximate token count for this pass.
         tokens: u64,
     },
+    /// LLM-generated session title ready.
+    SessionTitleUpdated {
+        /// Session whose title was generated.
+        session_id: String,
+        /// Generated short title.
+        title: String,
+    },
 }
 
 /// Plan step payload carried by [`TuiRuntimeEvent::PlanUpdated`].
@@ -1095,6 +1102,10 @@ impl TuiState {
                 }
                 TuiRuntimeEvent::ApprovalRequested { .. } => {
                     item.pending_attention = true;
+                }
+                TuiRuntimeEvent::SessionTitleUpdated { title, .. } => {
+                    item.title = title.clone();
+                    item.title_generated = true;
                 }
                 _ => {}
             }
@@ -1949,6 +1960,12 @@ impl TuiState {
                     "verdict": verdict,
                     "comments": comments,
                 }));
+            }
+            TuiRuntimeEvent::SessionTitleUpdated { session_id, title } => {
+                if let Some(item) = self.sessions.iter_mut().find(|s| s.id == session_id) {
+                    item.title = title;
+                    item.title_generated = true;
+                }
             }
         }
     }

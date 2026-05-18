@@ -154,7 +154,7 @@ mod tests {
         assert_eq!(state.sessions.len(), 2);
         let snapshot = render_text_snapshot(&state);
         assert!(snapshot.contains("tabs:"));
-        assert!(snapshot.contains("audit!"));
+        assert!(snapshot.contains("main task"));
     }
 
     #[test]

@@ -40,6 +40,9 @@ pub struct SessionDirectoryItem {
     /// the side panel tree. `None` for top-level sessions.
     #[serde(default)]
     pub kind: Option<String>,
+    /// Whether an LLM-generated title has replaced the default placeholder.
+    #[serde(default)]
+    pub title_generated: bool,
 }
 
 impl SessionDirectoryItem {
@@ -55,6 +58,7 @@ impl SessionDirectoryItem {
             pending_attention: false,
             parent_id: None,
             kind: None,
+            title_generated: false,
         }
     }
 
@@ -90,65 +94,47 @@ pub fn cycle_foreground(state: &mut TuiState) -> Option<String> {
 }
 
 /// Builds the styled tab-bar line shown directly under the header.
+/// Shows only the current foreground session title.
 /// Returns an empty Line when zero sessions are registered.
 pub fn render_tab_bar(state: &TuiState) -> Line<'static> {
-    if state.sessions.is_empty() {
+    let Some(item) = state
+        .sessions
+        .iter()
+        .find(|item| item.id == state.current_session_id)
+    else {
         return Line::from("");
+    };
+    let label = truncate_title(&item.title, 48);
+    let style = Style::default()
+        .fg(Color::Cyan)
+        .add_modifier(Modifier::BOLD);
+    Line::from(Span::styled(label, style))
+}
+
+fn truncate_title(title: &str, max_width: usize) -> String {
+    if title.width() <= max_width {
+        return title.to_string();
     }
-    let mut spans = Vec::with_capacity(state.sessions.len() * 2);
-    for (index, item) in state.sessions.iter().enumerate() {
-        if index > 0 {
-            spans.push(Span::raw("  "));
-        }
-        let is_active = item.id == state.current_session_id;
-        let label = if item.title.width() > 24 {
-            let mut w = 0;
-            let truncated: String = item
-                .title
-                .chars()
-                .take_while(|ch| {
-                    w += unicode_width::UnicodeWidthChar::width(*ch).unwrap_or(0);
-                    w <= 23
-                })
-                .collect();
-            format!("{truncated}…")
-        } else {
-            item.title.clone()
-        };
-        let badge = if item.pending_attention { " ◉" } else { "" };
-        let text = format!("{label}{badge}");
-        let mut style = Style::default().fg(Color::Gray);
-        if is_active {
-            style = style
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED);
-        } else if item.pending_attention {
-            style = style.fg(Color::Yellow).add_modifier(Modifier::BOLD);
-        }
-        spans.push(Span::styled(text, style));
-    }
-    Line::from(spans)
+    let mut w = 0;
+    let truncated: String = title
+        .chars()
+        .take_while(|ch| {
+            w += unicode_width::UnicodeWidthChar::width(*ch).unwrap_or(0);
+            w <= max_width.saturating_sub(1)
+        })
+        .collect();
+    format!("{truncated}…")
 }
 
 /// One-line plain-text summary used by the text snapshot path.
+/// Shows only the current foreground session title.
 pub fn render_tab_bar_text(state: &TuiState) -> String {
-    if state.sessions.is_empty() {
-        return String::new();
-    }
     state
         .sessions
         .iter()
-        .map(|item| {
-            let marker = if item.id == state.current_session_id {
-                "*"
-            } else {
-                "·"
-            };
-            let attention = if item.pending_attention { "!" } else { "" };
-            format!("{marker} {}{attention}", item.title)
-        })
-        .collect::<Vec<_>>()
-        .join("  ")
+        .find(|item| item.id == state.current_session_id)
+        .map(|item| item.title.clone())
+        .unwrap_or_default()
 }
 
 /// Computes how many cells the tab bar would consume. Used by the layout to
@@ -214,7 +200,7 @@ mod tests {
     }
 
     #[test]
-    fn tab_bar_text_marks_active_and_pending_attention() {
+    fn tab_bar_text_shows_only_current_session() {
         let mut state = fixture();
         state.sessions = vec![SessionDirectoryItem::new("s1", "first"), {
             let mut item = SessionDirectoryItem::new("s2", "needs you");
@@ -223,8 +209,8 @@ mod tests {
         }];
         state.current_session_id = "s2".to_string();
         let text = render_tab_bar_text(&state);
-        assert!(text.contains("· first"));
-        assert!(text.contains("* needs you!"));
+        assert_eq!(text, "needs you");
+        assert!(!text.contains("first"));
     }
 
     #[test]

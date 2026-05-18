@@ -26,8 +26,8 @@ use peridot_core::{
 };
 use peridot_git::GitManager;
 use peridot_llm::{
-    AuthMethod, ClaudeProvider, CompletionRequest, CompletionResponse, LlmProvider,
-    OpenAiCodexProvider, OpenAiProvider, PricingTable, Usage,
+    AuthMethod, ClaudeProvider, CompletionRequest, CompletionResponse, LlmMessage, LlmProvider,
+    MessageRole, OpenAiCodexProvider, OpenAiProvider, PricingTable, Usage,
 };
 use peridot_mcp::McpClient;
 use peridot_memory::{
@@ -514,6 +514,19 @@ async fn main() -> Result<()> {
                             WorkspaceIsolation::Shared,
                         ));
                     }
+                    if state.sessions.len() > 1 {
+                        let mut lines = String::from("sessions:");
+                        for item in &state.sessions {
+                            let marker = if item.id == state.current_session_id {
+                                ">"
+                            } else {
+                                " "
+                            };
+                            let status = format!("{:?}", item.status).to_ascii_lowercase();
+                            lines.push_str(&format!("\n {marker} {} ({status})", item.title,));
+                        }
+                        state.push_notice(lines);
+                    }
                     let (event_tx, event_rx) =
                         std::sync::mpsc::channel::<(String, TuiRuntimeEvent)>();
                     let handle = tokio::runtime::Handle::current();
@@ -555,6 +568,11 @@ async fn main() -> Result<()> {
                                     }
                                 };
                                 let effective_config = config_for_state(&config_template, state);
+                                let needs_title = state
+                                    .sessions
+                                    .iter()
+                                    .find(|s| s.id == foreground)
+                                    .is_some_and(|s| !s.title_generated);
                                 spawn_tui_agent_run(
                                     handle.clone(),
                                     event_tx.clone(),
@@ -569,6 +587,7 @@ async fn main() -> Result<()> {
                                     compact_flag,
                                     ask_user_pending.clone(),
                                     ask_user_next_id.clone(),
+                                    needs_title,
                                 );
                             }
                         },
@@ -650,6 +669,7 @@ async fn main() -> Result<()> {
                                     compact_flag,
                                     ask_user_pending.clone(),
                                     ask_user_next_id.clone(),
+                                    false,
                                 );
                             }
                         },
@@ -810,6 +830,34 @@ fn resolve_ask_user(pending: &AskUserPending, request_id: u64, answer: AskUserAn
     }
 }
 
+async fn generate_session_title(
+    config: &PeridotConfig,
+    project_root: &Path,
+    task: &str,
+) -> Option<String> {
+    let provider = live_provider(config, &config.models.main, project_root)
+        .await
+        .ok()?;
+    let request = CompletionRequest {
+        model: config.models.main.clone(),
+        system: Some(
+            "Generate a concise title (3-8 words) for this coding session. \
+             Reply with ONLY the title text, no quotes or extra punctuation."
+                .to_string(),
+        ),
+        messages: vec![LlmMessage::new(MessageRole::User, task)],
+        max_tokens: Some(30),
+        thinking: false,
+        reasoning_effort: peridot_common::ReasoningEffort::Off,
+        service_tier: None,
+        tools: Vec::new(),
+        tool_choice: Default::default(),
+    };
+    let response = provider.complete(request).await.ok()?;
+    let title = response.text.trim().to_string();
+    if title.is_empty() { None } else { Some(title) }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn spawn_tui_agent_run(
     handle: tokio::runtime::Handle,
@@ -825,6 +873,7 @@ fn spawn_tui_agent_run(
     compact_request: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     ask_user_pending: AskUserPending,
     ask_user_next_id: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    generate_title: bool,
 ) {
     let context_snapshot_path = Some(
         project_root
@@ -843,6 +892,21 @@ fn spawn_tui_agent_run(
         let event_sender = event_tx.clone();
         let session = session_id.clone();
         let router_for_events = router.clone();
+        let title_task = if generate_title {
+            Some(task.clone())
+        } else {
+            None
+        };
+        let title_config = if generate_title {
+            Some(config.clone())
+        } else {
+            None
+        };
+        let title_project_root = if generate_title {
+            Some(project_root.clone())
+        } else {
+            None
+        };
         let result = run_task_with_events(
             task,
             mode,
@@ -869,12 +933,22 @@ fn spawn_tui_agent_run(
             },
         )
         .await;
-        if let Err(err) = result {
+        if let Err(err) = &result {
             let _ = event_tx.send((
-                session_id,
+                session_id.clone(),
                 TuiRuntimeEvent::Failed {
                     message: err.to_string(),
                 },
+            ));
+        }
+        if result.is_ok()
+            && let (Some(task_text), Some(cfg), Some(root)) =
+                (title_task, title_config, title_project_root)
+            && let Some(title) = generate_session_title(&cfg, &root, &task_text).await
+        {
+            let _ = event_tx.send((
+                session_id.clone(),
+                TuiRuntimeEvent::SessionTitleUpdated { session_id, title },
             ));
         }
     });
@@ -2386,6 +2460,7 @@ fn spawn_session_task(
         compact_flag,
         ask_user_pending.clone(),
         ask_user_next_id.clone(),
+        true,
     );
 }
 
