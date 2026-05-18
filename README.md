@@ -1,27 +1,33 @@
 # Peridot Agent
 
-Peridot Agent is a Rust CLI/TUI autonomous coding agent. The current implementation is a buildable v0.1-ready foundation that follows `PERIDOT_SPEC_v1.md`.
+Peridot Agent is a Rust CLI/TUI autonomous coding agent with multi-session orchestration, multi-LLM committee mode, and native tool calling.
 
 ## Status
 
+Current version: **0.4.2**
+
 Implemented:
 
-- Cargo workspace with the 13 spec crates.
-- Provider-neutral LLM contracts with Claude Messages and OpenAI Responses providers, including provider-native streaming response parsing.
-- Append-only context manager with large-observation offload.
-- Built-in file, shell, plan, git, verify, and agent tools.
+- Cargo workspace with 13 spec crates (`peridot-cli`, `peridot-core`, `peridot-llm`, `peridot-tui`, etc.).
+- Provider-neutral LLM contracts with Claude Messages, OpenAI Chat Completions, OpenAI Codex OAuth, and OpenRouter providers. Native tool calling and streaming.
+- Append-only context manager with large-observation offload and live context utilization indicator.
+- Built-in file, shell, plan, git, verify, and agent tools with progressive disclosure (`skill_list`, `skill_view`).
 - AGENTS.md path boundary enforcement.
-- Bounded agent loop with deterministic mock provider support, Goal Checker, budget guardrails, and parse-failure recovery reminders.
+- Bounded agent loop with deterministic mock provider support, Goal Checker, budget guardrails, parse-failure recovery, and intent clarification flow (`agent_ask_user`).
 - Project scanner for Rust, Node, Python, Go, Make, AGENTS metadata, and git state.
-- SQLite-backed session summary store.
-- AGENTS, skill, MCP, verify, setup, login/logout, and session resume CLI surfaces.
+- SQLite-backed session summary store with session save/resume.
+- Multi-session runtime: `SessionRouter`, `CancelToken`, workspace isolation, `/fork`, `/teammate`, `/worktree` subagent spawning.
+- LLM-generated session titles after first response (main model, no reasoning overhead).
+- Multi-LLM committee mode: Planner / Reviewer / Executor pipeline with per-role cost tracking.
+- LLM Curator sub-agent with 30/90-day auto-archive rules, skill curation, and `memory_search`.
+- Ratatui-backed interactive TUI with i18n (English/Korean), mascot, side panel, approval/ask-user panels, branch picker, and single-session tab bar.
+- CLI surfaces: `agents`, `skill`, `mcp`, `verify`, `setup`, `login`/`logout`, `session`, `config`, `env`, `update`.
 - MCP stdio and HTTP initialize, `tools/list`, `tools/call`, auth headers, and ToolRegistry adapters.
 - Deterministic verification pipeline and git worktree helpers.
 - Configured tool hooks with warn/block behavior and audit JSONL logging.
-- OpenAI API-key and OAuth PKCE login storage.
-- OpenRouter API-key execution with Peridot-managed user-local environment storage.
-- Headless CLI commands and Ratatui-backed interactive TUI shell.
-- GitHub Actions CI, six-target release packaging, `install.sh`, checksum-verified self-update, and startup update notices.
+- OpenAI API-key and OAuth PKCE login storage; OpenRouter managed env storage.
+- GitHub Actions CI, six-target release packaging, `install.sh`, checksum-verified self-update (with Windows rename-then-copy), and startup update notices.
+- Unicode-safe display-width truncation and Windows `KeyEventKind::Press` filtering for cross-platform TUI stability.
 
 ## Common Commands
 
@@ -85,16 +91,11 @@ cargo run -p peridot-cli -- env set OPENROUTER_API_KEY sk-or-...
 cargo run -p peridot-cli -- env list
 ```
 
-Configure OpenRouter with the welcome wizard and run live:
+Configure providers with the welcome wizard:
 
 ```bash
-cargo run -p peridot-cli -- config init
-```
-
-Run the wizard again at any time:
-
-```bash
-cargo run -p peridot-cli -- config wizard
+cargo run -p peridot-cli -- config init     # first-time project setup
+cargo run -p peridot-cli -- config wizard   # re-run at any time
 ```
 
 Or update individual settings without opening an editor:
@@ -103,48 +104,36 @@ Or update individual settings without opening an editor:
 cargo run -p peridot-cli -- config set auth.primary openrouter-api
 cargo run -p peridot-cli -- config set api.base_url https://openrouter.ai/api
 cargo run -p peridot-cli -- config set models.main openai/gpt-4o-mini
-# `models.goal_checker` and `models.compaction` are not separately
-# configurable — they always follow `models.main`.
 ```
 
-The resulting config uses the same values as:
+Example provider configurations:
 
 ```toml
+# OpenRouter
 [auth]
 primary = "openrouter-api"
-
 [api]
 base_url = "https://openrouter.ai/api"
-
 [models]
-main = "openai/gpt-5.2"
-```
-
-```bash
-cargo run -p peridot-cli -- run "inspect this project" --headless
-```
-
-For ChatGPT subscription access through OpenAI OAuth direct, log in once and use the `openai-oauth` provider:
-
-```bash
-cargo run -p peridot-cli -- login openai-oauth
+main = "anthropic/claude-sonnet-4-6"
 ```
 
 ```toml
+# ChatGPT subscription (OAuth direct)
 [auth]
 primary = "openai-oauth"
-
 [api]
 base_url = "https://chatgpt.com/backend-api/codex"
-
 [models]
 main = "gpt-5.5"
 ```
 
-Live model responses must currently follow Peridot's JSON action protocol:
-
-```json
-{"action":"file_read","parameters":{"path":"README.md"}}
+```toml
+# Anthropic API
+[auth]
+primary = "claude-api"
+[models]
+main = "claude-sonnet-4-6"
 ```
 
 ## Updates
@@ -154,7 +143,7 @@ cargo run -p peridot-cli -- update --check
 cargo run -p peridot-cli -- update --force
 ```
 
-Interactive sessions honor `[updates]` config, check at most once per interval, and print a one-line notice. `peridot update` verifies `SHA256SUMS` before replacing the current binary and keeps the `peri` alias in place.
+Interactive sessions honor `[updates]` config, check at most once per interval, and print a one-line notice. `peridot update` verifies `SHA256SUMS` before replacing the current binary and keeps the `peri` alias in place. On Windows, the running executable is renamed before replacement.
 
 ## Project Initialization
 

@@ -58,9 +58,11 @@ license: MIT
 - The TUI uses a five-marker vocabulary (`▸ ◆ ❯ ✔/✘ ⚠`); never reintroduce decorative icons.
 - All user-facing strings flow through `peridot_tui::tr(PhraseKey, Locale)` — adding a new visible string requires a new `PhraseKey` arm in both English and Korean tables.
 - `AgentRunEvent` variants must round-trip through `peridot-cli/src/main.rs` adapter into a matching `TuiRuntimeEvent` arm; adding one without updating the adapter silently drops data.
+- Tab bar shows only the current foreground session title (single-session display, 48-column display-width truncation). On startup with 2+ sessions, a formatted session list is pushed to the transcript. LLM-generated titles replace placeholders after the first successful run via `TuiRuntimeEvent::SessionTitleUpdated`.
 - Multi-session work is gated by `peridot-cli/src/session_router.rs` — read `.peridot/skills/multisession-orchestration/SKILL.md` before changing its public surface.
 - Multi-LLM committee work (Planner / Reviewer / Executor roles, `/committee` slash, `committee.ndjson` persistence) is gated by `.peridot/skills/committee-orchestration/SKILL.md` and `docs/agents/committee-runbook.md`. Mode defaults to Off; opting in is per-session.
 - Schema additions to `TuiState`, `SessionRecord`, or `AgentRunEvent` need `#[serde(default)]` (struct fields) or new enum tags (variants) so disk-resumed sessions keep loading.
+- Windows cross-platform: `KeyEventKind::Press` filtering prevents key duplication; self-update uses rename-then-copy for locked executables; Unicode display-width truncation prevents CJK byte-slice panics.
 
 ## Reference Docs
 - [Implementation Playbook](docs/agents/implementation-playbook.md)

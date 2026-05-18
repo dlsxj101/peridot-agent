@@ -22,9 +22,14 @@ This runbook tracks the work that turns the multi-session scaffolding landed in 
 - `MemoryStore::SessionRecord` persists `tui_state.json` / `context.bin`
   per session atomically; `peridot session save/show/resume/delete`
   round-trips.
-- TUI tab bar (`SessionDirectoryItem`) renders multiple sessions; `Ctrl+T`/
-  `Ctrl+W` cycle foreground; mascot bubble reflects the foreground state.
-- 75 peridot-tui tests + 40 peridot-cli tests cover the surface,
+- TUI tab bar shows only the current foreground session title (single-session
+  display); `Ctrl+T`/`Ctrl+W` cycle foreground; mascot bubble reflects the
+  foreground state. Session list is shown in the transcript on startup when
+  multiple sessions exist.
+- LLM-generated session titles: after the first successful agent run, a
+  lightweight LLM call (main model, `ReasoningEffort::Off`) generates a
+  3–8 word title that replaces the placeholder.
+- 126 peridot-tui tests + 40 peridot-cli tests cover the surface,
   0 ignored, 0 flaky.
 
 Outstanding for the next milestones: throttled persistence on every tick
@@ -227,6 +232,11 @@ its parent transcript (M4), and the attention notifier line (M5).
   notification carrying the gated tool's reason. The feature is off by default
   so the bare workspace build stays free of D-Bus / dbus / zbus link
   dependencies; `cargo build -p peridot-cli --features os-notify` opts in.
+
+### M39 — Single-session tab bar + startup session list + LLM title generation (landed)
+- Tab bar now renders only the current foreground session title instead of all sessions. `render_tab_bar_text` mirrors the same single-session display. Display-width-safe truncation at 48 columns preserves CJK safety.
+- On startup, if two or more persisted sessions exist, a formatted session list (title + status, `>` for active) is pushed to the transcript as a notice so the operator sees what's available without a crowded tab bar.
+- After the first successful `run_task_with_events` completes, a lightweight LLM call (`live_provider`, main model, `ReasoningEffort::Off`, max 30 tokens) generates a 3–8 word session title. The result flows through the new `TuiRuntimeEvent::SessionTitleUpdated { session_id, title }` variant and updates `SessionDirectoryItem.title` + sets `title_generated = true` to prevent redundant calls. Approval resumes skip title generation.
 
 ### M6 — Multi-session UX polish
 - Per-session history (input recall) when swapping foreground.
