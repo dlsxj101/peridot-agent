@@ -5,7 +5,9 @@ use async_trait::async_trait;
 use peridot_agents::{
     LocalSubAgentRunner, ModelTier, SubAgent, SubAgentKind, SubAgentPolicy, SubAgentTask,
 };
-use peridot_common::{PeriError, PeriResult, PermissionLevel, ToolGroup, ToolResult};
+use peridot_common::{
+    AskUserAnswer, AskUserRequest, PeriError, PeriResult, PermissionLevel, ToolGroup, ToolResult,
+};
 use peridot_memory::{ErrorResolution, MemoryStore, StoredSkill};
 use serde::Serialize;
 use serde_json::Value;
@@ -123,7 +125,6 @@ impl Tool for AgentAskUserTool {
             .get("default_index")
             .and_then(Value::as_u64)
             .map(|value| value as usize);
-        let answer = default_ask_user_answer(&params, &choices, default_index);
         let display_choices = ask_user_display_choices(&kind, &choices);
         let explanation = params
             .get("explanation")
@@ -131,6 +132,40 @@ impl Tool for AgentAskUserTool {
             .unwrap_or("Peridot needs this answer to continue without guessing.")
             .to_string();
         run_ask_user_triggered_hook(ctx, question, &kind)?;
+
+        // When the harness has wired in an interactive `AskUserPort`
+        // (TUI, REPL, etc), forward the request and await the real
+        // answer. Headless / mock / test paths leave the port unset and
+        // fall back to the synthesised default below so existing
+        // behaviour is preserved.
+        if let Some(port) = ctx.ask_user_port.clone() {
+            let request = build_ask_user_request(question, &kind, &choices, default_index, &params);
+            let answer = port.ask(request.clone()).await;
+            let resolved_default = default_ask_user_answer(&params, &choices, default_index);
+            let (answer_text, source) = match &answer {
+                AskUserAnswer::Cancelled => (resolved_default, "default"),
+                other => (other.to_display_string(&request), "user"),
+            };
+            return Ok(ToolResult::success(
+                if answer_text.is_empty() {
+                    format!("asked user: {question}")
+                } else {
+                    format!("asked user: {question} -> {answer_text}")
+                },
+                serde_json::json!({
+                    "question": question,
+                    "kind": kind,
+                    "choices": choices,
+                    "display_choices": display_choices,
+                    "default_index": default_index,
+                    "explanation": explanation,
+                    "answer": answer_text,
+                    "source": source,
+                }),
+            ));
+        }
+
+        let answer = default_ask_user_answer(&params, &choices, default_index);
         Ok(ToolResult::success(
             if answer.is_empty() {
                 format!("asked user: {question}")
@@ -241,6 +276,50 @@ fn ask_user_display_choices(kind: &str, choices: &[String]) -> Vec<String> {
         .cloned()
         .chain(["[o] Other".to_string(), "[?] Explain".to_string()])
         .collect()
+}
+
+/// Build the structured `AskUserRequest` sent to an interactive port.
+/// Tool parameters keep their loose JSON shape for backwards
+/// compatibility; this function pins them down to one of the three
+/// canonical variants.
+fn build_ask_user_request(
+    question: &str,
+    kind: &str,
+    choices: &[String],
+    default_index: Option<usize>,
+    params: &Value,
+) -> AskUserRequest {
+    match kind {
+        "single_select" => AskUserRequest::SingleSelect {
+            question: question.to_string(),
+            options: choices.to_vec(),
+            default_index,
+        },
+        "multi_select" => AskUserRequest::MultiSelect {
+            question: question.to_string(),
+            options: choices.to_vec(),
+            min: params
+                .get("min")
+                .and_then(Value::as_u64)
+                .map(|value| value as usize)
+                .unwrap_or(0),
+            max: params
+                .get("max")
+                .and_then(Value::as_u64)
+                .map(|value| value as usize),
+        },
+        _ => AskUserRequest::FreeForm {
+            question: question.to_string(),
+            hint: params
+                .get("hint")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            default: params
+                .get("default")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+        },
+    }
 }
 
 /// Built-in subagent delegation tool.

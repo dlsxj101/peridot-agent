@@ -234,6 +234,56 @@ pub enum AskUserRequest {
     },
 }
 
+/// Answer returned by an `AskUserPort` after the user resolves the
+/// request — or after the harness synthesises a fallback in
+/// non-interactive contexts.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum AskUserAnswer {
+    /// User picked a single option from a `SingleSelect` request.
+    Selected {
+        /// Index into the original options list.
+        index: usize,
+        /// Text of the selected option.
+        text: String,
+    },
+    /// User picked multiple options from a `MultiSelect` request.
+    MultiSelected {
+        /// Indices into the original options list (sorted ascending).
+        indices: Vec<usize>,
+    },
+    /// User typed free-form text for a `FreeForm` request.
+    Text(String),
+    /// The prompt was cancelled or timed out without a real selection.
+    /// Callers should treat the request's default as the resolved value
+    /// when one is available.
+    Cancelled,
+}
+
+impl AskUserAnswer {
+    /// Returns the answer rendered as a plain string for inclusion in
+    /// tool results and conversation history. `MultiSelected` joins the
+    /// indices with commas; `Cancelled` becomes the empty string.
+    pub fn to_display_string(&self, request: &AskUserRequest) -> String {
+        match self {
+            AskUserAnswer::Selected { text, .. } => text.clone(),
+            AskUserAnswer::MultiSelected { indices } => {
+                let options = match request {
+                    AskUserRequest::MultiSelect { options, .. } => options.as_slice(),
+                    _ => &[][..],
+                };
+                indices
+                    .iter()
+                    .filter_map(|index| options.get(*index).cloned())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            }
+            AskUserAnswer::Text(text) => text.clone(),
+            AskUserAnswer::Cancelled => String::new(),
+        }
+    }
+}
+
 /// Top-level Peridot configuration.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct PeridotConfig {
