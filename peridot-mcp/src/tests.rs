@@ -1,7 +1,6 @@
 use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpListener;
-use std::os::unix::fs::PermissionsExt;
 use std::thread;
 use std::time::Duration;
 
@@ -28,8 +27,7 @@ async fn lists_tools_from_stdio_server() {
     let server = root.join("server.sh");
     fs::write(
         &server,
-        r#"#!/bin/sh
-while IFS= read -r line; do
+        r#"while IFS= read -r line; do
   case "$line" in
     *'"method":"initialize"'*)
       printf '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-11-25","capabilities":{"tools":{}},"serverInfo":{"name":"test","version":"0"}}}\n'
@@ -44,13 +42,12 @@ done
 "#,
     )
     .unwrap();
-    fs::set_permissions(&server, fs::Permissions::from_mode(0o755)).unwrap();
     let client = McpClient::with_timeout(
         McpServerConfig {
             name: "test".to_string(),
             transport: McpTransport::Stdio,
-            command: Some(server.display().to_string()),
-            args: Vec::new(),
+            command: Some("sh".to_string()),
+            args: vec![server.display().to_string()],
             env: Default::default(),
             url: None,
             auth: None,
@@ -73,8 +70,7 @@ async fn calls_stdio_tool() {
     let server = root.join("server.sh");
     fs::write(
         &server,
-        r#"#!/bin/sh
-while IFS= read -r line; do
+        r#"while IFS= read -r line; do
   case "$line" in
     *'"method":"initialize"'*)
       printf '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-11-25","capabilities":{"tools":{}},"serverInfo":{"name":"test","version":"0"}}}\n'
@@ -89,13 +85,12 @@ done
 "#,
     )
     .unwrap();
-    fs::set_permissions(&server, fs::Permissions::from_mode(0o755)).unwrap();
     let client = McpClient::with_timeout(
         McpServerConfig {
             name: "test".to_string(),
             transport: McpTransport::Stdio,
-            command: Some(server.display().to_string()),
-            args: Vec::new(),
+            command: Some("sh".to_string()),
+            args: vec![server.display().to_string()],
             env: Default::default(),
             url: None,
             auth: None,

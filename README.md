@@ -4,7 +4,7 @@ Peridot Agent is a Rust CLI/TUI autonomous coding agent with multi-session orche
 
 ## Status
 
-Current version: **0.5.0**
+Current version: **0.5.1**
 
 Implemented:
 
