@@ -309,6 +309,17 @@ pub(super) fn install_executable_update(extracted: &Path, current_exe: &Path) ->
 
 #[cfg(not(unix))]
 pub(super) fn install_executable_update(extracted: &Path, current_exe: &Path) -> Result<()> {
+    // On Windows a running executable is locked for writes but CAN be
+    // renamed. Move it out of the way first so the target path is free.
+    let old_path = current_exe.with_file_name(format!(
+        "{}.old",
+        current_exe
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("peridot")
+    ));
+    let _ = fs::remove_file(&old_path);
+    let _ = fs::rename(current_exe, &old_path);
     fs::copy(extracted, current_exe)
         .with_context(|| format!("failed to replace {}", current_exe.display()))?;
     set_executable_permissions(current_exe)
@@ -377,6 +388,15 @@ pub(super) fn install_alias(current_exe: &Path, alias: &Path) -> Result<()> {
 
 #[cfg(not(unix))]
 pub(super) fn install_alias(current_exe: &Path, alias: &Path) -> Result<()> {
+    let old = alias.with_file_name(format!(
+        "{}.old",
+        alias
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("peri")
+    ));
+    let _ = fs::remove_file(&old);
+    let _ = fs::rename(alias, &old);
     fs::copy(current_exe, alias)?;
     Ok(())
 }
