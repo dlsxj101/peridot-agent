@@ -1,4 +1,4 @@
-# Peridot Agent — Architecture Specification v1.7
+# Peridot Agent — Architecture Specification v1.8
 
 > Claude Code에게 넘기는 전체 설계 문서.
 > 이 문서를 읽으면 프로젝트의 모든 설계 결정을 이해할 수 있어야 한다.
@@ -10,6 +10,7 @@
 > v1.5: 첫 실행 설정 마법사(setup), self-update, peri 별칭 자동 생성, Peridot Night 테마
 > v1.6: 인증 전략 (Claude API Key + OpenAI Codex OAuth), 듀얼 프로바이더 설계
 > v1.7: 멀티세션 탭바 UX 개선, LLM 세션 제목 생성, Windows 크로스플랫폼 안정화, v0.4.2 릴리스 반영
+> v1.8: `/branch tree`·`/branch switch` DAG 내비게이션, `/collapse` 전사 블록 토글, `/autofix` 슬래시 명령, v0.5.0 릴리스 반영
 
 ---
 
@@ -1327,7 +1328,7 @@ peri update --force      # 확인 없이 즉시 업데이트
 
 세션 시작 시 자동 체크 (config [updates] 섹션):
 ```
-💎 Peridot v0.4.3 사용 가능 (현재 v0.4.2). peri update로 업데이트.
+💎 Peridot v0.5.1 사용 가능 (현재 v0.5.0). peri update로 업데이트.
 ```
 한 줄 알림만. 작업 흐름 안 끊음.
 Homebrew 설치 감지 시 `brew upgrade peridot` 안내.
@@ -1700,7 +1701,7 @@ plan 진행바 #6b8e23→#a8d948 (그라데이션), cache #c5d84b (골든)
   TUI가 Full/Compact/Minimal 세 레이아웃에서 정상 동작
   peridot --headless --mode goal "태스크" → JSON 결과 출력
   cargo test --workspace --features e2e 통과
-  git tag v0.4.2 → CI가 바이너리 빌드 + Release 생성
+  git tag v0.5.0 → CI가 바이너리 빌드 + Release 생성
 ```
 
 ### 세션 간 규칙 (Claude Code에게)
@@ -1908,9 +1909,9 @@ Job 4: coverage (main만)
 ### 21.3 릴리스 프로세스
 
 ```bash
-cargo set-version 0.4.2
-git tag v0.4.2
-git push origin v0.4.2
+cargo set-version 0.5.0
+git tag v0.5.0
+git push origin v0.5.0
 # → CI가 자동으로 빌드+릴리스+배포
 ```
 
