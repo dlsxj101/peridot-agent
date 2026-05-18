@@ -487,8 +487,9 @@ pub struct CommitteeConfig {
     /// keeps the legacy always-on behaviour.
     #[serde(default)]
     pub min_task_chars: usize,
-    /// When `true`, the harness runs a cheap LLM classifier before the
-    /// planner preflight and skips planning unless the task is judged
+    /// When `true`, the harness runs a single capped-output
+    /// classification round-trip to the main model before the planner
+    /// preflight and skips planning unless the task is judged
     /// `complex` or `architectural`. Replaces the brittle char-count
     /// heuristic with a model verdict. Off by default to avoid the
     /// extra round trip; turn on when the operator wants the planner
@@ -862,14 +863,16 @@ pub struct DefaultsConfig {
     /// "first agent_done wins" behaviour.
     #[serde(default)]
     pub auto_grade_on_done: bool,
-    /// Run a tiny LLM call before the executor loop starts to decide
-    /// whether the operator's task is concrete enough or whether they
-    /// should be asked to pick between candidate interpretations. The
-    /// gate dispatches an automatic `agent_ask_user` prompt through
-    /// the active port when the verdict is ambiguous and rewrites the
+    /// Run a single classification round-trip to the main model
+    /// before the executor loop starts to decide whether the
+    /// operator's task is concrete enough or whether they should be
+    /// asked to pick between candidate interpretations. The gate
+    /// dispatches an automatic `agent_ask_user` prompt through the
+    /// active port when the verdict is ambiguous and rewrites the
     /// task with the operator's pick. On by default — the executor's
     /// own clarification prompt is best-effort, this gate is the
-    /// safety net.
+    /// safety net. Output is capped at 256 tokens with reasoning off,
+    /// so cost is bounded regardless of which main model is selected.
     #[serde(default = "default_intent_clarification_gate")]
     pub intent_clarification_gate: bool,
     /// Minimum task length (chars) before the intent clarification

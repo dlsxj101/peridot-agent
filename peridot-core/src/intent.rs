@@ -1,10 +1,11 @@
 //! Intent clarification preflight.
 //!
 //! Sits between the user's raw request and the main executor loop. A
-//! tiny LLM call inspects the task plus lightweight project context
-//! (AGENTS.md head, project profile summary) and decides whether the
-//! request is concrete enough to act on or whether the operator should
-//! be asked to pin down their intent first.
+//! single classification round-trip to the main model inspects the
+//! task plus lightweight project context (AGENTS.md head, project
+//! profile summary) and decides whether the request is concrete
+//! enough to act on or whether the operator should be asked to pin
+//! down their intent first.
 //!
 //! When the verdict is `NeedsClarification` and the harness exposes an
 //! `AskUserPort`, the preflight dispatches a `SingleSelect` question
@@ -12,10 +13,13 @@
 //! operator's pick so the executor's first turn starts from a clear
 //! goal rather than from "fix the bug".
 //!
-//! The classifier is cheap on purpose: max 256 output tokens, reasoning
-//! off. On provider error or unparseable output the helper returns
-//! `Clear` so the executor still gets a chance to ask on its own —
-//! a missed clarification is worse than a missed preflight.
+//! Model selection follows the same convention as the rest of the
+//! harness: the call uses `options.model` (the operator's chosen main
+//! model). Output is capped at 256 tokens with reasoning off so the
+//! preflight stays a fixed-cost step regardless of which model is
+//! configured. On provider error or unparseable output the helper
+//! returns `Clear` so the executor still gets a chance to ask on its
+//! own — a missed clarification is worse than a missed preflight.
 
 use peridot_common::{PeriResult, ReasoningEffort};
 use peridot_llm::{CompletionRequest, LlmMessage, LlmProvider, MessageRole, ToolChoice};

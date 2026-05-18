@@ -1,13 +1,15 @@
 //! Task complexity classifier.
 //!
 //! Replaces the brittle "task is short, skip the planner" heuristic
-//! with a tiny LLM call that reads the task and returns one of four
-//! labels. The committee preflight only fires for `Complex` and
-//! `Architectural`; `Chat` and `Simple` go straight to the executor.
+//! with a single classification round-trip to the main model that
+//! returns one of four labels. The committee preflight only fires for
+//! `Complex` and `Architectural`; `Chat` and `Simple` go straight to
+//! the executor.
 //!
-//! Designed to be cheap: one round trip, max 64 output tokens, no
-//! reasoning. The classifier is OFF by default — operators opt in via
-//! `committee.use_llm_complexity_gate`, with the legacy
+//! Bounded to one round trip with max 64 output tokens and reasoning
+//! off so the gate stays a fixed cost regardless of which model is
+//! configured. The classifier is OFF by default — operators opt in
+//! via `committee.use_llm_complexity_gate`, with the legacy
 //! `committee.min_task_chars` length gate left in place as a free
 //! pre-filter (we skip the LLM entirely for sub-threshold tasks).
 

@@ -206,7 +206,7 @@ pub(crate) fn settings_registry(config: &PeridotConfig) -> Vec<SettingItem> {
         group: "Committee".into(),
         label: "Let the model decide task complexity".into(),
         help: Some(
-            "Run a small LLM classifier before the planner. Skips planning for chat / simple tasks, fires for complex / architectural."
+            "Classify the task with a capped-output call to the main model before the planner. Skips planning for chat / simple tasks, fires for complex / architectural."
                 .into(),
         ),
         value: SettingValue::Bool(config.committee.use_llm_complexity_gate),

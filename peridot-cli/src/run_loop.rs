@@ -457,10 +457,10 @@ where
         return Ok(());
     }
     // LLM complexity gate (opt-in): when on, classify the task with a
-    // small model call and skip preflight unless it's complex or
-    // architectural. On classifier failure the helper returns Complex
-    // so the planner still fires — a missed planner is worse than an
-    // extra one.
+    // single capped-output call to the main model and skip preflight
+    // unless it is complex or architectural. On classifier failure
+    // the helper returns Complex so the planner still fires — a
+    // missed planner is worse than an extra one.
     if config.committee.use_llm_complexity_gate {
         let verdict =
             peridot_core::classify_task_complexity(provider, &options.model, task).await?;
