@@ -356,7 +356,10 @@ pub(super) async fn init_project_config(project_root: &Path, output: OutputForma
     )
 }
 
-pub(super) async fn run_config_wizard_command(project_root: &Path, output: OutputFormat) -> Result<()> {
+pub(super) async fn run_config_wizard_command(
+    project_root: &Path,
+    output: OutputFormat,
+) -> Result<()> {
     if output == OutputFormat::Json || !std::io::stdin().is_terminal() {
         anyhow::bail!("config wizard requires an interactive terminal");
     }
