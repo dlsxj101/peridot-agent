@@ -19,7 +19,7 @@ pub fn run_interactive(mut state: TuiState) -> io::Result<TuiExit> {
         terminal.terminal.draw(|frame| draw(frame, &state))?;
         if event::poll(Duration::from_millis(250))? {
             match event::read()? {
-                Event::Key(key) => {
+                Event::Key(key) if key.kind == KeyEventKind::Press => {
                     if is_ctrl_c(key) {
                         if handle_ctrl_c_quit_confirmation(&mut state, key, &mut ctrl_c_armed) {
                             break None;
@@ -116,7 +116,7 @@ where
         on_persist(&mut state);
         if event::poll(Duration::from_millis(100))? {
             match event::read()? {
-                Event::Key(key) => {
+                Event::Key(key) if key.kind == KeyEventKind::Press => {
                     if is_ctrl_c(key) {
                         if handle_ctrl_c_quit_confirmation(&mut state, key, &mut ctrl_c_armed) {
                             break;
@@ -213,6 +213,9 @@ pub(super) fn swap_foreground_state(
 
 /// Applies a keyboard event to the TUI state.
 pub fn handle_key_event(state: &mut TuiState, key: KeyEvent) -> TuiEventOutcome {
+    if key.kind != KeyEventKind::Press {
+        return TuiEventOutcome::Continue;
+    }
     if state.menu.is_some() {
         return handle_menu_key_event(state, key);
     }

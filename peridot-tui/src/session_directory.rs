@@ -10,6 +10,7 @@
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
+use unicode_width::UnicodeWidthStr;
 
 use crate::state::{AgentRunStatus, TuiState};
 
@@ -100,8 +101,16 @@ pub fn render_tab_bar(state: &TuiState) -> Line<'static> {
             spans.push(Span::raw("  "));
         }
         let is_active = item.id == state.current_session_id;
-        let label = if item.title.chars().count() > 24 {
-            let truncated: String = item.title.chars().take(23).collect();
+        let label = if item.title.width() > 24 {
+            let mut w = 0;
+            let truncated: String = item
+                .title
+                .chars()
+                .take_while(|ch| {
+                    w += unicode_width::UnicodeWidthChar::width(*ch).unwrap_or(0);
+                    w <= 23
+                })
+                .collect();
             format!("{truncated}…")
         } else {
             item.title.clone()

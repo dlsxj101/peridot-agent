@@ -15,7 +15,7 @@ use std::io::{self, Stdout};
 use std::time::Duration;
 
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEvent, KeyModifiers},
+    event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
     execute,
     terminal::{
         EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
