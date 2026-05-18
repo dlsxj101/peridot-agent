@@ -862,6 +862,21 @@ pub struct DefaultsConfig {
     /// "first agent_done wins" behaviour.
     #[serde(default)]
     pub auto_grade_on_done: bool,
+    /// Run a tiny LLM call before the executor loop starts to decide
+    /// whether the operator's task is concrete enough or whether they
+    /// should be asked to pick between candidate interpretations. The
+    /// gate dispatches an automatic `agent_ask_user` prompt through
+    /// the active port when the verdict is ambiguous and rewrites the
+    /// task with the operator's pick. On by default — the executor's
+    /// own clarification prompt is best-effort, this gate is the
+    /// safety net.
+    #[serde(default = "default_intent_clarification_gate")]
+    pub intent_clarification_gate: bool,
+    /// Minimum task length (chars) before the intent clarification
+    /// gate fires. Chat-style inputs below this threshold skip the
+    /// preflight entirely.
+    #[serde(default = "default_intent_clarification_min_chars")]
+    pub intent_clarification_min_chars: usize,
 }
 
 impl Default for DefaultsConfig {
@@ -874,8 +889,18 @@ impl Default for DefaultsConfig {
             budget_warning_pct: default_budget_warning_pct(),
             auto_verify_after_mutation: false,
             auto_grade_on_done: false,
+            intent_clarification_gate: default_intent_clarification_gate(),
+            intent_clarification_min_chars: default_intent_clarification_min_chars(),
         }
     }
+}
+
+fn default_intent_clarification_gate() -> bool {
+    true
+}
+
+fn default_intent_clarification_min_chars() -> usize {
+    20
 }
 
 fn default_max_turns() -> u32 {

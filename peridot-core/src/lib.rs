@@ -5,6 +5,7 @@ mod complexity;
 mod goal;
 mod grader;
 mod inner_loop;
+mod intent;
 mod permissions;
 mod prompt;
 mod recovery;
@@ -21,6 +22,7 @@ pub use complexity::{TaskComplexity, classify_task_complexity};
 pub use goal::{GoalController, GoalStatus};
 pub use grader::{GraderVerdict, grade_work};
 pub use inner_loop::InnerLoopSubAgent;
+pub use intent::{IntentClarification, analyze_intent_clarification};
 pub use peridot_common::CancelToken;
 pub use permissions::allowed_tool_groups;
 pub use requests::{

@@ -267,6 +267,7 @@ where
     if let Some(flag) = compact_request {
         agent.set_compact_request(flag);
     }
+    let ask_user_port_for_preflight = ask_user_port.clone();
     if let Some(port) = ask_user_port {
         agent.set_ask_user_port(port);
     }
@@ -286,11 +287,24 @@ where
         agent.set_agents_md_path(path);
     }
     let profile = ProjectScanner::new().scan(&project_root)?;
+    let profile_summary = project_profile_summary(&profile);
     let denied_paths: Vec<PathBuf> = profile.boundaries.into_iter().map(PathBuf::from).collect();
+    let agents_md_excerpt = read_agents_md_excerpt(&project_root, 2_000);
     let mut events = events;
 
     if let Some(mock_response_file) = options.mock_response_file.clone() {
         let provider = FileMockProvider::from_file(&mock_response_file)?;
+        let task = run_intent_clarification_preflight_if_enabled(
+            &provider,
+            task,
+            &config,
+            &options,
+            &profile_summary,
+            &agents_md_excerpt,
+            ask_user_port_for_preflight.clone(),
+            &mut events,
+        )
+        .await?;
         run_planner_preflight_if_enabled(
             &mut agent,
             &provider,
@@ -357,6 +371,17 @@ where
     ));
     agent.set_auto_verify_after_mutation(config.defaults.auto_verify_after_mutation);
     agent.set_auto_grade_on_done(config.defaults.auto_grade_on_done);
+    let task = run_intent_clarification_preflight_if_enabled(
+        provider.as_ref(),
+        task,
+        &config,
+        &options,
+        &profile_summary,
+        &agents_md_excerpt,
+        ask_user_port_for_preflight,
+        &mut events,
+    )
+    .await?;
     run_planner_preflight_if_enabled(
         &mut agent,
         provider.as_ref(),
@@ -1019,4 +1044,153 @@ pub(super) fn run_completion_lifecycle_hooks(
         ),
         ExecutionMode::Execute => Ok(()),
     }
+}
+
+/// Best-effort, human-readable project summary fed to the intent
+/// clarification gate. Stays under ~600 chars so it never dwarfs the
+/// task itself in the small classification prompt.
+fn project_profile_summary(profile: &peridot_project::ProjectProfile) -> String {
+    let mut lines = Vec::new();
+    if !profile.name.is_empty() {
+        lines.push(format!("Name: {}", profile.name));
+    }
+    if !profile.languages.is_empty() {
+        let langs = profile
+            .languages
+            .iter()
+            .map(|lang| lang.name.clone())
+            .take(5)
+            .collect::<Vec<_>>()
+            .join(", ");
+        lines.push(format!("Languages: {langs}"));
+    }
+    if !profile.frameworks.is_empty() {
+        let frameworks = profile
+            .frameworks
+            .iter()
+            .take(5)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ");
+        lines.push(format!("Frameworks: {frameworks}"));
+    }
+    if !profile.top_dependencies.is_empty() {
+        let deps = profile
+            .top_dependencies
+            .iter()
+            .take(6)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ");
+        lines.push(format!("Top deps: {deps}"));
+    }
+    let summary = lines.join("\n");
+    truncate_chars(&summary, 600)
+}
+
+/// Reads the first `max_chars` characters of the project's AGENTS-style
+/// instruction file (AGENTS.md, CLAUDE.md, etc) so the clarification
+/// gate can ground candidate interpretations in project conventions.
+fn read_agents_md_excerpt(project_root: &Path, max_chars: usize) -> String {
+    let Some(path) = peridot_project::locate_agents_md(project_root) else {
+        return String::new();
+    };
+    match std::fs::read_to_string(path) {
+        Ok(content) => truncate_chars(content.trim(), max_chars),
+        Err(_) => String::new(),
+    }
+}
+
+fn truncate_chars(text: &str, max_chars: usize) -> String {
+    if text.chars().count() <= max_chars {
+        return text.to_string();
+    }
+    let mut out = text
+        .chars()
+        .take(max_chars.saturating_sub(3))
+        .collect::<String>();
+    out.push_str("...");
+    out
+}
+
+/// Preflight that decides whether the operator's request is concrete
+/// enough or whether they should pick between candidate
+/// interpretations first. When ambiguous and an `AskUserPort` is
+/// attached, the gate dispatches a `SingleSelect` prompt and rewrites
+/// the task with the operator's choice. Returns the (possibly
+/// refined) task.
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn run_intent_clarification_preflight_if_enabled<P, F>(
+    provider: &P,
+    task: String,
+    config: &PeridotConfig,
+    options: &AgentTaskOptions,
+    profile_summary: &str,
+    agents_md_excerpt: &str,
+    ask_user_port: Option<std::sync::Arc<dyn peridot_tools::AskUserPort>>,
+    events: &mut F,
+) -> Result<String>
+where
+    P: peridot_llm::LlmProvider + ?Sized,
+    F: FnMut(AgentRunEvent),
+{
+    if !config.defaults.intent_clarification_gate {
+        return Ok(task);
+    }
+    let trimmed = task.trim();
+    if trimmed.chars().count() < config.defaults.intent_clarification_min_chars {
+        return Ok(task);
+    }
+    let verdict = peridot_core::analyze_intent_clarification(
+        provider,
+        &options.model,
+        trimmed,
+        agents_md_excerpt,
+        profile_summary,
+    )
+    .await?;
+    let (question, candidates) = match verdict {
+        peridot_core::IntentClarification::Clear => return Ok(task),
+        peridot_core::IntentClarification::NeedsClarification {
+            question,
+            candidates,
+        } => (question, candidates),
+    };
+    let Some(port) = ask_user_port else {
+        // Non-interactive run (headless / mock): surface the
+        // question to the transcript and continue with the original
+        // task so the executor can ask later if it wants.
+        events(AgentRunEvent::Recovery {
+            message: format!(
+                "intent clarification: {question} (candidates: {})",
+                candidates.join(" | ")
+            ),
+        });
+        return Ok(task);
+    };
+    events(AgentRunEvent::Recovery {
+        message: format!("intent clarification: {question}"),
+    });
+    let request = peridot_common::AskUserRequest::SingleSelect {
+        question: question.clone(),
+        options: candidates.clone(),
+        default_index: Some(0),
+    };
+    let answer = port.ask(request).await;
+    let chosen = match answer {
+        peridot_common::AskUserAnswer::Selected { text, .. } => text,
+        peridot_common::AskUserAnswer::Text(text) => text,
+        peridot_common::AskUserAnswer::MultiSelected { indices } => indices
+            .into_iter()
+            .filter_map(|idx| candidates.get(idx).cloned())
+            .collect::<Vec<_>>()
+            .join(", "),
+        peridot_common::AskUserAnswer::Cancelled => return Ok(task),
+    };
+    if chosen.trim().is_empty() {
+        return Ok(task);
+    }
+    Ok(format!(
+        "{task}\n\nClarified intent (from operator preflight): {chosen}"
+    ))
 }
