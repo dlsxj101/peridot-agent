@@ -100,8 +100,9 @@ pub fn render_tab_bar(state: &TuiState) -> Line<'static> {
             spans.push(Span::raw("  "));
         }
         let is_active = item.id == state.current_session_id;
-        let label = if item.title.len() > 24 {
-            format!("{}…", &item.title[..23])
+        let label = if item.title.chars().count() > 24 {
+            let truncated: String = item.title.chars().take(23).collect();
+            format!("{truncated}…")
         } else {
             item.title.clone()
         };
