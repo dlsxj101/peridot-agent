@@ -152,7 +152,7 @@ mod tests {
         let mut events = Vec::new();
         let event = "data: {\"delta\":\"안녕\"}\n\n".as_bytes();
         let split_at = event
-            .windows("녕".as_bytes().len())
+            .windows("녕".len())
             .position(|window| window == "녕".as_bytes())
             .expect("test fixture should contain target syllable")
             + 1;

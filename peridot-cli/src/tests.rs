@@ -48,15 +48,15 @@ fn parse_reviewer_verdict_handles_each_outcome() {
 #[test]
 fn fast_model_alias_enables_service_tier() {
     assert_eq!(
-        normalize_model_service_tier(&"gpt-5.5-fast".to_string(), &None),
+        normalize_model_service_tier("gpt-5.5-fast", &None),
         Some("fast".to_string())
     );
     assert_eq!(
-        normalize_model_service_tier(&"gpt-5.5".to_string(), &Some("priority".to_string())),
+        normalize_model_service_tier("gpt-5.5", &Some("priority".to_string())),
         Some("fast".to_string())
     );
     assert_eq!(
-        normalize_model_service_tier(&"gpt-5.5".to_string(), &Some("standard".to_string())),
+        normalize_model_service_tier("gpt-5.5", &Some("standard".to_string())),
         None
     );
 }
