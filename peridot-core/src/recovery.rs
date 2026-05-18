@@ -227,9 +227,116 @@ impl StuckDetector {
                 self.repeat_count
             ));
         }
+        // Verification (or post-mutation grader) failures that repeat
+        // are the canonical "spinning on the wrong fix" signal — point
+        // the model at agent_ask_user with concrete alternatives
+        // instead of letting it churn through another identical edit.
+        if is_clarification_warranted(&outcome.tool_name, &outcome.tool_result) {
+            return StuckAction::Recover(format!(
+                "Recovery directive: `{tool}` has now failed {n} times in a row with the same result. The current approach is not working. STOP attempting more mutations and call agent_ask_user with 2-4 concrete alternative directions the operator could pick from (for example: revert the last change, narrow the scope to a single file, or confirm whether the originally requested behaviour matches the failing assertion). Resume editing only after the operator answers.",
+                tool = outcome.tool_name,
+                n = self.repeat_count,
+            ));
+        }
         StuckAction::Recover(format!(
             "Recovery directive: the last action repeated {} times with the same result. The conversation history above already contains that tool call and its `tool` role result paired by `tool_call_id` — read that prior result instead of calling the same tool again. Choose a different tool, change the arguments, or finish with `agent_done` if the answer is already in the prior result.",
             self.repeat_count
         ))
+    }
+}
+
+/// Returns `true` when a repeated failure with this tool is a strong
+/// "ask the operator before mutating again" signal. Verification
+/// failures and unsuccessful grader-style outcomes (auto-grade
+/// recommendations carried as a failure) both count.
+fn is_clarification_warranted(tool_name: &str, result: &peridot_common::ToolResult) -> bool {
+    if result.success {
+        return false;
+    }
+    matches!(
+        tool_name,
+        "verify_build" | "verify_test" | "verify_lint" | "verify_grade"
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use peridot_common::ToolResult;
+    use peridot_llm::Usage;
+    use serde_json::json;
+
+    fn outcome(tool: &str, success: bool, summary: &str) -> AgentTurnOutcome {
+        AgentTurnOutcome {
+            tool_name: tool.to_string(),
+            tool_result: if success {
+                ToolResult::success(summary, json!(null))
+            } else {
+                ToolResult::failure(summary)
+            },
+            usage: Usage::default(),
+            done: false,
+        }
+    }
+
+    #[test]
+    fn stuck_detector_routes_verify_failures_to_ask_user() {
+        let mut detector = StuckDetector::new(3);
+        let verify = outcome("verify_build", false, "tests failed: assertion mismatch");
+        assert_eq!(detector.record(&verify), StuckAction::Continue);
+        assert_eq!(detector.record(&verify), StuckAction::Continue);
+        let action = detector.record(&verify);
+        match action {
+            StuckAction::Recover(message) => {
+                assert!(
+                    message.contains("agent_ask_user"),
+                    "expected ask_user directive, got: {message}"
+                );
+                assert!(
+                    message.contains("STOP attempting more mutations"),
+                    "expected stop-mutating instruction, got: {message}"
+                );
+            }
+            other => panic!("expected Recover, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn stuck_detector_keeps_generic_directive_for_non_verify_tools() {
+        let mut detector = StuckDetector::new(3);
+        let probe = outcome("file_read", true, "no such file");
+        assert_eq!(detector.record(&probe), StuckAction::Continue);
+        assert_eq!(detector.record(&probe), StuckAction::Continue);
+        let action = detector.record(&probe);
+        match action {
+            StuckAction::Recover(message) => {
+                assert!(
+                    !message.contains("agent_ask_user"),
+                    "non-verify stuck should not force ask_user: {message}"
+                );
+                assert!(message.contains("repeated"));
+            }
+            other => panic!("expected Recover, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn stuck_detector_does_not_clarify_on_success() {
+        // A verify tool returning success three times is not the
+        // "spinning on a wrong fix" pattern; just generic repetition.
+        let mut detector = StuckDetector::new(3);
+        let pass = outcome("verify_build", true, "ok");
+        assert_eq!(detector.record(&pass), StuckAction::Continue);
+        assert_eq!(detector.record(&pass), StuckAction::Continue);
+        let action = detector.record(&pass);
+        match action {
+            StuckAction::Recover(message) => {
+                assert!(
+                    !message.contains("agent_ask_user"),
+                    "success-only repetition should not force ask_user"
+                );
+            }
+            other => panic!("expected Recover, got {other:?}"),
+        }
     }
 }
