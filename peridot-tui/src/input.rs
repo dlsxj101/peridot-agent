@@ -31,7 +31,9 @@ pub fn run_interactive(mut state: TuiState) -> io::Result<TuiExit> {
                         TuiEventOutcome::Continue => {}
                         TuiEventOutcome::Quit => break None,
                         TuiEventOutcome::Submit(task) => break Some(task),
-                        TuiEventOutcome::Approval { .. } | TuiEventOutcome::Interrupt => {}
+                        TuiEventOutcome::Approval { .. }
+                        | TuiEventOutcome::AskUserResolved { .. }
+                        | TuiEventOutcome::Interrupt => {}
                     }
                 }
                 Event::Resize(width, height) => state.resize(width, height),
@@ -71,6 +73,7 @@ pub fn run_interactive_with_events<F>(
         Option<serde_json::Value>,
         &mut TuiState,
     ),
+    mut on_ask_user_resolved: impl FnMut(u64, AskUserAnswer, &mut TuiState),
     mut on_interrupt: impl FnMut(&mut TuiState),
     mut on_session_command: impl FnMut(SessionCommandEvent, &mut TuiState),
     mut on_persist: impl FnMut(&mut TuiState),
@@ -141,6 +144,9 @@ where
                             synthesised_parameters,
                             &mut state,
                         ),
+                        TuiEventOutcome::AskUserResolved { request_id, answer } => {
+                            on_ask_user_resolved(request_id, answer, &mut state)
+                        }
                         TuiEventOutcome::Interrupt => on_interrupt(&mut state),
                     }
                 }
@@ -497,7 +503,17 @@ pub(super) fn handle_ask_user_key_event(state: &mut TuiState, key: KeyEvent) -> 
     };
     match key.code {
         KeyCode::Esc => {
+            let request_id = panel.request_id;
             state.ask_user = None;
+            // When the panel is tied to an `AskUserPort` request, surface
+            // the cancel so the CLI can fall back to the synthesised
+            // default; otherwise just close the panel.
+            if let Some(request_id) = request_id {
+                return TuiEventOutcome::AskUserResolved {
+                    request_id,
+                    answer: AskUserAnswer::Cancelled,
+                };
+            }
             TuiEventOutcome::Continue
         }
         KeyCode::Up => {
@@ -558,12 +574,17 @@ pub(super) fn handle_ask_user_key_event(state: &mut TuiState, key: KeyEvent) -> 
                 return TuiEventOutcome::Continue;
             }
             let question = panel.question.clone();
-            let answer = panel.selected_answer();
+            let answer_text = panel.selected_answer();
+            let request_id = panel.request_id;
+            let structured = panel.structured_answer();
             state.ask_user = None;
             state.push_transcript_entry(
                 TranscriptKind::Assistant,
-                format!("ask_user: {question} -> {answer}"),
+                format!("ask_user: {question} -> {answer_text}"),
             );
+            if let (Some(request_id), Some(answer)) = (request_id, structured) {
+                return TuiEventOutcome::AskUserResolved { request_id, answer };
+            }
             TuiEventOutcome::Continue
         }
         _ => TuiEventOutcome::Continue,

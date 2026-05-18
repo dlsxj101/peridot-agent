@@ -22,7 +22,7 @@ use crossterm::{
         size as terminal_size,
     },
 };
-use peridot_common::{AskUserRequest, ExecutionMode, PermissionMode, TuiConfig};
+use peridot_common::{AskUserAnswer, AskUserRequest, ExecutionMode, PermissionMode, TuiConfig};
 use peridot_core::{GoalStatus, SlashCommand, parse_slash_command};
 use ratatui::{
     Frame, Terminal,
@@ -62,7 +62,9 @@ pub use session_directory::{
 };
 pub use slash_picker::{SlashCommandSpec, filtered_specs, first_match, slash_command_catalog};
 
-pub use ask_user::{ApprovalDecision, ApprovalPanel, ApprovalScope, AskUserPanel, MenuState};
+pub use ask_user::{
+    ApprovalDecision, ApprovalPanel, ApprovalScope, AskUserPanel, AskUserPanelKind, MenuState,
+};
 pub use branch_picker::{BranchPickerState, BranchPickerTurn};
 pub use input::{handle_key_event, run_interactive, run_interactive_with_events};
 use render::goal_status_label;

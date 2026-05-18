@@ -219,6 +219,7 @@ pub(super) async fn run_task_with_events<F>(
     cancel: Option<peridot_core::CancelToken>,
     compact_request: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     context_snapshot_path: Option<PathBuf>,
+    ask_user_port: Option<std::sync::Arc<dyn peridot_tools::AskUserPort>>,
     events: F,
 ) -> Result<peridot_core::AgentRunSummary>
 where
@@ -265,6 +266,9 @@ where
     }
     if let Some(flag) = compact_request {
         agent.set_compact_request(flag);
+    }
+    if let Some(port) = ask_user_port {
+        agent.set_ask_user_port(port);
     }
     if let Some(path) = context_snapshot_path.as_ref() {
         // Resume-after-approval sidecar lives next to context.bin.
