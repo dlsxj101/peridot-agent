@@ -7,7 +7,7 @@ pub(crate) fn load_effective_config(
     load_effective_config_inner(project_root, explicit_config, true, true)
 }
 
-pub(crate) fn maybe_run_first_launch_wizard(
+pub(crate) async fn maybe_run_first_launch_wizard(
     project_root: &Path,
     explicit_config: Option<&Path>,
     headless: bool,
@@ -24,7 +24,7 @@ pub(crate) fn maybe_run_first_launch_wizard(
     }
     println!("No Peridot config found for this project. Let's set it up.");
     let result = init_project_config_value(project_root)?;
-    run_config_wizard(&result)?;
+    run_config_wizard(&result).await?;
     Ok(true)
 }
 
@@ -230,15 +230,15 @@ pub(super) fn merge_project_config(
     }
 }
 
-pub(crate) fn run_config_command(
+pub(crate) async fn run_config_command(
     command: &ConfigCommand,
     config: &PeridotConfig,
     project_root: &Path,
     output: OutputFormat,
 ) -> Result<()> {
     match command {
-        ConfigCommand::Init => init_project_config(project_root, output),
-        ConfigCommand::Wizard => run_config_wizard_command(project_root, output),
+        ConfigCommand::Init => init_project_config(project_root, output).await,
+        ConfigCommand::Wizard => run_config_wizard_command(project_root, output).await,
         ConfigCommand::Set { key, value } => {
             set_project_config_value(project_root, key, value, output)
         }
@@ -323,10 +323,10 @@ fn print_provider_catalog(config: &PeridotConfig, output: OutputFormat) -> Resul
     Ok(())
 }
 
-pub(super) fn init_project_config(project_root: &Path, output: OutputFormat) -> Result<()> {
+pub(super) async fn init_project_config(project_root: &Path, output: OutputFormat) -> Result<()> {
     let result = init_project_config_value(project_root)?;
     let configured = if output == OutputFormat::Text && std::io::stdin().is_terminal() {
-        maybe_run_config_wizard(&result)?
+        maybe_run_config_wizard(&result).await?
     } else {
         false
     };
@@ -356,12 +356,12 @@ pub(super) fn init_project_config(project_root: &Path, output: OutputFormat) -> 
     )
 }
 
-pub(super) fn run_config_wizard_command(project_root: &Path, output: OutputFormat) -> Result<()> {
+pub(super) async fn run_config_wizard_command(project_root: &Path, output: OutputFormat) -> Result<()> {
     if output == OutputFormat::Json || !std::io::stdin().is_terminal() {
         anyhow::bail!("config wizard requires an interactive terminal");
     }
     let result = init_project_config_value(project_root)?;
-    run_config_wizard(&result)?;
+    run_config_wizard(&result).await?;
     print_json_or_text_result(
         serde_json::json!({
             "config_path": result.config_path,
@@ -456,7 +456,7 @@ pub(super) fn init_project_config_value(project_root: &Path) -> Result<ConfigIni
     })
 }
 
-fn maybe_run_config_wizard(result: &ConfigInitResult) -> Result<bool> {
+async fn maybe_run_config_wizard(result: &ConfigInitResult) -> Result<bool> {
     if !result.created_config
         && !prompt_yes_no(
             "A Peridot config already exists. Update provider and model settings?",
@@ -465,11 +465,11 @@ fn maybe_run_config_wizard(result: &ConfigInitResult) -> Result<bool> {
     {
         return Ok(false);
     }
-    run_config_wizard(result)?;
+    run_config_wizard(result).await?;
     Ok(true)
 }
 
-fn run_config_wizard(result: &ConfigInitResult) -> Result<()> {
+async fn run_config_wizard(result: &ConfigInitResult) -> Result<()> {
     println!();
     println!("Welcome to Peridot.");
     println!("Choose how this project should talk to models.");
@@ -509,6 +509,9 @@ fn run_config_wizard(result: &ConfigInitResult) -> Result<()> {
             }
         }
         2 => {
+            println!();
+            run_login_command(AuthProvider::OpenaiOauth, OutputFormat::Text).await?;
+            println!();
             let model = prompt_model_choice(
                 "OpenAI OAuth main model",
                 &["gpt-5.5", "gpt-5.5-fast", "gpt-5.4", "gpt-5.4-mini"],

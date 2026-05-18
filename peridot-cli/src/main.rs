@@ -286,7 +286,8 @@ async fn main() -> Result<()> {
             cli.config.as_deref(),
             cli.effective_headless(),
             cli.output,
-        )?;
+        )
+        .await?;
     }
     let config = load_effective_config(&project_root, cli.config.as_deref())?;
 
@@ -324,7 +325,7 @@ async fn main() -> Result<()> {
             return Ok(());
         }
         Some(Command::Config { command }) => {
-            run_config_command(command, &config, &project_root, cli.output)?;
+            run_config_command(command, &config, &project_root, cli.output).await?;
             return Ok(());
         }
         Some(Command::Setting) => {
