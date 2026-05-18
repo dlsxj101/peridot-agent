@@ -13,17 +13,27 @@ pub fn run_interactive(mut state: TuiState) -> io::Result<TuiExit> {
     let mut terminal = TerminalGuard::enter()?;
     let (width, height) = terminal_size()?;
     state.resize(width, height);
+    let mut ctrl_c_armed = false;
     let submitted = loop {
         state.tick_spinner();
         terminal.terminal.draw(|frame| draw(frame, &state))?;
         if event::poll(Duration::from_millis(250))? {
             match event::read()? {
-                Event::Key(key) => match handle_key_event(&mut state, key) {
-                    TuiEventOutcome::Continue => {}
-                    TuiEventOutcome::Quit => break None,
-                    TuiEventOutcome::Submit(task) => break Some(task),
-                    TuiEventOutcome::Approval { .. } | TuiEventOutcome::Interrupt => {}
-                },
+                Event::Key(key) => {
+                    if is_ctrl_c(key) {
+                        if handle_ctrl_c_quit_confirmation(&mut state, key, &mut ctrl_c_armed) {
+                            break None;
+                        }
+                        continue;
+                    }
+                    ctrl_c_armed = false;
+                    match handle_key_event(&mut state, key) {
+                        TuiEventOutcome::Continue => {}
+                        TuiEventOutcome::Quit => break None,
+                        TuiEventOutcome::Submit(task) => break Some(task),
+                        TuiEventOutcome::Approval { .. } | TuiEventOutcome::Interrupt => {}
+                    }
+                }
                 Event::Resize(width, height) => state.resize(width, height),
                 _ => {}
             }
@@ -57,6 +67,7 @@ pub fn run_interactive_with_events<F>(
         ApprovalScope,
         String,
         String,
+        serde_json::Value,
         Option<serde_json::Value>,
         &mut TuiState,
     ),
@@ -73,6 +84,7 @@ where
     let mut other_states: std::collections::HashMap<String, TuiState> =
         std::collections::HashMap::new();
     let mut last_foreground = state.current_session_id.clone();
+    let mut ctrl_c_armed = false;
     loop {
         for (session_id, event) in runtime_events.try_iter() {
             if state.current_session_id.is_empty() || session_id == state.current_session_id {
@@ -101,26 +113,37 @@ where
         on_persist(&mut state);
         if event::poll(Duration::from_millis(100))? {
             match event::read()? {
-                Event::Key(key) => match handle_key_event(&mut state, key) {
-                    TuiEventOutcome::Continue => {}
-                    TuiEventOutcome::Quit => break,
-                    TuiEventOutcome::Submit(task) => on_submit(task, &mut state),
-                    TuiEventOutcome::Approval {
-                        decision,
-                        scope,
-                        tool_name,
-                        reason,
-                        synthesised_parameters,
-                    } => on_approval(
-                        decision,
-                        scope,
-                        tool_name,
-                        reason,
-                        synthesised_parameters,
-                        &mut state,
-                    ),
-                    TuiEventOutcome::Interrupt => on_interrupt(&mut state),
-                },
+                Event::Key(key) => {
+                    if is_ctrl_c(key) {
+                        if handle_ctrl_c_quit_confirmation(&mut state, key, &mut ctrl_c_armed) {
+                            break;
+                        }
+                        continue;
+                    }
+                    ctrl_c_armed = false;
+                    match handle_key_event(&mut state, key) {
+                        TuiEventOutcome::Continue => {}
+                        TuiEventOutcome::Quit => break,
+                        TuiEventOutcome::Submit(task) => on_submit(task, &mut state),
+                        TuiEventOutcome::Approval {
+                            decision,
+                            scope,
+                            tool_name,
+                            reason,
+                            parameters,
+                            synthesised_parameters,
+                        } => on_approval(
+                            decision,
+                            scope,
+                            tool_name,
+                            reason,
+                            parameters,
+                            synthesised_parameters,
+                            &mut state,
+                        ),
+                        TuiEventOutcome::Interrupt => on_interrupt(&mut state),
+                    }
+                }
                 Event::Resize(width, height) => state.resize(width, height),
                 _ => {}
             }
@@ -131,6 +154,26 @@ where
         state,
         submitted: None,
     })
+}
+
+fn is_ctrl_c(key: KeyEvent) -> bool {
+    matches!(key.code, KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL))
+}
+
+pub(super) fn handle_ctrl_c_quit_confirmation(
+    state: &mut TuiState,
+    key: KeyEvent,
+    armed: &mut bool,
+) -> bool {
+    if !is_ctrl_c(key) {
+        return false;
+    }
+    if *armed {
+        return true;
+    }
+    *armed = true;
+    state.push_notice("press Ctrl+C again to quit");
+    false
 }
 
 /// Hot-swaps `state` so that its transcript/header/plan match the new
@@ -535,12 +578,14 @@ pub(super) fn handle_approval_key_event(state: &mut TuiState, key: KeyEvent) -> 
         KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('d') => {
             let tool_name = panel.tool_name.clone();
             let reason = panel.reason.clone();
+            let parameters = panel.tool_params.clone();
             state.record_approval_decision(ApprovalDecision::Deny);
             TuiEventOutcome::Approval {
                 decision: ApprovalDecision::Deny,
                 scope: ApprovalScope::Once,
                 tool_name,
                 reason,
+                parameters,
                 synthesised_parameters: None,
             }
         }
@@ -548,12 +593,14 @@ pub(super) fn handle_approval_key_event(state: &mut TuiState, key: KeyEvent) -> 
             let synthesised = panel_synthesised_parameters(panel);
             let tool_name = panel.tool_name.clone();
             let reason = panel.reason.clone();
+            let parameters = panel.tool_params.clone();
             state.record_approval_decision(ApprovalDecision::Approve);
             TuiEventOutcome::Approval {
                 decision: ApprovalDecision::Approve,
                 scope: ApprovalScope::Once,
                 tool_name,
                 reason,
+                parameters,
                 synthesised_parameters: synthesised,
             }
         }
@@ -588,12 +635,14 @@ pub(super) fn handle_approval_key_event(state: &mut TuiState, key: KeyEvent) -> 
             };
             let tool_name = panel.tool_name.clone();
             let reason = panel.reason.clone();
+            let parameters = panel.tool_params.clone();
             state.record_approval_decision(decision.clone());
             TuiEventOutcome::Approval {
                 decision,
                 scope,
                 tool_name,
                 reason,
+                parameters,
                 synthesised_parameters: synthesised,
             }
         }
@@ -670,6 +719,9 @@ where
     F: FnMut(String, &mut TuiState),
 {
     if state.input_queue.is_empty() {
+        return;
+    }
+    if state.agent_run_status == AgentRunStatus::Interrupted {
         return;
     }
     if state.is_agent_busy() {
@@ -874,12 +926,14 @@ pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
                 ));
             }
         }
+        SlashCommand::ContextTop => {
+            state.push_pending_session_command(SessionCommandEvent::ContextTop);
+        }
         SlashCommand::Lang(locale) => {
             state.config.language = locale;
             state.push_transcript(format!("lang: {locale}"));
         }
         SlashCommand::Compact => {
-            state.push_transcript("compact: queued — will run on the next agent turn");
             state.push_pending_session_command(SessionCommandEvent::CompactContext);
         }
         SlashCommand::SidepanelToggle => {
@@ -892,9 +946,7 @@ pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
             state.push_transcript("diff: use the agent run stream for tool-backed diff output");
         }
         SlashCommand::Undo => {
-            state.push_transcript(
-                "undo: requires tool approval in a run; ask Peridot to undo the last change",
-            );
+            state.push_pending_session_command(SessionCommandEvent::UndoLastCheckpoint);
         }
         SlashCommand::Fork(task) => {
             state.push_transcript(format!("fork: {task} — spawning"));
@@ -966,6 +1018,19 @@ pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
             let from = state.reasoning_effort;
             state.reasoning_effort = effort;
             state.push_transcript(format!("reasoning: {from} -> {effort}"));
+        }
+        SlashCommand::Fast(change) => {
+            let from = state
+                .service_tier
+                .clone()
+                .unwrap_or_else(|| "standard".to_string());
+            let enabled = change.unwrap_or_else(|| state.service_tier.as_deref() != Some("fast"));
+            state.service_tier = enabled.then(|| "fast".to_string());
+            let to = state
+                .service_tier
+                .clone()
+                .unwrap_or_else(|| "standard".to_string());
+            state.push_transcript(format!("fast: {from} -> {to}"));
         }
         SlashCommand::McpList => {
             state.push_transcript("mcp: listing servers from config.toml…");
@@ -1284,7 +1349,7 @@ fn apply_menu_selection(state: &mut TuiState, selected: &str) -> TuiEventOutcome
                  - Ctrl+T / Ctrl+W   cycle session\n\
                  - PageUp / PageDown scroll transcript\n\
                  - Shift+Up / Down   scroll by line\n\
-                 - Ctrl+C / Ctrl+D   quit",
+                 - Ctrl+C twice / Ctrl+D quit",
             );
             TuiEventOutcome::Continue
         }

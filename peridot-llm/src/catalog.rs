@@ -1,9 +1,8 @@
 //! Provider model catalog fetchers.
 //!
-//! Currently only OpenRouter exposes a public model index that includes
-//! per-model `context_length`. Anthropic / OpenAI do not advertise context
-//! windows over their public APIs, so those providers continue to rely on
-//! the static heuristic table in [`crate::models::context_window_tokens`].
+//! OpenRouter exposes a public model index that includes per-model
+//! `context_length`. OpenAI's ChatGPT/Codex OAuth backend exposes a
+//! user-plan-aware model index under `/backend-api/codex/models`.
 //!
 //! Lookups are cached on disk for 24 hours so the network call only happens
 //! once per day per cache directory. When the network fetch fails, a stale
@@ -11,12 +10,15 @@
 //! offline keep getting whatever was last known.
 
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use serde::{Deserialize, Serialize};
 
 const OPENROUTER_MODELS_URL: &str = "https://openrouter.ai/api/v1/models";
+const OPENAI_CODEX_MODELS_URL: &str = "https://chatgpt.com/backend-api/codex/models";
+const OPENAI_CODEX_CLIENT_VERSION: &str = "0.131.0-alpha.9";
 const CACHE_TTL_SECS: u64 = 24 * 3600;
 const FETCH_TIMEOUT_SECS: u64 = 5;
 const CACHE_FILENAME: &str = "openrouter-models.json";
@@ -30,6 +32,17 @@ struct OpenRouterModelsResponse {
 struct OpenRouterModel {
     id: String,
     context_length: Option<usize>,
+}
+
+#[derive(Deserialize, Debug)]
+struct OpenAiCodexModelsResponse {
+    models: Vec<OpenAiCodexModel>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+struct OpenAiCodexModel {
+    slug: String,
+    context_window: Option<usize>,
 }
 
 /// Disk-cached snapshot of OpenRouter's model catalog. The wrapper carries
@@ -61,6 +74,38 @@ pub async fn openrouter_context_lengths(cache_dir: &Path) -> Option<HashMap<Stri
         return Some(cached.entries);
     }
     match fetch_from_openrouter().await {
+        Ok(entries) => {
+            let snapshot = CachedCatalog {
+                fetched_at_unix: now_unix(),
+                entries: entries.clone(),
+            };
+            write_cache(cache_dir, &cache_path, &snapshot);
+            Some(entries)
+        }
+        Err(_) => read_cache(&cache_path).map(|snapshot| snapshot.entries),
+    }
+}
+
+/// Returns ChatGPT/Codex OAuth `slug -> context_window` values.
+///
+/// The response is account/plan aware, so the cache file is keyed by a
+/// stable hash of `chatgpt-account-id`. No tokens are persisted.
+pub async fn openai_codex_context_lengths(
+    cache_dir: &Path,
+    access_token: &str,
+    account_id: &str,
+    originator: &str,
+) -> Option<HashMap<String, usize>> {
+    if access_token.trim().is_empty() || account_id.trim().is_empty() {
+        return None;
+    }
+    let cache_path = cache_dir.join(openai_codex_cache_filename(account_id));
+    if let Some(cached) = read_cache(&cache_path)
+        && cache_is_fresh(&cached)
+    {
+        return Some(cached.entries);
+    }
+    match fetch_from_openai_codex(access_token, account_id, originator).await {
         Ok(entries) => {
             let snapshot = CachedCatalog {
                 fetched_at_unix: now_unix(),
@@ -115,6 +160,41 @@ async fn fetch_from_openrouter() -> Result<HashMap<String, usize>, reqwest::Erro
         }
     }
     Ok(entries)
+}
+
+async fn fetch_from_openai_codex(
+    access_token: &str,
+    account_id: &str,
+    originator: &str,
+) -> Result<HashMap<String, usize>, reqwest::Error> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(FETCH_TIMEOUT_SECS))
+        .build()?;
+    let response: OpenAiCodexModelsResponse = client
+        .get(OPENAI_CODEX_MODELS_URL)
+        .query(&[("client_version", OPENAI_CODEX_CLIENT_VERSION)])
+        .bearer_auth(access_token)
+        .header("chatgpt-account-id", account_id)
+        .header("originator", originator)
+        .header("OpenAI-Beta", "responses=experimental")
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    let mut entries = HashMap::with_capacity(response.models.len());
+    for model in response.models {
+        if let Some(context) = model.context_window {
+            entries.insert(model.slug, context);
+        }
+    }
+    Ok(entries)
+}
+
+fn openai_codex_cache_filename(account_id: &str) -> String {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    account_id.hash(&mut hasher);
+    format!("openai-codex-models-{:016x}.json", hasher.finish())
 }
 
 /// Returns the default cache directory under `$HOME/.peridot/cache`. Used

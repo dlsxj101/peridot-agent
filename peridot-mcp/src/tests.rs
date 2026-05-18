@@ -54,6 +54,7 @@ done
             env: Default::default(),
             url: None,
             auth: None,
+            timeout_seconds: 30,
         },
         Duration::from_secs(2),
     );
@@ -98,6 +99,7 @@ done
             env: Default::default(),
             url: None,
             auth: None,
+            timeout_seconds: 30,
         },
         Duration::from_secs(2),
     );
@@ -121,6 +123,7 @@ async fn lists_tools_from_http_server() {
             env: Default::default(),
             url: Some(url),
             auth: Some("bearer:test-token".to_string()),
+            timeout_seconds: 30,
         },
         Duration::from_secs(2),
     );

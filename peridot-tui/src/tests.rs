@@ -156,6 +156,75 @@ fn tool_result_preview_reaches_main_transcript() {
 }
 
 #[test]
+fn agent_done_summary_renders_as_assistant_reply() {
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+
+    state.apply_runtime_event(TuiRuntimeEvent::ToolFinished {
+        name: "agent_done".to_string(),
+        success: true,
+        summary: "프로젝트 분석을 완료했습니다.".to_string(),
+        output: serde_json::json!({}),
+    });
+
+    let assistant = state
+        .transcript
+        .iter()
+        .find(|entry| entry.kind == TranscriptKind::Assistant)
+        .expect("agent_done summary should be shown as assistant text");
+    assert_eq!(assistant.text, "프로젝트 분석을 완료했습니다.");
+    assert!(!state.transcript.iter().any(|entry| {
+        matches!(entry.kind, TranscriptKind::ToolOk) && entry.text.contains("agent_done")
+    }));
+}
+
+#[test]
+fn interrupted_state_does_not_auto_drain_input_queue() {
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    state.input_queue.push("queued task".to_string());
+    state.apply_runtime_event(TuiRuntimeEvent::Interrupted {
+        stage: "turn_error".to_string(),
+    });
+    let mut submitted: Vec<String> = Vec::new();
+    let mut on_submit = |task: String, _state: &mut TuiState| submitted.push(task);
+
+    drain_input_queue(&mut state, &mut on_submit);
+
+    assert!(submitted.is_empty());
+    assert_eq!(state.input_queue, vec!["queued task".to_string()]);
+}
+
+#[test]
+fn ctrl_c_quit_confirmation_consumes_first_press() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    let key = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+    let mut armed = false;
+
+    assert!(!handle_ctrl_c_quit_confirmation(
+        &mut state, key, &mut armed
+    ));
+    assert!(armed);
+    assert!(state.transcript.iter().any(|entry| {
+        entry.kind == TranscriptKind::Notice && entry.text.contains("Ctrl+C again")
+    }));
+
+    assert!(handle_ctrl_c_quit_confirmation(&mut state, key, &mut armed));
+}
+
+#[test]
 fn tool_started_preview_shows_patch_and_write_details() {
     let mut state = TuiState::new(HeaderState::new(
         ExecutionMode::Execute,
@@ -519,6 +588,11 @@ fn slash_commands_update_tui_state() {
             .contains("goal: paused")
     );
     assert!(render_text_snapshot(&state).contains("goal paused"));
+
+    apply_slash_command(&mut state, SlashCommand::Fast(Some(true)));
+    assert_eq!(state.service_tier.as_deref(), Some("fast"));
+    apply_slash_command(&mut state, SlashCommand::Fast(Some(false)));
+    assert_eq!(state.service_tier, None);
 }
 
 #[test]
@@ -551,6 +625,12 @@ fn utility_slash_commands_update_tui_surface() {
             .transcript
             .iter()
             .any(|line| line.text.contains("[ ] 1. write tests"))
+    );
+
+    apply_slash_command(&mut state, SlashCommand::ContextTop);
+    assert_eq!(
+        state.drain_pending_session_commands(),
+        vec![SessionCommandEvent::ContextTop]
     );
 
     apply_slash_command(&mut state, SlashCommand::Model("next-model".to_string()));
@@ -1205,7 +1285,7 @@ fn locale_switches_status_bar_strings() {
 }
 
 #[test]
-fn approval_panel_offers_four_scopes_and_returns_scope() {
+fn approval_panel_offers_scopes_and_returns_scope() {
     let mut state = TuiState::new(HeaderState::new(
         ExecutionMode::Execute,
         PermissionMode::Auto,
@@ -1222,11 +1302,12 @@ fn approval_panel_offers_four_scopes_and_returns_scope() {
     });
 
     let panel = state.approval.as_ref().expect("approval panel");
-    assert_eq!(panel.choices().len(), 4);
+    assert_eq!(panel.choices().len(), 5);
     let panel_text = render_approval_panel(panel);
     assert!(panel_text.contains("Approve once"));
     assert!(panel_text.contains("Approve for session"));
-    assert!(panel_text.contains("Approve always"));
+    assert!(panel_text.contains("Approve command"));
+    assert!(panel_text.contains("Approve path"));
     assert!(panel_text.contains("Deny"));
     assert!(panel_text.contains("Params:"));
     // file_patch parameters now flow through the per-hunk staging path:
@@ -1249,7 +1330,7 @@ fn approval_panel_offers_four_scopes_and_returns_scope() {
             decision, scope, ..
         } => {
             assert_eq!(decision, ApprovalDecision::Approve);
-            assert_eq!(scope, ApprovalScope::Always);
+            assert_eq!(scope, ApprovalScope::Command);
         }
         other => panic!("unexpected outcome: {other:?}"),
     }

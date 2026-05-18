@@ -9,12 +9,18 @@ use peridot_llm::Usage;
 use peridot_memory::{MemoryStore, SessionLifecycle, SessionRecord};
 use peridot_tui::{HeaderState, TuiState};
 
+use super::checkpoints::restore_latest_checkpoint;
 use super::interactive_io::*;
 use super::relax_security_for_approval;
-use super::run_loop::parse_reviewer_verdict;
+use super::run_loop::{normalize_model_service_tier, parse_reviewer_verdict};
 use super::run_output::*;
 use super::run_state::*;
-use super::{restore_tui_state_from_disk, scan_and_suspend_running_sessions};
+use super::session_router::SessionRouter;
+use super::{
+    context_top_report, delete_persisted_session, hydrate_persisted_sessions,
+    restore_latest_tui_state_from_disk, restore_tui_state_from_disk,
+    scan_and_suspend_running_sessions,
+};
 
 #[test]
 fn parse_reviewer_verdict_handles_each_outcome() {
@@ -37,6 +43,104 @@ fn parse_reviewer_verdict_handles_each_outcome() {
     );
     assert!(parse_reviewer_verdict("not json at all").is_none());
     assert!(parse_reviewer_verdict(r#"{"unrelated":1}"#).is_none());
+}
+
+#[test]
+fn fast_model_alias_enables_service_tier() {
+    assert_eq!(
+        normalize_model_service_tier(&"gpt-5.5-fast".to_string(), &None),
+        Some("fast".to_string())
+    );
+    assert_eq!(
+        normalize_model_service_tier(&"gpt-5.5".to_string(), &Some("priority".to_string())),
+        Some("fast".to_string())
+    );
+    assert_eq!(
+        normalize_model_service_tier(&"gpt-5.5".to_string(), &Some("standard".to_string())),
+        None
+    );
+}
+
+#[test]
+fn context_top_report_ranks_largest_entries() {
+    let entries = vec![
+        peridot_context::ContextEntry::trusted(peridot_context::ContextSource::User, "short"),
+        peridot_context::ContextEntry::untrusted(
+            peridot_context::ContextSource::Tool,
+            "x".repeat(400),
+        ),
+        peridot_context::ContextEntry::trusted(
+            peridot_context::ContextSource::Assistant,
+            "medium text",
+        ),
+    ];
+
+    let report = context_top_report(&entries, 123, 272_000, 2);
+
+    assert!(report.contains("context top: 3 entries"));
+    assert!(report.contains("status 123 / 272000"));
+    assert!(report.contains("tool: 100 tok"));
+    assert!(report.contains("1. tool turn 0 · 100 tok untrusted"));
+    assert!(!report.contains("3. user"));
+}
+
+#[test]
+fn restore_latest_checkpoint_restores_previous_content_and_consumes_checkpoint() {
+    let root =
+        std::env::temp_dir().join(format!("peridot-restore-checkpoint-{}", std::process::id()));
+    let checkpoint_dir = root.join(".peridot/checkpoints");
+    fs::create_dir_all(&checkpoint_dir).unwrap();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("src/lib.rs"), "new").unwrap();
+    let checkpoint_path = checkpoint_dir.join("1-file_patch.json");
+    fs::write(
+        &checkpoint_path,
+        serde_json::to_vec(&serde_json::json!({
+            "id": "1-file_patch",
+            "tool_name": "file_patch",
+            "path": "src/lib.rs",
+            "existed": true,
+            "previous_content": "old"
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let message = restore_latest_checkpoint(&root).unwrap();
+
+    assert!(message.contains("1-file_patch"));
+    assert_eq!(fs::read_to_string(root.join("src/lib.rs")).unwrap(), "old");
+    assert!(!checkpoint_path.exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn restore_latest_checkpoint_removes_file_created_by_tool() {
+    let root = std::env::temp_dir().join(format!(
+        "peridot-restore-new-file-checkpoint-{}",
+        std::process::id()
+    ));
+    let checkpoint_dir = root.join(".peridot/checkpoints");
+    fs::create_dir_all(&checkpoint_dir).unwrap();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("src/generated.rs"), "created").unwrap();
+    fs::write(
+        checkpoint_dir.join("1-file_write.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "id": "1-file_write",
+            "tool_name": "file_write",
+            "path": "src/generated.rs",
+            "existed": false,
+            "previous_content": null
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    restore_latest_checkpoint(&root).unwrap();
+
+    assert!(!root.join("src/generated.rs").exists());
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -329,6 +433,132 @@ fn restore_returns_serde_roundtrip_of_persisted_state() {
     assert_eq!(restored.last_task.as_deref(), Some("rewrite README"));
     assert_eq!(restored.current_session_id, id);
 
+    fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn restore_latest_tui_state_uses_most_recent_persisted_session() {
+    let root =
+        std::env::temp_dir().join(format!("peridot-cli-restore-latest-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(root.join(".peridot")).unwrap();
+    let sessions_root = root.join(".peridot").join("sessions");
+    let memory = MemoryStore::new(root.join(".peridot/memory.db"));
+    for (id, updated_at_unix) in [("older", 100), ("newer", 200)] {
+        let mut state = TuiState::new(HeaderState::new(
+            ExecutionMode::Execute,
+            PermissionMode::Auto,
+            "mock",
+        ));
+        state.current_session_id = id.to_string();
+        state.last_task = Some(format!("task {id}"));
+        peridot_memory::save_session_blob(
+            &sessions_root,
+            id,
+            "tui_state.json",
+            &serde_json::to_vec(&state).unwrap(),
+        )
+        .unwrap();
+        memory
+            .save_session_record(&SessionRecord {
+                id: id.to_string(),
+                summary: format!("summary {id}"),
+                status: SessionLifecycle::Suspended,
+                created_at_unix: 1,
+                updated_at_unix,
+                workspace_root: root.clone(),
+                worktree_branch: None,
+                last_task: Some(format!("task {id}")),
+                total_tokens: 0,
+                total_cost_usd: 0.0,
+                turns_used: 0,
+            })
+            .unwrap();
+    }
+
+    let (id, state) = restore_latest_tui_state_from_disk(&root).unwrap();
+
+    assert_eq!(id, "newer");
+    assert_eq!(state.last_task.as_deref(), Some("task newer"));
+    fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn hydrate_persisted_sessions_registers_all_unclosed_sessions() {
+    let root = std::env::temp_dir().join(format!("peridot-cli-hydrate-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(root.join(".peridot")).unwrap();
+    let sessions_root = root.join(".peridot").join("sessions");
+    let memory = MemoryStore::new(root.join(".peridot/memory.db"));
+    for id in ["s1", "s2"] {
+        let mut state = TuiState::new(HeaderState::new(
+            ExecutionMode::Execute,
+            PermissionMode::Auto,
+            "mock",
+        ));
+        state.current_session_id = id.to_string();
+        peridot_memory::save_session_blob(
+            &sessions_root,
+            id,
+            "tui_state.json",
+            &serde_json::to_vec(&state).unwrap(),
+        )
+        .unwrap();
+        memory
+            .save_session_record(&SessionRecord {
+                id: id.to_string(),
+                summary: format!("summary {id}"),
+                status: SessionLifecycle::Suspended,
+                created_at_unix: 1,
+                updated_at_unix: 2,
+                workspace_root: root.clone(),
+                worktree_branch: None,
+                last_task: Some(format!("task {id}")),
+                total_tokens: 10,
+                total_cost_usd: 0.1,
+                turns_used: 1,
+            })
+            .unwrap();
+    }
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    let router = std::sync::Arc::new(std::sync::Mutex::new(SessionRouter::new()));
+
+    hydrate_persisted_sessions(&mut state, &router, &root);
+
+    assert_eq!(state.sessions.len(), 2);
+    assert_eq!(router.lock().unwrap().len(), 2);
+    assert!(!state.current_session_id.is_empty());
+    fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn delete_persisted_session_removes_record_summary_and_blobs() {
+    let root =
+        std::env::temp_dir().join(format!("peridot-cli-delete-session-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(root.join(".peridot")).unwrap();
+    let sessions_root = root.join(".peridot").join("sessions");
+    let memory = MemoryStore::new(root.join(".peridot/memory.db"));
+    memory
+        .save_session_record(&SessionRecord::new("s1", &root))
+        .unwrap();
+    memory
+        .save_session(&peridot_memory::SessionSummary {
+            id: "s1".to_string(),
+            summary: "saved".to_string(),
+        })
+        .unwrap();
+    peridot_memory::save_session_blob(&sessions_root, "s1", "tui_state.json", b"{}").unwrap();
+
+    delete_persisted_session(&root, "s1");
+
+    assert!(memory.get_session_record("s1").unwrap().is_none());
+    assert!(memory.get_session("s1").unwrap().is_none());
+    assert!(!sessions_root.join("s1").exists());
     fs::remove_dir_all(&root).ok();
 }
 

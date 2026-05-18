@@ -5,6 +5,7 @@ use peridot_common::{
     SecurityConfig, ToolCall,
 };
 use peridot_context::{ContextEntry, ContextManager, ContextSource};
+use peridot_llm::ToolInvocation;
 use peridot_tools::{ToolRegistry, register_builtin_tools};
 use serde_json::json;
 
@@ -48,6 +49,7 @@ async fn run_until_done_executes_tools_and_stops() {
                 max_turns: 4,
                 max_tokens: 512,
                 reasoning_effort: peridot_common::ReasoningEffort::Off,
+                service_tier: None,
                 budget_usd: 5.0,
                 budget_warning_pct: 50,
                 project_root: root.clone(),
@@ -100,6 +102,7 @@ async fn run_until_done_emits_ui_events() {
                 max_turns: 2,
                 max_tokens: 512,
                 reasoning_effort: peridot_common::ReasoningEffort::Off,
+                service_tier: None,
                 budget_usd: 5.0,
                 budget_warning_pct: 50,
                 project_root: root.clone(),
@@ -170,6 +173,7 @@ async fn text_only_completion_does_not_emit_synthetic_tool_events() {
                 max_turns: 2,
                 max_tokens: 512,
                 reasoning_effort: peridot_common::ReasoningEffort::Off,
+                service_tier: None,
                 budget_usd: 5.0,
                 budget_warning_pct: 50,
                 project_root: root.clone(),
@@ -245,6 +249,7 @@ async fn text_plus_agent_done_suppresses_redundant_tool_events() {
                 max_turns: 2,
                 max_tokens: 512,
                 reasoning_effort: peridot_common::ReasoningEffort::Off,
+                service_tier: None,
                 budget_usd: 5.0,
                 budget_warning_pct: 50,
                 project_root: root.clone(),
@@ -269,6 +274,73 @@ async fn text_plus_agent_done_suppresses_redundant_tool_events() {
             .any(|event| matches!(event, AgentRunEvent::ToolFinished { name, .. } if name == "agent_done")),
         "text + agent_done should suppress ToolFinished: {events:?}"
     );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn parallel_tool_calls_record_only_executed_call_in_context() {
+    let root = std::env::temp_dir().join(format!(
+        "peridot-core-single-tool-history-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let mut registry = ToolRegistry::new();
+    register_builtin_tools(&mut registry).unwrap();
+    let mut agent = HarnessAgent::new(
+        AgentState::new(ExecutionMode::Execute, PermissionMode::Auto),
+        ContextManager::new(),
+        registry,
+    );
+    let provider = StaticProvider::new_custom_completion(
+        String::new(),
+        vec![
+            ToolInvocation {
+                id: "call_file_list".to_string(),
+                name: "file_list".to_string(),
+                arguments: json!({"path": "."}),
+            },
+            ToolInvocation {
+                id: "call_ignored".to_string(),
+                name: "agent_done".to_string(),
+                arguments: json!({"summary": "ignored"}),
+            },
+        ],
+    );
+
+    let outcome = agent
+        .run_turn(
+            &provider,
+            AgentTurnRequest {
+                user_input: Some("hi".to_string()),
+                model: "mock".to_string(),
+                max_tokens: 512,
+                reasoning_effort: peridot_common::ReasoningEffort::Off,
+                service_tier: None,
+                project_root: root.clone(),
+                denied_paths: Vec::new(),
+                hooks: HooksConfig::default(),
+                security: SecurityConfig::default(),
+            },
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(outcome.tool_name, "file_list");
+    let assistant_entry = agent
+        .context()
+        .entries()
+        .iter()
+        .find(|entry| entry.source == ContextSource::Assistant)
+        .expect("assistant tool-call entry");
+    assert_eq!(assistant_entry.tool_calls.len(), 1);
+    assert_eq!(assistant_entry.tool_calls[0].id, "call_file_list");
+    let tool_entry = agent
+        .context()
+        .entries()
+        .iter()
+        .find(|entry| entry.source == ContextSource::Tool)
+        .expect("tool result entry");
+    assert_eq!(tool_entry.tool_call_id.as_deref(), Some("call_file_list"));
     std::fs::remove_dir_all(root).unwrap();
 }
 
@@ -305,6 +377,7 @@ async fn permission_denied_tool_emits_approval_event() {
                 max_turns: 1,
                 max_tokens: 512,
                 reasoning_effort: peridot_common::ReasoningEffort::Off,
+                service_tier: None,
                 budget_usd: 5.0,
                 budget_warning_pct: 50,
                 project_root: root.clone(),
@@ -360,6 +433,7 @@ async fn run_turn_injects_plan_reminder() {
                 model: "mock".to_string(),
                 max_tokens: 512,
                 reasoning_effort: peridot_common::ReasoningEffort::Off,
+                service_tier: None,
                 project_root: root.clone(),
                 denied_paths: Vec::new(),
                 hooks: HooksConfig::default(),
@@ -396,6 +470,7 @@ async fn run_turn_uses_provider_stream_chunks() {
                 model: "mock".to_string(),
                 max_tokens: 512,
                 reasoning_effort: peridot_common::ReasoningEffort::Off,
+                service_tier: None,
                 project_root: root.clone(),
                 denied_paths: Vec::new(),
                 hooks: HooksConfig::default(),
@@ -525,6 +600,7 @@ async fn run_turn_emits_context_compacted_hook() {
     register_builtin_tools(&mut registry).unwrap();
     let mut context = ContextManager::with_limits(peridot_context::ContextLimits {
         compaction_threshold_tokens: 1,
+        llm_compaction_threshold_tokens: 1,
         ..peridot_context::ContextLimits::default()
     });
     // Compaction now preserves the last COMPACTION_KEEP_TAIL=6 entries,
@@ -541,6 +617,12 @@ async fn run_turn_emits_context_compacted_hook() {
         registry,
     );
     let provider = StaticProvider::new(vec![
+        json!({
+            "key_facts": ["prior context compacted"],
+            "current_plan": "finish",
+            "recent_decisions": []
+        })
+        .to_string(),
         json!({"action":"agent_done","parameters":{"summary":"done"}}).to_string(),
     ]);
 
@@ -552,6 +634,7 @@ async fn run_turn_emits_context_compacted_hook() {
                 model: "mock".to_string(),
                 max_tokens: 512,
                 reasoning_effort: peridot_common::ReasoningEffort::Off,
+                service_tier: None,
                 project_root: root.clone(),
                 denied_paths: Vec::new(),
                 hooks: HooksConfig {
@@ -608,6 +691,7 @@ async fn auto_verify_after_mutation_appends_plan_reminder() {
                 max_turns: 3,
                 max_tokens: 512,
                 reasoning_effort: peridot_common::ReasoningEffort::Off,
+                service_tier: None,
                 budget_usd: 5.0,
                 budget_warning_pct: 50,
                 project_root: root.clone(),
@@ -668,6 +752,7 @@ async fn auto_grade_failure_keeps_loop_running() {
                 max_turns: 4,
                 max_tokens: 512,
                 reasoning_effort: peridot_common::ReasoningEffort::Off,
+                service_tier: None,
                 budget_usd: 5.0,
                 budget_warning_pct: 50,
                 project_root: root.clone(),

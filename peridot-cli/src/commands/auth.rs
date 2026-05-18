@@ -132,7 +132,21 @@ pub(crate) fn run_env_command(command: &EnvCommand, output: OutputFormat) -> Res
     }
 }
 
-pub(crate) async fn read_stored_openai_oauth_access_token() -> Result<Option<String>> {
+#[derive(Clone, Debug, Default)]
+pub(crate) struct OpenAiOAuthCredentials {
+    pub access_token: String,
+    pub account_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct OpenAiOAuthIdentity {
+    pub account_id: Option<String>,
+    pub chatgpt_plan_type: Option<String>,
+    pub email: Option<String>,
+}
+
+pub(crate) async fn read_stored_openai_oauth_credentials() -> Result<Option<OpenAiOAuthCredentials>>
+{
     let path = auth_file(AuthProvider::OpenaiOauth)?;
     if !path.exists() {
         return Ok(None);
@@ -145,10 +159,55 @@ pub(crate) async fn read_stored_openai_oauth_access_token() -> Result<Option<Str
         fs::write(&path, serde_json::to_string_pretty(&value)?)?;
         set_private_permissions(&path)?;
     }
-    Ok(value
+    let Some(access_token) = value
         .get("access_token")
         .and_then(Value::as_str)
-        .map(str::to_string))
+        .map(str::to_string)
+    else {
+        return Ok(None);
+    };
+    let identity = openai_oauth_access_token_identity(&access_token);
+    let account_id = value
+        .get("account_id")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .or(identity.account_id);
+    Ok(Some(OpenAiOAuthCredentials {
+        access_token,
+        account_id,
+    }))
+}
+
+pub(crate) fn openai_oauth_access_token_identity(access_token: &str) -> OpenAiOAuthIdentity {
+    let Some(payload) = decode_openai_oauth_jwt_payload(access_token) else {
+        return OpenAiOAuthIdentity::default();
+    };
+    let auth = payload
+        .get("https://api.openai.com/auth")
+        .unwrap_or(&Value::Null);
+    let profile = payload
+        .get("https://api.openai.com/profile")
+        .unwrap_or(&Value::Null);
+    OpenAiOAuthIdentity {
+        account_id: auth
+            .get("chatgpt_account_id")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        chatgpt_plan_type: auth
+            .get("chatgpt_plan_type")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        email: profile
+            .get("email")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+    }
+}
+
+fn decode_openai_oauth_jwt_payload(access_token: &str) -> Option<Value> {
+    let payload = access_token.split('.').nth(1)?;
+    let bytes = URL_SAFE_NO_PAD.decode(payload.as_bytes()).ok()?;
+    serde_json::from_slice::<Value>(&bytes).ok()
 }
 
 pub(super) fn openai_oauth_token_expires_within(token: &Value, leeway_seconds: u64) -> bool {
@@ -178,6 +237,7 @@ pub(super) async fn refresh_openai_oauth_token(token: &Value) -> Result<Option<V
         .and_then(Value::as_str)
         .is_some();
     if let Some(object) = refreshed.as_object_mut() {
+        enrich_openai_oauth_token_object(object);
         object.insert(
             "provider".to_string(),
             Value::String(AuthProvider::OpenaiOauth.id().to_string()),
@@ -213,21 +273,33 @@ pub(super) fn unix_timestamp() -> u64 {
         .unwrap_or_default()
 }
 
+const OPENAI_CODEX_CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
+const OPENAI_CODEX_OAUTH_PORT: u16 = 1455;
+const OPENAI_CODEX_REDIRECT_PATH: &str = "/auth/callback";
+
 pub(super) async fn run_openai_oauth_login(output: OutputFormat) -> Result<()> {
-    let client_id = std::env::var("OPENAI_OAUTH_CLIENT_ID")
-        .with_context(|| "OPENAI_OAUTH_CLIENT_ID is required for openai-oauth login")?;
+    let client_id =
+        std::env::var("OPENAI_OAUTH_CLIENT_ID").unwrap_or_else(|_| OPENAI_CODEX_CLIENT_ID.into());
     let port = std::env::var("PERIDOT_OAUTH_PORT")
         .ok()
         .and_then(|value| value.parse::<u16>().ok())
-        .unwrap_or(14552);
+        .unwrap_or(OPENAI_CODEX_OAUTH_PORT);
     let scope = std::env::var("OPENAI_OAUTH_SCOPE")
         .unwrap_or_else(|_| "openid profile email offline_access".to_string());
-    let redirect_uri = format!("http://127.0.0.1:{port}/callback");
+    let originator =
+        std::env::var("OPENAI_OAUTH_ORIGINATOR").unwrap_or_else(|_| "peridot".to_string());
+    let redirect_uri = format!("http://localhost:{port}{OPENAI_CODEX_REDIRECT_PATH}");
     let state = random_urlsafe(32);
     let code_verifier = random_urlsafe(64);
     let code_challenge = pkce_challenge(&code_verifier);
-    let auth_url =
-        openai_oauth_authorize_url(&client_id, &redirect_uri, &scope, &state, &code_challenge);
+    let auth_url = openai_oauth_authorize_url(
+        &client_id,
+        &redirect_uri,
+        &scope,
+        &state,
+        &code_challenge,
+        &originator,
+    );
 
     if output == OutputFormat::Text {
         println!("Open this URL to authorize Peridot:\n{auth_url}");
@@ -243,12 +315,14 @@ pub(super) async fn run_openai_oauth_login(output: OutputFormat) -> Result<()> {
         .await
         .with_context(|| "failed to exchange OpenAI OAuth authorization code")?;
     if let Some(object) = token.as_object_mut() {
+        enrich_openai_oauth_token_object(object);
         object.insert(
             "provider".to_string(),
             Value::String(AuthProvider::OpenaiOauth.id().to_string()),
         );
         object.insert("client_id".to_string(), Value::String(client_id));
         object.insert("redirect_uri".to_string(), Value::String(redirect_uri));
+        object.insert("originator".to_string(), Value::String(originator));
         object.insert(
             "obtained_at_unix".to_string(),
             Value::Number(serde_json::Number::from(
@@ -268,11 +342,29 @@ pub(super) async fn run_openai_oauth_login(output: OutputFormat) -> Result<()> {
             "provider": AuthProvider::OpenaiOauth.id(),
             "path": path,
             "stored": true,
-            "token_type": token.get("token_type").and_then(Value::as_str)
+            "token_type": token.get("token_type").and_then(Value::as_str),
+            "account_id": token.get("account_id").and_then(Value::as_str),
+            "chatgpt_plan_type": token.get("chatgpt_plan_type").and_then(Value::as_str)
         }),
         format!("stored credentials for {}", AuthProvider::OpenaiOauth.id()),
         output,
     )
+}
+
+fn enrich_openai_oauth_token_object(object: &mut serde_json::Map<String, Value>) {
+    let Some(access_token) = object.get("access_token").and_then(Value::as_str) else {
+        return;
+    };
+    let identity = openai_oauth_access_token_identity(access_token);
+    if let Some(account_id) = identity.account_id {
+        object.insert("account_id".to_string(), Value::String(account_id));
+    }
+    if let Some(plan_type) = identity.chatgpt_plan_type {
+        object.insert("chatgpt_plan_type".to_string(), Value::String(plan_type));
+    }
+    if let Some(email) = identity.email {
+        object.insert("email".to_string(), Value::String(email));
+    }
 }
 
 pub(super) fn openai_oauth_authorize_url(
@@ -281,14 +373,16 @@ pub(super) fn openai_oauth_authorize_url(
     scope: &str,
     state: &str,
     code_challenge: &str,
+    originator: &str,
 ) -> String {
     format!(
-        "https://auth.openai.com/oauth/authorize?response_type=code&client_id={}&redirect_uri={}&scope={}&state={}&code_challenge={}&code_challenge_method=S256",
+        "https://auth.openai.com/oauth/authorize?response_type=code&client_id={}&redirect_uri={}&scope={}&state={}&code_challenge={}&code_challenge_method=S256&id_token_add_organizations=true&codex_cli_simplified_flow=true&originator={}",
         url_encode(client_id),
         url_encode(redirect_uri),
         url_encode(scope),
         url_encode(state),
-        url_encode(code_challenge)
+        url_encode(code_challenge),
+        url_encode(originator)
     )
 }
 
@@ -339,11 +433,36 @@ pub(super) async fn exchange_openai_oauth_refresh_token(
 }
 
 pub(super) fn wait_for_oauth_code(port: u16, expected_state: &str) -> Result<String> {
-    let listener = TcpListener::bind(("127.0.0.1", port))
-        .with_context(|| format!("failed to bind local OAuth callback port {port}"))?;
+    let listener = match TcpListener::bind(("127.0.0.1", port)) {
+        Ok(listener) => Some(listener),
+        Err(error) => {
+            eprintln!(
+                "Could not bind local OAuth callback port {port}: {error}. Paste the redirect URL or authorization code:"
+            );
+            None
+        }
+    };
+    if listener.is_none() {
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+        return parse_authorization_input(&input, expected_state);
+    }
+    let listener = listener.unwrap();
     listener.set_nonblocking(true)?;
+    let (tx, rx) = std::sync::mpsc::channel::<String>();
+    if std::io::stdin().is_terminal() {
+        std::thread::spawn(move || {
+            let mut input = String::new();
+            if std::io::stdin().read_line(&mut input).is_ok() && !input.trim().is_empty() {
+                let _ = tx.send(input);
+            }
+        });
+    }
     let deadline = SystemTime::now() + Duration::from_secs(300);
     loop {
+        if let Ok(input) = rx.try_recv() {
+            return parse_authorization_input(&input, expected_state);
+        }
         match listener.accept() {
             Ok((mut stream, _)) => {
                 stream.set_read_timeout(Some(Duration::from_secs(5)))?;
@@ -366,13 +485,59 @@ pub(super) fn wait_for_oauth_code(port: u16, expected_state: &str) -> Result<Str
             }
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                 if SystemTime::now() >= deadline {
-                    anyhow::bail!("timed out waiting for OpenAI OAuth callback");
+                    anyhow::bail!(
+                        "timed out waiting for OpenAI OAuth callback or pasted redirect URL"
+                    );
                 }
                 std::thread::sleep(Duration::from_millis(100));
             }
             Err(error) => return Err(error).with_context(|| "failed to accept OAuth callback"),
         }
     }
+}
+
+pub(super) fn parse_authorization_input(input: &str, expected_state: &str) -> Result<String> {
+    let value = input.trim();
+    if value.is_empty() {
+        anyhow::bail!("authorization code cannot be empty");
+    }
+    if let Ok(url) = reqwest::Url::parse(value)
+        && let Some(query) = url.query()
+    {
+        let params = parse_query(query)?;
+        if let Some(state) = params.get("state")
+            && state != expected_state
+        {
+            anyhow::bail!("OpenAI OAuth state mismatch");
+        }
+        if let Some(code) = params.get("code") {
+            return Ok(code.clone());
+        }
+    }
+    if let Some((code, state)) = value.split_once('#') {
+        if !state.is_empty() && state != expected_state {
+            anyhow::bail!("OpenAI OAuth state mismatch");
+        }
+        if !code.is_empty() {
+            return Ok(code.to_string());
+        }
+    }
+    if value.contains("code=") {
+        let query = value
+            .split_once('?')
+            .map(|(_, query)| query)
+            .unwrap_or(value);
+        let params = parse_query(query)?;
+        if let Some(state) = params.get("state")
+            && state != expected_state
+        {
+            anyhow::bail!("OpenAI OAuth state mismatch");
+        }
+        if let Some(code) = params.get("code") {
+            return Ok(code.clone());
+        }
+    }
+    Ok(value.to_string())
 }
 
 pub(super) fn parse_oauth_callback(request: &str, expected_state: &str) -> Result<String> {

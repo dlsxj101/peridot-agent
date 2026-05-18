@@ -261,11 +261,16 @@ fn print_model_catalog(config: &PeridotConfig, output: OutputFormat) -> Result<(
                     "main": config.models.main,
                     "goal_checker": config.models.goal_checker(),
                     "compaction": config.models.compaction(),
+                    "service_tier": config.models.service_tier,
                 }))?
             );
         }
         OutputFormat::Text => {
             println!("main:         {}", config.models.main);
+            println!(
+                "service_tier: {}",
+                config.models.service_tier.as_deref().unwrap_or("default")
+            );
             println!(
                 "goal_checker: {} (auto, follows main)",
                 config.models.goal_checker()
@@ -284,8 +289,7 @@ fn print_provider_catalog(config: &PeridotConfig, output: OutputFormat) -> Resul
         ("claude-api", "Anthropic Claude API"),
         ("openai-api", "OpenAI API (api.openai.com)"),
         ("openrouter-api", "OpenRouter (openrouter.ai/api)"),
-        ("openai-oauth", "OpenAI OAuth (Codex)"),
-        ("codex", "Codex App Server (local)"),
+        ("openai-oauth", "OpenAI OAuth direct (ChatGPT subscription)"),
     ];
     let active = config.auth.primary.as_str();
     match output {
@@ -475,7 +479,7 @@ fn run_config_wizard(result: &ConfigInitResult) -> Result<()> {
         "Provider",
         &[
             "OpenRouter API key",
-            "Codex app-server / ChatGPT login",
+            "OpenAI OAuth direct / ChatGPT login",
             "Claude API key",
             "OpenAI API key",
         ],
@@ -506,13 +510,13 @@ fn run_config_wizard(result: &ConfigInitResult) -> Result<()> {
         }
         2 => {
             let model = prompt_model_choice(
-                "Codex model",
-                &["gpt-5.5", "gpt-5.4", "gpt-5.4-mini"],
+                "OpenAI OAuth main model",
+                &["gpt-5.5", "gpt-5.5-fast", "gpt-5.4", "gpt-5.4-mini"],
                 "gpt-5.5",
             )?;
             ConfigWizardProfile {
-                auth_primary: "codex".to_string(),
-                api_base_url: PeridotConfig::default().api.base_url,
+                auth_primary: "openai-oauth".to_string(),
+                api_base_url: "https://chatgpt.com/backend-api/codex".to_string(),
                 main_model: model,
             }
         }
@@ -578,6 +582,7 @@ pub(super) fn set_config_key(config: &mut PeridotConfig, key: &str, value: &str)
                 .with_context(|| "api.max_retries must be an integer")?;
         }
         "models.main" => config.models.main = value.to_string(),
+        "models.service_tier" => config.models.service_tier = parse_service_tier(value)?,
         "models.goal_checker" | "models.compaction" => {
             // These roles deliberately track `models.main` so a single
             // switch reroutes every internal call. Refuse the write so
@@ -613,10 +618,20 @@ pub(super) fn set_config_key(config: &mut PeridotConfig, key: &str, value: &str)
             config.updates.auto_install = parse_bool_value("updates.auto_install", value)?;
         }
         _ => anyhow::bail!(
-            "unsupported config key `{key}`; supported examples: auth.primary, api.base_url, models.main, defaults.mode"
+            "unsupported config key `{key}`; supported examples: auth.primary, api.base_url, models.main, models.service_tier, defaults.mode"
         ),
     }
     Ok(())
+}
+
+fn parse_service_tier(value: &str) -> Result<Option<String>> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "" | "off" | "none" | "default" | "standard" => Ok(None),
+        "fast" | "priority" => Ok(Some("fast".to_string())),
+        other => anyhow::bail!(
+            "models.service_tier must be one of fast, priority, standard, default, off, or none (got {other})"
+        ),
+    }
 }
 
 fn parse_bool_value(name: &str, value: &str) -> Result<bool> {
@@ -643,22 +658,21 @@ fn default_provider_choice() -> usize {
         .is_some()
     {
         1
-    } else if command_exists("codex") {
+    } else if openai_oauth_credentials_path().exists() {
         2
     } else {
         1
     }
 }
 
-fn command_exists(command: &str) -> bool {
-    Command::new(command)
-        .arg("--version")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
+fn openai_oauth_credentials_path() -> PathBuf {
+    if let Some(home) = std::env::var_os("PERIDOT_HOME") {
+        return PathBuf::from(home).join("auth/openai-oauth.json");
+    }
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".peridot/auth/openai-oauth.json")
 }
 
 fn prompt_model_choice(label: &str, options: &[&str], default: &str) -> Result<String> {

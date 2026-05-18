@@ -11,7 +11,10 @@ mod web;
 pub use agent::{
     AgentAskUserTool, AgentDelegateTool, AgentDoneTool, AgentMemorySearchTool, AgentScratchpadTool,
 };
-pub use file::{FileListTool, FilePatchTool, FileReadTool, FileSearchTool, FileWriteTool};
+pub use file::{
+    FileListTool, FileOutlineTool, FilePatchTool, FileReadTool, FileSearchTool, FileWriteTool,
+    SymbolSearchTool, WorkspaceSymbolsTool,
+};
 pub use git::{
     GhPrCreateTool, GhPrMergeTool, GhPrStatusTool, GitBranchTool, GitCommitTool, GitDiffTool,
     GitLogTool, GitPushTool, GitStatusTool,
@@ -34,6 +37,9 @@ pub fn register_builtin_tools(registry: &mut ToolRegistry) -> PeriResult<()> {
     registry.register(FilePatchTool)?;
     registry.register(FileSearchTool)?;
     registry.register(FileListTool)?;
+    registry.register(FileOutlineTool)?;
+    registry.register(SymbolSearchTool)?;
+    registry.register(WorkspaceSymbolsTool)?;
     registry.register(PlanCreateTool)?;
     registry.register(PlanUpdateTool)?;
     registry.register(GitStatusTool)?;

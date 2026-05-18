@@ -182,8 +182,7 @@ pub struct SidePanelState {
     /// instead of having to back-derive the count from the percentage.
     #[serde(default)]
     pub context_tokens_used: usize,
-    /// Threshold the percentage was computed against — usually the active
-    /// model window the dynamic compaction trigger uses (`window * 0.9`).
+    /// Full active model context window used for display.
     /// Surfaced verbatim in the status line so the operator can confirm
     /// which window peridot resolved for the active model.
     #[serde(default)]
@@ -375,7 +374,7 @@ pub enum TuiRuntimeEvent {
     ContextUtilizationChanged {
         /// Tokens used.
         tokens_used: u64,
-        /// Compaction threshold.
+        /// Full model context window.
         threshold: u64,
     },
     /// MCP server status snapshot.
@@ -605,6 +604,9 @@ pub struct TuiState {
     pub ask_user: Option<AskUserPanel>,
     /// Active approval panel, when a gated tool needs confirmation.
     pub approval: Option<ApprovalPanel>,
+    /// Approval grants remembered for this TUI session.
+    #[serde(default)]
+    pub approval_grants: Vec<ApprovalGrant>,
     /// Active branch picker overlay, when the operator typed `/branch`
     /// with no args. Populated asynchronously by the CLI handler
     /// after reading the session's context snapshot.
@@ -700,6 +702,10 @@ pub struct TuiState {
     /// resumed session keeps the operator's preference.
     #[serde(default)]
     pub reasoning_effort: peridot_common::ReasoningEffort,
+    /// Runtime service-tier override. `Some("fast")` requests the provider's
+    /// fast/priority lane where supported; `None` uses provider defaults.
+    #[serde(default)]
+    pub service_tier: Option<String>,
     /// Active `@file` picker, when the input cursor sits inside an
     /// `@<token>` mention. Cleared as soon as the cursor leaves the
     /// token. Tab / Enter inserts the highlighted suggestion in place of
@@ -783,6 +789,11 @@ pub enum SessionCommandEvent {
     /// auto threshold. Fire-and-forget; the agent loop consumes the
     /// flag and resets it.
     CompactContext,
+    /// `/context top` — render the largest entries from the persisted
+    /// context snapshot so operators can see what is consuming the window.
+    ContextTop,
+    /// `/undo` — restore the latest file checkpoint.
+    UndoLastCheckpoint,
 }
 
 /// Result produced when an interactive TUI session exits.
@@ -813,6 +824,8 @@ pub enum TuiEventOutcome {
         tool_name: String,
         /// Approval reason.
         reason: String,
+        /// Original tool parameters that triggered approval.
+        parameters: serde_json::Value,
         /// Optional partial-patch parameters synthesised from the
         /// operator's per-hunk selection. When `Some`, the caller
         /// should re-execute the tool with these parameters instead
@@ -822,6 +835,23 @@ pub enum TuiEventOutcome {
     },
     /// The user pressed Esc while the agent was busy; the run should be cancelled.
     Interrupt,
+}
+
+/// Approval remembered for the current interactive session.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ApprovalGrant {
+    /// Tool the grant came from.
+    pub tool_name: String,
+    /// Human-readable approval reason.
+    pub reason: String,
+    /// Scope selected by the operator.
+    pub scope: ApprovalScope,
+    /// Exact shell command, when available.
+    #[serde(default)]
+    pub command: Option<String>,
+    /// Project-relative path scope, when available.
+    #[serde(default)]
+    pub path: Option<String>,
 }
 
 impl TuiState {
@@ -849,6 +879,7 @@ impl TuiState {
             input_history_cursor: None,
             ask_user: None,
             approval: None,
+            approval_grants: Vec::new(),
             branch_picker: None,
             menu: None,
             lifecycle_events: Vec::new(),
@@ -872,6 +903,7 @@ impl TuiState {
             goal_text: None,
             goal_started_at_unix: None,
             reasoning_effort: peridot_common::ReasoningEffort::default(),
+            service_tier: None,
             at_picker: None,
             at_picker_index: Vec::new(),
         }
@@ -1452,6 +1484,10 @@ impl TuiState {
             && success
             && self.last_assistant_text_matches(summary.trim());
         if !suppress_duplicate {
+            if tool_name == "agent_done" && success {
+                self.push_transcript_entry(TranscriptKind::Assistant, summary);
+                return;
+            }
             self.push_transcript_entry(kind, format!("{tool_name}  {summary}"));
             for line in tool_output_preview(&tool_name, &output) {
                 self.push_transcript_entry(kind, line);
@@ -1647,6 +1683,7 @@ impl TuiState {
             }
             TuiRuntimeEvent::Recovery { message } => {
                 self.side_panel.stats.errors += 1;
+                self.push_transcript_entry(TranscriptKind::Notice, format!("recovery: {message}"));
                 self.push_activity(ActivityKind::Verification, "recovery", message);
             }
             TuiRuntimeEvent::Finished {

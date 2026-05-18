@@ -45,6 +45,8 @@ pub enum SlashCommand {
     /// Print a one-shot summary of the current session (model, provider,
     /// workspace, session id, mode, permission, turn, tokens, cost).
     Info,
+    /// Show which context entries currently consume the most estimated tokens.
+    ContextTop,
     /// Request context compaction.
     Compact,
     /// Save the current session.
@@ -80,6 +82,8 @@ pub enum SlashCommand {
     /// Change the reasoning intensity applied to every model request.
     /// Cheap models without a reasoning channel ignore the setting.
     Reasoning(ReasoningEffort),
+    /// Toggle provider fast/priority service tier for the current session.
+    Fast(Option<bool>),
     /// List MCP server entries currently configured in `config.toml`.
     McpList,
     /// Append a new MCP server entry to `config.toml`. The host loop
@@ -174,6 +178,7 @@ pub fn parse_slash_command(input: &str) -> Option<SlashCommand> {
             .map(SlashCommand::Committee),
         "note" if !rest.is_empty() => Some(SlashCommand::Note(rest.to_string())),
         "info" if rest.is_empty() => Some(SlashCommand::Info),
+        "context" if rest.is_empty() || rest == "top" => Some(SlashCommand::ContextTop),
         "lang" if !rest.is_empty() => Locale::from_str(rest).ok().map(SlashCommand::Lang),
         "fork" if !rest.is_empty() => Some(SlashCommand::Fork(rest.to_string())),
         "teammate" if !rest.is_empty() => Some(SlashCommand::Teammate(rest.to_string())),
@@ -238,6 +243,12 @@ pub fn parse_slash_command(input: &str) -> Option<SlashCommand> {
         "reasoning" if !rest.is_empty() => {
             ReasoningEffort::parse(rest).map(SlashCommand::Reasoning)
         }
+        "fast" => match rest {
+            "" | "on" | "true" | "1" => Some(SlashCommand::Fast(Some(true))),
+            "off" | "false" | "0" | "standard" => Some(SlashCommand::Fast(Some(false))),
+            "toggle" => Some(SlashCommand::Fast(None)),
+            _ => None,
+        },
         // `/think` and `/think hard` map to the High reasoning tier; `/think
         // off` clears it. A convenient alias for users who think in terms of
         // "make the model think harder" instead of the dial vocabulary.

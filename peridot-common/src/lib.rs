@@ -670,6 +670,12 @@ pub struct SecurityConfig {
     /// Whether destructive delete/history commands require explicit approval.
     #[serde(default = "default_ask_before_delete")]
     pub ask_before_delete: bool,
+    /// Exact shell commands approved by the operator for the current config scope.
+    #[serde(default)]
+    pub approved_shell_commands: Vec<String>,
+    /// Shell path substrings approved by the operator for destructive commands.
+    #[serde(default)]
+    pub approved_shell_path_scopes: Vec<String>,
 }
 
 impl Default for SecurityConfig {
@@ -680,6 +686,8 @@ impl Default for SecurityConfig {
             docker_network: false,
             ask_before_install: default_ask_before_install(),
             ask_before_delete: default_ask_before_delete(),
+            approved_shell_commands: Vec::new(),
+            approved_shell_path_scopes: Vec::new(),
         }
     }
 }
@@ -738,6 +746,10 @@ pub struct ModelsConfig {
     /// `/reasoning <off|low|medium|high>` slash command.
     #[serde(default)]
     pub reasoning_effort: ReasoningEffort,
+    /// Optional provider service tier. `fast` maps to the provider's
+    /// priority/fast path where supported; `None` leaves provider defaults.
+    #[serde(default)]
+    pub service_tier: Option<String>,
 }
 
 impl ModelsConfig {
@@ -757,6 +769,7 @@ impl Default for ModelsConfig {
         Self {
             main: default_main_model(),
             reasoning_effort: ReasoningEffort::default(),
+            service_tier: None,
         }
     }
 }
@@ -1027,6 +1040,13 @@ pub struct McpServerConfig {
     /// HTTP auth declaration, for example bearer:${TOKEN}.
     #[serde(default)]
     pub auth: Option<String>,
+    /// Per-request timeout for initialize, list, and tool calls.
+    #[serde(default = "default_mcp_timeout_seconds")]
+    pub timeout_seconds: u64,
+}
+
+fn default_mcp_timeout_seconds() -> u64 {
+    30
 }
 
 /// Hook configuration grouped by hook class.
@@ -1113,6 +1133,23 @@ mod tests {
         assert_eq!(config.mcp[0].name, "jira");
         assert_eq!(config.mcp[0].transport, McpTransport::Stdio);
         assert_eq!(config.mcp[0].command.as_deref(), Some("npx"));
+        assert_eq!(config.mcp[0].timeout_seconds, 30);
+    }
+
+    #[test]
+    fn parses_mcp_timeout_config() {
+        let config = toml::from_str::<PeridotConfig>(
+            r#"
+            [[mcp]]
+            name = "jira"
+            transport = "stdio"
+            command = "npx"
+            timeout_seconds = 5
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(config.mcp[0].timeout_seconds, 5);
     }
 
     #[test]

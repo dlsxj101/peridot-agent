@@ -99,6 +99,12 @@ pub fn slash_command_catalog() -> &'static [SlashCommandSpec] {
             category: "session",
         },
         SlashCommandSpec {
+            name: "/context top",
+            description: "show the largest entries in the current context",
+            arg_hint: None,
+            category: "session",
+        },
+        SlashCommandSpec {
             name: "/sidepanel",
             description: "toggle the Status side panel (same as Ctrl+] / F2)",
             arg_hint: None,
@@ -174,6 +180,12 @@ pub fn slash_command_catalog() -> &'static [SlashCommandSpec] {
             name: "/reasoning",
             description: "set reasoning intensity (off / low / medium / high)",
             arg_hint: Some("<off|low|medium|high>"),
+            category: "session",
+        },
+        SlashCommandSpec {
+            name: "/fast",
+            description: "toggle OpenAI fast / priority service tier",
+            arg_hint: Some("[on|off|toggle]"),
             category: "session",
         },
         SlashCommandSpec {

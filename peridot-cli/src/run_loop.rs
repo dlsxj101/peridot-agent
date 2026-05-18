@@ -27,10 +27,12 @@ pub(super) async fn run_task(
     let mut registry = ToolRegistry::new();
     register_builtin_tools(&mut registry)?;
     register_configured_mcp_tools(&mut registry, config).await?;
-    let context = ContextManager::with_limits(project_context_limits_from_config(
+    let mut context = ContextManager::with_limits(project_context_limits_from_config(
         project_root,
         &config.context,
     ));
+    let window = resolve_model_window(&model, &config.auth.primary).await;
+    context.set_model_window_tokens(Some(window));
     let mut agent = HarnessAgent::new(state, context, registry);
 
     if let Some(mock_response_file) = &cli.mock_response_file {
@@ -42,7 +44,9 @@ pub(super) async fn run_task(
             &provider,
             RunLoopOptions {
                 task,
-                model,
+                model: model.clone(),
+                reasoning_effort: config.models.reasoning_effort,
+                service_tier: normalize_model_service_tier(&model, &config.models.service_tier),
                 max_turns,
                 budget_usd,
                 config,
@@ -87,7 +91,9 @@ pub(super) async fn run_task(
         provider.as_ref(),
         RunLoopOptions {
             task,
-            model,
+            model: model.clone(),
+            reasoning_effort: config.models.reasoning_effort,
+            service_tier: normalize_model_service_tier(&model, &config.models.service_tier),
             max_turns,
             budget_usd,
             config,
@@ -112,6 +118,8 @@ pub(super) async fn run_task(
 pub(super) struct AgentTaskOptions {
     pub(super) permission: PermissionMode,
     pub(super) model: String,
+    pub(super) reasoning_effort: peridot_common::ReasoningEffort,
+    pub(super) service_tier: Option<String>,
     pub(super) max_turns: u32,
     pub(super) budget_usd: f64,
     pub(super) resume: Option<String>,
@@ -120,15 +128,18 @@ pub(super) struct AgentTaskOptions {
 }
 
 pub(super) fn agent_task_options(cli: &Cli, config: &PeridotConfig) -> AgentTaskOptions {
+    let model = cli
+        .model
+        .clone()
+        .unwrap_or_else(|| config.models.main.clone());
     AgentTaskOptions {
         permission: cli
             .permission
             .map(PermissionMode::from)
             .unwrap_or(config.defaults.permission),
-        model: cli
-            .model
-            .clone()
-            .unwrap_or_else(|| config.models.main.clone()),
+        model: model.clone(),
+        reasoning_effort: config.models.reasoning_effort,
+        service_tier: normalize_model_service_tier(&model, &config.models.service_tier),
         max_turns: cli.max_turns.unwrap_or(config.defaults.max_turns),
         budget_usd: cli.budget.unwrap_or(config.defaults.budget_usd),
         resume: cli.resume.clone(),
@@ -137,23 +148,65 @@ pub(super) fn agent_task_options(cli: &Cli, config: &PeridotConfig) -> AgentTask
     }
 }
 
-/// Picks the active model's max input-token window for the dynamic
-/// compaction trigger. When `auth_primary == "openrouter-api"` we
+pub(super) fn normalize_model_service_tier(
+    model: &str,
+    configured_tier: &Option<String>,
+) -> Option<String> {
+    let model = model.trim().to_ascii_lowercase();
+    if model.ends_with("-fast") {
+        return Some("fast".to_string());
+    }
+    configured_tier
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .and_then(|value| match value.to_ascii_lowercase().as_str() {
+            "fast" | "priority" => Some("fast".to_string()),
+            "off" | "none" | "standard" | "default" => None,
+            other => Some(other.to_string()),
+        })
+}
+
+/// Picks the active model's max input-token window. When
+/// `auth_primary == "openrouter-api"` we
 /// consult the cached OpenRouter catalog first (24h disk cache, no auth
 /// required) so slugs the static heuristic table doesn't recognise — or
 /// new releases whose context window grew — get the exact value. For
-/// every other path we fall straight through to the heuristic table and
-/// finally to a 200K floor so the 90%-of-window trigger always has a
-/// sensible threshold to compare against.
+/// OpenAI OAuth we consult the ChatGPT/Codex model catalog because it is
+/// account/plan aware. For every other path we fall straight through to the
+/// heuristic table and finally to a 200K floor.
 pub(super) async fn resolve_model_window(model: &str, auth_primary: &str) -> usize {
+    let lookup_model = model.strip_suffix("-fast").unwrap_or(model);
     if auth_primary == "openrouter-api"
         && let Some(cache_dir) = peridot_llm::catalog::default_cache_dir()
         && let Some(catalog) = peridot_llm::catalog::openrouter_context_lengths(&cache_dir).await
-        && let Some(window) = catalog.get(model).copied()
+        && let Some(window) = catalog.get(lookup_model).copied()
     {
         return window;
     }
-    peridot_llm::context_window_tokens(model).unwrap_or(200_000)
+    if auth_primary == "openai-oauth"
+        && let Some(cache_dir) = peridot_llm::catalog::default_cache_dir()
+        && let Some(credentials) = read_stored_openai_oauth_credentials().await.ok().flatten()
+        && let Some(account_id) = credentials.account_id.as_deref()
+        && let Some(catalog) = peridot_llm::catalog::openai_codex_context_lengths(
+            &cache_dir,
+            &credentials.access_token,
+            account_id,
+            "peridot",
+        )
+        .await
+        && let Some(window) = catalog.get(lookup_model).copied()
+    {
+        return window;
+    }
+    if auth_primary == "openai-oauth" && lookup_model.to_ascii_lowercase().starts_with("gpt-5") {
+        // ChatGPT/Codex OAuth is plan-aware and currently much smaller than
+        // the public Platform API window for the same model aliases. If the
+        // live catalog is unavailable, prefer the conservative Codex value
+        // over the generic OpenAI API heuristic.
+        return 272_000;
+    }
+    peridot_llm::context_window_tokens(lookup_model).unwrap_or(200_000)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -184,7 +237,8 @@ where
         &project_root,
         &config.context,
     ));
-    // Drive dynamic compaction off the active model's context window.
+    // Resolve the active model's full context window. The TUI displays this
+    // exact value; auto-compaction triggers from `window * auto_compaction_pct`.
     //
     // For OpenRouter we fetch the live catalog from `/v1/models` (no auth
     // required), which returns each slug's exact `context_length`. The
@@ -193,11 +247,10 @@ where
     // from disk. Stale cache is preferred over a network failure so the
     // operator stays online when OpenRouter is briefly unreachable.
     //
-    // For other providers (and as a fallback when the OpenRouter lookup
-    // misses the active slug) we use the static heuristic table in
-    // `peridot_llm::context_window_tokens`. Unknown models default to
-    // 200K so the 90% auto-compaction trigger fires at a sensible point
-    // instead of the old too-small 140K static threshold.
+    // For OpenAI OAuth, the ChatGPT/Codex catalog is account/plan aware and
+    // can differ from public API model windows for the same slug. For other
+    // providers (and as a fallback when live catalog lookup misses) we use the
+    // static heuristic table in `peridot_llm::context_window_tokens`.
     let window = resolve_model_window(&options.model, &config.auth.primary).await;
     context.set_model_window_tokens(Some(window));
     if let Some(path) = context_snapshot_path.as_ref()
@@ -252,6 +305,8 @@ where
                 RunLoopOptions {
                     task,
                     model: options.model,
+                    reasoning_effort: options.reasoning_effort,
+                    service_tier: options.service_tier.clone(),
                     max_turns: options.max_turns,
                     budget_usd: options.budget_usd,
                     config: &config,
@@ -268,6 +323,8 @@ where
             RunLoopOptions {
                 task,
                 model: options.model,
+                reasoning_effort: options.reasoning_effort,
+                service_tier: options.service_tier.clone(),
                 max_turns: options.max_turns,
                 budget_usd: options.budget_usd,
                 config: &config,
@@ -292,7 +349,7 @@ where
         .with_max_tokens(4096)
         .with_permission(options.permission)
         .with_security(config.security.clone())
-        .with_reasoning_effort(config.models.reasoning_effort),
+        .with_reasoning_effort(options.reasoning_effort),
     ));
     agent.set_auto_verify_after_mutation(config.defaults.auto_verify_after_mutation);
     agent.set_auto_grade_on_done(config.defaults.auto_grade_on_done);
@@ -314,6 +371,8 @@ where
             RunLoopOptions {
                 task,
                 model: options.model,
+                reasoning_effort: options.reasoning_effort,
+                service_tier: options.service_tier.clone(),
                 max_turns: options.max_turns,
                 budget_usd: options.budget_usd,
                 config: &config,
@@ -330,6 +389,8 @@ where
         RunLoopOptions {
             task,
             model: options.model,
+            reasoning_effort: options.reasoning_effort,
+            service_tier: options.service_tier.clone(),
             max_turns: options.max_turns,
             budget_usd: options.budget_usd,
             config: &config,
@@ -410,6 +471,8 @@ where
         RunLoopOptions {
             task: task.to_string(),
             model: planner_model,
+            reasoning_effort: options.reasoning_effort,
+            service_tier: options.service_tier.clone(),
             max_turns: planner_max_turns,
             budget_usd: planner_budget,
             config,
@@ -481,6 +544,8 @@ pub(super) async fn register_configured_mcp_tools(
 pub(super) struct RunLoopOptions<'a> {
     task: String,
     model: String,
+    reasoning_effort: peridot_common::ReasoningEffort,
+    service_tier: Option<String>,
     max_turns: u32,
     budget_usd: f64,
     config: &'a PeridotConfig,
@@ -496,7 +561,12 @@ pub(super) async fn run_agent_loop<P>(
 where
     P: LlmProvider + ?Sized,
 {
-    run_agent_loop_with_events(agent, provider, options, |_| {}).await
+    run_agent_loop_with_events(agent, provider, options, |event| {
+        if let AgentRunEvent::Recovery { message } = event {
+            eprintln!("recovery: {message}");
+        }
+    })
+    .await
 }
 
 pub(super) async fn run_agent_loop_with_events<P, F>(
@@ -520,7 +590,8 @@ where
                 goal_checker_model: Some(options.config.models.goal_checker().to_string()),
                 max_turns: options.max_turns,
                 max_tokens: 4096,
-                reasoning_effort: options.config.models.reasoning_effort,
+                reasoning_effort: options.reasoning_effort,
+                service_tier: options.service_tier.clone(),
                 budget_usd: options.budget_usd,
                 budget_warning_pct: options.config.defaults.budget_warning_pct,
                 project_root: options.project_root.to_path_buf(),
@@ -626,7 +697,8 @@ where
             user_input: user_input_for_next.take(),
             model: options.model.clone(),
             max_tokens: 4096,
-            reasoning_effort: options.config.models.reasoning_effort,
+            reasoning_effort: options.reasoning_effort,
+            service_tier: options.service_tier.clone(),
             project_root: options.project_root.to_path_buf(),
             denied_paths: options.denied_paths.clone(),
             hooks: options.config.hooks.clone(),
@@ -840,6 +912,7 @@ where
         max_tokens: Some(512),
         thinking: false,
         reasoning_effort: peridot_common::ReasoningEffort::Off,
+        service_tier: None,
         tools: Vec::new(),
         tool_choice: ToolChoice::Auto,
     };

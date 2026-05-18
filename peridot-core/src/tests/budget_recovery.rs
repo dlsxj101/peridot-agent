@@ -38,6 +38,7 @@ async fn run_until_done_stops_on_budget() {
                 max_turns: 4,
                 max_tokens: 512,
                 reasoning_effort: peridot_common::ReasoningEffort::Off,
+                service_tier: None,
                 budget_usd: 0.1,
                 budget_warning_pct: 50,
                 project_root: root.clone(),
@@ -56,8 +57,15 @@ async fn run_until_done_stops_on_budget() {
 
 #[tokio::test]
 async fn run_until_done_emits_budget_warning_hook() {
-    let root =
-        std::env::temp_dir().join(format!("peridot-core-budget-hook-{}", std::process::id()));
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "peridot-core-budget-hook-{}-{unique}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
     let hooks_dir = root.join(".peridot/hooks");
     std::fs::create_dir_all(&hooks_dir).unwrap();
     let script = hooks_dir.join("budget.sh");
@@ -85,6 +93,7 @@ async fn run_until_done_emits_budget_warning_hook() {
                 max_turns: 1,
                 max_tokens: 512,
                 reasoning_effort: peridot_common::ReasoningEffort::Off,
+                service_tier: None,
                 budget_usd: 0.1,
                 budget_warning_pct: 50,
                 project_root: root.clone(),
@@ -142,6 +151,7 @@ async fn goal_budget_warning_is_injected_into_context() {
                 max_turns: 2,
                 max_tokens: 512,
                 reasoning_effort: peridot_common::ReasoningEffort::Off,
+                service_tier: None,
                 budget_usd: 1.0,
                 budget_warning_pct: 5,
                 project_root: root.clone(),
@@ -189,6 +199,7 @@ async fn goal_budget_stop_injects_pause_directive() {
                 max_turns: 2,
                 max_tokens: 512,
                 reasoning_effort: peridot_common::ReasoningEffort::Off,
+                service_tier: None,
                 budget_usd: 0.1,
                 budget_warning_pct: 50,
                 project_root: root.clone(),
@@ -238,6 +249,7 @@ async fn repeated_actions_inject_recovery_directive() {
                 max_turns: 4,
                 max_tokens: 512,
                 reasoning_effort: peridot_common::ReasoningEffort::Off,
+                service_tier: None,
                 budget_usd: 5.0,
                 budget_warning_pct: 50,
                 project_root: root.clone(),
@@ -284,6 +296,7 @@ async fn run_until_done_recovers_after_tool_error() {
                 max_turns: 2,
                 max_tokens: 512,
                 reasoning_effort: peridot_common::ReasoningEffort::Off,
+                service_tier: None,
                 budget_usd: 5.0,
                 budget_warning_pct: 50,
                 project_root: root.clone(),
@@ -345,6 +358,7 @@ async fn repeated_parse_failures_inject_format_reminder() {
                 max_turns: 8,
                 max_tokens: 512,
                 reasoning_effort: peridot_common::ReasoningEffort::Off,
+                service_tier: None,
                 budget_usd: 5.0,
                 budget_warning_pct: 50,
                 project_root: root.clone(),
@@ -396,6 +410,7 @@ async fn run_until_done_emits_error_and_recovery_hooks() {
                 max_turns: 2,
                 max_tokens: 512,
                 reasoning_effort: peridot_common::ReasoningEffort::Off,
+                service_tier: None,
                 budget_usd: 5.0,
                 budget_warning_pct: 50,
                 project_root: root.clone(),
@@ -460,6 +475,7 @@ async fn goal_checker_can_reject_premature_done() {
                 max_turns: 5,
                 max_tokens: 512,
                 reasoning_effort: peridot_common::ReasoningEffort::Off,
+                service_tier: None,
                 budget_usd: 5.0,
                 budget_warning_pct: 50,
                 project_root: root.clone(),

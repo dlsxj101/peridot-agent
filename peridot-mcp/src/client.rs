@@ -17,10 +17,8 @@ pub struct McpClient {
 impl McpClient {
     /// Creates an MCP client.
     pub fn new(config: McpServerConfig) -> Self {
-        Self {
-            config,
-            timeout: Duration::from_secs(30),
-        }
+        let timeout = Duration::from_secs(config.timeout_seconds.max(1));
+        Self { config, timeout }
     }
 
     /// Creates an MCP client with an explicit timeout.

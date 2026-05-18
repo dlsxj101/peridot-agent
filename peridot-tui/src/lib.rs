@@ -69,9 +69,9 @@ use render::goal_status_label;
 pub use render::{draw, render_text_snapshot, select_layout};
 pub use settings_screen::{SettingItem, SettingValue, SettingsOutcome, run_settings_screen};
 pub use state::{
-    ActivityKind, AgentRunStatus, AgentsSummary, BudgetGauge, HeaderState, LayoutMode,
-    McpServerSummary, PlanStep, PlanStepUpdate, RuntimeActivity, SessionCommandEvent, SessionStats,
-    SidePanelState, SlashPicker, StreamState, SubagentMonitorItem, TranscriptEntry, TranscriptKind,
-    TuiEventOutcome, TuiExit, TuiLifecycleEvent, TuiRuntimeEvent, TuiState,
+    ActivityKind, AgentRunStatus, AgentsSummary, ApprovalGrant, BudgetGauge, HeaderState,
+    LayoutMode, McpServerSummary, PlanStep, PlanStepUpdate, RuntimeActivity, SessionCommandEvent,
+    SessionStats, SidePanelState, SlashPicker, StreamState, SubagentMonitorItem, TranscriptEntry,
+    TranscriptKind, TuiEventOutcome, TuiExit, TuiLifecycleEvent, TuiRuntimeEvent, TuiState,
 };
 use terminal::TerminalGuard;

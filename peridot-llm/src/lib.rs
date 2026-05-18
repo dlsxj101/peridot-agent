@@ -5,6 +5,7 @@ pub mod catalog;
 mod codex;
 mod models;
 mod openai;
+mod openai_codex;
 mod provider;
 mod transport;
 mod types;
@@ -13,6 +14,7 @@ pub use anthropic::ClaudeProvider;
 pub use codex::CodexAppServerProvider;
 pub use models::context_window_tokens;
 pub use openai::OpenAiProvider;
+pub use openai_codex::OpenAiCodexProvider;
 pub use provider::{LlmProvider, PricingTable};
 pub use types::{
     AuthMethod, CompletionRequest, CompletionResponse, CompletionStreamChunk, LlmMessage,
@@ -22,8 +24,16 @@ pub use types::{
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::anthropic::{anthropic_payload, parse_anthropic_response, parse_anthropic_stream};
-    use crate::openai::{openai_chat_payload, parse_openai_response, parse_openai_stream};
+    use crate::anthropic::{
+        anthropic_payload, anthropic_stream_payload, parse_anthropic_response,
+        parse_anthropic_stream,
+    };
+    use crate::openai::{
+        openai_chat_payload, openai_stream_payload, parse_openai_response, parse_openai_stream,
+    };
+    use crate::openai_codex::{
+        codex_model_and_service_tier, openai_codex_payload, openai_codex_responses_url,
+    };
     use crate::transport::should_retry_status;
     use async_trait::async_trait;
     use peridot_common::PeriResult;
@@ -38,6 +48,7 @@ mod tests {
             max_tokens: Some(16),
             thinking: false,
             reasoning_effort: peridot_common::ReasoningEffort::Off,
+            service_tier: None,
             tools: Vec::new(),
             tool_choice: ToolChoice::Auto,
         }
@@ -51,9 +62,29 @@ mod tests {
             max_tokens: Some(64),
             thinking: false,
             reasoning_effort: peridot_common::ReasoningEffort::Off,
+            service_tier: None,
             tools,
             tool_choice: ToolChoice::Auto,
         }
+    }
+
+    fn file_read_tool() -> ToolDefinition {
+        ToolDefinition {
+            name: "file_read".to_string(),
+            description: "Read a file".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string" }
+                },
+                "required": ["path"]
+            }),
+        }
+    }
+
+    fn assert_json_snapshot(value: &serde_json::Value, expected: &str) {
+        let actual = serde_json::to_string_pretty(value).unwrap();
+        assert_eq!(actual, expected.trim());
     }
 
     #[derive(Clone, Debug)]
@@ -124,6 +155,7 @@ mod tests {
             max_tokens: Some(128),
             thinking: false,
             reasoning_effort: peridot_common::ReasoningEffort::Off,
+            service_tier: None,
             tools: Vec::new(),
             tool_choice: ToolChoice::Auto,
         });
@@ -188,6 +220,7 @@ mod tests {
             max_tokens: Some(256),
             thinking: false,
             reasoning_effort: peridot_common::ReasoningEffort::Off,
+            service_tier: None,
             tools: Vec::new(),
             tool_choice: ToolChoice::Auto,
         });
@@ -198,6 +231,54 @@ mod tests {
         assert_eq!(payload["messages"][0]["content"], "system");
         assert_eq!(payload["messages"][1]["role"], "user");
         assert!(payload.get("tools").is_none());
+    }
+
+    #[test]
+    fn openai_codex_payload_uses_responses_shape() {
+        let tool = ToolDefinition {
+            name: "file_read".to_string(),
+            description: "Read a file".to_string(),
+            parameters: json!({"type": "object", "properties": {"path": {"type": "string"}}}),
+        };
+        let payload = openai_codex_payload(&CompletionRequest {
+            model: "gpt-5.4".to_string(),
+            system: Some("system".to_string()),
+            messages: vec![LlmMessage::new(MessageRole::User, "hello")],
+            max_tokens: Some(256),
+            thinking: false,
+            reasoning_effort: peridot_common::ReasoningEffort::Medium,
+            service_tier: None,
+            tools: vec![tool],
+            tool_choice: ToolChoice::Auto,
+        });
+
+        assert_eq!(payload["model"], "gpt-5.4");
+        assert_eq!(payload["store"], false);
+        assert_eq!(payload["stream"], true);
+        assert_eq!(payload["instructions"], "system");
+        assert!(payload.get("max_output_tokens").is_none());
+        assert_eq!(payload["parallel_tool_calls"], false);
+        assert_eq!(payload["input"][0]["role"], "user");
+        assert_eq!(payload["input"][0]["content"][0]["type"], "input_text");
+        assert_eq!(payload["tools"][0]["type"], "function");
+        assert_eq!(payload["reasoning"]["effort"], "medium");
+        assert_eq!(payload["include"][0], "reasoning.encrypted_content");
+    }
+
+    #[test]
+    fn openai_codex_endpoint_normalizes_backend_urls() {
+        assert_eq!(
+            openai_codex_responses_url("https://chatgpt.com/backend-api"),
+            "https://chatgpt.com/backend-api/codex/responses"
+        );
+        assert_eq!(
+            openai_codex_responses_url("https://chatgpt.com/backend-api/codex"),
+            "https://chatgpt.com/backend-api/codex/responses"
+        );
+        assert_eq!(
+            openai_codex_responses_url("https://chatgpt.com/backend-api/codex/responses"),
+            "https://chatgpt.com/backend-api/codex/responses"
+        );
     }
 
     #[test]
@@ -225,6 +306,7 @@ mod tests {
             max_tokens: Some(128),
             thinking: false,
             reasoning_effort: peridot_common::ReasoningEffort::Off,
+            service_tier: None,
             tools: Vec::new(),
             tool_choice: ToolChoice::Auto,
         });
@@ -268,6 +350,7 @@ mod tests {
             max_tokens: None,
             thinking: false,
             reasoning_effort: peridot_common::ReasoningEffort::Off,
+            service_tier: None,
             tools: Vec::new(),
             tool_choice: ToolChoice::Auto,
         });
@@ -297,6 +380,7 @@ mod tests {
             max_tokens: Some(128),
             thinking: false,
             reasoning_effort: peridot_common::ReasoningEffort::Off,
+            service_tier: None,
             tools: Vec::new(),
             tool_choice: ToolChoice::Auto,
         });
@@ -326,18 +410,255 @@ mod tests {
 
     #[test]
     fn openai_payload_emits_tools_when_provided() {
-        let tool = ToolDefinition {
-            name: "file_read".to_string(),
-            description: "Read a file".to_string(),
-            parameters: json!({"type": "object", "properties": {"path": {"type": "string"}}}),
-        };
         let payload = openai_chat_payload(&tool_request(
             vec![LlmMessage::new(MessageRole::User, "read README")],
-            vec![tool],
+            vec![file_read_tool()],
         ));
         assert_eq!(payload["tools"][0]["type"], "function");
         assert_eq!(payload["tools"][0]["function"]["name"], "file_read");
         assert_eq!(payload["tool_choice"], "auto");
+    }
+
+    #[test]
+    fn openai_api_payload_snapshot_covers_reasoning_tools_and_streaming() {
+        let mut request = tool_request(
+            vec![LlmMessage::new(MessageRole::User, "read README")],
+            vec![file_read_tool()],
+        );
+        request.model = "gpt-5.5".to_string();
+        request.system = Some("system".to_string());
+        request.max_tokens = Some(256);
+        request.reasoning_effort = peridot_common::ReasoningEffort::High;
+        request.tool_choice = ToolChoice::Required;
+
+        assert_json_snapshot(
+            &openai_stream_payload(&request),
+            r##"
+{
+  "max_tokens": 256,
+  "messages": [
+    {
+      "content": "system",
+      "role": "system"
+    },
+    {
+      "content": "read README",
+      "role": "user"
+    }
+  ],
+  "model": "gpt-5.5",
+  "reasoning": {
+    "effort": "high"
+  },
+  "stream": true,
+  "stream_options": {
+    "include_usage": true
+  },
+  "tool_choice": "required",
+  "tools": [
+    {
+      "function": {
+        "description": "Read a file",
+        "name": "file_read",
+        "parameters": {
+          "properties": {
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "path"
+          ],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    }
+  ]
+}
+"##,
+        );
+    }
+
+    #[test]
+    fn openai_codex_oauth_payload_snapshot_covers_responses_tool_linkage() {
+        let assistant = LlmMessage::assistant_with_tool_calls(
+            "Reading.",
+            vec![ToolInvocation {
+                id: "call_1".to_string(),
+                name: "file_read".to_string(),
+                arguments: json!({"path": "README.md"}),
+            }],
+        );
+        let mut request = tool_request(
+            vec![
+                LlmMessage::new(MessageRole::User, "read README"),
+                assistant,
+                LlmMessage::tool_result("call_1", "# Peridot"),
+                LlmMessage::new(MessageRole::User, "summarize"),
+            ],
+            vec![file_read_tool()],
+        );
+        request.model = "gpt-5.5".to_string();
+        request.system = Some("system".to_string());
+        request.reasoning_effort = peridot_common::ReasoningEffort::Medium;
+
+        let payload = openai_codex_payload(&request);
+        assert!(payload.get("max_output_tokens").is_none());
+        assert_json_snapshot(
+            &payload,
+            r##"
+{
+  "include": [
+    "reasoning.encrypted_content"
+  ],
+  "input": [
+    {
+      "content": [
+        {
+          "text": "read README",
+          "type": "input_text"
+        }
+      ],
+      "role": "user",
+      "type": "message"
+    },
+    {
+      "content": [
+        {
+          "text": "Reading.",
+          "type": "output_text"
+        }
+      ],
+      "role": "assistant",
+      "type": "message"
+    },
+    {
+      "arguments": "{\"path\":\"README.md\"}",
+      "call_id": "call_1",
+      "name": "file_read",
+      "type": "function_call"
+    },
+    {
+      "call_id": "call_1",
+      "output": "# Peridot",
+      "type": "function_call_output"
+    },
+    {
+      "content": [
+        {
+          "text": "summarize",
+          "type": "input_text"
+        }
+      ],
+      "role": "user",
+      "type": "message"
+    }
+  ],
+  "instructions": "system",
+  "model": "gpt-5.5",
+  "parallel_tool_calls": false,
+  "reasoning": {
+    "effort": "medium",
+    "summary": "auto"
+  },
+  "store": false,
+  "stream": true,
+  "text": {
+    "verbosity": "low"
+  },
+  "tool_choice": "auto",
+  "tools": [
+    {
+      "description": "Read a file",
+      "name": "file_read",
+      "parameters": {
+        "properties": {
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      },
+      "type": "function"
+    }
+  ]
+}
+"##,
+        );
+    }
+
+    #[test]
+    fn openai_codex_fast_model_alias_sets_priority_service_tier() {
+        let mut request = request(vec![LlmMessage::new(MessageRole::User, "hi")]);
+        request.model = "gpt-5.5-fast".to_string();
+
+        let payload = openai_codex_payload(&request);
+
+        assert_eq!(payload["model"], "gpt-5.5");
+        assert_eq!(payload["service_tier"], "priority");
+        assert_eq!(
+            codex_model_and_service_tier("gpt-5.5", Some("fast")),
+            ("gpt-5.5".to_string(), Some("priority"))
+        );
+    }
+
+    #[test]
+    fn anthropic_payload_snapshot_covers_thinking_tools_and_streaming() {
+        let mut request = tool_request(
+            vec![LlmMessage::new(MessageRole::User, "read README")],
+            vec![file_read_tool()],
+        );
+        request.model = "claude-sonnet-4-6".to_string();
+        request.system = Some("system".to_string());
+        request.max_tokens = Some(512);
+        request.reasoning_effort = peridot_common::ReasoningEffort::Low;
+        request.tool_choice = ToolChoice::None;
+
+        assert_json_snapshot(
+            &anthropic_stream_payload(&request),
+            r#"
+{
+  "max_tokens": 512,
+  "messages": [
+    {
+      "content": "read README",
+      "role": "user"
+    }
+  ],
+  "model": "claude-sonnet-4-6",
+  "stream": true,
+  "system": "system",
+  "thinking": {
+    "budget_tokens": 1024,
+    "type": "enabled"
+  },
+  "tool_choice": {
+    "type": "none"
+  },
+  "tools": [
+    {
+      "description": "Read a file",
+      "input_schema": {
+        "properties": {
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      },
+      "name": "file_read"
+    }
+  ]
+}
+"#,
+        );
     }
 
     #[tokio::test]
@@ -382,6 +703,7 @@ mod tests {
                 max_tokens: Some(16),
                 thinking: false,
                 reasoning_effort: peridot_common::ReasoningEffort::Off,
+                service_tier: None,
                 tools: Vec::new(),
                 tool_choice: ToolChoice::Auto,
             })
@@ -391,6 +713,128 @@ mod tests {
         server.join().unwrap();
         assert_eq!(response.text, "ok");
         assert_eq!(response.usage.output_tokens, 2);
+    }
+
+    #[tokio::test]
+    async fn openai_compatible_stream_uses_openrouter_api_prefix() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                .unwrap();
+            let mut buffer = [0_u8; 8192];
+            let size = stream.read(&mut buffer).unwrap();
+            let request = String::from_utf8_lossy(&buffer[..size]);
+
+            assert!(request.starts_with("POST /api/v1/chat/completions HTTP/1.1"));
+            assert!(request.contains("authorization: Bearer openrouter-key"));
+            assert!(request.contains("accept: text/event-stream"));
+            assert!(request.contains("\"stream\":true"));
+            assert!(request.contains("\"stream_options\":{\"include_usage\":true}"));
+
+            let body = concat!(
+                "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n",
+                "data: {\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":2}}\n\n",
+                "data: [DONE]\n\n"
+            );
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            stream.write_all(response.as_bytes()).unwrap();
+        });
+        let provider = OpenAiProvider::with_transport_options(
+            "openai/gpt-5.5",
+            Some("openrouter-key".to_string()),
+            format!("http://{address}/api"),
+            AuthMethod::ApiKey,
+            5,
+            0,
+        );
+
+        let chunks = provider
+            .stream(CompletionRequest {
+                model: "openai/gpt-5.5".to_string(),
+                system: None,
+                messages: vec![LlmMessage::new(MessageRole::User, "hello")],
+                max_tokens: Some(16),
+                thinking: false,
+                reasoning_effort: peridot_common::ReasoningEffort::Off,
+                service_tier: None,
+                tools: Vec::new(),
+                tool_choice: ToolChoice::Auto,
+            })
+            .await
+            .unwrap();
+
+        server.join().unwrap();
+        assert_eq!(chunks[0].delta, "ok");
+        assert_eq!(chunks.last().unwrap().usage.unwrap().output_tokens, 2);
+    }
+
+    #[tokio::test]
+    async fn openai_codex_oauth_stream_sends_required_headers() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                .unwrap();
+            let mut buffer = [0_u8; 8192];
+            let size = stream.read(&mut buffer).unwrap();
+            let request = String::from_utf8_lossy(&buffer[..size]);
+
+            assert!(request.starts_with("POST /backend-api/codex/responses HTTP/1.1"));
+            assert!(request.contains("authorization: Bearer oauth-token"));
+            assert!(request.contains("chatgpt-account-id: account-1"));
+            assert!(request.contains("originator: peridot"));
+            assert!(request.contains("openai-beta: responses=experimental"));
+            assert!(request.contains("\"parallel_tool_calls\":false"));
+            assert!(request.contains("\"include\":[\"reasoning.encrypted_content\"]"));
+            assert!(!request.contains("max_output_tokens"));
+
+            let body = concat!(
+                "data: {\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}\n\n",
+                "data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":1,\"output_tokens\":2},\"output\":[]}}\n\n"
+            );
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            stream.write_all(response.as_bytes()).unwrap();
+        });
+        let provider = OpenAiCodexProvider::with_transport_options(
+            "gpt-5.5",
+            "oauth-token",
+            "account-1",
+            format!("http://{address}/backend-api/codex"),
+            5,
+            0,
+        );
+
+        let chunks = provider
+            .stream(CompletionRequest {
+                model: "gpt-5.5".to_string(),
+                system: None,
+                messages: vec![LlmMessage::new(MessageRole::User, "hello")],
+                max_tokens: Some(16),
+                thinking: false,
+                reasoning_effort: peridot_common::ReasoningEffort::Off,
+                service_tier: None,
+                tools: Vec::new(),
+                tool_choice: ToolChoice::Auto,
+            })
+            .await
+            .unwrap();
+
+        server.join().unwrap();
+        assert_eq!(chunks[0].delta, "ok");
+        assert_eq!(chunks.last().unwrap().usage.unwrap().output_tokens, 2);
     }
 
     #[test]

@@ -114,7 +114,7 @@ its parent transcript (M4), and the attention notifier line (M5).
 - Picker advertises the command in the same `session` category as `/cost`, `/note`, and `/provider`.
 
 ### M27 — `peridot config providers` catalog (landed)
-- Lists the five live provider keys the CLI accepts (`claude-api`, `openai-api`, `openrouter-api`, `openai-oauth`, `codex`) with short descriptions and marks the one currently set as `auth.primary` in the project config.
+- Lists the four live provider keys the CLI accepts (`claude-api`, `openai-api`, `openrouter-api`, `openai-oauth`) with short descriptions and marks the one currently set as `auth.primary` in the project config.
 - JSON output mirrors the same shape (`{ active, providers: [{ name, description, active }] }`) so tooling can pick a sensible value before calling `peridot config set auth.primary <name>`.
 
 ### M26 — `/cost` slash includes model / provider / turn (landed)

@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use super::*;
 
 pub(crate) async fn run_mcp_command(
@@ -14,10 +16,11 @@ pub(crate) async fn run_mcp_command(
             OutputFormat::Text => {
                 for server in &config.mcp {
                     println!(
-                        "{}\t{}\t{}",
+                        "{}\t{}\t{}\ttimeout={}s",
                         server.name,
                         server.transport,
-                        mcp_target(server)
+                        mcp_target(server),
+                        server.timeout_seconds
                     );
                 }
             }
@@ -29,20 +32,27 @@ pub(crate) async fn run_mcp_command(
                 .find(|server| server.name == *name)
                 .with_context(|| format!("MCP server not found: {name}"))?;
             validate_mcp_server(server)?;
-            let tools = McpClient::new(server.clone()).list_tools().await?;
+            let tools = McpClient::with_timeout(
+                server.clone(),
+                Duration::from_secs(server.timeout_seconds.max(1)),
+            )
+            .list_tools()
+            .await?;
             print_json_or_text_result(
                 serde_json::json!({
                     "name": server.name,
                     "transport": server.transport,
                     "target": mcp_target(server),
+                    "timeout_seconds": server.timeout_seconds,
                     "configured": true,
                     "tools": tools
                 }),
                 format!(
-                    "MCP server {} is configured for {} ({}) with {} tools",
+                    "MCP server {} is configured for {} ({}) with timeout {}s and {} tools",
                     server.name,
                     server.transport,
                     mcp_target(server),
+                    server.timeout_seconds,
                     tools.len()
                 ),
                 output,
@@ -93,6 +103,7 @@ pub(super) fn mcp_json(server: &McpServerConfig) -> serde_json::Value {
         "name": server.name,
         "transport": server.transport,
         "target": mcp_target(server),
+        "timeout_seconds": server.timeout_seconds,
         "configured": validate_mcp_server(server).is_ok()
     })
 }

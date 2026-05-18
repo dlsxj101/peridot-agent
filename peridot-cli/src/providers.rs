@@ -1,10 +1,13 @@
 use super::*;
-use crate::commands::read_managed_env_var;
+use crate::commands::{
+    OpenAiOAuthCredentials, openai_oauth_access_token_identity, read_managed_env_var,
+    read_stored_openai_oauth_credentials,
+};
 
 pub(crate) async fn live_provider(
     config: &PeridotConfig,
     model: &str,
-    project_root: &Path,
+    _project_root: &Path,
 ) -> Result<Box<dyn LlmProvider>> {
     match config.auth.primary.as_str() {
         "claude-api" => {
@@ -67,39 +70,44 @@ pub(crate) async fn live_provider(
             )))
         }
         "openai-oauth" => {
-            let access_token = match std::env::var("OPENAI_ACCESS_TOKEN").ok() {
-                Some(access_token) => Some(access_token),
-                None => read_stored_openai_oauth_access_token().await?,
-            }
-            .with_context(
-                || "OPENAI_ACCESS_TOKEN or peridot login openai-oauth is required for live runs",
-            )?;
-            let base_url = if config.api.base_url == "https://api.anthropic.com" {
-                "https://api.openai.com".to_string()
+            let credentials = match std::env::var("OPENAI_ACCESS_TOKEN").ok() {
+                Some(access_token) => {
+                    let identity = openai_oauth_access_token_identity(&access_token);
+                    OpenAiOAuthCredentials {
+                        access_token,
+                        account_id: std::env::var("OPENAI_CODEX_ACCOUNT_ID")
+                            .ok()
+                            .or(identity.account_id),
+                    }
+                }
+                None => read_stored_openai_oauth_credentials().await?.with_context(|| {
+                    "OPENAI_ACCESS_TOKEN or peridot login openai-oauth is required for live runs"
+                })?,
+            };
+            let account_id = credentials.account_id.with_context(|| {
+                "OpenAI Codex OAuth token does not include chatgpt_account_id; rerun `peridot login openai-oauth`"
+            })?;
+            let base_url = if matches!(
+                config.api.base_url.trim_end_matches('/'),
+                "https://api.anthropic.com"
+                    | "https://api.openai.com"
+                    | "https://api.openai.com/v1"
+            ) {
+                "https://chatgpt.com/backend-api/codex".to_string()
             } else {
                 config.api.base_url.clone()
             };
-            Ok(Box::new(OpenAiProvider::with_transport_options(
+            Ok(Box::new(OpenAiCodexProvider::with_transport_options(
                 model.to_string(),
-                Some(access_token),
+                credentials.access_token,
+                account_id,
                 base_url,
-                AuthMethod::OAuth,
                 config.api.timeout_seconds,
                 config.api.max_retries,
             )))
         }
-        "codex" => {
-            let command =
-                std::env::var("PERIDOT_CODEX_COMMAND").unwrap_or_else(|_| "codex".to_string());
-            Ok(Box::new(CodexAppServerProvider::with_command(
-                model.to_string(),
-                project_root.to_path_buf(),
-                command,
-                config.api.timeout_seconds,
-            )))
-        }
         provider => anyhow::bail!(
-            "live provider {provider} is not implemented yet; use claude-api, openai-api, openrouter-api, codex, openai-oauth, or --mock-response-file for deterministic replay"
+            "live provider {provider} is not implemented yet; use claude-api, openai-api, openrouter-api, openai-oauth, or --mock-response-file for deterministic replay"
         ),
     }
 }

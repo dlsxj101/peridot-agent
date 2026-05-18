@@ -141,8 +141,7 @@ impl LlmProvider for ClaudeProvider {
             .api_key
             .as_deref()
             .ok_or_else(|| PeriError::Provider("missing Anthropic API key".to_string()))?;
-        let mut payload = anthropic_payload(&request);
-        payload["stream"] = Value::Bool(true);
+        let payload = anthropic_stream_payload(&request);
         let endpoint = format!("{}/v1/messages", self.base_url.trim_end_matches('/'));
         let mut last_error = None;
         for attempt in 0..=self.max_retries {
@@ -193,8 +192,7 @@ impl LlmProvider for ClaudeProvider {
             .api_key
             .as_deref()
             .ok_or_else(|| PeriError::Provider("missing Anthropic API key".to_string()))?;
-        let mut payload = anthropic_payload(&request);
-        payload["stream"] = Value::Bool(true);
+        let payload = anthropic_stream_payload(&request);
         let endpoint = format!("{}/v1/messages", self.base_url.trim_end_matches('/'));
         let mut last_error = None;
         for attempt in 0..=self.max_retries {
@@ -385,6 +383,13 @@ pub(crate) fn anthropic_payload(request: &CompletionRequest) -> Value {
         };
     }
 
+    payload
+}
+
+/// Builds the Anthropic streaming Messages request body.
+pub(crate) fn anthropic_stream_payload(request: &CompletionRequest) -> Value {
+    let mut payload = anthropic_payload(request);
+    payload["stream"] = Value::Bool(true);
     payload
 }
 

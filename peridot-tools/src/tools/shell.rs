@@ -159,6 +159,9 @@ pub(crate) fn reject_hard_blocked_command(command: &str) -> PeriResult<()> {
 
 pub(crate) fn enforce_shell_approval_policy(command: &str, ctx: &ToolContext) -> PeriResult<()> {
     let normalized = normalize_shell_command(command);
+    if shell_command_is_approved(&normalized, ctx) {
+        return Ok(());
+    }
     if ctx.security.ask_before_install && is_install_command(&normalized) {
         return Err(PeriError::PermissionDenied(
             "dependency installation requires explicit user approval".to_string(),
@@ -174,6 +177,19 @@ pub(crate) fn enforce_shell_approval_policy(command: &str, ctx: &ToolContext) ->
 
 fn normalize_shell_command(command: &str) -> String {
     command.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn shell_command_is_approved(command: &str, ctx: &ToolContext) -> bool {
+    ctx.security
+        .approved_shell_commands
+        .iter()
+        .any(|approved| normalize_shell_command(approved) == command)
+        || (is_destructive_shell_command(command)
+            && ctx
+                .security
+                .approved_shell_path_scopes
+                .iter()
+                .any(|path| !path.trim().is_empty() && command.contains(path.trim())))
 }
 
 fn is_install_command(command: &str) -> bool {

@@ -173,6 +173,7 @@ impl SubAgent for InnerLoopSubAgent {
             max_turns: self.max_turns,
             max_tokens: self.max_tokens,
             reasoning_effort: self.reasoning_effort,
+            service_tier: None,
             budget_usd: self.budget_usd,
             budget_warning_pct: 80,
             project_root: workspace.clone(),

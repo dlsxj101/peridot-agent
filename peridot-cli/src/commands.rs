@@ -44,8 +44,9 @@ pub(crate) use agents::run_agents_command;
 use agents::{agents_draft, find_agents_instruction};
 use auth::unix_timestamp;
 pub(crate) use auth::{
-    read_managed_env_var, read_stored_api_key, read_stored_openai_oauth_access_token,
-    run_env_command, run_login_command, run_logout_command,
+    OpenAiOAuthCredentials, openai_oauth_access_token_identity, read_managed_env_var,
+    read_stored_api_key, read_stored_openai_oauth_credentials, run_env_command, run_login_command,
+    run_logout_command,
 };
 use config::init_project_config_value;
 pub(crate) use config::{load_effective_config, maybe_run_first_launch_wizard, run_config_command};

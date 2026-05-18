@@ -146,9 +146,7 @@ impl LlmProvider for OpenAiProvider {
             .api_key
             .as_deref()
             .ok_or_else(|| PeriError::Provider("missing OpenAI API key".to_string()))?;
-        let mut payload = openai_chat_payload(&request);
-        payload["stream"] = Value::Bool(true);
-        payload["stream_options"] = json!({ "include_usage": true });
+        let payload = openai_stream_payload(&request);
         let endpoint = format!(
             "{}/v1/chat/completions",
             self.base_url.trim_end_matches('/')
@@ -201,9 +199,7 @@ impl LlmProvider for OpenAiProvider {
             .api_key
             .as_deref()
             .ok_or_else(|| PeriError::Provider("missing OpenAI API key".to_string()))?;
-        let mut payload = openai_chat_payload(&request);
-        payload["stream"] = Value::Bool(true);
-        payload["stream_options"] = json!({ "include_usage": true });
+        let payload = openai_stream_payload(&request);
         let endpoint = format!(
             "{}/v1/chat/completions",
             self.base_url.trim_end_matches('/')
@@ -360,8 +356,13 @@ pub(crate) fn openai_chat_payload(request: &CompletionRequest) -> Value {
         }
     }
 
+    let model = request
+        .model
+        .strip_suffix("-fast")
+        .unwrap_or(&request.model)
+        .to_string();
     let mut payload = json!({
-        "model": request.model,
+        "model": model,
         "messages": messages,
     });
     if let Some(max_tokens) = request.max_tokens {
@@ -380,6 +381,13 @@ pub(crate) fn openai_chat_payload(request: &CompletionRequest) -> Value {
     };
     if let Some(label) = effective_effort.openai_effort_label() {
         payload["reasoning"] = json!({ "effort": label });
+    }
+    if let Some(service_tier) = request
+        .service_tier
+        .as_deref()
+        .and_then(crate::openai_codex::normalize_service_tier)
+    {
+        payload["service_tier"] = json!(service_tier);
     }
     if !request.tools.is_empty() {
         let tools = request
@@ -403,6 +411,17 @@ pub(crate) fn openai_chat_payload(request: &CompletionRequest) -> Value {
             ToolChoice::Required => Value::String("required".to_string()),
         };
     }
+    payload
+}
+
+/// Builds the OpenAI/OpenRouter streaming Chat Completions request body.
+///
+/// OpenRouter accepts the same OpenAI-compatible payload shape and endpoint
+/// suffix, so this helper deliberately stays provider-neutral at the wire level.
+pub(crate) fn openai_stream_payload(request: &CompletionRequest) -> Value {
+    let mut payload = openai_chat_payload(request);
+    payload["stream"] = Value::Bool(true);
+    payload["stream_options"] = json!({ "include_usage": true });
     payload
 }
 

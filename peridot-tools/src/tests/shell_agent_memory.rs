@@ -46,6 +46,40 @@ fn shell_install_approval_can_be_disabled_by_config() {
 }
 
 #[test]
+fn shell_exact_command_approval_skips_install_gate() {
+    let root = std::env::temp_dir().join(format!(
+        "peridot-tools-shell-approved-command-{}",
+        std::process::id()
+    ));
+    let ctx = ToolContext::new(&root, PermissionMode::Auto).with_security(
+        peridot_common::SecurityConfig {
+            approved_shell_commands: vec!["npm install left-pad".to_string()],
+            ..peridot_common::SecurityConfig::default()
+        },
+    );
+
+    enforce_shell_approval_policy("npm   install   left-pad", &ctx).unwrap();
+}
+
+#[test]
+fn shell_path_scope_approval_skips_matching_destructive_gate() {
+    let root = std::env::temp_dir().join(format!(
+        "peridot-tools-shell-approved-path-{}",
+        std::process::id()
+    ));
+    let ctx = ToolContext::new(&root, PermissionMode::Auto).with_security(
+        peridot_common::SecurityConfig {
+            approved_shell_path_scopes: vec!["target".to_string()],
+            ..peridot_common::SecurityConfig::default()
+        },
+    );
+
+    enforce_shell_approval_policy("rm -rf target", &ctx).unwrap();
+    let blocked = enforce_shell_approval_policy("rm -rf src", &ctx);
+    assert!(matches!(blocked, Err(PeriError::PermissionDenied(_))));
+}
+
+#[test]
 fn shell_requires_approval_for_destructive_commands() {
     let root = std::env::temp_dir().join(format!("peridot-tools-delete-{}", std::process::id()));
     let ctx = ToolContext::new(&root, PermissionMode::Yolo);

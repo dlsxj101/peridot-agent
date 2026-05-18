@@ -103,6 +103,7 @@ pub async fn run_llm_curator(
         max_tokens: Some(4096),
         thinking: false,
         reasoning_effort: ReasoningEffort::Off,
+        service_tier: None,
         tools: Vec::new(),
         tool_choice: ToolChoice::None,
     };

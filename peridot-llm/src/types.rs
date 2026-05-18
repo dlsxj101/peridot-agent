@@ -110,6 +110,10 @@ pub struct CompletionRequest {
     /// reasoning entirely so cheap chat-style models keep their cost.
     #[serde(default)]
     pub reasoning_effort: ReasoningEffort,
+    /// Optional provider service tier such as `fast` / `priority`.
+    /// Providers that do not support service tiers ignore it.
+    #[serde(default)]
+    pub service_tier: Option<String>,
     /// Native tool definitions surfaced to the model. Empty disables tool calling.
     #[serde(default)]
     pub tools: Vec<ToolDefinition>,

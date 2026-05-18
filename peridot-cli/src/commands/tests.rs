@@ -143,16 +143,56 @@ fn config_set_updates_known_keys() {
 
     set_config_key(&mut config, "auth.primary", "openrouter-api").unwrap();
     set_config_key(&mut config, "models.main", "openai/gpt-4o-mini").unwrap();
+    set_config_key(&mut config, "models.service_tier", "fast").unwrap();
     set_config_key(&mut config, "api.base_url", "https://openrouter.ai/api").unwrap();
     set_config_key(&mut config, "defaults.max_turns", "3").unwrap();
     set_config_key(&mut config, "git.auto_commit", "true").unwrap();
 
     assert_eq!(config.auth.primary, "openrouter-api");
     assert_eq!(config.models.main, "openai/gpt-4o-mini");
+    assert_eq!(config.models.service_tier.as_deref(), Some("fast"));
     assert_eq!(config.api.base_url, "https://openrouter.ai/api");
     assert_eq!(config.defaults.max_turns, 3);
     assert!(config.git.auto_commit);
     assert!(set_config_key(&mut config, "unknown.key", "value").is_err());
+    set_config_key(&mut config, "models.service_tier", "standard").unwrap();
+    assert_eq!(config.models.service_tier, None);
+}
+
+#[test]
+fn mcp_json_exposes_timeout_for_operator_status() {
+    let server = McpServerConfig {
+        name: "docs".to_string(),
+        transport: McpTransport::Http,
+        command: None,
+        args: Vec::new(),
+        env: Default::default(),
+        url: Some("http://127.0.0.1:3333".to_string()),
+        auth: None,
+        timeout_seconds: 7,
+    };
+
+    let value = mcp::mcp_json(&server);
+
+    assert_eq!(value["name"], "docs");
+    assert_eq!(value["timeout_seconds"], 7);
+    assert_eq!(value["configured"], true);
+}
+
+#[test]
+fn mcp_validation_rejects_missing_http_url() {
+    let server = McpServerConfig {
+        name: "empty".to_string(),
+        transport: McpTransport::Http,
+        command: None,
+        args: Vec::new(),
+        env: Default::default(),
+        url: None,
+        auth: None,
+        timeout_seconds: 30,
+    };
+
+    assert!(mcp::validate_mcp_server(&server).is_err());
 }
 
 #[test]
@@ -297,16 +337,46 @@ fn detects_openai_oauth_token_expiry_window() {
 fn builds_openai_authorize_url_with_escaped_values() {
     let url = openai_oauth_authorize_url(
         "client id",
-        "http://127.0.0.1:14552/callback",
+        "http://localhost:1455/auth/callback",
         "openid profile",
         "state",
         "challenge",
+        "peridot",
     );
 
     assert!(url.contains("client_id=client%20id"));
-    assert!(url.contains("redirect_uri=http%3A%2F%2F127.0.0.1%3A14552%2Fcallback"));
+    assert!(url.contains("redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback"));
     assert!(url.contains("scope=openid%20profile"));
     assert!(url.contains("code_challenge_method=S256"));
+    assert!(url.contains("id_token_add_organizations=true"));
+    assert!(url.contains("codex_cli_simplified_flow=true"));
+    assert!(url.contains("originator=peridot"));
+}
+
+#[test]
+fn extracts_openai_oauth_identity_from_access_token() {
+    let header = URL_SAFE_NO_PAD.encode(r#"{"alg":"none"}"#);
+    let payload = URL_SAFE_NO_PAD.encode(
+        r#"{"https://api.openai.com/auth":{"chatgpt_account_id":"acct_123","chatgpt_plan_type":"plus"},"https://api.openai.com/profile":{"email":"user@example.test"}}"#,
+    );
+    let token = format!("{header}.{payload}.sig");
+
+    let identity = openai_oauth_access_token_identity(&token);
+
+    assert_eq!(identity.account_id.as_deref(), Some("acct_123"));
+    assert_eq!(identity.chatgpt_plan_type.as_deref(), Some("plus"));
+    assert_eq!(identity.email.as_deref(), Some("user@example.test"));
+}
+
+#[test]
+fn parses_manual_oauth_redirect_input() {
+    let code = parse_authorization_input(
+        "http://localhost:1455/auth/callback?code=abc%20123&state=state%2Bvalue",
+        "state+value",
+    )
+    .unwrap();
+
+    assert_eq!(code, "abc 123");
 }
 
 #[test]

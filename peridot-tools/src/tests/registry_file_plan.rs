@@ -1,7 +1,7 @@
 use crate::tools::plan::PlanFile;
 use crate::{
-    FilePatchTool, FileReadTool, FileWriteTool, PlanCreateTool, PlanUpdateTool, Tool, ToolContext,
-    ToolRegistry,
+    FileOutlineTool, FilePatchTool, FileReadTool, FileWriteTool, PlanCreateTool, PlanUpdateTool,
+    SymbolSearchTool, Tool, ToolContext, ToolRegistry, WorkspaceSymbolsTool,
 };
 use async_trait::async_trait;
 use peridot_common::{
@@ -44,6 +44,22 @@ fn registry_orders_names() {
     assert!(
         !registry
             .get("read_only")
+            .unwrap()
+            .requires_confirmation(PermissionMode::Safe)
+    );
+}
+
+#[test]
+fn builtin_registry_includes_semantic_code_tools() {
+    let mut registry = ToolRegistry::new();
+    crate::register_builtin_tools(&mut registry).unwrap();
+
+    assert!(registry.get("file_outline").is_some());
+    assert!(registry.get("symbol_search").is_some());
+    assert!(registry.get("workspace_symbols").is_some());
+    assert!(
+        !registry
+            .get("workspace_symbols")
             .unwrap()
             .requires_confirmation(PermissionMode::Safe)
     );
@@ -132,6 +148,58 @@ async fn file_patch_replaces_one_segment() {
         fs::read_to_string(root.join("sample.txt")).unwrap(),
         "goodbye\nhello\n"
     );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn semantic_code_tools_outline_and_search_workspace_symbols() {
+    let root = std::env::temp_dir().join(format!("peridot-tools-symbols-{}", std::process::id()));
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::create_dir_all(root.join("node_modules/pkg")).unwrap();
+    fs::write(
+        root.join("src/lib.rs"),
+        "pub struct ProjectScanner;\nimpl ProjectScanner {\n    pub async fn scan(&self) {}\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src/app.ts"),
+        "export function renderApp() {}\nexport class AppShell {}\nconst hidden = 1;\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("node_modules/pkg/index.ts"),
+        "export function ignored() {}\n",
+    )
+    .unwrap();
+    let ctx = ToolContext::new(&root, PermissionMode::Auto);
+
+    let outline = FileOutlineTool
+        .execute(serde_json::json!({"path":"src/lib.rs"}), &ctx)
+        .await
+        .unwrap();
+    let outline = outline.output.as_array().unwrap();
+    assert_eq!(outline[0]["name"], "ProjectScanner");
+    assert_eq!(outline[1]["kind"], "impl");
+    assert_eq!(outline[2]["name"], "scan");
+
+    let symbols = WorkspaceSymbolsTool
+        .execute(serde_json::json!({"path":"src"}), &ctx)
+        .await
+        .unwrap();
+    let symbols = symbols.output.as_array().unwrap();
+    assert!(symbols.iter().any(|symbol| symbol["name"] == "renderApp"));
+    assert!(!symbols.iter().any(|symbol| symbol["name"] == "ignored"));
+
+    let matches = SymbolSearchTool
+        .execute(serde_json::json!({"query":"scanner"}), &ctx)
+        .await
+        .unwrap();
+    let matches = matches.output.as_array().unwrap();
+    assert!(matches.len() >= 2);
+    assert!(matches.iter().all(|symbol| symbol["path"] == "src/lib.rs"));
+    assert!(matches.iter().any(|symbol| symbol["kind"] == "struct"));
+    assert!(matches.iter().any(|symbol| symbol["kind"] == "impl"));
+
     fs::remove_dir_all(root).unwrap();
 }
 

@@ -91,8 +91,11 @@ pub enum ApprovalScope {
     Once,
     /// Remember for the rest of this session.
     Session,
-    /// Persist to the workspace config for future sessions.
-    Always,
+    /// Remember this exact shell command.
+    #[serde(alias = "always")]
+    Command,
+    /// Remember operations scoped to this path.
+    Path,
 }
 
 impl ApprovalPanel {
@@ -136,11 +139,12 @@ impl ApprovalPanel {
         self
     }
 
-    pub(super) fn choices(&self) -> [&'static str; 4] {
+    pub(super) fn choices(&self) -> [&'static str; 5] {
         [
             "Approve once",
             "Approve for session",
-            "Approve always",
+            "Approve command",
+            "Approve path",
             "Deny",
         ]
     }
@@ -149,7 +153,8 @@ impl ApprovalPanel {
         match self.selected_index {
             0 => (ApprovalDecision::Approve, ApprovalScope::Once),
             1 => (ApprovalDecision::Approve, ApprovalScope::Session),
-            2 => (ApprovalDecision::Approve, ApprovalScope::Always),
+            2 => (ApprovalDecision::Approve, ApprovalScope::Command),
+            3 => (ApprovalDecision::Approve, ApprovalScope::Path),
             _ => (ApprovalDecision::Deny, ApprovalScope::Once),
         }
     }

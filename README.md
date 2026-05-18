@@ -124,11 +124,18 @@ main = "openai/gpt-5.2"
 cargo run -p peridot-cli -- run "inspect this project" --headless
 ```
 
-For ChatGPT Pro through the local Codex app-server, log in with Codex first, then use the `codex` provider:
+For ChatGPT subscription access through OpenAI OAuth direct, log in once and use the `openai-oauth` provider:
+
+```bash
+cargo run -p peridot-cli -- login openai-oauth
+```
 
 ```toml
 [auth]
-primary = "codex"
+primary = "openai-oauth"
+
+[api]
+base_url = "https://chatgpt.com/backend-api/codex"
 
 [models]
 main = "gpt-5.5"

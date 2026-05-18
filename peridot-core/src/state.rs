@@ -59,6 +59,7 @@ impl AgentState {
             | SlashCommand::Committee(_)
             | SlashCommand::Note(_)
             | SlashCommand::Info
+            | SlashCommand::ContextTop
             | SlashCommand::Compact
             | SlashCommand::SessionSave
             | SlashCommand::Diff
@@ -73,6 +74,7 @@ impl AgentState {
             | SlashCommand::SessionList
             | SlashCommand::SubagentModel(_)
             | SlashCommand::Reasoning(_)
+            | SlashCommand::Fast(_)
             | SlashCommand::McpList
             | SlashCommand::McpAdd { .. }
             | SlashCommand::McpRemove(_)

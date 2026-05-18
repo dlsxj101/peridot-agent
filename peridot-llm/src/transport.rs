@@ -45,26 +45,14 @@ where
     F: FnMut(&str) -> PeriResult<()>,
 {
     let mut stream = response.bytes_stream();
-    let mut buffer = String::new();
+    let mut buffer = Vec::new();
     while let Some(chunk) = stream.next().await {
         let chunk =
             chunk.map_err(|err| PeriError::Provider(format!("stream read failed: {err}")))?;
-        let text = std::str::from_utf8(&chunk)
-            .map_err(|err| PeriError::Provider(format!("stream chunk was not UTF-8: {err}")))?;
-        buffer.push_str(text);
-        while let Some(boundary) = find_sse_boundary(&buffer) {
-            let event_text = buffer[..boundary.end].to_string();
-            buffer = buffer[boundary.end..].to_string();
-            let data = collect_sse_data(&event_text);
-            if !data.is_empty() {
-                on_event(&data)?;
-            }
-        }
+        buffer.extend_from_slice(&chunk);
+        drain_sse_events(&mut buffer, &mut on_event)?;
     }
-    let data = collect_sse_data(&buffer);
-    if !data.is_empty() {
-        on_event(&data)?;
-    }
+    drain_sse_tail(buffer, &mut on_event)?;
     Ok(())
 }
 
@@ -73,18 +61,43 @@ struct SseBoundary {
     end: usize,
 }
 
-/// Finds the byte index just past the next SSE event terminator (`\n\n` or `\r\n\r\n`)
-/// in `text`. Returns `None` while the buffer still ends mid-event so the caller keeps
-/// accumulating bytes.
-fn find_sse_boundary(text: &str) -> Option<SseBoundary> {
-    if let Some(idx) = text.find("\r\n\r\n") {
-        return Some(SseBoundary {
-            end: idx + "\r\n\r\n".len(),
-        });
+fn find_sse_boundary_bytes(bytes: &[u8]) -> Option<SseBoundary> {
+    if let Some(idx) = bytes.windows(4).position(|window| window == b"\r\n\r\n") {
+        return Some(SseBoundary { end: idx + 4 });
     }
-    text.find("\n\n").map(|idx| SseBoundary {
-        end: idx + "\n\n".len(),
-    })
+    bytes
+        .windows(2)
+        .position(|window| window == b"\n\n")
+        .map(|idx| SseBoundary { end: idx + 2 })
+}
+
+fn drain_sse_events<F>(buffer: &mut Vec<u8>, on_event: &mut F) -> PeriResult<()>
+where
+    F: FnMut(&str) -> PeriResult<()>,
+{
+    while let Some(boundary) = find_sse_boundary_bytes(buffer) {
+        let event_bytes: Vec<u8> = buffer.drain(..boundary.end).collect();
+        let event_text = String::from_utf8(event_bytes)
+            .map_err(|err| PeriError::Provider(format!("stream event was not UTF-8: {err}")))?;
+        let data = collect_sse_data(&event_text);
+        if !data.is_empty() {
+            on_event(&data)?;
+        }
+    }
+    Ok(())
+}
+
+fn drain_sse_tail<F>(buffer: Vec<u8>, on_event: &mut F) -> PeriResult<()>
+where
+    F: FnMut(&str) -> PeriResult<()>,
+{
+    let tail = String::from_utf8(buffer)
+        .map_err(|err| PeriError::Provider(format!("stream tail was not UTF-8: {err}")))?;
+    let data = collect_sse_data(&tail);
+    if !data.is_empty() {
+        on_event(&data)?;
+    }
+    Ok(())
 }
 
 /// Joins all `data:` payload lines from one SSE event block into a single string,
@@ -127,4 +140,39 @@ pub(crate) fn sse_data_events(body: &str) -> Vec<String> {
         events.push(current.join("\n"));
     }
     events
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sse_drain_tolerates_utf8_split_across_chunks() {
+        let mut buffer = Vec::new();
+        let mut events = Vec::new();
+        let event = "data: {\"delta\":\"안녕\"}\n\n".as_bytes();
+        let split_at = event
+            .windows("녕".as_bytes().len())
+            .position(|window| window == "녕".as_bytes())
+            .expect("test fixture should contain target syllable")
+            + 1;
+
+        buffer.extend_from_slice(&event[..split_at]);
+        drain_sse_events(&mut buffer, &mut |data: &str| {
+            events.push(data.to_string());
+            Ok(())
+        })
+        .unwrap();
+        assert!(events.is_empty());
+
+        buffer.extend_from_slice(&event[split_at..]);
+        drain_sse_events(&mut buffer, &mut |data: &str| {
+            events.push(data.to_string());
+            Ok(())
+        })
+        .unwrap();
+
+        assert_eq!(events, vec!["{\"delta\":\"안녕\"}".to_string()]);
+        assert!(buffer.is_empty());
+    }
 }

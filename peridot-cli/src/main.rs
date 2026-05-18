@@ -11,7 +11,7 @@ use commands::{
     AgentsCommand, AuthProvider, ConfigCommand, EnvCommand, McpCommand, OutputFormat,
     SessionCommand, SkillCommand, load_effective_config, maybe_print_update_notice,
     maybe_run_first_launch_wizard, move_auto_skill_to_archive, print_scan, read_stored_api_key,
-    read_stored_openai_oauth_access_token, run_agents_command, run_config_command, run_env_command,
+    read_stored_openai_oauth_credentials, run_agents_command, run_config_command, run_env_command,
     run_login_command, run_logout_command, run_mcp_command, run_session_command,
     run_setting_command, run_setup_command, run_skill_command, run_update_command,
     run_verify_command,
@@ -26,8 +26,8 @@ use peridot_core::{
 };
 use peridot_git::GitManager;
 use peridot_llm::{
-    AuthMethod, ClaudeProvider, CodexAppServerProvider, CompletionRequest, CompletionResponse,
-    LlmProvider, OpenAiProvider, PricingTable, Usage,
+    AuthMethod, ClaudeProvider, CompletionRequest, CompletionResponse, LlmProvider,
+    OpenAiCodexProvider, OpenAiProvider, PricingTable, Usage,
 };
 use peridot_mcp::McpClient;
 use peridot_memory::{
@@ -37,10 +37,11 @@ use peridot_project::ProjectScanner;
 use peridot_tools::hooks::{HookRunner, HookVariables, lifecycle_hook_variables};
 use peridot_tools::{ToolRegistry, register_builtin_tools, register_mcp_tools};
 use peridot_tui::{
-    ApprovalDecision, HeaderState, SessionCommandEvent, SessionDirectoryItem, TuiRuntimeEvent,
-    TuiState, run_interactive_with_events,
+    ApprovalDecision, ApprovalGrant, ApprovalScope, HeaderState, SessionCommandEvent,
+    SessionDirectoryItem, TuiRuntimeEvent, TuiState, run_interactive_with_events,
 };
 
+mod checkpoints;
 mod commands;
 mod context_limits;
 mod curator;
@@ -53,6 +54,7 @@ mod session_router;
 #[cfg(test)]
 mod tests;
 
+use checkpoints::restore_latest_checkpoint;
 use context_limits::project_context_limits_from_config;
 use interactive_io::{read_piped_task, run_tui_lifecycle_hooks};
 use providers::{FileMockProvider, live_provider};
@@ -444,10 +446,12 @@ async fn main() -> Result<()> {
                     }
                 } else {
                     maybe_print_update_notice(&config, cli.effective_headless(), cli.output).await;
+                    let suspended = scan_and_suspend_running_sessions(&project_root);
                     let restored_state = cli
                         .resume
                         .as_deref()
-                        .and_then(|id| restore_tui_state_from_disk(id, &project_root).ok());
+                        .and_then(|id| restore_tui_state_from_disk(id, &project_root).ok())
+                        .or_else(|| restore_latest_tui_state_from_disk(&project_root).ok());
                     let workspace_label = project_root
                         .file_name()
                         .and_then(|name| name.to_str())
@@ -457,7 +461,10 @@ async fn main() -> Result<()> {
                             let mut state = restored.with_config(config.tui.clone());
                             state.header.workspace_label = workspace_label.clone();
                             state.committee_mode = config.committee.mode;
-                            state.push_notice(format!("session: resumed {id} from disk"));
+                            if state.service_tier.is_none() {
+                                state.service_tier = config.models.service_tier.clone();
+                            }
+                            state.push_notice(format!("session: restored {id} from disk"));
                             state
                         }
                         None => {
@@ -465,6 +472,7 @@ async fn main() -> Result<()> {
                             header.workspace_label = workspace_label.clone();
                             let mut state = TuiState::new(header).with_config(config.tui.clone());
                             state.committee_mode = config.committee.mode;
+                            state.service_tier = config.models.service_tier.clone();
                             // Warm the `@file` picker index up-front so the
                             // first `@` keystroke gets an instant suggestion
                             // list instead of having to walk the project
@@ -477,7 +485,6 @@ async fn main() -> Result<()> {
                             state
                         }
                     };
-                    let suspended = scan_and_suspend_running_sessions(&project_root);
                     if !suspended.is_empty() {
                         state.push_notice(format!(
                             "found {} stale session(s) marked Suspended: {}. \
@@ -488,6 +495,7 @@ async fn main() -> Result<()> {
                     }
                     let router: std::sync::Arc<std::sync::Mutex<SessionRouter>> =
                         std::sync::Arc::new(std::sync::Mutex::new(SessionRouter::new()));
+                    hydrate_persisted_sessions(&mut state, &router, &project_root);
                     let initial_session_id = if state.current_session_id.is_empty() {
                         let new_id = format!("session-{}-{}", std::process::id(), unix_timestamp());
                         state.current_session_id = new_id.clone();
@@ -498,11 +506,13 @@ async fn main() -> Result<()> {
                     } else {
                         state.current_session_id.clone()
                     };
-                    router.lock().unwrap().register(SessionHandle::new(
-                        initial_session_id.clone(),
-                        project_root.clone(),
-                        WorkspaceIsolation::Shared,
-                    ));
+                    if router.lock().unwrap().get(&initial_session_id).is_none() {
+                        router.lock().unwrap().register(SessionHandle::new(
+                            initial_session_id.clone(),
+                            project_root.clone(),
+                            WorkspaceIsolation::Shared,
+                        ));
+                    }
                     let (event_tx, event_rx) =
                         std::sync::mpsc::channel::<(String, TuiRuntimeEvent)>();
                     let handle = tokio::runtime::Handle::current();
@@ -524,6 +534,8 @@ async fn main() -> Result<()> {
                                 let mut options = options_template.clone();
                                 options.permission = state.header.permission;
                                 options.model = state.header.model.clone();
+                                options.reasoning_effort = state.reasoning_effort;
+                                options.service_tier = state.service_tier.clone();
                                 let token = peridot_core::CancelToken::new();
                                 let compact_flag = {
                                     let mut router = router.lock().unwrap();
@@ -534,10 +546,7 @@ async fn main() -> Result<()> {
                                         None
                                     }
                                 };
-                                let effective_config = config_with_provider(
-                                    &config_template,
-                                    state.header.provider.as_deref(),
-                                );
+                                let effective_config = config_for_state(&config_template, state);
                                 spawn_tui_agent_run(
                                     handle.clone(),
                                     event_tx.clone(),
@@ -562,8 +571,9 @@ async fn main() -> Result<()> {
                             let project_template = run_project_root.clone();
                             move |decision,
                                   scope,
-                                  _tool_name,
+                                  tool_name,
                                   reason,
+                                  parameters,
                                   synthesised_parameters,
                                   state| {
                                 if decision != ApprovalDecision::Approve {
@@ -579,19 +589,29 @@ async fn main() -> Result<()> {
                                 let mut options = options_template.clone();
                                 options.permission = state.header.permission;
                                 options.model = state.header.model.clone();
-                                let mut config = config_with_provider(
-                                    &config_template,
-                                    state.header.provider.as_deref(),
+                                options.reasoning_effort = state.reasoning_effort;
+                                options.service_tier = state.service_tier.clone();
+                                let grant = approval_grant_from_event(
+                                    tool_name.clone(),
+                                    reason.clone(),
+                                    scope,
+                                    &parameters,
                                 );
-                                relax_security_for_approval(&mut config, &reason);
+                                let mut config = config_for_state(&config_template, state);
+                                apply_approval_grant_to_config(&mut config, &grant);
+                                if scope != ApprovalScope::Once
+                                    && !state.approval_grants.contains(&grant)
+                                {
+                                    state.approval_grants.push(grant.clone());
+                                }
                                 if synthesised_parameters.is_some() {
                                     state.push_transcript(
                                         "approval: partial-hunk patch staged — re-running with selected hunks only",
                                     );
                                 }
-                                if scope != peridot_tui::ApprovalScope::Once {
+                                if scope != ApprovalScope::Once {
                                     state.push_transcript(format!(
-                                        "approval: scope {scope:?} noted (persistence TBD)"
+                                        "approval: scope {scope:?} remembered for this session"
                                     ));
                                 }
                                 let token = peridot_core::CancelToken::new();
@@ -635,6 +655,13 @@ async fn main() -> Result<()> {
                                 };
                                 if cancelled {
                                     state.push_transcript("interrupting current run...");
+                                    let queued = state.input_queue.len();
+                                    if queued > 0 {
+                                        state.input_queue.clear();
+                                        state.push_transcript(format!(
+                                            "interrupt: cleared {queued} queued input(s); re-submit manually when ready"
+                                        ));
+                                    }
                                 } else {
                                     state.push_transcript("interrupt: no active run");
                                 }
@@ -784,7 +811,7 @@ fn apply_session_command(
     config_template: &PeridotConfig,
     project_template: &Path,
 ) {
-    let effective_config = config_with_provider(config_template, state.header.provider.as_deref());
+    let effective_config = config_for_state(config_template, state);
     let config_template = &effective_config;
     match command {
         SessionCommandEvent::SessionNew(task) => {
@@ -809,6 +836,8 @@ fn apply_session_command(
                     state.header.mode,
                     state.header.permission,
                     state.header.model.clone(),
+                    state.reasoning_effort,
+                    state.service_tier.clone(),
                     options_template,
                     config_template,
                     project_template,
@@ -865,6 +894,7 @@ fn apply_session_command(
                 }
                 if removed {
                     state.sessions.retain(|item| item.id != id);
+                    delete_persisted_session(project_template, &id);
                     if state.current_session_id == id {
                         state.current_session_id = router
                             .lock()
@@ -908,6 +938,8 @@ fn apply_session_command(
                 state.header.mode,
                 state.header.permission,
                 state.header.model.clone(),
+                state.reasoning_effort,
+                state.service_tier.clone(),
                 options_template,
                 config_template,
                 project_template,
@@ -984,8 +1016,127 @@ fn apply_session_command(
         SessionCommandEvent::CompactContext => {
             handle_compact_context(state, router);
         }
+        SessionCommandEvent::ContextTop => {
+            handle_context_top(state, project_template);
+        }
+        SessionCommandEvent::UndoLastCheckpoint => {
+            handle_undo_last_checkpoint(state, project_template);
+        }
     }
     warn_on_shared_workspace_collisions(state, router, project_template);
+}
+
+fn context_snapshot_path(project_root: &Path, session_id: &str) -> PathBuf {
+    project_root
+        .join(".peridot/sessions")
+        .join(session_id)
+        .join("context.bin")
+}
+
+fn read_context_snapshot(
+    project_root: &Path,
+    session_id: &str,
+) -> Result<Vec<peridot_context::ContextEntry>, String> {
+    let snapshot_path = context_snapshot_path(project_root, session_id);
+    if !snapshot_path.exists() {
+        return Err("no context snapshot has been written for this session yet".to_string());
+    }
+    let bytes = std::fs::read(&snapshot_path)
+        .map_err(|err| format!("failed to read {}: {err}", snapshot_path.display()))?;
+    serde_json::from_slice(&bytes)
+        .map_err(|err| format!("failed to parse {}: {err}", snapshot_path.display()))
+}
+
+fn estimate_context_tokens(text: &str) -> usize {
+    text.len().div_ceil(4)
+}
+
+fn context_top_report(
+    entries: &[peridot_context::ContextEntry],
+    status_tokens: usize,
+    status_window: usize,
+    limit: usize,
+) -> String {
+    if entries.is_empty() {
+        return "context top: <empty>".to_string();
+    }
+
+    let mut source_totals: std::collections::BTreeMap<&'static str, usize> =
+        std::collections::BTreeMap::new();
+    let mut rows: Vec<(&peridot_context::ContextEntry, usize)> = entries
+        .iter()
+        .map(|entry| {
+            let tokens = estimate_context_tokens(&entry.content);
+            *source_totals
+                .entry(source_label(&entry.source))
+                .or_default() += tokens;
+            (entry, tokens)
+        })
+        .collect();
+    rows.sort_by_key(|row| std::cmp::Reverse(row.1));
+
+    let estimated_total: usize = rows.iter().map(|(_, tokens)| *tokens).sum();
+    let status = if status_window > 0 {
+        format!("status {} / {}", status_tokens, status_window)
+    } else {
+        "status <unknown>".to_string()
+    };
+    let mut report = format!(
+        "context top: {} entries · estimated {} tok · {status}\nby source:",
+        entries.len(),
+        estimated_total
+    );
+    for (source, tokens) in source_totals {
+        report.push_str(&format!("\n  {source}: {tokens} tok"));
+    }
+    report.push_str("\nlargest entries:");
+    for (index, (entry, tokens)) in rows.into_iter().take(limit.max(1)).enumerate() {
+        let marker = if entry.untrusted { " untrusted" } else { "" };
+        let tool = entry
+            .tool_call_id
+            .as_deref()
+            .map(|id| format!(" · call {id}"))
+            .unwrap_or_default();
+        report.push_str(&format!(
+            "\n  {}. {} turn {} · {} tok{}{} · {}",
+            index + 1,
+            source_label(&entry.source),
+            entry.turn_id,
+            tokens,
+            marker,
+            tool,
+            preview_line(&entry.content, 120)
+        ));
+    }
+    report
+}
+
+fn handle_context_top(state: &mut TuiState, project_root: &Path) {
+    let session_id = state.current_session_id.clone();
+    if session_id.is_empty() {
+        state.push_error("context top: no active session".to_string());
+        return;
+    }
+    match read_context_snapshot(project_root, &session_id) {
+        Ok(entries) => {
+            let status_tokens = state.side_panel.context_tokens_used;
+            let status_window = state.side_panel.context_tokens_window;
+            state.push_transcript(context_top_report(
+                &entries,
+                status_tokens,
+                status_window,
+                10,
+            ));
+        }
+        Err(message) => state.push_error(format!("context top: {message}")),
+    }
+}
+
+fn handle_undo_last_checkpoint(state: &mut TuiState, project_root: &Path) {
+    match restore_latest_checkpoint(project_root) {
+        Ok(message) => state.push_transcript(message),
+        Err(err) => state.push_error(format!("undo: {err}")),
+    }
 }
 
 /// Loads the session's context snapshot and pushes the resulting
@@ -1003,10 +1154,7 @@ fn handle_branch_picker_open(
         state.branch_picker = None;
         return;
     }
-    let snapshot_path = project_root
-        .join(".peridot/sessions")
-        .join(&session_id)
-        .join("context.bin");
+    let snapshot_path = context_snapshot_path(project_root, &session_id);
     if !snapshot_path.exists() {
         state.push_error("branch picker: no snapshot to fork from".to_string());
         state.branch_picker = None;
@@ -1107,10 +1255,7 @@ fn handle_branch_turn(state: &mut TuiState, project_root: &Path, turn_id: u64) {
         state.push_error("branch turn: no active session id".to_string());
         return;
     }
-    let snapshot_path = project_root
-        .join(".peridot/sessions")
-        .join(&session_id)
-        .join("context.bin");
+    let snapshot_path = context_snapshot_path(project_root, &session_id);
     if !snapshot_path.exists() {
         state.push_error("branch turn: no context snapshot to fork from".to_string());
         return;
@@ -1472,6 +1617,8 @@ fn spawn_worktree_session(
         state.header.mode,
         state.header.permission,
         state.header.model.clone(),
+        state.reasoning_effort,
+        state.service_tier.clone(),
         options_template,
         config_template,
         &worktree_path,
@@ -1980,6 +2127,82 @@ fn restore_tui_state_from_disk(
     Ok((id.to_string(), state))
 }
 
+fn restore_latest_tui_state_from_disk(project_root: &Path) -> anyhow::Result<(String, TuiState)> {
+    let memory = MemoryStore::new(project_root.join(".peridot/memory.db"));
+    let records = memory.list_session_records()?;
+    for record in records {
+        if let Ok(restored) = restore_tui_state_from_disk(&record.id, project_root) {
+            return Ok(restored);
+        }
+    }
+    anyhow::bail!("no persisted sessions found")
+}
+
+fn hydrate_persisted_sessions(
+    state: &mut TuiState,
+    router: &std::sync::Arc<std::sync::Mutex<SessionRouter>>,
+    project_root: &Path,
+) {
+    let memory = MemoryStore::new(project_root.join(".peridot/memory.db"));
+    let Ok(records) = memory.list_session_records() else {
+        return;
+    };
+    let sessions_root = project_root.join(".peridot").join("sessions");
+    let mut router = router.lock().unwrap();
+    for record in records {
+        if peridot_memory::load_session_blob(&sessions_root, &record.id, "tui_state.json")
+            .ok()
+            .flatten()
+            .is_none()
+        {
+            continue;
+        }
+        if !state.sessions.iter().any(|item| item.id == record.id) {
+            let title = record
+                .last_task
+                .as_deref()
+                .filter(|task| !task.trim().is_empty())
+                .or_else(|| (!record.summary.trim().is_empty()).then_some(record.summary.as_str()))
+                .unwrap_or(record.id.as_str());
+            let mut item = SessionDirectoryItem::new(&record.id, title);
+            item.status = agent_status_from_lifecycle(record.status);
+            item.tokens = record.total_tokens;
+            item.cost_usd = record.total_cost_usd;
+            item.last_event_at_unix = record.updated_at_unix;
+            state.sessions.push(item);
+        }
+        if router.get(&record.id).is_none() {
+            let isolation = match record.worktree_branch.clone() {
+                Some(branch) => WorkspaceIsolation::Worktree { branch },
+                None => WorkspaceIsolation::Shared,
+            };
+            let mut handle =
+                SessionHandle::new(&record.id, record.workspace_root.clone(), isolation);
+            handle.lifecycle = record.status;
+            handle.started_at_unix = record.created_at_unix;
+            router.register(handle);
+        }
+    }
+    if state.current_session_id.is_empty() {
+        state.current_session_id = state
+            .sessions
+            .first()
+            .map(|item| item.id.clone())
+            .unwrap_or_default();
+    }
+    if !state.current_session_id.is_empty() {
+        let _ = router.switch_to(&state.current_session_id);
+    }
+}
+
+fn delete_persisted_session(project_root: &Path, id: &str) {
+    let memory = MemoryStore::new(project_root.join(".peridot/memory.db"));
+    let _ = memory.delete_session_record(id);
+    let _ = memory.delete_session(id);
+    let sessions_root = project_root.join(".peridot").join("sessions");
+    let _ = peridot_memory::remove_session_dir(&sessions_root, id);
+}
+
 /// Downgrades any session record still marked `Running` to `Suspended` on
 /// startup. Returns the ids that were transitioned.
 fn scan_and_suspend_running_sessions(project_root: &Path) -> Vec<String> {
@@ -2001,6 +2224,15 @@ fn scan_and_suspend_running_sessions(project_root: &Path) -> Vec<String> {
     suspended
 }
 
+fn agent_status_from_lifecycle(status: SessionLifecycle) -> peridot_tui::AgentRunStatus {
+    match status {
+        SessionLifecycle::Idle | SessionLifecycle::Suspended => peridot_tui::AgentRunStatus::Idle,
+        SessionLifecycle::Running => peridot_tui::AgentRunStatus::Running,
+        SessionLifecycle::Done => peridot_tui::AgentRunStatus::Succeeded,
+        SessionLifecycle::Failed => peridot_tui::AgentRunStatus::Failed,
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn spawn_session_task(
     handle: &tokio::runtime::Handle,
@@ -2011,6 +2243,8 @@ fn spawn_session_task(
     mode: ExecutionMode,
     permission: PermissionMode,
     model: String,
+    reasoning_effort: peridot_common::ReasoningEffort,
+    service_tier: Option<String>,
     options_template: &run_loop::AgentTaskOptions,
     config_template: &PeridotConfig,
     project_template: &Path,
@@ -2018,6 +2252,8 @@ fn spawn_session_task(
     let mut options = options_template.clone();
     options.permission = permission;
     options.model = model;
+    options.reasoning_effort = reasoning_effort;
+    options.service_tier = service_tier;
     let token = peridot_core::CancelToken::new();
     let compact_flag = {
         let mut router = router.lock().unwrap();
@@ -2049,6 +2285,13 @@ fn resolve_session_id(state: &TuiState, target: &str) -> Option<String> {
         .map(|item| item.id.clone())
 }
 
+fn config_for_state(template: &PeridotConfig, state: &TuiState) -> PeridotConfig {
+    let mut config = config_with_provider(template, state.header.provider.as_deref());
+    config.models.service_tier = state.service_tier.clone();
+    apply_approval_grants(&mut config, &state.approval_grants);
+    config
+}
+
 fn relax_security_for_approval(config: &mut PeridotConfig, reason: &str) {
     if reason.contains("dependency installation") {
         config.security.ask_before_install = false;
@@ -2056,6 +2299,84 @@ fn relax_security_for_approval(config: &mut PeridotConfig, reason: &str) {
     if reason.contains("destructive shell command") {
         config.security.ask_before_delete = false;
     }
+}
+
+fn approval_grant_from_event(
+    tool_name: String,
+    reason: String,
+    scope: ApprovalScope,
+    parameters: &serde_json::Value,
+) -> ApprovalGrant {
+    ApprovalGrant {
+        tool_name,
+        reason,
+        scope,
+        command: parameters
+            .get("command")
+            .and_then(serde_json::Value::as_str)
+            .map(normalize_shell_command_for_grant),
+        path: parameters
+            .get("path")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string),
+    }
+}
+
+fn apply_approval_grants(config: &mut PeridotConfig, grants: &[ApprovalGrant]) {
+    for grant in grants {
+        apply_approval_grant_to_config(config, grant);
+    }
+}
+
+fn apply_approval_grant_to_config(config: &mut PeridotConfig, grant: &ApprovalGrant) {
+    match grant.scope {
+        ApprovalScope::Once => {
+            if let Some(command) = grant.command.as_ref() {
+                push_unique_string(
+                    &mut config.security.approved_shell_commands,
+                    command.clone(),
+                );
+            } else {
+                relax_security_for_approval(config, &grant.reason);
+            }
+        }
+        ApprovalScope::Session => relax_security_for_approval(config, &grant.reason),
+        ApprovalScope::Command => {
+            if let Some(command) = grant.command.as_ref() {
+                push_unique_string(
+                    &mut config.security.approved_shell_commands,
+                    command.clone(),
+                );
+            } else {
+                relax_security_for_approval(config, &grant.reason);
+            }
+        }
+        ApprovalScope::Path => {
+            if let Some(path) = grant.path.as_ref() {
+                push_unique_string(
+                    &mut config.security.approved_shell_path_scopes,
+                    path.clone(),
+                );
+            } else if let Some(command) = grant.command.as_ref() {
+                push_unique_string(
+                    &mut config.security.approved_shell_commands,
+                    command.clone(),
+                );
+            } else {
+                relax_security_for_approval(config, &grant.reason);
+            }
+        }
+    }
+}
+
+fn push_unique_string(values: &mut Vec<String>, value: String) {
+    if !values.iter().any(|existing| existing == &value) {
+        values.push(value);
+    }
+}
+
+fn normalize_shell_command_for_grant(command: &str) -> String {
+    command.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn tui_runtime_event_from_agent(event: AgentRunEvent) -> TuiRuntimeEvent {

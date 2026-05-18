@@ -466,6 +466,7 @@ mod tests {
             max_tokens: Some(1000),
             thinking: false,
             reasoning_effort: peridot_common::ReasoningEffort::Off,
+            service_tier: None,
             tools: Vec::new(),
             tool_choice: crate::ToolChoice::Auto,
         });

@@ -83,6 +83,7 @@ where
         max_tokens: Some(64),
         thinking: false,
         reasoning_effort: ReasoningEffort::Off,
+        service_tier: None,
         tools: Vec::new(),
         tool_choice: ToolChoice::None,
     };

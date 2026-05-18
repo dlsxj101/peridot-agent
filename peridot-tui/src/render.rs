@@ -257,7 +257,7 @@ pub(super) fn render_welcome(state: &TuiState) -> String {
          Slash commands\n\
          /plan  /execute  /goal <objective>  /safe  /auto  /yolo  /help  /lang en|ko\n\n\
          Keys\n\
-         Enter sends  |  Ctrl+J / Alt+Enter newline  |  Esc interrupts/menu  |  Ctrl+P menu  |  Ctrl+] side panel  |  Ctrl-C quits",
+         Enter sends  |  Ctrl+J / Alt+Enter newline  |  Esc interrupts/menu  |  Ctrl+P menu  |  Ctrl+] side panel  |  Ctrl-C twice quits",
         state.header.model, state.header.mode, state.header.permission, workspace
     )
 }

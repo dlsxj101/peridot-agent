@@ -18,6 +18,14 @@ fn parses_goal_slash_commands() {
     assert_eq!(parse_slash_command("/help"), Some(SlashCommand::Help));
     assert_eq!(parse_slash_command("/cost"), Some(SlashCommand::Cost));
     assert_eq!(
+        parse_slash_command("/context top"),
+        Some(SlashCommand::ContextTop)
+    );
+    assert_eq!(
+        parse_slash_command("/context"),
+        Some(SlashCommand::ContextTop)
+    );
+    assert_eq!(
         parse_slash_command("/plan show"),
         Some(SlashCommand::PlanShow)
     );
@@ -28,6 +36,18 @@ fn parses_goal_slash_commands() {
     assert_eq!(
         parse_slash_command("/session save"),
         Some(SlashCommand::SessionSave)
+    );
+    assert_eq!(
+        parse_slash_command("/fast on"),
+        Some(SlashCommand::Fast(Some(true)))
+    );
+    assert_eq!(
+        parse_slash_command("/fast off"),
+        Some(SlashCommand::Fast(Some(false)))
+    );
+    assert_eq!(
+        parse_slash_command("/fast toggle"),
+        Some(SlashCommand::Fast(None))
     );
 }
 

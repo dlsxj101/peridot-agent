@@ -35,6 +35,7 @@ where
             max_tokens: Some(512),
             thinking: false,
             reasoning_effort: peridot_common::ReasoningEffort::Off,
+                service_tier: None,
             tools: Vec::new(),
             tool_choice: ToolChoice::Auto,
         })

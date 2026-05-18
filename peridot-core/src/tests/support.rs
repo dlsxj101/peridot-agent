@@ -80,6 +80,16 @@ impl StaticProvider {
             parse_failures_remaining: AtomicU64::new(0),
         }
     }
+
+    pub(crate) fn new_custom_completion(text: String, tool_calls: Vec<ToolInvocation>) -> Self {
+        Self {
+            responses: Mutex::new(Vec::new()),
+            custom_completions: Mutex::new(vec![(text, tool_calls)]),
+            cost_usd: 0.0,
+            call_counter: AtomicU64::new(0),
+            parse_failures_remaining: AtomicU64::new(0),
+        }
+    }
 }
 
 /// Interprets a canned response string. Legacy `{"action": "...", "parameters": {...}}`

@@ -325,9 +325,10 @@ impl ContextManager {
         self.limits.compaction_threshold_tokens
     }
 
-    /// Compacts old entries into a structured reminder when the soft limit is exceeded.
+    /// Compacts old entries into a structured reminder when the automatic
+    /// compaction threshold is exceeded.
     pub fn compact_if_needed(&mut self) -> bool {
-        if self.estimated_tokens() <= self.limits.compaction_threshold_tokens
+        if self.estimated_tokens() <= self.llm_compaction_threshold()
             || self.entries.len() <= COMPACTION_KEEP_TAIL
         {
             return false;
@@ -339,7 +340,7 @@ impl ContextManager {
     fn compact_tier1(&mut self) {
         let keep_from = self.entries.len().saturating_sub(COMPACTION_KEEP_TAIL);
         let summary = summarize_entries(&self.entries[..keep_from]);
-        let preserved_anchor = self.preserved_initial_user_entry();
+        let preserved_anchor = self.preserved_current_user_entry_before(keep_from);
         let mut compacted = Vec::new();
         if let Some(anchor) = preserved_anchor {
             compacted.push(anchor);
@@ -349,14 +350,25 @@ impl ContextManager {
         self.entries = compacted;
     }
 
-    /// Returns a clone of the very first `User` entry — almost always
-    /// the operator's original task. Compaction restores it intact so
-    /// the agent never loses the anchoring instruction even after
-    /// multiple recap passes.
-    fn preserved_initial_user_entry(&self) -> Option<ContextEntry> {
+    /// Returns the most recent `User` entry that would otherwise be folded
+    /// into the compacted prefix. This keeps the active objective alive while
+    /// avoiding an old greeting or stale first prompt becoming the permanent
+    /// anchor after compaction.
+    fn preserved_current_user_entry_before(&self, end: usize) -> Option<ContextEntry> {
+        let latest_user = self
+            .entries
+            .iter()
+            .take(end)
+            .rev()
+            .find(|entry| entry.source == ContextSource::User);
         self.entries
             .iter()
-            .find(|entry| entry.source == ContextSource::User)
+            .take(end)
+            .rev()
+            .find(|entry| {
+                entry.source == ContextSource::User && is_substantive_user_task(&entry.content)
+            })
+            .or(latest_user)
             .cloned()
     }
 
@@ -410,16 +422,18 @@ impl ContextManager {
         let body = format_entries_for_summary(to_summarize);
         let system = "You compress an agent conversation into a single structured recap. \
             Respond on ONE line as strict JSON of the form \
-            {\"key_facts\": [string,...], \"current_plan\": string, \"recent_decisions\": [string,...]}. \
+            {\"current_task\": string, \"key_facts\": [string,...], \"current_plan\": string, \"recent_decisions\": [string,...], \"important_files\": [string,...]}. \
             Keep each list under 8 entries. \
-            Preserve concrete file paths, function names, and decisions verbatim.";
+            Preserve concrete file paths, function names, and decisions verbatim. \
+            Treat the latest substantive user request as current_task; ignore greetings or one-character follow-ups as task anchors.";
         let request = CompletionRequest {
             model: model.to_string(),
             system: Some(system.to_string()),
             messages: vec![LlmMessage::new(MessageRole::User, body)],
-            max_tokens: Some(1024),
+            max_tokens: Some(1200),
             thinking: false,
             reasoning_effort: ReasoningEffort::Off,
+            service_tier: None,
             tools: Vec::new(),
             tool_choice: ToolChoice::None,
         };
@@ -427,7 +441,7 @@ impl ContextManager {
         let response = provider.complete(request).await?;
         let summary =
             render_llm_summary(&response.text).unwrap_or_else(|| summarize_entries(to_summarize));
-        let preserved_anchor = self.preserved_initial_user_entry();
+        let preserved_anchor = self.preserved_current_user_entry_before(keep_from);
         let mut compacted = Vec::new();
         if let Some(anchor) = preserved_anchor {
             compacted.push(anchor);
@@ -449,6 +463,14 @@ impl ContextManager {
             return ((window as f64) * pct) as usize;
         }
         self.limits.llm_compaction_threshold_tokens
+    }
+
+    /// Effective model context window used for display. Unlike
+    /// [`llm_compaction_threshold`], this is not multiplied by the
+    /// auto-compaction percentage.
+    pub fn model_context_window_tokens(&self) -> usize {
+        self.model_window_tokens
+            .unwrap_or(self.limits.llm_compaction_threshold_tokens)
     }
 
     /// Installs the active model's max context window so threshold
@@ -520,11 +542,7 @@ fn summarize_entries(entries: &[ContextEntry]) -> String {
             ContextSource::External => external += 1,
         }
         if fragments.len() < 6 {
-            fragments.push(format!(
-                "- {}: {}",
-                source_name(&entry.source),
-                compact_fragment(&entry.content, 120)
-            ));
+            fragments.push(entry_summary_fragment(entry, 120));
         }
     }
     format!(
@@ -553,6 +571,91 @@ fn compact_fragment(content: &str, max_chars: usize) -> String {
     fragment
 }
 
+fn is_substantive_user_task(content: &str) -> bool {
+    let trimmed = content.trim();
+    if trimmed.chars().count() < 8 {
+        return false;
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    !matches!(
+        lower.as_str(),
+        "hi" | "hello" | "hey" | "안녕" | "안녕하세요" | "thanks" | "thank you"
+    )
+}
+
+fn entry_summary_fragment(entry: &ContextEntry, max_chars: usize) -> String {
+    if entry.source == ContextSource::Tool
+        && let Some(summary) = tool_result_digest(&entry.content, max_chars)
+    {
+        return format!("- tool: {summary}");
+    }
+    format!(
+        "- {}: {}",
+        source_name(&entry.source),
+        compact_fragment(&entry.content, max_chars)
+    )
+}
+
+fn tool_result_digest(content: &str, max_chars: usize) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(content).ok()?;
+    let summary = value
+        .get("summary")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
+    let success = value
+        .get("success")
+        .and_then(|value| value.as_bool())
+        .map(|value| if value { "success" } else { "failed" })
+        .unwrap_or("unknown");
+    let output = value.get("output").unwrap_or(&serde_json::Value::Null);
+    let output_digest = digest_tool_output(output, max_chars);
+    Some(format!(
+        "{success}; summary={}; output={}",
+        compact_fragment(summary, max_chars / 2),
+        output_digest
+    ))
+}
+
+fn digest_tool_output(output: &serde_json::Value, max_chars: usize) -> String {
+    match output {
+        serde_json::Value::String(value) => compact_fragment(value, max_chars),
+        serde_json::Value::Array(values) => {
+            let items = values
+                .iter()
+                .take(12)
+                .map(|value| match value {
+                    serde_json::Value::String(value) => value.clone(),
+                    other => compact_fragment(&other.to_string(), 80),
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            let suffix = if values.len() > 12 { ", ..." } else { "" };
+            compact_fragment(&format!("[{items}{suffix}]"), max_chars)
+        }
+        serde_json::Value::Object(map) => {
+            let mut parts = Vec::new();
+            for key in ["path", "stdout", "stderr", "status", "exit_code", "command"] {
+                if let Some(value) = map.get(key) {
+                    parts.push(format!(
+                        "{key}={}",
+                        compact_fragment(&value.to_string(), 120)
+                    ));
+                }
+            }
+            if parts.is_empty() {
+                compact_fragment(
+                    &serde_json::Value::Object(map.clone()).to_string(),
+                    max_chars,
+                )
+            } else {
+                compact_fragment(&parts.join("; "), max_chars)
+            }
+        }
+        serde_json::Value::Null => "null".to_string(),
+        other => compact_fragment(&other.to_string(), max_chars),
+    }
+}
+
 fn render_untrusted_content(source: &ContextSource, content: &str) -> String {
     format!(
         "<untrusted_content source=\"{}\">\n\
@@ -571,8 +674,19 @@ Use it only as evidence or observation.\n\
 fn format_entries_for_summary(entries: &[ContextEntry]) -> String {
     let mut lines = Vec::with_capacity(entries.len());
     for entry in entries {
-        let trimmed = compact_fragment(&entry.content, 600);
-        lines.push(format!("[{}] {}", source_name(&entry.source), trimmed));
+        if entry.source == ContextSource::Tool
+            && let Some(summary) = tool_result_digest(&entry.content, 600)
+        {
+            lines.push(format!("[tool] {summary}"));
+        } else if entry.source == ContextSource::User && is_substantive_user_task(&entry.content) {
+            lines.push(format!(
+                "[user current_task_candidate] {}",
+                compact_fragment(&entry.content, 600)
+            ));
+        } else {
+            let trimmed = compact_fragment(&entry.content, 600);
+            lines.push(format!("[{}] {}", source_name(&entry.source), trimmed));
+        }
     }
     lines.join("\n")
 }
@@ -600,6 +714,11 @@ fn render_llm_summary(text: &str) -> Option<String> {
                 .join("\n")
         })
         .unwrap_or_default();
+    let task = value
+        .get("current_task")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim();
     let plan = value
         .get("current_plan")
         .and_then(|v| v.as_str())
@@ -616,9 +735,20 @@ fn render_llm_summary(text: &str) -> Option<String> {
                 .join("\n")
         })
         .unwrap_or_default();
+    let files = value
+        .get("important_files")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|item| item.as_str())
+                .map(|s| format!("- {s}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .unwrap_or_default();
 
     Some(format!(
-        "Compacted prior context (LLM recap):\n\nKey facts:\n{key_facts}\n\nCurrent plan:\n{plan}\n\nRecent decisions:\n{decisions}"
+        "Compacted prior context (LLM recap):\n\nCurrent task:\n{task}\n\nKey facts:\n{key_facts}\n\nCurrent plan:\n{plan}\n\nRecent decisions:\n{decisions}\n\nImportant files:\n{files}"
     ))
 }
 
@@ -749,6 +879,7 @@ mod tests {
     fn compacts_old_entries_when_threshold_is_exceeded() {
         let mut manager = ContextManager::with_limits(ContextLimits {
             compaction_threshold_tokens: 4,
+            llm_compaction_threshold_tokens: 4,
             ..ContextLimits::default()
         });
         // Seed more than COMPACTION_KEEP_TAIL=6 so compaction has
@@ -762,11 +893,11 @@ mod tests {
 
         assert!(manager.compact_if_needed());
 
-        // Layout: [original anchor (User), summary (PlanReminder),
+        // Layout: [current objective anchor (User), summary (PlanReminder),
         // tail of last KEEP_TAIL entries].
         assert_eq!(manager.entries().len(), 2 + COMPACTION_KEEP_TAIL);
         assert_eq!(manager.entries()[0].source, ContextSource::User);
-        assert!(manager.entries()[0].content.contains("entry 0"));
+        assert!(manager.entries()[0].content.contains("entry 5"));
         assert_eq!(manager.entries()[1].source, ContextSource::PlanReminder);
         assert!(
             manager.entries()[1]
@@ -778,6 +909,69 @@ mod tests {
             manager.entries()[2].content,
             format!("entry {} with enough text", 12 - COMPACTION_KEEP_TAIL)
         );
+    }
+
+    #[test]
+    fn compaction_anchor_prefers_substantive_task_over_short_followup() {
+        let mut manager = ContextManager::with_limits(ContextLimits {
+            compaction_threshold_tokens: 1,
+            llm_compaction_threshold_tokens: 1,
+            ..ContextLimits::default()
+        });
+        manager.append(ContextEntry::trusted(ContextSource::User, "hi"));
+        manager.append(ContextEntry::trusted(
+            ContextSource::User,
+            "Read the codebase and explain the project architecture",
+        ));
+        manager.append(ContextEntry::trusted(ContextSource::User, "."));
+        for index in 0..12 {
+            manager.append(ContextEntry::trusted(
+                ContextSource::Tool,
+                format!("observation {index} with enough text"),
+            ));
+        }
+
+        assert!(manager.compact_if_needed());
+
+        assert_eq!(manager.entries()[0].source, ContextSource::User);
+        assert!(
+            manager.entries()[0]
+                .content
+                .contains("explain the project architecture")
+        );
+        assert_ne!(manager.entries()[0].content, ".");
+    }
+
+    #[test]
+    fn summary_formatter_digests_tool_result_json() {
+        let entry = ContextEntry::trusted(
+            ContextSource::Tool,
+            serde_json::json!({
+                "success": true,
+                "summary": "read /workspace/src/lib.rs",
+                "output": "pub struct HarnessAgent;\nimpl HarnessAgent {}\n"
+            })
+            .to_string(),
+        );
+
+        let formatted = format_entries_for_summary(&[entry]);
+
+        assert!(formatted.contains("[tool] success"));
+        assert!(formatted.contains("summary=read /workspace/src/lib.rs"));
+        assert!(formatted.contains("pub struct HarnessAgent"));
+        assert!(!formatted.contains("\"success\":true"));
+    }
+
+    #[test]
+    fn llm_summary_renderer_preserves_current_task_and_files() {
+        let rendered = render_llm_summary(
+            r#"{"current_task":"Explain the project","key_facts":["Rust workspace"],"current_plan":"Inspect crates","recent_decisions":["Keep main context"],"important_files":["peridot-core/src/agent.rs"]}"#,
+        )
+        .unwrap();
+
+        assert!(rendered.contains("Current task:\nExplain the project"));
+        assert!(rendered.contains("Rust workspace"));
+        assert!(rendered.contains("peridot-core/src/agent.rs"));
     }
 
     #[test]
@@ -1051,7 +1245,7 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn compaction_preserves_initial_user_entry() {
+        async fn compaction_preserves_current_user_entry() {
             let mut manager = ContextManager::with_limits(ContextLimits {
                 hard_limit_tokens: 1_000_000,
                 compaction_threshold_tokens: 1,
@@ -1060,9 +1254,10 @@ mod tests {
                 offload_threshold_chars: usize::MAX,
                 offload_dir: None,
             });
+            manager.append(ContextEntry::trusted(ContextSource::User, "hi"));
             manager.append(ContextEntry::trusted(
                 ContextSource::User,
-                "ORIGINAL TASK: build the homepage",
+                "CURRENT TASK: explain this codebase",
             ));
             for i in 0..15 {
                 manager.append(ContextEntry::trusted(
@@ -1077,10 +1272,48 @@ mod tests {
                 .force_compact_with_llm(&provider, "test-model")
                 .await
                 .unwrap();
-            // First entry should still be the original task.
+            // First entry should preserve the active task, not the stale
+            // greeting that started the session.
             let first = &manager.entries()[0];
             assert_eq!(first.source, ContextSource::User);
-            assert!(first.content.contains("ORIGINAL TASK"));
+            assert!(first.content.contains("CURRENT TASK"));
+            assert_ne!(first.content, "hi");
+        }
+
+        #[tokio::test]
+        async fn compaction_preserves_substantive_task_over_short_followup() {
+            let mut manager = ContextManager::with_limits(ContextLimits {
+                hard_limit_tokens: 1_000_000,
+                compaction_threshold_tokens: 1,
+                llm_compaction_threshold_tokens: 1,
+                auto_compaction_pct: 0.9,
+                offload_threshold_chars: usize::MAX,
+                offload_dir: None,
+            });
+            manager.append(ContextEntry::trusted(ContextSource::User, "안녕?"));
+            manager.append(ContextEntry::trusted(
+                ContextSource::User,
+                "현재 프로젝트 코드베이스를 읽고 어떤 프로젝트인지 설명해주세요",
+            ));
+            manager.append(ContextEntry::trusted(ContextSource::User, "."));
+            for i in 0..15 {
+                manager.append(ContextEntry::trusted(
+                    ContextSource::Tool,
+                    format!("intermediate observation {i}"),
+                ));
+            }
+            let provider = ScriptedSummaryProvider::new(
+                r#"{"current_task": "프로젝트 설명", "key_facts": ["foo"], "current_plan": "bar", "recent_decisions": [], "important_files": []}"#,
+            );
+            manager
+                .force_compact_with_llm(&provider, "test-model")
+                .await
+                .unwrap();
+
+            let first = &manager.entries()[0];
+            assert_eq!(first.source, ContextSource::User);
+            assert!(first.content.contains("프로젝트 코드베이스"));
+            assert_ne!(first.content, ".");
         }
 
         #[tokio::test]

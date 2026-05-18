@@ -257,6 +257,13 @@ impl HarnessAgent {
         runner.run_tool_hooks(&format!("pre:{}", call.name), &variables)?;
         let tool_name = call.name.clone();
         let params = call.parameters.clone();
+        let checkpoint_id = if tool.modifies_state() {
+            write_file_checkpoint(&project_root, &tool_name, &params)
+                .ok()
+                .flatten()
+        } else {
+            None
+        };
         let result = tool.execute(call.parameters, &ctx).await?;
         let _ = append_audit_event(
             &project_root,
@@ -268,7 +275,8 @@ impl HarnessAgent {
                     "params": params,
                     "phase": self.state.phase,
                     "mode": self.state.mode,
-                    "permission": self.state.permission
+                    "permission": self.state.permission,
+                    "checkpoint_id": checkpoint_id
                 }),
             ),
         );
@@ -358,7 +366,7 @@ impl HarnessAgent {
                 &request.project_root,
                 &request.hooks,
                 estimated_tokens,
-                self.context.compaction_threshold_tokens(),
+                self.context.llm_compaction_threshold(),
             )?;
             // Surface the auto-compaction in the transcript so the
             // operator can see that the 90%-of-window guard rail did
@@ -373,11 +381,10 @@ impl HarnessAgent {
             });
         }
         // Always emit the current context size so the TUI can render a
-        // `ctx used/window` indicator in the status line. The window we
-        // report is the LLM compaction threshold (`model_window * 0.9`)
-        // since that is what governs when auto-compaction triggers and
-        // therefore the "effective" budget for any single turn.
-        let window = self.context.llm_compaction_threshold();
+        // `ctx used/window` indicator in the status line. The displayed window
+        // is the full model context; auto-compaction still triggers at
+        // `window * auto_compaction_pct`.
+        let window = self.context.model_context_window_tokens();
         let tokens_now = self.context.estimated_tokens();
         events(AgentRunEvent::ContextUtilizationChanged {
             tokens_used: tokens_now as u64,
@@ -397,6 +404,7 @@ impl HarnessAgent {
                 max_tokens: Some(request.max_tokens),
                 thinking: self.state.mode == ExecutionMode::Goal,
                 reasoning_effort: request.reasoning_effort,
+                service_tier: request.service_tier,
                 tools: tool_definitions,
                 tool_choice: ToolChoice::Auto,
             },
@@ -471,16 +479,17 @@ impl HarnessAgent {
             });
         };
 
-        // Native tool-call protocol path. Record the assistant turn carrying the
-        // structured `tool_calls` so the next request to the provider replays the
-        // exact wire shape the model was trained on (assistant message + tool_calls
-        // → tool message with matching tool_call_id → next assistant turn).
+        let tool_call_id = invocation.id.clone();
+        // Native tool-call protocol path. Record only the tool call this harness
+        // will execute. The loop deliberately enforces a single-tool-per-turn
+        // invariant; replaying ignored parallel calls would make Responses-style
+        // providers reject the next turn because those calls have no matching
+        // `function_call_output`.
         self.context.append(ContextEntry::assistant_with_tool_calls(
             completion.text.clone(),
-            completion.tool_calls.clone(),
+            vec![invocation.clone()],
         ));
 
-        let tool_call_id = invocation.id.clone();
         let tool_call = ToolCall {
             name: invocation.name.clone(),
             parameters: tool_invocation_parameters(&invocation),
@@ -667,13 +676,11 @@ impl HarnessAgent {
         let mut stuck_detector = StuckDetector::new(3);
         let mut budget_warning_sent = false;
         let mut consecutive_parse_failures = 0usize;
-        // Auto-fix loop counter. Increments every time a `verify_*` tool
-        // (build / test / lint) returns a non-success ToolResult; resets
-        // on any other outcome. When it crosses the cap we abort the run
-        // so a perpetually-failing checker can't burn the budget while
-        // the model thrashes — operators can re-run after fixing the
-        // root cause manually.
-        let mut consecutive_verify_failures = 0u32;
+        // Auto-fix loop state. Tracks the current failing verifier by
+        // a compact signature so the model can tell "same failure,
+        // same attempted fix" apart from a new failure uncovered by
+        // progress.
+        let mut verify_failure_state: Option<VerifyFailureState> = None;
         const VERIFY_FIX_CAP: u32 = 3;
         for turn_index in 0..request.max_turns {
             if self
@@ -706,6 +713,7 @@ impl HarnessAgent {
                         model: request.model.clone(),
                         max_tokens: request.max_tokens,
                         reasoning_effort: request.reasoning_effort,
+                        service_tier: request.service_tier.clone(),
                         project_root: request.project_root.clone(),
                         denied_paths: request.denied_paths.clone(),
                         hooks: request.hooks.clone(),
@@ -725,6 +733,26 @@ impl HarnessAgent {
                             turns: outcomes,
                             usage: total_usage,
                             stopped_reason: StopReason::ApprovalRequired,
+                            duration_ms: started_at.elapsed().as_millis() as u64,
+                        };
+                        events(AgentRunEvent::Finished {
+                            summary: summary.clone(),
+                        });
+                        return Ok(summary);
+                    }
+                    if self
+                        .cancel
+                        .as_ref()
+                        .map(|token| token.is_cancelled())
+                        .unwrap_or(false)
+                    {
+                        events(AgentRunEvent::Interrupted {
+                            stage: "turn_error".to_string(),
+                        });
+                        let summary = AgentRunSummary {
+                            turns: outcomes,
+                            usage: total_usage,
+                            stopped_reason: StopReason::Interrupted,
                             duration_ms: started_at.elapsed().as_millis() as u64,
                         };
                         events(AgentRunEvent::Finished {
@@ -756,18 +784,19 @@ impl HarnessAgent {
                 }
             };
             let turn_success = outcome.tool_result.success;
-            // Auto-fix loop: when verify_* fails, inject a hard "fix
-            // this first" directive so the model anchors on the
-            // failing check instead of drifting back to feature work.
-            // Cap at `VERIFY_FIX_CAP` consecutive failures so a
-            // permanently-broken checker doesn't blow the budget.
+            // Auto-fix loop: when verify_* fails, inject a structured
+            // "fix this first" directive keyed by the failure signature
+            // so repeated identical failures force a strategy change.
+            // Cap repeated failures so a permanently-broken checker
+            // doesn't blow the budget.
             let is_verify_tool = outcome.tool_name.starts_with("verify_");
             if is_verify_tool && !turn_success {
-                consecutive_verify_failures += 1;
-                if consecutive_verify_failures >= VERIFY_FIX_CAP {
+                let failure =
+                    update_verify_failure_state(&mut verify_failure_state, &outcome).clone();
+                if failure.attempts >= VERIFY_FIX_CAP {
                     let message = format!(
-                        "Auto-fix loop circuit breaker: {} failed {} times in a row. Aborting so the operator can intervene.",
-                        outcome.tool_name, consecutive_verify_failures
+                        "Auto-fix loop circuit breaker: {} failed {} times with signature `{}`. Aborting so the operator can intervene.",
+                        failure.tool_name, failure.attempts, failure.signature
                     );
                     self.state.phase = AgentPhase::Recovering;
                     run_recovery_event_hook(
@@ -793,16 +822,10 @@ impl HarnessAgent {
                 }
                 self.context.append(ContextEntry::trusted(
                     ContextSource::PlanReminder,
-                    format!(
-                        "Auto-fix directive ({}/{}): {} reported failure. STOP all new work. Read the failing output above, make the smallest change that restores the check, and re-run the same `{}` to confirm. Do not proceed to other tasks until the verifier passes.",
-                        consecutive_verify_failures,
-                        VERIFY_FIX_CAP,
-                        outcome.tool_name,
-                        outcome.tool_name,
-                    ),
+                    verify_failure_directive(&failure, VERIFY_FIX_CAP),
                 ));
             } else {
-                consecutive_verify_failures = 0;
+                verify_failure_state = None;
             }
             accumulate_usage(&mut total_usage, outcome.usage);
             // Auto-verify after mutation: if the operator opted into
@@ -1156,6 +1179,64 @@ fn take_pending_resume(path: Option<&PathBuf>) -> Option<ToolCall> {
     Some(call)
 }
 
+fn write_file_checkpoint(
+    project_root: &std::path::Path,
+    tool_name: &str,
+    params: &serde_json::Value,
+) -> PeriResult<Option<String>> {
+    if !matches!(tool_name, "file_write" | "file_patch") {
+        return Ok(None);
+    }
+    let Some(relative) = params.get("path").and_then(serde_json::Value::as_str) else {
+        return Ok(None);
+    };
+    let path = project_root.join(relative);
+    let path = peridot_tools::ensure_within_project(project_root, &path)?;
+    let existed = path.exists();
+    let previous_content = if existed {
+        Some(std::fs::read_to_string(&path).map_err(|err| {
+            PeriError::Tool(format!(
+                "failed to read checkpoint source {}: {err}",
+                path.display()
+            ))
+        })?)
+    } else {
+        None
+    };
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    let id = format!("{nanos}-{tool_name}");
+    let checkpoints_dir = project_root.join(".peridot/checkpoints");
+    std::fs::create_dir_all(&checkpoints_dir).map_err(|err| {
+        PeriError::Tool(format!(
+            "failed to create checkpoint dir {}: {err}",
+            checkpoints_dir.display()
+        ))
+    })?;
+    let checkpoint = serde_json::json!({
+        "id": id,
+        "tool_name": tool_name,
+        "path": relative,
+        "existed": existed,
+        "previous_content": previous_content,
+    });
+    let checkpoint_path = checkpoints_dir.join(format!("{id}.json"));
+    std::fs::write(
+        &checkpoint_path,
+        serde_json::to_vec_pretty(&checkpoint)
+            .map_err(|err| PeriError::Parse(format!("failed to serialize checkpoint: {err}")))?,
+    )
+    .map_err(|err| {
+        PeriError::Tool(format!(
+            "failed to write checkpoint {}: {err}",
+            checkpoint_path.display()
+        ))
+    })?;
+    Ok(Some(id))
+}
+
 /// Builds the `[sub-agent review]` directive injected after a
 /// successful `agent_delegate` call. Extracts the workspace diff from
 /// the serialized `SubAgentResult` (under `output.diff`) and wraps it
@@ -1222,6 +1303,75 @@ fn recent_verify_summary(context: &ContextManager) -> Option<String> {
         }
     }
     None
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct VerifyFailureState {
+    tool_name: String,
+    signature: String,
+    attempts: u32,
+}
+
+fn update_verify_failure_state<'a>(
+    state: &'a mut Option<VerifyFailureState>,
+    outcome: &AgentTurnOutcome,
+) -> &'a VerifyFailureState {
+    let signature = verify_failure_signature(&outcome.tool_result);
+    let attempts = match state.as_ref() {
+        Some(previous)
+            if previous.tool_name == outcome.tool_name && previous.signature == signature =>
+        {
+            previous.attempts.saturating_add(1)
+        }
+        _ => 1,
+    };
+    *state = Some(VerifyFailureState {
+        tool_name: outcome.tool_name.clone(),
+        signature,
+        attempts,
+    });
+    state.as_ref().expect("verify failure state just written")
+}
+
+fn verify_failure_signature(result: &ToolResult) -> String {
+    let mut material = String::new();
+    material.push_str(result.summary.trim());
+    if !result.output.is_null()
+        && let Ok(output) = serde_json::to_string(&result.output)
+    {
+        material.push('\n');
+        material.push_str(&output);
+    }
+    let normalized = material
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .take(12)
+        .collect::<Vec<_>>()
+        .join(" | ");
+    truncate_chars(&normalized, 180)
+}
+
+fn verify_failure_directive(failure: &VerifyFailureState, cap: u32) -> String {
+    let repeat_note = if failure.attempts > 1 {
+        " This is the same verifier failure signature as the previous attempt; change strategy before editing again."
+    } else {
+        ""
+    };
+    format!(
+        "Auto-fix directive ({}/{}): {} failed with signature `{}`. STOP all new work. Diagnose that verifier output, make the smallest targeted change, and re-run `{}`.{} If it fails again with the same signature, do not repeat the same patch pattern; explain the blocker or ask the operator.",
+        failure.attempts, cap, failure.tool_name, failure.signature, failure.tool_name, repeat_note,
+    )
+}
+
+fn truncate_chars(value: &str, max_chars: usize) -> String {
+    let mut chars = value.chars();
+    let truncated = chars.by_ref().take(max_chars).collect::<String>();
+    if chars.next().is_some() {
+        format!("{truncated}...")
+    } else {
+        truncated
+    }
 }
 
 fn snapshot_context_to_disk<F>(path: &std::path::Path, context: &ContextManager, events: &mut F)
@@ -1380,6 +1530,69 @@ mod helpers_tests {
         assert!(take_pending_resume(Some(&path)).is_none());
         // garbage file is left on disk for the operator to inspect
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn write_file_checkpoint_captures_previous_file_content() {
+        let root =
+            std::env::temp_dir().join(format!("peridot-file-checkpoint-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/lib.rs"), "old").unwrap();
+
+        let id = write_file_checkpoint(
+            &root,
+            "file_patch",
+            &serde_json::json!({"path": "src/lib.rs"}),
+        )
+        .unwrap()
+        .unwrap();
+        let checkpoint =
+            std::fs::read_to_string(root.join(".peridot/checkpoints").join(format!("{id}.json")))
+                .unwrap();
+        let value: serde_json::Value = serde_json::from_str(&checkpoint).unwrap();
+
+        assert_eq!(value["path"], "src/lib.rs");
+        assert_eq!(value["existed"], true);
+        assert_eq!(value["previous_content"], "old");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn verify_failure_state_repeats_same_signature_and_resets_on_new_one() {
+        let mut state = None;
+        let first = AgentTurnOutcome {
+            tool_name: "verify_build".to_string(),
+            tool_result: ToolResult::failure("error[E0425]: cannot find value `x`"),
+            usage: Usage::default(),
+            done: false,
+        };
+        let repeated = update_verify_failure_state(&mut state, &first).clone();
+        assert_eq!(repeated.attempts, 1);
+        let repeated = update_verify_failure_state(&mut state, &first).clone();
+        assert_eq!(repeated.attempts, 2);
+
+        let changed = AgentTurnOutcome {
+            tool_name: "verify_build".to_string(),
+            tool_result: ToolResult::failure("error[E0308]: mismatched types"),
+            usage: Usage::default(),
+            done: false,
+        };
+        let changed = update_verify_failure_state(&mut state, &changed).clone();
+        assert_eq!(changed.attempts, 1);
+        assert!(changed.signature.contains("E0308"));
+    }
+
+    #[test]
+    fn verify_failure_directive_mentions_repeated_signature() {
+        let failure = VerifyFailureState {
+            tool_name: "verify_test".to_string(),
+            signature: "test foo failed".to_string(),
+            attempts: 2,
+        };
+        let directive = verify_failure_directive(&failure, 3);
+        assert!(directive.contains("2/3"));
+        assert!(directive.contains("same verifier failure signature"));
+        assert!(directive.contains("re-run `verify_test`"));
     }
 
     #[test]

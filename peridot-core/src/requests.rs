@@ -118,7 +118,7 @@ pub enum AgentRunEvent {
     ContextUtilizationChanged {
         /// Tokens already in the context window.
         tokens_used: u64,
-        /// Compaction threshold.
+        /// Full model context window used for display.
         threshold: u64,
     },
     /// MCP server status changed (one or more servers connected / disconnected).
@@ -227,6 +227,8 @@ pub struct AgentTurnRequest {
     pub max_tokens: u32,
     /// Reasoning intensity forwarded to the provider for this turn.
     pub reasoning_effort: peridot_common::ReasoningEffort,
+    /// Optional provider service tier forwarded to the provider for this turn.
+    pub service_tier: Option<String>,
     /// Project root.
     pub project_root: PathBuf,
     /// Denied path prefixes.
@@ -268,6 +270,8 @@ pub struct AgentRunRequest {
     /// `config.models.reasoning_effort` as the persistent fallback. The
     /// agent loop passes this verbatim to each `CompletionRequest`.
     pub reasoning_effort: peridot_common::ReasoningEffort,
+    /// Optional provider service tier forwarded to every turn.
+    pub service_tier: Option<String>,
     /// Maximum estimated cost for the run. Values <= 0 disable budget stopping.
     pub budget_usd: f64,
     /// Budget warning threshold percentage.
