@@ -30,6 +30,37 @@ pub struct AskUserPanel {
     /// when `multi_select == false`.
     #[serde(default)]
     pub selected_set: Vec<usize>,
+    /// Number of real options (excluding the synthetic `[o] Other` and
+    /// `[?] Explain` controls) in the underlying request. Used to map a
+    /// selected choice back to its index in the original options list
+    /// when the panel resolves into an `AskUserAnswer`.
+    #[serde(default)]
+    pub real_options_count: usize,
+    /// Optional correlation id supplied by the CLI when the panel was
+    /// opened through a `TuiRuntimeEvent::AskUserRequested`. Carries
+    /// the matching `AskUserPort` request through the panel and back to
+    /// the CLI on resolution.
+    #[serde(default)]
+    pub request_id: Option<u64>,
+    /// Kind of the underlying ask-user request (single_select /
+    /// multi_select / free_form). Recorded so resolution can build the
+    /// right `AskUserAnswer` variant without inspecting choices.
+    #[serde(default)]
+    pub request_kind: AskUserPanelKind,
+}
+
+/// Mirrors the variants of `AskUserRequest` so a resolving panel knows
+/// which `AskUserAnswer` shape to produce.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AskUserPanelKind {
+    /// Single-select request.
+    #[default]
+    SingleSelect,
+    /// Multi-select request.
+    MultiSelect,
+    /// Free-form text request.
+    FreeForm,
 }
 
 /// Esc menu state.
@@ -236,34 +267,48 @@ impl AskUserPanel {
                 question,
                 options,
                 default_index,
-            } => Self {
-                question,
-                choices: ask_user_choices_with_controls(options),
-                selected_index: default_index.unwrap_or(0),
-                freeform: String::new(),
-                explanation: Some("Peridot needs this decision before continuing.".to_string()),
-                showing_explanation: false,
-                other_index: None,
-                explain_index: None,
-                multi_select: false,
-                selected_set: Vec::new(),
-            },
+            } => {
+                let real_options_count = options.len();
+                Self {
+                    question,
+                    choices: ask_user_choices_with_controls(options),
+                    selected_index: default_index.unwrap_or(0),
+                    freeform: String::new(),
+                    explanation: Some(
+                        "Peridot needs this decision before continuing.".to_string(),
+                    ),
+                    showing_explanation: false,
+                    other_index: None,
+                    explain_index: None,
+                    multi_select: false,
+                    selected_set: Vec::new(),
+                    real_options_count,
+                    request_id: None,
+                    request_kind: AskUserPanelKind::SingleSelect,
+                }
+            }
             AskUserRequest::MultiSelect {
                 question, options, ..
-            } => Self {
-                question,
-                choices: ask_user_choices_with_controls(options),
-                selected_index: 0,
-                freeform: String::new(),
-                explanation: Some(
-                    "Peridot needs one or more choices before continuing. Space toggles, Enter commits.".to_string(),
-                ),
-                showing_explanation: false,
-                other_index: None,
-                explain_index: None,
-                multi_select: true,
-                selected_set: Vec::new(),
-            },
+            } => {
+                let real_options_count = options.len();
+                Self {
+                    question,
+                    choices: ask_user_choices_with_controls(options),
+                    selected_index: 0,
+                    freeform: String::new(),
+                    explanation: Some(
+                        "Peridot needs one or more choices before continuing. Space toggles, Enter commits.".to_string(),
+                    ),
+                    showing_explanation: false,
+                    other_index: None,
+                    explain_index: None,
+                    multi_select: true,
+                    selected_set: Vec::new(),
+                    real_options_count,
+                    request_id: None,
+                    request_kind: AskUserPanelKind::MultiSelect,
+                }
+            }
             AskUserRequest::FreeForm {
                 question, default, ..
             } => Self {
@@ -277,9 +322,61 @@ impl AskUserPanel {
                 explain_index: None,
                 multi_select: false,
                 selected_set: Vec::new(),
+                real_options_count: 0,
+                request_id: None,
+                request_kind: AskUserPanelKind::FreeForm,
             },
         }
         .with_control_indexes()
+    }
+
+    /// Attaches a correlation id from the CLI side so resolution events
+    /// can be matched against the originating `AskUserPort` request.
+    pub fn with_request_id(mut self, request_id: u64) -> Self {
+        self.request_id = Some(request_id);
+        self
+    }
+
+    /// Builds the structured answer reported back to the CLI when the
+    /// operator confirms the panel. Returns `None` when the panel is
+    /// not ready to commit (e.g., the user is hovering on `[o] Other`
+    /// or `[?] Explain` rather than a real choice).
+    pub fn structured_answer(&self) -> Option<AskUserAnswer> {
+        match self.request_kind {
+            AskUserPanelKind::SingleSelect => {
+                if Some(self.selected_index) == self.other_index
+                    || Some(self.selected_index) == self.explain_index
+                {
+                    return None;
+                }
+                if self.selected_index < self.real_options_count
+                    && let Some(text) = self.choices.get(self.selected_index)
+                {
+                    return Some(AskUserAnswer::Selected {
+                        index: self.selected_index,
+                        text: text.clone(),
+                    });
+                }
+                // Fell into the synthetic "Other → free-form" mode: the
+                // operator's typed text becomes the answer.
+                Some(AskUserAnswer::Text(self.freeform.clone()))
+            }
+            AskUserPanelKind::MultiSelect => {
+                let mut indices = self
+                    .selected_set
+                    .iter()
+                    .copied()
+                    .filter(|idx| {
+                        Some(*idx) != self.other_index
+                            && Some(*idx) != self.explain_index
+                            && *idx < self.real_options_count
+                    })
+                    .collect::<Vec<_>>();
+                indices.sort_unstable();
+                Some(AskUserAnswer::MultiSelected { indices })
+            }
+            AskUserPanelKind::FreeForm => Some(AskUserAnswer::Text(self.freeform.clone())),
+        }
     }
 
     pub(super) fn selected_answer(&self) -> String {

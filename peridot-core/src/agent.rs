@@ -12,7 +12,7 @@ use peridot_llm::{
 };
 use peridot_tools::audit::{AuditEvent, append_audit_event};
 use peridot_tools::hooks::{HookRunner, tool_hook_variables};
-use peridot_tools::{ToolContext, ToolRegistry};
+use peridot_tools::{AskUserPort, ToolContext, ToolRegistry};
 
 use crate::goal::check_goal_satisfied;
 use crate::permissions::ensure_tool_allowed;
@@ -41,6 +41,7 @@ pub struct HarnessAgent {
     agents_md_signature: Option<(u64, u64)>,
     role: AgentRole,
     subagent_runner: Option<Arc<dyn SubAgent>>,
+    ask_user_port: Option<Arc<dyn AskUserPort>>,
     auto_verify_after_mutation: bool,
     auto_grade_on_done: bool,
     /// Optional flag the operator sets via `/compact` to force an LLM
@@ -79,6 +80,7 @@ impl HarnessAgent {
             agents_md_signature: None,
             role: AgentRole::default(),
             subagent_runner: None,
+            ask_user_port: None,
             auto_verify_after_mutation: false,
             auto_grade_on_done: false,
             compact_request: None,
@@ -106,6 +108,15 @@ impl HarnessAgent {
     /// instead of only preparing a workspace.
     pub fn set_subagent_runner(&mut self, runner: Arc<dyn SubAgent>) {
         self.subagent_runner = Some(runner);
+    }
+
+    /// Installs an ask-user port. The harness injects it into every
+    /// `ToolContext` it builds so `agent_ask_user` actually awaits a
+    /// real user answer through the interactive front-end. Headless and
+    /// test harnesses leave it unset and the tool keeps its synthesised
+    /// default fallback.
+    pub fn set_ask_user_port(&mut self, port: Arc<dyn AskUserPort>) {
+        self.ask_user_port = Some(port);
     }
 
     /// Enables the "verify after every mutation" auto-loop. When on,
@@ -243,6 +254,9 @@ impl HarnessAgent {
         }
         if let Some(runner) = self.subagent_runner.clone() {
             ctx = ctx.with_subagent_runner(runner);
+        }
+        if let Some(port) = self.ask_user_port.clone() {
+            ctx = ctx.with_ask_user_port(port);
         }
         tool.validate_params(&call.parameters)?;
         let runner = HookRunner::new(&project_root, ctx.hooks.clone());

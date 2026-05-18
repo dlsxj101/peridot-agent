@@ -17,8 +17,8 @@ use commands::{
     run_verify_command,
 };
 use peridot_common::{
-    ContextConfig, ExecutionMode, MemoryConfig, PeriError, PeriResult, PeridotConfig,
-    PermissionMode,
+    AskUserAnswer, AskUserRequest, ContextConfig, ExecutionMode, MemoryConfig, PeriError,
+    PeriResult, PeridotConfig, PermissionMode,
 };
 use peridot_context::{ContextLimits, ContextManager, project_context_limits};
 use peridot_core::{
@@ -35,7 +35,7 @@ use peridot_memory::{
 };
 use peridot_project::ProjectScanner;
 use peridot_tools::hooks::{HookRunner, HookVariables, lifecycle_hook_variables};
-use peridot_tools::{ToolRegistry, register_builtin_tools, register_mcp_tools};
+use peridot_tools::{AskUserPort, ToolRegistry, register_builtin_tools, register_mcp_tools};
 use peridot_tui::{
     ApprovalDecision, ApprovalGrant, ApprovalScope, HeaderState, SessionCommandEvent,
     SessionDirectoryItem, TuiRuntimeEvent, TuiState, run_interactive_with_events,
@@ -519,6 +519,11 @@ async fn main() -> Result<()> {
                     let base_options = agent_task_options(&cli, &config);
                     let run_config = config.clone();
                     let run_project_root = project_root.clone();
+                    let ask_user_pending: AskUserPending = std::sync::Arc::new(
+                        std::sync::Mutex::new(std::collections::HashMap::new()),
+                    );
+                    let ask_user_next_id: std::sync::Arc<std::sync::atomic::AtomicU64> =
+                        std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1));
                     let exit = run_interactive_with_events(
                         state,
                         event_rx,
@@ -529,6 +534,8 @@ async fn main() -> Result<()> {
                             let options_template = base_options.clone();
                             let config_template = run_config.clone();
                             let project_template = run_project_root.clone();
+                            let ask_user_pending = ask_user_pending.clone();
+                            let ask_user_next_id = ask_user_next_id.clone();
                             move |task, state| {
                                 let foreground = state.current_session_id.clone();
                                 let mut options = options_template.clone();
@@ -559,6 +566,8 @@ async fn main() -> Result<()> {
                                     project_template.clone(),
                                     Some(token),
                                     compact_flag,
+                                    ask_user_pending.clone(),
+                                    ask_user_next_id.clone(),
                                 );
                             }
                         },
@@ -569,6 +578,8 @@ async fn main() -> Result<()> {
                             let options_template = base_options.clone();
                             let config_template = run_config.clone();
                             let project_template = run_project_root.clone();
+                            let ask_user_pending = ask_user_pending.clone();
+                            let ask_user_next_id = ask_user_next_id.clone();
                             move |decision,
                                   scope,
                                   tool_name,
@@ -636,7 +647,15 @@ async fn main() -> Result<()> {
                                     project_template.clone(),
                                     Some(token),
                                     compact_flag,
+                                    ask_user_pending.clone(),
+                                    ask_user_next_id.clone(),
                                 );
+                            }
+                        },
+                        {
+                            let ask_user_pending = ask_user_pending.clone();
+                            move |request_id, answer, _state| {
+                                resolve_ask_user(&ask_user_pending, request_id, answer);
                             }
                         },
                         {
@@ -674,6 +693,8 @@ async fn main() -> Result<()> {
                             let options_template = base_options.clone();
                             let config_template = run_config.clone();
                             let project_template = run_project_root.clone();
+                            let ask_user_pending = ask_user_pending.clone();
+                            let ask_user_next_id = ask_user_next_id.clone();
                             move |command, state| {
                                 apply_session_command(
                                     command,
@@ -684,6 +705,8 @@ async fn main() -> Result<()> {
                                     &options_template,
                                     &config_template,
                                     &project_template,
+                                    &ask_user_pending,
+                                    &ask_user_next_id,
                                 );
                             }
                         },
@@ -725,6 +748,67 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+/// Shared registry of in-flight `agent_ask_user` requests. The
+/// `TuiAskUserPort` inserts a oneshot sender keyed by request id when
+/// it dispatches a question; the TUI resolution callback removes the
+/// matching entry and fulfils the channel when the operator confirms or
+/// cancels the panel. Wrapped in a plain `std::sync::Mutex` because the
+/// critical sections are O(1) HashMap ops with no `.await` inside.
+type AskUserPending = std::sync::Arc<
+    std::sync::Mutex<std::collections::HashMap<u64, tokio::sync::oneshot::Sender<AskUserAnswer>>>,
+>;
+
+/// `AskUserPort` implementation that ferries questions through the TUI
+/// event channel and awaits a structured answer from the panel.
+struct TuiAskUserPort {
+    session_id: String,
+    event_tx: std::sync::mpsc::Sender<(String, TuiRuntimeEvent)>,
+    next_id: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    pending: AskUserPending,
+}
+
+#[async_trait]
+impl AskUserPort for TuiAskUserPort {
+    async fn ask(&self, request: AskUserRequest) -> AskUserAnswer {
+        let request_id = self
+            .next_id
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        {
+            let mut pending = self.pending.lock().unwrap();
+            pending.insert(request_id, tx);
+        }
+        if self
+            .event_tx
+            .send((
+                self.session_id.clone(),
+                TuiRuntimeEvent::AskUserRequested {
+                    request_id,
+                    request,
+                },
+            ))
+            .is_err()
+        {
+            // TUI channel closed before the question reached the panel:
+            // drop the pending sender and fall back to the synthesised
+            // default so the agent loop does not deadlock.
+            self.pending.lock().unwrap().remove(&request_id);
+            return AskUserAnswer::Cancelled;
+        }
+        rx.await.unwrap_or(AskUserAnswer::Cancelled)
+    }
+}
+
+/// Resolves the pending `agent_ask_user` request matching `request_id`
+/// by sending `answer` through its registered oneshot. No-ops when the
+/// id is unknown (e.g., the agent already cancelled the run).
+fn resolve_ask_user(pending: &AskUserPending, request_id: u64, answer: AskUserAnswer) {
+    let sender = pending.lock().unwrap().remove(&request_id);
+    if let Some(sender) = sender {
+        let _ = sender.send(answer);
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn spawn_tui_agent_run(
     handle: tokio::runtime::Handle,
@@ -738,6 +822,8 @@ fn spawn_tui_agent_run(
     project_root: PathBuf,
     cancel: Option<peridot_core::CancelToken>,
     compact_request: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    ask_user_pending: AskUserPending,
+    ask_user_next_id: std::sync::Arc<std::sync::atomic::AtomicU64>,
 ) {
     let context_snapshot_path = Some(
         project_root
@@ -746,6 +832,12 @@ fn spawn_tui_agent_run(
             .join(&session_id)
             .join("context.bin"),
     );
+    let ask_user_port: std::sync::Arc<dyn AskUserPort> = std::sync::Arc::new(TuiAskUserPort {
+        session_id: session_id.clone(),
+        event_tx: event_tx.clone(),
+        next_id: ask_user_next_id,
+        pending: ask_user_pending,
+    });
     handle.spawn(async move {
         let event_sender = event_tx.clone();
         let session = session_id.clone();
@@ -759,6 +851,7 @@ fn spawn_tui_agent_run(
             cancel,
             compact_request,
             context_snapshot_path,
+            Some(ask_user_port),
             move |event| {
                 let evt = tui_runtime_event_from_agent(event);
                 if let TuiRuntimeEvent::ApprovalRequested { reason, .. } = &evt {
@@ -810,6 +903,8 @@ fn apply_session_command(
     options_template: &run_loop::AgentTaskOptions,
     config_template: &PeridotConfig,
     project_template: &Path,
+    ask_user_pending: &AskUserPending,
+    ask_user_next_id: &std::sync::Arc<std::sync::atomic::AtomicU64>,
 ) {
     let effective_config = config_for_state(config_template, state);
     let config_template = &effective_config;
@@ -841,6 +936,8 @@ fn apply_session_command(
                     options_template,
                     config_template,
                     project_template,
+                    ask_user_pending,
+                    ask_user_next_id,
                 );
             }
         }
@@ -943,6 +1040,8 @@ fn apply_session_command(
                 options_template,
                 config_template,
                 project_template,
+                ask_user_pending,
+                ask_user_next_id,
             );
             state.push_transcript(format!("fork: registered {new_id}"));
         }
@@ -961,6 +1060,8 @@ fn apply_session_command(
                 options_template,
                 config_template,
                 project_template,
+                ask_user_pending,
+                ask_user_next_id,
             );
         }
         SessionCommandEvent::Worktree { branch, task } => {
@@ -977,6 +1078,8 @@ fn apply_session_command(
                 options_template,
                 config_template,
                 project_template,
+                ask_user_pending,
+                ask_user_next_id,
             );
         }
         SessionCommandEvent::McpList => {
@@ -1561,6 +1664,8 @@ fn spawn_worktree_session(
     options_template: &run_loop::AgentTaskOptions,
     config_template: &PeridotConfig,
     project_template: &Path,
+    ask_user_pending: &AskUserPending,
+    ask_user_next_id: &std::sync::Arc<std::sync::atomic::AtomicU64>,
 ) {
     let worktree_path = project_template
         .join(".peridot")
@@ -1622,6 +1727,8 @@ fn spawn_worktree_session(
         options_template,
         config_template,
         &worktree_path,
+        ask_user_pending,
+        ask_user_next_id,
     );
 }
 
@@ -2248,6 +2355,8 @@ fn spawn_session_task(
     options_template: &run_loop::AgentTaskOptions,
     config_template: &PeridotConfig,
     project_template: &Path,
+    ask_user_pending: &AskUserPending,
+    ask_user_next_id: &std::sync::Arc<std::sync::atomic::AtomicU64>,
 ) {
     let mut options = options_template.clone();
     options.permission = permission;
@@ -2274,6 +2383,8 @@ fn spawn_session_task(
         project_template.to_path_buf(),
         Some(token),
         compact_flag,
+        ask_user_pending.clone(),
+        ask_user_next_id.clone(),
     );
 }
 

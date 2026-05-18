@@ -219,6 +219,7 @@ pub(super) async fn run_task_with_events<F>(
     cancel: Option<peridot_core::CancelToken>,
     compact_request: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     context_snapshot_path: Option<PathBuf>,
+    ask_user_port: Option<std::sync::Arc<dyn peridot_tools::AskUserPort>>,
     events: F,
 ) -> Result<peridot_core::AgentRunSummary>
 where
@@ -265,6 +266,9 @@ where
     }
     if let Some(flag) = compact_request {
         agent.set_compact_request(flag);
+    }
+    if let Some(port) = ask_user_port {
+        agent.set_ask_user_port(port);
     }
     if let Some(path) = context_snapshot_path.as_ref() {
         // Resume-after-approval sidecar lives next to context.bin.
@@ -428,10 +432,10 @@ where
         return Ok(());
     }
     // LLM complexity gate (opt-in): when on, classify the task with a
-    // small model call and skip preflight unless it's complex or
-    // architectural. On classifier failure the helper returns Complex
-    // so the planner still fires — a missed planner is worse than an
-    // extra one.
+    // single capped-output call to the main model and skip preflight
+    // unless it is complex or architectural. On classifier failure
+    // the helper returns Complex so the planner still fires — a
+    // missed planner is worse than an extra one.
     if config.committee.use_llm_complexity_gate {
         let verdict =
             peridot_core::classify_task_complexity(provider, &options.model, task).await?;

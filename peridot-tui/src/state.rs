@@ -295,6 +295,16 @@ pub enum TuiRuntimeEvent {
         #[serde(default)]
         parameters: serde_json::Value,
     },
+    /// `agent_ask_user` needs a real user answer. The TUI opens its
+    /// ask-user panel for `request`; once the operator confirms, the CLI
+    /// resolves the matching `request_id` through its `AskUserPort`
+    /// registry.
+    AskUserRequested {
+        /// Correlation id echoed back when the panel resolves.
+        request_id: u64,
+        /// Structured ask-user request.
+        request: AskUserRequest,
+    },
     /// Turn list response for an open branch picker. Sent by the CLI
     /// after reading the session's context snapshot.
     BranchPickerTurns {
@@ -835,6 +845,16 @@ pub enum TuiEventOutcome {
     },
     /// The user pressed Esc while the agent was busy; the run should be cancelled.
     Interrupt,
+    /// The operator committed (or cancelled) an `agent_ask_user` panel.
+    /// The CLI fulfils the matching oneshot inside its `AskUserPort`
+    /// registry so the in-flight tool call can resume.
+    AskUserResolved {
+        /// Correlation id originally supplied with `open_ask_user_with_id`.
+        request_id: u64,
+        /// Structured answer. `AskUserAnswer::Cancelled` when the
+        /// operator dismissed the panel without picking.
+        answer: AskUserAnswer,
+    },
 }
 
 /// Approval remembered for the current interactive session.
@@ -1583,6 +1603,14 @@ impl TuiState {
         self.ask_user = Some(AskUserPanel::from_request(request));
     }
 
+    /// Opens an ask-user panel tied to an `AskUserPort` correlation id.
+    /// The panel records the id and surfaces it back through
+    /// `TuiEventOutcome::AskUserResolved` when the operator commits, so
+    /// the CLI can fulfil the matching oneshot.
+    pub fn open_ask_user_with_id(&mut self, request_id: u64, request: AskUserRequest) {
+        self.ask_user = Some(AskUserPanel::from_request(request).with_request_id(request_id));
+    }
+
     /// Opens a tool approval panel.
     pub fn open_approval(
         &mut self,
@@ -1660,6 +1688,12 @@ impl TuiState {
                 summary,
                 output,
             } => self.record_tool_result(name, success, summary, output),
+            TuiRuntimeEvent::AskUserRequested {
+                request_id,
+                request,
+            } => {
+                self.open_ask_user_with_id(request_id, request);
+            }
             TuiRuntimeEvent::ApprovalRequested {
                 tool_name,
                 reason,

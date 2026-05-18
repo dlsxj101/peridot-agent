@@ -89,6 +89,27 @@ fn plan_prompt_requires_understand_then_choose_flow() {
 }
 
 #[test]
+fn execute_prompt_enforces_intent_clarification() {
+    let prompt = system_prompt_for_mode(ExecutionMode::Execute);
+
+    assert!(prompt.contains("Intent clarification rules"));
+    assert!(prompt.contains("Before the first file_write"));
+    assert!(prompt.contains("vague verbs"));
+    assert!(prompt.contains("2-4 concrete candidate interpretations"));
+    assert!(prompt.contains("Yolo trusts you on execution"));
+}
+
+#[test]
+fn goal_prompt_runs_clarification_on_initial_request() {
+    let prompt = system_prompt_for_mode(ExecutionMode::Goal);
+
+    assert!(prompt.contains("Intent clarification rules"));
+    assert!(
+        prompt.contains("Apply the intent clarification rules below to the initial user request")
+    );
+}
+
+#[test]
 fn reads_plan_reminder_from_todo_md() {
     let root =
         std::env::temp_dir().join(format!("peridot-core-plan-reminder-{}", std::process::id()));

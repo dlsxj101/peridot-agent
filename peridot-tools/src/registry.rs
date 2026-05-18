@@ -5,10 +5,23 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use peridot_agents::SubAgent;
 use peridot_common::{
-    CancelToken, HooksConfig, PeriError, PeriResult, PermissionLevel, PermissionMode,
-    SecurityConfig, ToolGroup, ToolResult,
+    AskUserAnswer, AskUserRequest, CancelToken, HooksConfig, PeriError, PeriResult,
+    PermissionLevel, PermissionMode, SecurityConfig, ToolGroup, ToolResult,
 };
 use serde_json::Value;
+
+/// Bridge that lets `agent_ask_user` wait for an actual user response
+/// from an interactive front-end (TUI, REPL, etc). When no port is
+/// attached the tool synthesises a default answer so headless paths,
+/// tests, and mock providers keep working without UI plumbing.
+#[async_trait]
+pub trait AskUserPort: Send + Sync {
+    /// Presents the request to the user and resolves to the chosen
+    /// answer. Implementations may block until the user responds, time
+    /// out and return `AskUserAnswer::Cancelled`, or apply any
+    /// front-end-specific policy.
+    async fn ask(&self, request: AskUserRequest) -> AskUserAnswer;
+}
 
 /// Runtime context passed to tool implementations.
 #[derive(Clone)]
@@ -34,6 +47,11 @@ pub struct ToolContext {
     /// workspace via `LocalSubAgentRunner`. Tests and minimal harnesses
     /// leave it `None`, which keeps the legacy prepare-only behaviour.
     pub runner: Option<Arc<dyn SubAgent>>,
+    /// Optional ask-user port injected by interactive front-ends. When
+    /// set, `AgentAskUserTool` awaits a real user answer through this
+    /// port; otherwise it falls back to a synthesised default so
+    /// headless / mock / test paths keep running unchanged.
+    pub ask_user_port: Option<Arc<dyn AskUserPort>>,
 }
 
 impl std::fmt::Debug for ToolContext {
@@ -46,6 +64,10 @@ impl std::fmt::Debug for ToolContext {
             .field("security", &self.security)
             .field("cancel", &self.cancel)
             .field("runner", &self.runner.as_ref().map(|_| "Arc<dyn SubAgent>"))
+            .field(
+                "ask_user_port",
+                &self.ask_user_port.as_ref().map(|_| "Arc<dyn AskUserPort>"),
+            )
             .finish()
     }
 }
@@ -61,6 +83,7 @@ impl ToolContext {
             security: SecurityConfig::default(),
             cancel: None,
             runner: None,
+            ask_user_port: None,
         }
     }
 
@@ -97,6 +120,15 @@ impl ToolContext {
     /// leave it `None` to keep the deterministic prepare-only path.
     pub fn with_subagent_runner(mut self, runner: Arc<dyn SubAgent>) -> Self {
         self.runner = Some(runner);
+        self
+    }
+
+    /// Attaches an ask-user port. When present, `AgentAskUserTool`
+    /// dispatches the question through this port and awaits the real
+    /// user answer; otherwise the tool falls back to its synthesised
+    /// default so headless / mock / test paths keep running.
+    pub fn with_ask_user_port(mut self, port: Arc<dyn AskUserPort>) -> Self {
+        self.ask_user_port = Some(port);
         self
     }
 }

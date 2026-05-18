@@ -4,13 +4,17 @@ use crate::tools::shell::{
     reject_hard_blocked_command,
 };
 use crate::{
-    AgentAskUserTool, AgentDelegateTool, AgentMemorySearchTool, FileWriteTool, Tool, ToolContext,
-    ToolRegistry, register_builtin_tools,
+    AgentAskUserTool, AgentDelegateTool, AgentMemorySearchTool, AskUserPort, FileWriteTool, Tool,
+    ToolContext, ToolRegistry, register_builtin_tools,
 };
-use peridot_common::{HooksConfig, PeriError, PermissionMode, SecurityConfig};
+use async_trait::async_trait;
+use peridot_common::{
+    AskUserAnswer, AskUserRequest, HooksConfig, PeriError, PermissionMode, SecurityConfig,
+};
 use peridot_memory::{ErrorResolution, MemoryStore, StoredSkill};
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 #[test]
 fn shell_blocks_remote_pipe() {
@@ -138,6 +142,91 @@ async fn ask_user_returns_default_answer() {
         .unwrap();
 
     assert_eq!(result.output["answer"], "no");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn ask_user_port_resolves_with_selected_choice() {
+    struct StaticPort {
+        captured: std::sync::Mutex<Option<AskUserRequest>>,
+        answer: AskUserAnswer,
+    }
+
+    #[async_trait]
+    impl AskUserPort for StaticPort {
+        async fn ask(&self, request: AskUserRequest) -> AskUserAnswer {
+            *self.captured.lock().unwrap() = Some(request);
+            self.answer.clone()
+        }
+    }
+
+    let root = std::env::temp_dir().join(format!("peridot-tools-ask-port-{}", std::process::id()));
+    fs::create_dir_all(&root).unwrap();
+    let port = Arc::new(StaticPort {
+        captured: std::sync::Mutex::new(None),
+        answer: AskUserAnswer::Selected {
+            index: 1,
+            text: "goal".to_string(),
+        },
+    });
+    let ctx = ToolContext::new(&root, PermissionMode::Auto).with_ask_user_port(port.clone());
+
+    let result = AgentAskUserTool
+        .execute(
+            serde_json::json!({
+                "question": "Which mode?",
+                "kind": "single_select",
+                "choices": ["execute", "goal"],
+                "default_index": 0
+            }),
+            &ctx,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(result.output["answer"], "goal");
+    assert_eq!(result.output["source"], "user");
+    let captured = port.captured.lock().unwrap().clone();
+    assert!(matches!(
+        captured,
+        Some(AskUserRequest::SingleSelect { ref question, .. }) if question == "Which mode?"
+    ));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn ask_user_port_cancel_falls_back_to_default() {
+    struct CancelPort;
+
+    #[async_trait]
+    impl AskUserPort for CancelPort {
+        async fn ask(&self, _request: AskUserRequest) -> AskUserAnswer {
+            AskUserAnswer::Cancelled
+        }
+    }
+
+    let root = std::env::temp_dir().join(format!(
+        "peridot-tools-ask-port-cancel-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    let ctx =
+        ToolContext::new(&root, PermissionMode::Auto).with_ask_user_port(Arc::new(CancelPort));
+
+    let result = AgentAskUserTool
+        .execute(
+            serde_json::json!({
+                "question": "Proceed?",
+                "choices": ["yes", "no"],
+                "default": "no"
+            }),
+            &ctx,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(result.output["answer"], "no");
+    assert_eq!(result.output["source"], "default");
     fs::remove_dir_all(root).unwrap();
 }
 

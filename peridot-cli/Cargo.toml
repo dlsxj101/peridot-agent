@@ -40,4 +40,4 @@ base64 = "0.22.1"
 sha2 = "0.11.0"
 rand = "0.10.1"
 notify-rust = { version = "4", optional = true }
-peridot-tui = { version = "0.3.1", path = "../peridot-tui" }
+peridot-tui = { version = "0.4.0", path = "../peridot-tui" }
