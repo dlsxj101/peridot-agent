@@ -14,6 +14,7 @@ async-trait.workspace = true
 peridot-agents = { path = "../peridot-agents" }
 peridot-common = { path = "../peridot-common" }
 peridot-context = { path = "../peridot-context" }
+peridot-grader = { path = "../peridot-grader" }
 peridot-llm = { path = "../peridot-llm" }
 peridot-tools = { path = "../peridot-tools" }
 serde.workspace = true

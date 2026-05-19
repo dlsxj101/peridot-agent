@@ -9,7 +9,8 @@ mod verify;
 mod web;
 
 pub use agent::{
-    AgentAskUserTool, AgentDelegateTool, AgentDoneTool, AgentMemorySearchTool, AgentScratchpadTool,
+    AgentAskUserTool, AgentDelegateTool, AgentDoneTool, AgentMemorySearchTool, AgentMessageTool,
+    AgentScratchpadTool,
 };
 pub use file::{
     FileListTool, FileOutlineTool, FilePatchTool, FileReadTool, FileSearchTool, FileWriteTool,
@@ -59,6 +60,7 @@ pub fn register_builtin_tools(registry: &mut ToolRegistry) -> PeriResult<()> {
     registry.register(AgentScratchpadTool)?;
     registry.register(AgentAskUserTool)?;
     registry.register(AgentDelegateTool)?;
+    registry.register(AgentMessageTool)?;
     registry.register(AgentMemorySearchTool)?;
     registry.register(SkillListTool)?;
     registry.register(SkillViewTool)?;

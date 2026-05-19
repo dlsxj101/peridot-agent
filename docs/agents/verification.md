@@ -12,11 +12,18 @@ cargo test --workspace
 If the workspace skeleton does not exist yet, say so and run applicable shell syntax or file checks instead.
 
 ## Verification Pipeline
-- Stage 1: deterministic checks such as file existence, syntax, and local lint hints.
-- Stage 2: project build command from `ProjectProfile`.
-- Stage 3: project tests from `ProjectProfile`.
-- Stage 4: diff review against intended changes.
-- Stage 5: grader agent using AGENTS style and boundaries as rubric.
+- Stage 1: deterministic checks such as file existence, syntax, and local lint hints (`VerifyStage::Deterministic`).
+- Stage 2: project build command from `ProjectProfile` (`VerifyStage::Build`).
+- Stage 3: project tests from `ProjectProfile` (`VerifyStage::Test`).
+- Stage 4a: project lint / typecheck (`VerifyStage::Lint`, v0.6.0). Lint failures used to be mislabelled as `Deterministic`; they now show as `Lint`.
+- Stage 4b: diff review against intended changes (`VerifyStage::DiffReview`). Also enforces AGENTS.md boundary patterns.
+- Stage 5: LLM grader using the task description, captured `git diff HEAD`, and the deterministic summary as inputs (`VerifyStage::Grader`).
+
+### Stage 5 (Grader) — invocation
+
+`VerifyPipeline::run_all()` runs stages 1-4 only. To include the grader, call `run_all_with_grader(provider, model, task)` or invoke `peridot verify --with-grader --grader-task "<text>"`. The grader is skipped automatically when any deterministic stage fails — the agent already has a verdict and burning an API call to repeat "yes, it's still broken" wastes budget.
+
+The grader itself lives in the `peridot-grader` crate so both `peridot-verify` (CLI verify pipeline) and `peridot-core` (agent loop's `auto_grade_on_done` gate) can call it without a dependency cycle. `peridot_core::grader::*` re-exports the public API.
 
 ## Test Strategy
 - Unit tests cover crate-local logic.

@@ -87,7 +87,11 @@ impl LlmProvider for ClaudeProvider {
             .api_key
             .as_deref()
             .ok_or_else(|| PeriError::Provider("missing Anthropic API key".to_string()))?;
-        let payload = anthropic_payload(&request);
+        // Mark cache breakpoints when this provider advertises caching support.
+        // Consulting `supports_cache()` here is the single place the capability
+        // method is honoured: providers that flip the bit off (or future
+        // OAuth backends without caching) skip the marking automatically.
+        let payload = anthropic_payload_with_cache(&request, self.supports_cache());
         let endpoint = format!("{}/v1/messages", self.base_url.trim_end_matches('/'));
         let mut last_error = None;
         for attempt in 0..=self.max_retries {
@@ -141,7 +145,7 @@ impl LlmProvider for ClaudeProvider {
             .api_key
             .as_deref()
             .ok_or_else(|| PeriError::Provider("missing Anthropic API key".to_string()))?;
-        let payload = anthropic_stream_payload(&request);
+        let payload = anthropic_stream_payload_with_cache(&request, self.supports_cache());
         let endpoint = format!("{}/v1/messages", self.base_url.trim_end_matches('/'));
         let mut last_error = None;
         for attempt in 0..=self.max_retries {
@@ -192,7 +196,7 @@ impl LlmProvider for ClaudeProvider {
             .api_key
             .as_deref()
             .ok_or_else(|| PeriError::Provider("missing Anthropic API key".to_string()))?;
-        let payload = anthropic_stream_payload(&request);
+        let payload = anthropic_stream_payload_with_cache(&request, self.supports_cache());
         let endpoint = format!("{}/v1/messages", self.base_url.trim_end_matches('/'));
         let mut last_error = None;
         for attempt in 0..=self.max_retries {
@@ -268,13 +272,35 @@ impl LlmProvider for ClaudeProvider {
 /// Plain chat messages with no tool metadata stay as a single-string content
 /// for backward compatibility with conversation histories that predate the
 /// native protocol.
+/// Legacy entry-point retained so test fixtures and callers that predate the
+/// `cache_enabled` flag still compile. Production code goes through
+/// [`anthropic_payload_with_cache`] directly.
+#[cfg(test)]
 pub(crate) fn anthropic_payload(request: &CompletionRequest) -> Value {
+    anthropic_payload_with_cache(request, false)
+}
+
+/// Like [`anthropic_payload`] but stamps explicit prompt-cache breakpoints
+/// when `cache_enabled` is true. Three breakpoints follow SPEC 6.3:
+///
+/// 1. Tools: last tool definition carries `cache_control: ephemeral`.
+/// 2. System: rendered as a single block array with `cache_control`.
+/// 3. History: last assistant / tool_result content gets `cache_control`
+///    (we deliberately skip the trailing user message so the *prefix*
+///    stays cached but a new user prompt does not bust the cache).
+///
+/// `cache_enabled = false` produces the legacy wire format exactly, so
+/// providers that disable caching (e.g. OAuth backends) stay unchanged.
+pub(crate) fn anthropic_payload_with_cache(
+    request: &CompletionRequest,
+    cache_enabled: bool,
+) -> Value {
     let mut system_parts = Vec::new();
     if let Some(system) = &request.system {
         system_parts.push(system.clone());
     }
 
-    let messages = request
+    let mut messages = request
         .messages
         .iter()
         .filter_map(|message| match message.role {
@@ -335,14 +361,54 @@ pub(crate) fn anthropic_payload(request: &CompletionRequest) -> Value {
         })
         .collect::<Vec<_>>();
 
+    // Breakpoint 3: stamp the last assistant/tool_result with cache_control so
+    // the conversation prefix up to (but not including) the trailing user turn
+    // becomes a cache boundary. Walks backward to find the most recent
+    // non-user message; if none exist, the breakpoint is silently skipped.
+    if cache_enabled && !messages.is_empty() {
+        let trailing_user_index = messages.len() - 1;
+        let trailing_is_user = messages[trailing_user_index]
+            .get("role")
+            .and_then(Value::as_str)
+            == Some("user")
+            // tool_result is sent under role=user; do not treat it as a true user prompt.
+            && messages[trailing_user_index]
+                .get("content")
+                .and_then(Value::as_array)
+                .and_then(|arr| arr.first())
+                .and_then(|first| first.get("type"))
+                .and_then(Value::as_str)
+                != Some("tool_result");
+        let target = if trailing_is_user && messages.len() >= 2 {
+            Some(messages.len() - 2)
+        } else if !trailing_is_user {
+            Some(messages.len() - 1)
+        } else {
+            None
+        };
+        if let Some(idx) = target {
+            apply_cache_control_to_last_content_block(&mut messages[idx]);
+        }
+    }
+
     let mut payload = json!({
         "model": request.model,
         "max_tokens": request.max_tokens.unwrap_or(4096),
         "messages": messages
     });
 
+    // Breakpoint 2: emit system as a block array with cache_control when
+    // caching is enabled; fall back to the plain-string form otherwise.
     if !system_parts.is_empty() {
-        payload["system"] = Value::String(system_parts.join("\n\n"));
+        if cache_enabled {
+            payload["system"] = json!([{
+                "type": "text",
+                "text": system_parts.join("\n\n"),
+                "cache_control": { "type": "ephemeral" },
+            }]);
+        } else {
+            payload["system"] = Value::String(system_parts.join("\n\n"));
+        }
     }
 
     // `reasoning_effort` is the canonical knob; `thinking: true` is the
@@ -364,7 +430,7 @@ pub(crate) fn anthropic_payload(request: &CompletionRequest) -> Value {
     }
 
     if !request.tools.is_empty() {
-        let tools = request
+        let mut tools = request
             .tools
             .iter()
             .map(|tool| {
@@ -375,6 +441,13 @@ pub(crate) fn anthropic_payload(request: &CompletionRequest) -> Value {
                 })
             })
             .collect::<Vec<_>>();
+        // Breakpoint 1: tag the final tool definition so the entire tool
+        // catalogue caches together. Anthropic caches everything up to the
+        // marker, so tagging only the last entry is equivalent to tagging
+        // the whole array and keeps the wire format minimal.
+        if cache_enabled && let Some(last) = tools.last_mut() {
+            last["cache_control"] = json!({ "type": "ephemeral" });
+        }
         payload["tools"] = Value::Array(tools);
         payload["tool_choice"] = match request.tool_choice {
             ToolChoice::Auto => json!({ "type": "auto" }),
@@ -386,11 +459,42 @@ pub(crate) fn anthropic_payload(request: &CompletionRequest) -> Value {
     payload
 }
 
-/// Builds the Anthropic streaming Messages request body.
+/// Builds the Anthropic streaming Messages request body without cache markings.
+/// Kept for tests; production stream paths use
+/// [`anthropic_stream_payload_with_cache`].
+#[cfg(test)]
 pub(crate) fn anthropic_stream_payload(request: &CompletionRequest) -> Value {
-    let mut payload = anthropic_payload(request);
+    anthropic_stream_payload_with_cache(request, false)
+}
+
+pub(crate) fn anthropic_stream_payload_with_cache(
+    request: &CompletionRequest,
+    cache_enabled: bool,
+) -> Value {
+    let mut payload = anthropic_payload_with_cache(request, cache_enabled);
     payload["stream"] = Value::Bool(true);
     payload
+}
+
+/// Adds `cache_control: { type: "ephemeral" }` to the last content block of
+/// a message. When the message uses the plain-string content shape, rewrites
+/// it as a single text block first so the marker has somewhere to attach.
+fn apply_cache_control_to_last_content_block(message: &mut Value) {
+    if let Some(content_str) = message.get("content").and_then(Value::as_str) {
+        let owned = content_str.to_string();
+        message["content"] = json!([{
+            "type": "text",
+            "text": owned,
+            "cache_control": { "type": "ephemeral" },
+        }]);
+        return;
+    }
+    if let Some(blocks) = message.get_mut("content").and_then(Value::as_array_mut)
+        && let Some(last) = blocks.last_mut()
+        && let Some(obj) = last.as_object_mut()
+    {
+        obj.insert("cache_control".to_string(), json!({ "type": "ephemeral" }));
+    }
 }
 
 pub(crate) fn parse_anthropic_response(

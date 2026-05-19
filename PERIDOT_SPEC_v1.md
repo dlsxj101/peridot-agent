@@ -1,8 +1,8 @@
-# Peridot Agent — Architecture Specification v1.8
+# Peridot Agent — Architecture Specification v1.9
 
 > Claude Code에게 넘기는 전체 설계 문서.
 > 이 문서를 읽으면 프로젝트의 모든 설계 결정을 이해할 수 있어야 한다.
-> 작성일: 2026-05-14
+> 작성일: 2026-05-19
 > v1.1: peridot-project 상세, Hook 시스템, AGENTS.md 스펙
 > v1.2: peridot-cli, config.toml, 설치, headless, peridot-tui 상세
 > v1.3: 보안 6-Layer, 테스트 전략 (단위/통합/E2E/Mock), CI/CD (GitHub Actions)
@@ -11,6 +11,7 @@
 > v1.6: 인증 전략 (Claude API Key + OpenAI Codex OAuth), 듀얼 프로바이더 설계
 > v1.7: 멀티세션 탭바 UX 개선, LLM 세션 제목 생성, Windows 크로스플랫폼 안정화, v0.4.2 릴리스 반영
 > v1.8: `/branch tree`·`/branch switch` DAG 내비게이션, `/collapse` 전사 블록 토글, `/autofix` 슬래시 명령, v0.5.0 릴리스 반영
+> v1.9: 9개 정합성 이슈 정리 — Grader-Verify 통합(`--with-grader`), `agent_message` 도구 등록, Prompt cache_control 자동 마킹(3-breakpoint), Lint stage variant, 4-Tier→2-Tier 정정, Append-Only 정정(in-turn 한정), Fork/Teammate 메시지 큐 + LocalSubAgentRunner 정리, `peridot-grader` crate 분리, capability 메서드(`supports_cache`/`supports_thinking`) 실제 활용. v0.6.0 릴리스 반영.
 
 ---
 
@@ -85,7 +86,7 @@ Production 급 설계. 실제로 만들어 배포/사용할 것.
 - 읽기 전용. 코드베이스를 분석하고 계획만 세움.
 - 절대 파일을 수정하지 않음. 절대 명령을 실행하지 않음.
 - 허용 도구: file_read, file_search, file_list, git_status, git_diff, git_log, web_search, web_fetch, plan_create, plan_update, agent_scratchpad, agent_ask_user, agent_memory_search
-- 차단: shell_exec, file_write, file_patch, git_commit, git_branch, verify_build, verify_test, agent_fork, agent_worktree
+- 차단: shell_exec, file_write, file_patch, git_commit, git_branch, verify_build, verify_test, agent_delegate
 - Plan 완료 시 자동으로 실행 방식 선택지 제시 (execute/goal, safe/auto/yolo)
 
 #### 🔧 Execute Mode (기본)
@@ -189,7 +190,7 @@ peridot/
 ├── peridot-tui/                  # Ratatui 터미널 UI
 ├── peridot-core/                 # 에이전트 루프, 상태 머신
 ├── peridot-llm/                  # LLM 프로바이더 추상화 + Claude 구현
-├── peridot-context/              # 4-Tier 컨텍스트 관리
+├── peridot-context/              # 2-Tier 컨텍스트 관리 (deterministic + LLM)
 ├── peridot-tools/                # 도구 레지스트리, 내장 도구, 권한
 ├── peridot-mcp/                  # MCP 클라이언트 (외부 도구 확장)
 ├── peridot-verify/               # 빌드/테스트/grader/루브릭/diff
@@ -256,28 +257,31 @@ PLANNING → EXECUTING → VERIFYING → DONE
 
 ---
 
-## 5. peridot-context — 4-Tier 컨텍스트 관리
+## 5. peridot-context — 2-Tier 컨텍스트 관리
 
-### 5.1 4-Tier 압축 (Claude Code 유출본 기반)
+### 5.1 2-Tier 압축 (v0.6.0 정정 — 원안 4-Tier에서 통합 단순화)
+
+원래 SPEC v1.x는 4-Tier 압축을 명시했으나, 실제 구현은 두 단계로 통합되었음:
 
 ```
-Tier 0: MicroCompact (비용 0, API 호출 없음)
-  → 오래된 tool output을 로컬에서 직접 잘라냄
+Tier A: Deterministic Compaction (비용 0, API 호출 없음)
+  → compact_if_needed() / compact_tier1() (peridot-context/src/lib.rs)
+  → 오래된 entries를 구조화 요약으로 fold-in
+  → 가장 최근 user/tool 결과는 preserved_anchor + COMPACTION_KEEP_TAIL로 보존
+  → 원안 Tier 0(MicroCompact)는 offload_threshold_chars 메커니즘에 흡수됨
+  → 원안 Tier 3(HistorySnip) 비상 케이스는 hard_limit_tokens 초과 시 이 경로로 처리
 
-Tier 1: AutoCompact (API 1회)
-  → 컨텍스트가 윈도우 한계 접근 시 자동 트리거
-  → 13,000 토큰 버퍼 남기고, 최대 20,000 토큰 구조화 요약
-
-Tier 2: FullCompact (API 1회, 전체 대화 압축)
-  → 선택적으로 중요 파일 재주입
-  → MEMORY.md, todo.md 항상 재주입
-
-Tier 3: HistorySnip (비용 0, 비상용)
-  → 오래된 메시지 블록 통째 삭제
-  → headless/background 세션에서만 사용
+Tier B: LLM-driven Compaction (API 1회)
+  → compact_with_llm() (peridot-context/src/lib.rs)
+  → 임계치(model_window * auto_compaction_pct, 기본 0.9) 도달 시 자동 트리거
+  → LLM이 {current_task, key_facts, current_plan, recent_decisions, important_files} JSON 생성
+  → /compact 슬래시로 강제 트리거 가능 (force_compact_with_llm)
+  → 원안 Tier 1(AutoCompact, 구조화 요약)과 Tier 2(FullCompact, 중요 파일 재주입)를 통합한 단계
+  → 파싱 실패 시 Tier A로 fallback (compact_with_llm_inner)
 ```
 
-항상 가장 싼 옵션부터 시도.
+호출 순서: agent loop이 매 턴 시작 시 force_compact 체크 → Tier B 시도 → 실패 시 Tier A → 둘 다
+스킵되면 다음 턴으로. 항상 LLM 비용 없는 deterministic 경로를 fallback으로 유지.
 
 ### 5.2 컨텍스트 윈도우 구조
 
@@ -299,14 +303,26 @@ Tier 3: HistorySnip (비용 0, 비상용)
 
 - 3,000자 이상 tool result → 자동 파일 오프로드
 - 8,000자 이상 → 자동 잘림 (head + tail 보존)
-- 100K 토큰 → Tier 1 자동 압축
+- 임계치(model_window * 0.9) 도달 → Tier B(LLM) 자동 압축 시도
 - 160K 토큰 → 강제 삭제
 
-### 5.4 Append-Only 원칙
+### 5.4 Append-Only 원칙 (v0.6.0 정정)
 
-과거 메시지를 절대 수정하지 않음 → KV-cache 보존.
-Compaction은 메시지 내용을 [COMPACTED] 마커로 줄이는 것이지 메시지를 삭제/교체하는 것이 아님.
-단, compaction 발생 시 cache miss 1회는 감수.
+**In-turn 한정 원칙**: 진행 중인 턴에서는 과거 entries를 절대 수정하지 않음. 모든 새 entry는
+`ContextManager::append`로만 추가. → KV-cache prefix 안정.
+
+**Compaction은 예외**: Compaction은 entries vec 재구성을 허용함 (`self.entries = compacted`).
+- 가장 최근 substantive user/tool 결과는 `preserved_anchor` + `COMPACTION_KEEP_TAIL`(기본 6)로
+  반드시 보존되어 active objective와 직전 작업 컨텍스트가 사라지지 않음.
+- Compaction이 일어나면 prefix가 바뀌므로 cache miss 1회는 감수 — LLM 비용 절감(요약된 컨텍스트가
+  훨씬 작음)이 이 비용을 상쇄.
+- 원안 SPEC의 "[COMPACTED] 마커로 메시지 내용 줄이기" 표현은 implementation detail로 격하됨:
+  실제로는 `ContextEntry::trusted(ContextSource::PlanReminder, summary)` 한 줄로 fold-in.
+
+**Provider 응답 단일 턴 invariant**: 한 턴 내에서는 assistant 응답을 두 번 append하지 않으며
+(`HarnessAgent::run_turn_with_events`는 첫 tool call만 honor), `tool_call_id` 페어링은 항상
+다음 turn으로만 흘러감 — provider validator(특히 OpenAI/Codex)가 누락된 tool_call 페어를
+reject하는 경우 방어.
 
 ---
 
@@ -460,7 +476,7 @@ trait Tool: Send + Sync {
 
 내장 도구와 MCP 외부 도구 모두 이 trait을 구현. 에이전트 입장에서 구분 없음.
 
-### 7.2 내장 도구 목록 (25개)
+### 7.2 내장 도구 목록 (v0.6.0 기준, 34개)
 
 ```
 shell_ 그룹:
@@ -472,6 +488,9 @@ file_ 그룹:
   file_patch          — 정밀 편집 (old_text → new_text)
   file_search         — grep 스타일 검색
   file_list           — 디렉토리 구조 조회
+  file_outline        — 파일 outline / 심볼 요약 (v0.5.x+)
+  symbol_search       — 워크스페이스 심볼 검색 (v0.5.x+, LSP 대안)
+  workspace_symbols   — 워크스페이스 심볼 인덱스 조회 (v0.5.x+)
 
 git_ 그룹:
   git_status          — 변경 상태
@@ -479,6 +498,10 @@ git_ 그룹:
   git_commit          — 자동 커밋 (메시지 생성 포함)
   git_branch          — 브랜치 생성/전환
   git_log             — 히스토리
+  git_push            — 원격 push (v0.5.x+, 권한 게이팅)
+  gh_pr_create        — GitHub PR 생성 (v0.5.x+, Beyond-v1 21.5.4)
+  gh_pr_status        — GitHub PR 상태 조회 (v0.5.x+)
+  gh_pr_merge         — GitHub PR 머지 (v0.5.x+)
 
 web_ 그룹:
   web_search          — 웹 검색
@@ -494,14 +517,22 @@ verify_ 그룹:
   verify_lint         — 린터/타입체커
 
 agent_ 그룹:
-  agent_fork          — Fork 서브에이전트 (독립 컨텍스트)
-  agent_worktree      — Worktree 서브에이전트 (git worktree 격리)
-  agent_message       — Teammate 간 메시지
+  agent_delegate      — Fork/Worktree/Teammate 통합 위임
+                        (v0.5.x에서 agent_fork·agent_worktree 통합;
+                         kind="fork|worktree|teammate" 파라미터로 선택)
+  agent_message       — 부모↔자식 서브에이전트 메시지 (v0.6.0+)
   agent_ask_user      — 사용자에게 질문 (SingleSelect/MultiSelect/FreeForm)
   agent_scratchpad    — 메모 저장
   agent_memory_search — 과거 메모리/스킬 검색
+  skill_list          — 저장된 스킬 목록 조회 (v0.5.x+)
+  skill_view          — 스킬 본문 로드 (v0.5.x+, Curator last_used 기록)
   agent_done          — 완료 선언
 ```
+
+> **v0.6.0 통합 노트**: `agent_fork`·`agent_worktree`는 v0.5.x에서 `agent_delegate(kind=...)`
+> 단일 도구로 통합되었음. `SubAgentPolicy`가 프롬프트 키워드로 kind를 자동 추론하므로
+> 모델이 명시하지 않아도 적절한 격리 방식이 선택됨. SPEC 7.2의 원래 25개 목록과
+> 비교했을 때 9개 도구가 추가되어 총 34개가 등록됨 (`register_builtin_tools`).
 
 ### 7.3 Structured Variation
 
@@ -1328,7 +1359,7 @@ peri update --force      # 확인 없이 즉시 업데이트
 
 세션 시작 시 자동 체크 (config [updates] 섹션):
 ```
-💎 Peridot v0.5.1 사용 가능 (현재 v0.5.0). peri update로 업데이트.
+💎 Peridot v0.6.0 사용 가능 (현재 v0.5.1). peri update로 업데이트.
 ```
 한 줄 알림만. 작업 흐름 안 끊음.
 Homebrew 설치 감지 시 `brew upgrade peridot` 안내.
@@ -1701,7 +1732,7 @@ plan 진행바 #6b8e23→#a8d948 (그라데이션), cache #c5d84b (골든)
   TUI가 Full/Compact/Minimal 세 레이아웃에서 정상 동작
   peridot --headless --mode goal "태스크" → JSON 결과 출력
   cargo test --workspace --features e2e 통과
-  git tag v0.5.0 → CI가 바이너리 빌드 + Release 생성
+  git tag v0.6.0 → CI가 바이너리 빌드 + Release 생성
 ```
 
 ### 세션 간 규칙 (Claude Code에게)
@@ -1806,7 +1837,7 @@ firejail: 가볍고 빠르나 Linux 전용.
 ### 20.2 크레이트별 단위 테스트 핵심 항목
 
 ```
-peridot-context:  토큰 추정, 4-Tier 압축, append-only 보장, 오프로딩, 직렬화
+peridot-context:  토큰 추정, 2-Tier 압축(deterministic + LLM), in-turn append-only, 오프로딩, 직렬화
 peridot-tools:    각 핸들러 정상/에러, 상태 머신 전이, 마스킹, blocklist, path sandbox, hook 순서
 peridot-llm:      직렬화 결정론, breakpoint 배치, 5단계 파싱 fallback, 에러 처리, 비용 계산
 peridot-core:     상태 전이, Recovery(stuck 감지, 에러 분류, 에스컬레이션), Goal Checker, Structured Variation
@@ -1910,8 +1941,8 @@ Job 4: coverage (main만)
 
 ```bash
 cargo set-version 0.5.0
-git tag v0.5.0
-git push origin v0.5.0
+git tag v0.6.0
+git push origin v0.6.0
 # → CI가 자동으로 빌드+릴리스+배포
 ```
 

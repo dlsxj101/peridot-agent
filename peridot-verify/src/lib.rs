@@ -16,6 +16,8 @@ pub enum VerifyStage {
     Build,
     /// Project tests.
     Test,
+    /// Project lint / typecheck.
+    Lint,
     /// Diff review.
     DiffReview,
     /// LLM grader.
@@ -80,6 +82,83 @@ impl VerifyPipeline {
         Ok(VerifyReport { stages })
     }
 
+    /// Runs the deterministic stages and then asks an LLM grader to weigh in
+    /// on the actual change (SPEC Stage 5). The grader only runs when every
+    /// deterministic stage passed — a failing build or lint already gives
+    /// the operator a verdict and burning an API call to confirm "yes, it's
+    /// broken" wastes budget. The resulting grader stage carries the verdict
+    /// summary in `VerifyStageResult.summary` and `passed` mirrors the
+    /// LLM verdict.
+    pub async fn run_all_with_grader<P>(
+        &self,
+        provider: &P,
+        model: &str,
+        task: &str,
+    ) -> PeriResult<VerifyReport>
+    where
+        P: peridot_llm::LlmProvider + ?Sized,
+    {
+        let mut report = self.run_all()?;
+        if !report.passed() {
+            // Deterministic stages already failed — skip the grader so the
+            // operator pays nothing for a duplicated negative verdict.
+            return Ok(report);
+        }
+        let diff = self.collect_diff_for_grader();
+        let verify_summary = render_verify_summary_for_grader(&report);
+        match peridot_grader::grade_work(provider, model, task, &diff, &verify_summary).await {
+            Ok(verdict) => {
+                report.stages.push(VerifyStageResult {
+                    stage: VerifyStage::Grader,
+                    passed: verdict.passed,
+                    summary: verdict.summary,
+                });
+            }
+            Err(err) => {
+                // Surface grader infrastructure failures as a non-passing
+                // Grader stage so the operator can see *why* grading didn't
+                // happen — but do not propagate the error, since the
+                // deterministic verdict above is still valid.
+                report.stages.push(VerifyStageResult {
+                    stage: VerifyStage::Grader,
+                    passed: false,
+                    summary: format!("grader unavailable: {err}"),
+                });
+            }
+        }
+        Ok(report)
+    }
+
+    /// Captures `git diff HEAD` in the project root for the grader. Best-effort
+    /// — when git is missing or the directory is not a repo, returns an empty
+    /// string so the grader still sees the verify summary and task text.
+    fn collect_diff_for_grader(&self) -> String {
+        Command::new("git")
+            .args(["diff", "HEAD"])
+            .current_dir(&self.profile.root)
+            .output()
+            .ok()
+            .map(|output| String::from_utf8_lossy(&output.stdout).to_string())
+            .unwrap_or_default()
+    }
+}
+
+/// Renders a multi-line "stage: passed/failed — summary" block the grader can
+/// consume as its `verify_summary` input. Kept short so the grader call body
+/// stays under typical token caps.
+fn render_verify_summary_for_grader(report: &VerifyReport) -> String {
+    report
+        .stages
+        .iter()
+        .map(|stage| {
+            let marker = if stage.passed { "PASS" } else { "FAIL" };
+            format!("{marker} {:?}: {}", stage.stage, stage.summary)
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+impl VerifyPipeline {
     /// Runs deterministic checks.
     pub fn run_deterministic(&self) -> PeriResult<VerifyStageResult> {
         self.run_command_or_pass(
@@ -101,10 +180,7 @@ impl VerifyPipeline {
 
     /// Runs the detected lint command when one exists.
     pub fn run_lint(&self) -> PeriResult<Option<VerifyStageResult>> {
-        self.run_optional_command(
-            VerifyStage::Deterministic,
-            self.profile.commands.lint.as_deref(),
-        )
+        self.run_optional_command(VerifyStage::Lint, self.profile.commands.lint.as_deref())
     }
 
     /// Runs deterministic diff review.
@@ -292,6 +368,40 @@ mod tests {
     }
 
     #[test]
+    fn run_lint_stage_uses_lint_variant() {
+        let root =
+            std::env::temp_dir().join(format!("peridot-verify-lint-pass-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let mut profile = ProjectProfile::minimal(&root);
+        profile.commands.lint = Some("true".to_string());
+
+        let stage = VerifyPipeline::new(profile).run_lint().unwrap().unwrap();
+
+        assert_eq!(stage.stage, VerifyStage::Lint);
+        assert!(stage.passed);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn run_lint_failure_reports_lint_stage_not_deterministic() {
+        let root =
+            std::env::temp_dir().join(format!("peridot-verify-lint-fail-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let mut profile = ProjectProfile::minimal(&root);
+        profile.commands.lint = Some("exit 1".to_string());
+
+        let stage = VerifyPipeline::new(profile).run_lint().unwrap().unwrap();
+
+        assert_eq!(
+            stage.stage,
+            VerifyStage::Lint,
+            "lint failures must be reported under Lint, not Deterministic"
+        );
+        assert!(!stage.passed);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn git_checks_are_skipped_outside_repositories() {
         let root =
             std::env::temp_dir().join(format!("peridot-verify-non-git-{}", std::process::id()));
@@ -328,6 +438,116 @@ mod tests {
         assert_eq!(stage.stage, VerifyStage::DiffReview);
         assert!(!stage.passed);
         assert!(stage.summary.contains("generated/out.txt"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn run_all_with_grader_appends_grader_stage_when_deterministic_passes() {
+        use async_trait::async_trait;
+        use peridot_common::PeriResult;
+        use peridot_llm::{
+            AuthMethod, CompletionRequest, CompletionResponse, LlmProvider, PricingTable, Usage,
+        };
+
+        struct PassGrader;
+        #[async_trait]
+        impl LlmProvider for PassGrader {
+            async fn complete(&self, _req: CompletionRequest) -> PeriResult<CompletionResponse> {
+                Ok(CompletionResponse {
+                    text: r#"{"passed": true, "summary": "looks good", "recommendations": []}"#
+                        .to_string(),
+                    tool_calls: Vec::new(),
+                    reasoning_content: None,
+                    usage: Usage::default(),
+                })
+            }
+            fn supports_cache(&self) -> bool {
+                false
+            }
+            fn supports_prefill(&self) -> bool {
+                false
+            }
+            fn supports_thinking(&self) -> bool {
+                false
+            }
+            fn pricing(&self) -> PricingTable {
+                PricingTable::default()
+            }
+            fn auth_method(&self) -> AuthMethod {
+                AuthMethod::NotConfigured
+            }
+        }
+
+        let root =
+            std::env::temp_dir().join(format!("peridot-verify-grader-pass-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let provider = PassGrader;
+        let report = VerifyPipeline::new(ProjectProfile::minimal(&root))
+            .run_all_with_grader(&provider, "test-model", "make a button")
+            .await
+            .unwrap();
+
+        let grader_stage = report
+            .stages
+            .iter()
+            .find(|s| s.stage == VerifyStage::Grader)
+            .expect("grader stage must be appended when deterministic stages pass");
+        assert!(grader_stage.passed);
+        assert!(grader_stage.summary.contains("looks good"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn run_all_with_grader_skips_grader_when_deterministic_fails() {
+        use async_trait::async_trait;
+        use peridot_common::{PeriError, PeriResult};
+        use peridot_llm::{
+            AuthMethod, CompletionRequest, CompletionResponse, LlmProvider, PricingTable,
+        };
+
+        // A grader that would PANIC if invoked — proves we never call it
+        // when the deterministic stages have already failed.
+        struct PanickingGrader;
+        #[async_trait]
+        impl LlmProvider for PanickingGrader {
+            async fn complete(&self, _req: CompletionRequest) -> PeriResult<CompletionResponse> {
+                Err(PeriError::Provider(
+                    "grader must not run on deterministic failure".to_string(),
+                ))
+            }
+            fn supports_cache(&self) -> bool {
+                false
+            }
+            fn supports_prefill(&self) -> bool {
+                false
+            }
+            fn supports_thinking(&self) -> bool {
+                false
+            }
+            fn pricing(&self) -> PricingTable {
+                PricingTable::default()
+            }
+            fn auth_method(&self) -> AuthMethod {
+                AuthMethod::NotConfigured
+            }
+        }
+
+        let root =
+            std::env::temp_dir().join(format!("peridot-verify-grader-skip-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let mut profile = ProjectProfile::minimal(&root);
+        // Force a deterministic failure via an exiting-nonzero build command.
+        profile.commands.build = Some("exit 1".to_string());
+        let provider = PanickingGrader;
+        let report = VerifyPipeline::new(profile)
+            .run_all_with_grader(&provider, "test-model", "noop")
+            .await
+            .unwrap();
+
+        assert!(
+            report.stages.iter().all(|s| s.stage != VerifyStage::Grader),
+            "grader must NOT be appended when deterministic stages fail"
+        );
         fs::remove_dir_all(root).unwrap();
     }
 

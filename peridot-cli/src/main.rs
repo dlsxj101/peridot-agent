@@ -138,6 +138,22 @@ impl Cli {
     }
 }
 
+/// Args struct for `peridot verify`. Extracted from the inline enum
+/// variant because rustc 1.95 hit an ICE in `report_arg_errors` when an
+/// inline struct variant with optional boolean flags was used inside
+/// `main`'s match.
+#[derive(Debug, clap::Args)]
+struct VerifyArgs {
+    /// Also invoke the LLM grader after deterministic stages pass.
+    /// Uses the same primary provider as the agent loop.
+    #[arg(long)]
+    with_grader: bool,
+    /// Task description handed to the grader. Required when
+    /// `--with-grader` is set; ignored otherwise.
+    #[arg(long, value_name = "TEXT")]
+    grader_task: Option<String>,
+}
+
 /// Top-level subcommands.
 #[derive(Debug, Subcommand)]
 enum Command {
@@ -159,7 +175,7 @@ enum Command {
     /// Print a project scan.
     Scan,
     /// Run deterministic verification.
-    Verify,
+    Verify(VerifyArgs),
     /// Initialize project-local Peridot files.
     Setup,
     /// Configuration commands.
@@ -316,8 +332,15 @@ async fn main() -> Result<()> {
             print_scan(&profile, cli.output)?;
             return Ok(());
         }
-        Some(Command::Verify) => {
-            run_verify_command(&project_root, &config, cli.output)?;
+        Some(Command::Verify(args)) => {
+            run_verify_command(
+                &project_root,
+                &config,
+                cli.output,
+                args.with_grader,
+                args.grader_task.clone(),
+            )
+            .await?;
             return Ok(());
         }
         Some(Command::Setup) => {
@@ -903,6 +926,19 @@ fn spawn_tui_agent_run(
         next_id: ask_user_next_id,
         pending: ask_user_pending,
     });
+    // Wire the SessionRouter-backed message bus so this session's
+    // `agent_message` calls route to its registered parent/children,
+    // and so its inbox is drained at the start of every turn.
+    let message_bus: run_loop::MessageBusHookup = {
+        let bus = std::sync::Arc::new(
+            session_router::RouterMessageBus::new(router.clone())
+                .with_current_session(session_id.clone()),
+        );
+        Some((
+            bus as std::sync::Arc<dyn peridot_tools::AgentMessageBus>,
+            session_id.clone(),
+        ))
+    };
     handle.spawn(async move {
         let event_sender = event_tx.clone();
         let session = session_id.clone();
@@ -932,6 +968,7 @@ fn spawn_tui_agent_run(
             compact_request,
             context_snapshot_path,
             Some(ask_user_port),
+            message_bus,
             move |event| {
                 let evt = tui_runtime_event_from_agent(event);
                 if let TuiRuntimeEvent::ApprovalRequested { reason, .. } = &evt {

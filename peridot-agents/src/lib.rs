@@ -79,11 +79,34 @@ impl LocalSubAgentRunner {
 
 #[async_trait]
 impl SubAgent for LocalSubAgentRunner {
+    /// Prepares the workspace for a subagent task without executing
+    /// it. The actual LLM loop is the harness's job (`InnerLoopSubAgent`
+    /// in `peridot-core`) — this crate stays LLM-free so the
+    /// dependency graph keeps `peridot-tools` → `peridot-agents`
+    /// without a cycle back through `peridot-core`/`peridot-llm`.
+    ///
+    /// Per-kind preparation:
+    /// * `Fork` — reuses the parent workspace as-is. The execution
+    ///   step gets a fresh `HarnessAgent` but works against the same
+    ///   files. Returns the parent root as `workspace`.
+    /// * `Worktree` — materialises a real `git worktree` under
+    ///   `<worktrees_root>/<slug>` on branch
+    ///   `codex/subagent-<slug>`. Caller is responsible for tearing
+    ///   it down via `GitManager::remove_worktree` when the session
+    ///   ends.
+    /// * `Teammate` — same physical isolation as `Worktree`. The
+    ///   distinction is bookkeeping: teammates carry parent↔child
+    ///   message channels (`agent_message`) and have a longer
+    ///   intended lifetime, but the file isolation needs are identical
+    ///   so we share the worktree machinery instead of running unisolated.
     async fn run(&self, task: SubAgentTask) -> PeriResult<SubAgentResult> {
         match task.kind {
             SubAgentKind::Fork => Ok(SubAgentResult {
                 success: true,
-                summary: format!("fork subagent prepared: {}", task.prompt),
+                summary: format!(
+                    "fork workspace prepared (shared with parent) for task: {}",
+                    task.prompt
+                ),
                 kind: SubAgentKind::Fork,
                 workspace: Some(self.project_root.clone()),
                 diff: String::new(),
@@ -106,13 +129,30 @@ impl SubAgent for LocalSubAgentRunner {
                     diff: String::new(),
                 })
             }
-            SubAgentKind::Teammate => Ok(SubAgentResult {
-                success: true,
-                summary: format!("teammate subagent queued: {}", task.prompt),
-                kind: SubAgentKind::Teammate,
-                workspace: Some(self.project_root.clone()),
-                diff: String::new(),
-            }),
+            SubAgentKind::Teammate => {
+                // Teammates inherit the same physical isolation as worktree
+                // subagents — the difference is only in lifecycle
+                // (long-running) and routing (parent↔child message bus).
+                // Sharing the worktree path avoids the two-tier
+                // "Fork still string-only / Worktree real" inconsistency
+                // that v0.5.x carried.
+                let plan =
+                    WorktreePlan::new(&self.project_root, &self.worktrees_root, &task.prompt)?;
+                std::fs::create_dir_all(&self.worktrees_root).map_err(|err| {
+                    PeriError::Tool(format!(
+                        "failed to create worktrees root {}: {err}",
+                        self.worktrees_root.display()
+                    ))
+                })?;
+                GitManager::new(&self.project_root).add_worktree(&plan.path, &plan.branch)?;
+                Ok(SubAgentResult {
+                    success: true,
+                    summary: format!("teammate subagent prepared on {}", plan.branch),
+                    kind: SubAgentKind::Teammate,
+                    workspace: Some(plan.path),
+                    diff: String::new(),
+                })
+            }
         }
     }
 }

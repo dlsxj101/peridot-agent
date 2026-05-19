@@ -18,14 +18,17 @@
 
 #![allow(dead_code)]
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use async_trait::async_trait;
+use peridot_common::PeriResult;
 use peridot_core::CancelToken;
 use peridot_memory::{SessionLifecycle, SessionRecord};
+use peridot_tools::{AgentMessageBus, InboxMessage};
 
 /// Where an agent loop should perform its tool calls.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -65,6 +68,12 @@ pub struct SessionHandle {
     pub worktree_branch: Option<String>,
     /// Wall-clock spawn time (unix seconds).
     pub started_at_unix: u64,
+    /// FIFO queue of messages destined for this session, populated by
+    /// `RouterMessageBus::send_to_parent` / `send_to_child` from peer
+    /// sessions. The agent loop drains this at the start of every turn
+    /// and folds each entry into context as a `PlanReminder`. `Mutex`
+    /// is sufficient (no async work happens while holding it).
+    pub inbox: Arc<Mutex<VecDeque<InboxMessage>>>,
 }
 
 impl SessionHandle {
@@ -90,6 +99,7 @@ impl SessionHandle {
             workspace_root: workspace_root.into(),
             worktree_branch,
             started_at_unix: now_unix(),
+            inbox: Arc::new(Mutex::new(VecDeque::new())),
         }
     }
 
@@ -226,6 +236,136 @@ impl SessionRouter {
         }
         removed
     }
+
+    /// Returns the parent session id of `id`, if any. Used by
+    /// `RouterMessageBus::send_to_parent` to resolve the destination.
+    pub fn parent_of(&self, id: &str) -> Option<String> {
+        self.sessions.get(id).and_then(|h| h.parent_id.clone())
+    }
+
+    /// Returns true when `parent_id` is the registered parent of `child_id`.
+    /// Used as a safety check before `send_to_child` so a session can only
+    /// message its own direct children, never arbitrary peers.
+    pub fn is_child_of(&self, parent_id: &str, child_id: &str) -> bool {
+        self.sessions
+            .get(child_id)
+            .and_then(|h| h.parent_id.as_deref())
+            == Some(parent_id)
+    }
+
+    /// Returns a clone of the inbox `Arc<Mutex<...>>` for `id`, so a peer
+    /// session can push messages without holding a `&mut SessionRouter`.
+    pub fn inbox_handle(&self, id: &str) -> Option<Arc<Mutex<VecDeque<InboxMessage>>>> {
+        self.sessions.get(id).map(|h| h.inbox.clone())
+    }
+}
+
+/// `AgentMessageBus` implementation backed by a shared [`SessionRouter`].
+/// Carries a single session id (the "current" session — i.e. whose harness
+/// instantiated the bus) so the tool can identify itself without consulting
+/// the router. Per-spawn `with_current_session` creates a new bus that
+/// shares the underlying router but reports a different `current_session_id`.
+#[derive(Clone)]
+pub struct RouterMessageBus {
+    router: Arc<Mutex<SessionRouter>>,
+    current_session_id: Option<String>,
+}
+
+impl RouterMessageBus {
+    /// Creates a bus that delegates to `router`. The `current_session_id`
+    /// is initially unset; call `with_current_session` to bind one before
+    /// passing the bus into a harness `ToolContext`.
+    pub fn new(router: Arc<Mutex<SessionRouter>>) -> Self {
+        Self {
+            router,
+            current_session_id: None,
+        }
+    }
+
+    /// Returns a clone of this bus that reports `id` as the calling session.
+    pub fn with_current_session(&self, id: impl Into<String>) -> Self {
+        Self {
+            router: self.router.clone(),
+            current_session_id: Some(id.into()),
+        }
+    }
+
+    fn push_to(&self, target: &str, body: InboxMessage) -> PeriResult<()> {
+        let router = self.router.lock().expect("session router mutex poisoned");
+        let Some(inbox) = router.inbox_handle(target) else {
+            return Err(peridot_common::PeriError::Tool(format!(
+                "agent_message: no session named `{target}` to deliver to"
+            )));
+        };
+        drop(router);
+        inbox.lock().expect("inbox mutex poisoned").push_back(body);
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl AgentMessageBus for RouterMessageBus {
+    fn current_session_id(&self) -> Option<String> {
+        self.current_session_id.clone()
+    }
+
+    async fn send_to_parent(&self, from_session: &str, message: &str) -> PeriResult<String> {
+        let parent_id = {
+            let router = self.router.lock().expect("session router mutex poisoned");
+            router.parent_of(from_session)
+        };
+        let parent_id = parent_id.ok_or_else(|| {
+            peridot_common::PeriError::Tool(format!(
+                "agent_message: session `{from_session}` has no parent to message"
+            ))
+        })?;
+        self.push_to(
+            &parent_id,
+            InboxMessage {
+                from: from_session.to_string(),
+                body: message.to_string(),
+                at_unix: now_unix(),
+            },
+        )?;
+        Ok(parent_id)
+    }
+
+    async fn send_to_child(
+        &self,
+        from_session: &str,
+        child_session: &str,
+        message: &str,
+    ) -> PeriResult<()> {
+        let is_child = {
+            let router = self.router.lock().expect("session router mutex poisoned");
+            router.is_child_of(from_session, child_session)
+        };
+        if !is_child {
+            return Err(peridot_common::PeriError::Tool(format!(
+                "agent_message: `{child_session}` is not a registered child of `{from_session}`"
+            )));
+        }
+        self.push_to(
+            child_session,
+            InboxMessage {
+                from: from_session.to_string(),
+                body: message.to_string(),
+                at_unix: now_unix(),
+            },
+        )
+    }
+
+    async fn drain_inbox(&self, session: &str) -> Vec<InboxMessage> {
+        let inbox = {
+            let router = self.router.lock().expect("session router mutex poisoned");
+            router.inbox_handle(session)
+        };
+        let Some(inbox) = inbox else {
+            return Vec::new();
+        };
+        let mut guard = inbox.lock().expect("inbox mutex poisoned");
+        guard.drain(..).collect()
+    }
 }
 
 /// Thread-safe handle that callbacks (on_submit / on_interrupt) share to fire
@@ -298,6 +438,71 @@ mod tests {
         assert_eq!(router.cycle_foreground(), Some("s2"));
         assert_eq!(router.cycle_foreground(), Some("s3"));
         assert_eq!(router.cycle_foreground(), Some("s1"));
+    }
+
+    #[tokio::test]
+    async fn router_message_bus_routes_parent_and_child() {
+        let mut router = SessionRouter::new();
+        let mut parent = handle("parent");
+        let mut child = handle("child");
+        child.parent_id = Some("parent".to_string());
+        parent.parent_id = None;
+        router.register(parent);
+        router.register(child);
+
+        let shared = Arc::new(Mutex::new(router));
+        let bus_child = RouterMessageBus::new(shared.clone()).with_current_session("child");
+        let bus_parent = RouterMessageBus::new(shared.clone()).with_current_session("parent");
+
+        // child → parent should push to parent's inbox.
+        let resolved_parent = bus_child.send_to_parent("child", "hello").await.unwrap();
+        assert_eq!(resolved_parent, "parent");
+        let parent_inbox = bus_parent.drain_inbox("parent").await;
+        assert_eq!(parent_inbox.len(), 1);
+        assert_eq!(parent_inbox[0].from, "child");
+        assert_eq!(parent_inbox[0].body, "hello");
+
+        // parent → child should push to child's inbox.
+        bus_parent
+            .send_to_child("parent", "child", "stop")
+            .await
+            .unwrap();
+        let child_inbox = bus_child.drain_inbox("child").await;
+        assert_eq!(child_inbox.len(), 1);
+        assert_eq!(child_inbox[0].from, "parent");
+        assert_eq!(child_inbox[0].body, "stop");
+
+        // second drain returns empty (FIFO + consumes).
+        assert!(bus_parent.drain_inbox("parent").await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn router_message_bus_rejects_sibling_addressing() {
+        let mut router = SessionRouter::new();
+        let mut parent = handle("p");
+        parent.parent_id = None;
+        let mut sib1 = handle("s1");
+        sib1.parent_id = Some("p".to_string());
+        let mut sib2 = handle("s2");
+        sib2.parent_id = Some("p".to_string());
+        router.register(parent);
+        router.register(sib1);
+        router.register(sib2);
+        let shared = Arc::new(Mutex::new(router));
+        let bus = RouterMessageBus::new(shared).with_current_session("s1");
+        // s1 cannot address s2 directly — s1's parent_id is "p", not "s1".
+        let err = bus.send_to_child("s1", "s2", "hi").await;
+        assert!(err.is_err());
+    }
+
+    #[tokio::test]
+    async fn router_message_bus_send_to_parent_errors_for_root() {
+        let mut router = SessionRouter::new();
+        router.register(handle("root"));
+        let shared = Arc::new(Mutex::new(router));
+        let bus = RouterMessageBus::new(shared).with_current_session("root");
+        let err = bus.send_to_parent("root", "where are you").await;
+        assert!(err.is_err());
     }
 
     #[test]

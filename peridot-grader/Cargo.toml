@@ -1,21 +1,13 @@
 [package]
-name = "peridot-verify"
+name = "peridot-grader"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
-[features]
-e2e = []
-
 [dependencies]
 peridot-common = { path = "../peridot-common" }
-peridot-grader = { path = "../peridot-grader" }
 peridot-llm = { path = "../peridot-llm" }
-peridot-project = { path = "../peridot-project" }
 serde.workspace = true
-
-[dev-dependencies]
-async-trait.workspace = true
-tokio = { workspace = true, features = ["macros", "rt"] }
+serde_json.workspace = true

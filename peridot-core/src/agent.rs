@@ -12,7 +12,7 @@ use peridot_llm::{
 };
 use peridot_tools::audit::{AuditEvent, append_audit_event};
 use peridot_tools::hooks::{HookRunner, tool_hook_variables};
-use peridot_tools::{AskUserPort, ToolContext, ToolRegistry};
+use peridot_tools::{AgentMessageBus, AskUserPort, ToolContext, ToolRegistry};
 
 use crate::goal::check_goal_satisfied;
 use crate::permissions::ensure_tool_allowed;
@@ -42,6 +42,15 @@ pub struct HarnessAgent {
     role: AgentRole,
     subagent_runner: Option<Arc<dyn SubAgent>>,
     ask_user_port: Option<Arc<dyn AskUserPort>>,
+    /// Optional inter-session message bus. When set, the harness folds
+    /// the bus into every `ToolContext` (so `agent_message` can route to
+    /// peers) AND drains its own inbox at the start of every turn so
+    /// peer messages reach the model as `PlanReminder` entries.
+    message_bus: Option<Arc<dyn AgentMessageBus>>,
+    /// Optional session id. Required only when `message_bus` is set —
+    /// it identifies which inbox the harness drains. `None` keeps the
+    /// legacy single-session behaviour.
+    session_id: Option<String>,
     auto_verify_after_mutation: bool,
     auto_grade_on_done: bool,
     auto_fix_cap: u32,
@@ -82,6 +91,8 @@ impl HarnessAgent {
             role: AgentRole::default(),
             subagent_runner: None,
             ask_user_port: None,
+            message_bus: None,
+            session_id: None,
             auto_verify_after_mutation: false,
             auto_grade_on_done: false,
             auto_fix_cap: 3,
@@ -119,6 +130,26 @@ impl HarnessAgent {
     /// default fallback.
     pub fn set_ask_user_port(&mut self, port: Arc<dyn AskUserPort>) {
         self.ask_user_port = Some(port);
+    }
+
+    /// Installs an inter-session message bus. The harness:
+    ///
+    /// 1. Folds the bus into every `ToolContext`, enabling
+    ///    `agent_message` to actually route to peers.
+    /// 2. Drains its own inbox at the start of every turn and
+    ///    injects received messages as PlanReminder context entries
+    ///    so the model sees them on the next call.
+    ///
+    /// `session_id` must be set for the drain step to know which inbox
+    /// to read; see [`Self::set_session_id`].
+    pub fn set_message_bus(&mut self, bus: Arc<dyn AgentMessageBus>) {
+        self.message_bus = Some(bus);
+    }
+
+    /// Identifies this harness's session for inbox routing. Required
+    /// when `set_message_bus` is also set; ignored otherwise.
+    pub fn set_session_id(&mut self, id: impl Into<String>) {
+        self.session_id = Some(id.into());
     }
 
     /// Enables the "verify after every mutation" auto-loop. When on,
@@ -273,6 +304,9 @@ impl HarnessAgent {
         if let Some(port) = self.ask_user_port.clone() {
             ctx = ctx.with_ask_user_port(port);
         }
+        if let Some(bus) = self.message_bus.clone() {
+            ctx = ctx.with_message_bus(bus);
+        }
         tool.validate_params(&call.parameters)?;
         let runner = HookRunner::new(&project_root, ctx.hooks.clone());
         let mut variables = tool_hook_variables(&call.name, &call.parameters);
@@ -424,6 +458,14 @@ impl HarnessAgent {
             label: "assistant".to_string(),
         });
         let tool_definitions = self.cached_tool_definitions.clone();
+        // Honour the provider's capability advertisement: a provider that
+        // returns `supports_thinking() == false` (e.g. plain OpenAI Chat
+        // Completions) must not receive the thinking flag, otherwise the
+        // server would either ignore it silently (best case) or reject the
+        // request as malformed (some forks). Mode-based intent still gates
+        // this, so Execute-mode runs against a thinking-capable provider
+        // continue to leave thinking off as before.
+        let thinking = self.state.mode == ExecutionMode::Goal && provider.supports_thinking();
         let completion = stream_completion_with_chunks(
             provider,
             CompletionRequest {
@@ -431,7 +473,7 @@ impl HarnessAgent {
                 system: Some(system_prompt_for_role(self.state.mode, self.role).to_string()),
                 messages: self.context.to_messages(),
                 max_tokens: Some(request.max_tokens),
-                thinking: self.state.mode == ExecutionMode::Goal,
+                thinking,
                 reasoning_effort: request.reasoning_effort,
                 service_tier: request.service_tier,
                 tools: tool_definitions,
@@ -712,6 +754,22 @@ impl HarnessAgent {
         let mut verify_failure_state: Option<VerifyFailureState> = None;
         let fix_cap = self.auto_fix_cap;
         for turn_index in 0..request.max_turns {
+            // Drain any inter-session messages parked for this session.
+            // Each entry becomes a trusted `[peer message from <id>]`
+            // PlanReminder so the model sees coordination signals (e.g.
+            // a parent's "stop", a child's "tests passed") on the next
+            // call without an explicit tool round-trip.
+            if let (Some(bus), Some(session_id)) =
+                (self.message_bus.clone(), self.session_id.clone())
+            {
+                let messages = bus.drain_inbox(&session_id).await;
+                for entry in messages {
+                    self.context.append(ContextEntry::trusted(
+                        ContextSource::PlanReminder,
+                        format!("[peer message from {}] {}", entry.from, entry.body),
+                    ));
+                }
+            }
             if self
                 .cancel
                 .as_ref()

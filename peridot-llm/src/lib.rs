@@ -25,8 +25,8 @@ pub use types::{
 mod tests {
     use super::*;
     use crate::anthropic::{
-        anthropic_payload, anthropic_stream_payload, parse_anthropic_response,
-        parse_anthropic_stream,
+        anthropic_payload, anthropic_payload_with_cache, anthropic_stream_payload,
+        parse_anthropic_response, parse_anthropic_stream,
     };
     use crate::openai::{
         openai_chat_payload, openai_stream_payload, parse_openai_response, parse_openai_stream,
@@ -163,6 +163,109 @@ mod tests {
         assert_eq!(payload["system"], "top\n\ninline");
         assert_eq!(payload["messages"][0]["role"], "user");
         assert!(payload.get("tools").is_none());
+    }
+
+    #[test]
+    fn anthropic_payload_with_cache_marks_three_breakpoints() {
+        // System + tools + a multi-turn conversation so all three
+        // breakpoints (tools, system, history) can be exercised.
+        let tool = ToolDefinition {
+            name: "file_read".to_string(),
+            description: "Read a file".to_string(),
+            parameters: json!({"type": "object", "properties": {"path": {"type": "string"}}}),
+        };
+        let assistant = LlmMessage::assistant_with_tool_calls(
+            "Reading.",
+            vec![ToolInvocation {
+                id: "toolu_1".to_string(),
+                name: "file_read".to_string(),
+                arguments: json!({"path": "README.md"}),
+            }],
+        );
+        let request = CompletionRequest {
+            model: "claude-sonnet-4-6".to_string(),
+            system: Some("you are peridot".to_string()),
+            messages: vec![
+                LlmMessage::new(MessageRole::User, "first prompt"),
+                assistant,
+                LlmMessage::tool_result("toolu_1", "# Peridot"),
+                LlmMessage::new(MessageRole::User, "trailing user prompt"),
+            ],
+            max_tokens: Some(128),
+            thinking: false,
+            reasoning_effort: peridot_common::ReasoningEffort::Off,
+            service_tier: None,
+            tools: vec![tool],
+            tool_choice: ToolChoice::Auto,
+        };
+        let payload = anthropic_payload_with_cache(&request, true);
+
+        // Breakpoint 1: last tool definition carries cache_control.
+        let tools = payload["tools"].as_array().expect("tools present");
+        assert_eq!(
+            tools.last().unwrap()["cache_control"],
+            json!({ "type": "ephemeral" })
+        );
+
+        // Breakpoint 2: system rendered as a single block with cache_control.
+        let system_blocks = payload["system"].as_array().expect("system as array");
+        assert_eq!(system_blocks.len(), 1);
+        assert_eq!(
+            system_blocks[0]["cache_control"],
+            json!({ "type": "ephemeral" })
+        );
+        assert_eq!(system_blocks[0]["text"], "you are peridot");
+
+        // Breakpoint 3: cache_control on the tool_result content block (the
+        // entry just before the trailing user prompt). Confirms the trailing
+        // user turn itself is NOT marked, keeping new prompts off-cache.
+        let messages = payload["messages"].as_array().expect("messages present");
+        assert_eq!(messages.last().unwrap()["role"], "user");
+        assert!(
+            messages.last().unwrap()["content"].is_string(),
+            "trailing user prompt must remain unmarked plain string"
+        );
+        let tool_result_msg = &messages[messages.len() - 2];
+        let tool_result_blocks = tool_result_msg["content"]
+            .as_array()
+            .expect("tool_result content is a block array");
+        assert_eq!(tool_result_blocks[0]["type"], "tool_result");
+        assert_eq!(
+            tool_result_blocks
+                .last()
+                .and_then(|block| block.get("cache_control")),
+            Some(&json!({ "type": "ephemeral" }))
+        );
+    }
+
+    #[test]
+    fn anthropic_payload_skips_cache_when_provider_disables() {
+        // cache_enabled = false must produce the exact legacy wire shape:
+        // system is a plain string, tools/history have no cache_control.
+        let tool = ToolDefinition {
+            name: "file_read".to_string(),
+            description: "Read a file".to_string(),
+            parameters: json!({"type": "object", "properties": {"path": {"type": "string"}}}),
+        };
+        let request = CompletionRequest {
+            model: "claude-sonnet-4-6".to_string(),
+            system: Some("plain system".to_string()),
+            messages: vec![LlmMessage::new(MessageRole::User, "hi")],
+            max_tokens: Some(128),
+            thinking: false,
+            reasoning_effort: peridot_common::ReasoningEffort::Off,
+            service_tier: None,
+            tools: vec![tool],
+            tool_choice: ToolChoice::Auto,
+        };
+        let payload = anthropic_payload_with_cache(&request, false);
+
+        assert_eq!(payload["system"], "plain system");
+        let tools = payload["tools"].as_array().unwrap();
+        assert!(tools.last().unwrap().get("cache_control").is_none());
+        // legacy default also unchanged for callers that call anthropic_payload directly.
+        let legacy = anthropic_payload(&request);
+        assert_eq!(legacy, payload);
     }
 
     #[test]

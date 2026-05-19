@@ -66,15 +66,15 @@ Done when:
 Goal: compaction, recovery, grader, audit, and prompt-injection hardening.
 
 Key work:
-- Tier 1/2/3 compaction.
+- 2-Tier compaction (deterministic + LLM). v1.x originally specified 4 tiers; the implementation absorbed the others into these two and the SPEC was realigned in v1.9.
 - Stuck detection and error-specific recovery.
-- Diff review and grader agent.
+- Diff review and grader agent. The grader lives in the standalone `peridot-grader` crate (extracted in v0.6.0 to break a verify ↔ core dependency cycle) and is invoked from two places: `HarnessAgent::auto_grade_on_done` for the agent loop, and `VerifyPipeline::run_all_with_grader` / `peridot verify --with-grader` for the CLI verify pipeline.
 - Audit logs for shell and file changes.
 
 Done when:
 - A long task survives compaction.
 - Known failure modes trigger recovery instead of repetition.
-- Grader feedback can cause a fix loop.
+- Grader feedback can cause a fix loop. Both invocation paths (agent loop + verify pipeline) reach the same `grade_work` implementation.
 
 ## Session 6: Memory, Subagents, MCP, Hooks
 Goal: persistence, skills, external tools, subagents, hooks, and OpenAI provider support.

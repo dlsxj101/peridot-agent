@@ -211,6 +211,14 @@ pub(super) async fn resolve_model_window(model: &str, auth_primary: &str) -> usi
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Optional inter-session messaging hookup. `(bus, session_id)` are
+/// installed on the harness so it drains its inbox every turn and
+/// `agent_message` calls route through `bus`. Pass `None` for headless
+/// or single-session runs.
+pub(super) type MessageBusHookup =
+    Option<(std::sync::Arc<dyn peridot_tools::AgentMessageBus>, String)>;
+
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn run_task_with_events<F>(
     task: String,
     mode: ExecutionMode,
@@ -221,6 +229,7 @@ pub(super) async fn run_task_with_events<F>(
     compact_request: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     context_snapshot_path: Option<PathBuf>,
     ask_user_port: Option<std::sync::Arc<dyn peridot_tools::AskUserPort>>,
+    message_bus: MessageBusHookup,
     events: F,
 ) -> Result<peridot_core::AgentRunSummary>
 where
@@ -270,6 +279,10 @@ where
     }
     if let Some(port) = ask_user_port {
         agent.set_ask_user_port(port);
+    }
+    if let Some((bus, session_id)) = message_bus {
+        agent.set_message_bus(bus);
+        agent.set_session_id(session_id);
     }
     if let Some(path) = context_snapshot_path.as_ref() {
         // Resume-after-approval sidecar lives next to context.bin.

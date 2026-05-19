@@ -23,6 +23,61 @@ pub trait AskUserPort: Send + Sync {
     async fn ask(&self, request: AskUserRequest) -> AskUserAnswer;
 }
 
+/// Bridge that routes `agent_message` between parent and child subagent
+/// sessions. When no bus is attached (single-session run, tests, headless
+/// jobs without spawn capability), `AgentMessageTool` returns a polite
+/// noop so the model still sees a tool result instead of an error.
+///
+/// Implementations live in the harness layer (`peridot-cli` /
+/// `SessionRouter`) because that's the first place that owns the per-session
+/// lifetime + parent_id map.
+#[async_trait]
+pub trait AgentMessageBus: Send + Sync {
+    /// Returns the calling session's id when the harness has wired
+    /// session identity into the bus, otherwise `None`. The tool uses
+    /// this to populate the "from" field on every outbound message
+    /// without requiring the model to know its own id.
+    fn current_session_id(&self) -> Option<String> {
+        None
+    }
+
+    /// Forwards a message from the current session to its parent. Returns
+    /// the resolved parent id (or an `Err` when the current session has
+    /// no parent, e.g. the root foreground session).
+    async fn send_to_parent(&self, from_session: &str, message: &str) -> PeriResult<String>;
+
+    /// Forwards a message from the current session to a named child.
+    /// `child_session` must be one of the children the router has
+    /// registered against `from_session.parent_id`; otherwise the
+    /// implementation should return an `Err` so a typo doesn't silently
+    /// drop the note.
+    async fn send_to_child(
+        &self,
+        from_session: &str,
+        child_session: &str,
+        message: &str,
+    ) -> PeriResult<()>;
+
+    /// Drains the inbox for `session`, returning the queued messages in
+    /// FIFO order. The harness loop calls this at the start of every turn
+    /// and folds the entries into context as `PlanReminder`s. An empty
+    /// vec means "no new messages, carry on".
+    async fn drain_inbox(&self, session: &str) -> Vec<InboxMessage>;
+}
+
+/// One queued message destined for an agent session's inbox.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct InboxMessage {
+    /// Session id of the sender. The receiver renders this as
+    /// `[from: <id>]` in the context entry so the model knows who is
+    /// talking to it.
+    pub from: String,
+    /// Message body.
+    pub body: String,
+    /// Unix seconds when the router accepted the message.
+    pub at_unix: u64,
+}
+
 /// Runtime context passed to tool implementations.
 #[derive(Clone)]
 pub struct ToolContext {
@@ -52,6 +107,10 @@ pub struct ToolContext {
     /// port; otherwise it falls back to a synthesised default so
     /// headless / mock / test paths keep running unchanged.
     pub ask_user_port: Option<Arc<dyn AskUserPort>>,
+    /// Optional bus that delivers `agent_message` calls to the right
+    /// parent or child session. None on single-session runs or in tests
+    /// — the tool returns a polite noop in that case.
+    pub message_bus: Option<Arc<dyn AgentMessageBus>>,
 }
 
 impl std::fmt::Debug for ToolContext {
@@ -67,6 +126,13 @@ impl std::fmt::Debug for ToolContext {
             .field(
                 "ask_user_port",
                 &self.ask_user_port.as_ref().map(|_| "Arc<dyn AskUserPort>"),
+            )
+            .field(
+                "message_bus",
+                &self
+                    .message_bus
+                    .as_ref()
+                    .map(|_| "Arc<dyn AgentMessageBus>"),
             )
             .finish()
     }
@@ -84,6 +150,7 @@ impl ToolContext {
             cancel: None,
             runner: None,
             ask_user_port: None,
+            message_bus: None,
         }
     }
 
@@ -129,6 +196,14 @@ impl ToolContext {
     /// default so headless / mock / test paths keep running.
     pub fn with_ask_user_port(mut self, port: Arc<dyn AskUserPort>) -> Self {
         self.ask_user_port = Some(port);
+        self
+    }
+
+    /// Attaches an agent message bus. When present, `AgentMessageTool`
+    /// routes through this bus to deliver notes to parent or child
+    /// sessions; otherwise the tool returns a noop result with a hint.
+    pub fn with_message_bus(mut self, bus: Arc<dyn AgentMessageBus>) -> Self {
+        self.message_bus = Some(bus);
         self
     }
 }

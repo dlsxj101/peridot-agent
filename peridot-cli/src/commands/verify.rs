@@ -1,12 +1,33 @@
 use super::*;
+use crate::providers::live_provider;
 
-pub(crate) fn run_verify_command(
+pub(crate) async fn run_verify_command(
     project_root: &Path,
     config: &PeridotConfig,
     output: OutputFormat,
+    with_grader: bool,
+    grader_task: Option<String>,
 ) -> Result<()> {
     let profile = ProjectScanner::new().scan(project_root)?;
-    let report = VerifyPipeline::new(profile).run_all()?;
+    let pipeline = VerifyPipeline::new(profile);
+    let report = if with_grader {
+        // The grader needs a task description to evaluate against; an empty
+        // one is almost always a mistake (the grader will hallucinate
+        // intent from the diff alone). Reject early with a helpful message.
+        let task = grader_task.ok_or_else(|| {
+            anyhow::anyhow!(
+                "--with-grader requires --grader-task <TEXT> so the grader \
+                 knows what to evaluate the change against"
+            )
+        })?;
+        let model = config.models.main.clone();
+        let provider = live_provider(config, &model, project_root).await?;
+        pipeline
+            .run_all_with_grader(provider.as_ref(), &model, &task)
+            .await?
+    } else {
+        pipeline.run_all()?
+    };
     run_verification_event_hooks(project_root, &config.hooks, &report)?;
     match output {
         OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
@@ -64,6 +85,7 @@ pub(super) fn verify_stage_name(stage: &VerifyStage) -> &'static str {
         VerifyStage::Deterministic => "deterministic",
         VerifyStage::Build => "build",
         VerifyStage::Test => "test",
+        VerifyStage::Lint => "lint",
         VerifyStage::DiffReview => "diff_review",
         VerifyStage::Grader => "grader",
     }

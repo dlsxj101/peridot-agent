@@ -487,3 +487,136 @@ fn firejail_shell_args_whitelist_workspace_without_network_by_default() {
     assert!(args.contains(&"--read-write=/tmp/project".to_string()));
     assert_eq!(args.last().map(String::as_str), Some("cargo test"));
 }
+
+#[test]
+fn agent_message_is_registered_in_builtin_tools() {
+    let mut registry = ToolRegistry::new();
+    register_builtin_tools(&mut registry).unwrap();
+    assert!(
+        registry.get("agent_message").is_some(),
+        "agent_message must be present in the builtin tool registry"
+    );
+}
+
+#[tokio::test]
+async fn agent_message_without_bus_returns_polite_noop() {
+    use crate::AgentMessageTool;
+    let root = std::env::temp_dir().join(format!(
+        "peridot-tools-agent-msg-noop-{}",
+        std::process::id()
+    ));
+    let ctx = ToolContext::new(&root, PermissionMode::Auto);
+    let tool = AgentMessageTool;
+    let result = tool
+        .execute(
+            serde_json::json!({ "target": "parent", "message": "ping" }),
+            &ctx,
+        )
+        .await
+        .unwrap();
+    assert!(result.success, "noop must report success");
+    assert!(
+        result.summary.contains("no bus configured"),
+        "summary should hint at missing bus: {}",
+        result.summary
+    );
+    assert_eq!(result.output["delivered"], false);
+}
+
+#[tokio::test]
+async fn agent_message_routes_through_bus_to_parent() {
+    use crate::{AgentMessageBus, AgentMessageTool, InboxMessage};
+    use peridot_common::PeriResult;
+    use std::sync::Mutex;
+
+    #[derive(Default)]
+    struct RecordingBus {
+        sent: Mutex<Vec<(String, String, String)>>,
+    }
+    #[async_trait]
+    impl AgentMessageBus for RecordingBus {
+        fn current_session_id(&self) -> Option<String> {
+            Some("child-1".to_string())
+        }
+        async fn send_to_parent(&self, from_session: &str, message: &str) -> PeriResult<String> {
+            self.sent.lock().unwrap().push((
+                "parent".to_string(),
+                from_session.to_string(),
+                message.to_string(),
+            ));
+            Ok("parent-0".to_string())
+        }
+        async fn send_to_child(&self, _from: &str, _child: &str, _message: &str) -> PeriResult<()> {
+            unreachable!("test only exercises parent path")
+        }
+        async fn drain_inbox(&self, _session: &str) -> Vec<InboxMessage> {
+            Vec::new()
+        }
+    }
+
+    let bus = Arc::new(RecordingBus::default());
+    let root = std::env::temp_dir().join(format!(
+        "peridot-tools-agent-msg-parent-{}",
+        std::process::id()
+    ));
+    let ctx = ToolContext::new(&root, PermissionMode::Auto).with_message_bus(bus.clone());
+    let result = AgentMessageTool
+        .execute(
+            serde_json::json!({ "target": "parent", "message": "tests passed" }),
+            &ctx,
+        )
+        .await
+        .unwrap();
+    assert!(result.success);
+    assert_eq!(result.output["target"], "parent");
+    assert_eq!(result.output["parent_id"], "parent-0");
+    let captured = bus.sent.lock().unwrap();
+    assert_eq!(captured.len(), 1);
+    assert_eq!(captured[0].1, "child-1");
+    assert_eq!(captured[0].2, "tests passed");
+}
+
+#[tokio::test]
+async fn agent_message_rejects_invalid_target() {
+    use crate::AgentMessageTool;
+    let root = std::env::temp_dir().join(format!(
+        "peridot-tools-agent-msg-bad-{}",
+        std::process::id()
+    ));
+    let ctx = ToolContext::new(&root, PermissionMode::Auto);
+    let err = AgentMessageTool
+        .execute(
+            serde_json::json!({ "target": "neighbour", "message": "hi" }),
+            &ctx,
+        )
+        .await;
+    // Without a bus, dispatch falls back to the noop path before validating
+    // the target shape. Wire one in to force the target match to run.
+    assert!(err.is_ok(), "noop path returns success");
+
+    use crate::AgentMessageBus;
+    use crate::InboxMessage;
+    use peridot_common::PeriResult;
+    struct InertBus;
+    #[async_trait]
+    impl AgentMessageBus for InertBus {
+        async fn send_to_parent(&self, _f: &str, _m: &str) -> PeriResult<String> {
+            unreachable!()
+        }
+        async fn send_to_child(&self, _f: &str, _c: &str, _m: &str) -> PeriResult<()> {
+            unreachable!()
+        }
+        async fn drain_inbox(&self, _s: &str) -> Vec<InboxMessage> {
+            Vec::new()
+        }
+    }
+    let ctx = ToolContext::new(&root, PermissionMode::Auto).with_message_bus(Arc::new(InertBus));
+    let err = AgentMessageTool
+        .execute(
+            serde_json::json!({ "target": "neighbour", "message": "hi" }),
+            &ctx,
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, PeriError::Config(_)));
+}

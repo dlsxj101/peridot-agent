@@ -658,3 +658,131 @@ impl Tool for AgentDoneTool {
         PermissionLevel::Read
     }
 }
+
+/// Built-in inter-subagent messaging tool. Routes a short note from the
+/// current session to its `parent` or to a named `child:<session_id>`.
+/// Requires `ctx.message_bus` to be wired in by the harness — when it
+/// isn't (single-session run, tests), the tool returns a polite noop so
+/// the model still gets a tool result instead of a hard error.
+///
+/// Schema:
+/// ```json
+/// {
+///   "target": "parent" | "child:<session_id>",
+///   "message": "<body, plain text>"
+/// }
+/// ```
+#[derive(Clone, Debug)]
+pub struct AgentMessageTool;
+
+#[async_trait]
+impl Tool for AgentMessageTool {
+    fn name(&self) -> &str {
+        "agent_message"
+    }
+
+    fn group(&self) -> ToolGroup {
+        ToolGroup::Agent
+    }
+
+    fn description(&self) -> &str {
+        "Send a short note to a parent or child subagent session. \
+         Use `target: \"parent\"` to notify the spawning session, or \
+         `target: \"child:<session_id>\"` to message a named child. \
+         Messages are delivered to the recipient's inbox and surface at \
+         the start of their next turn as a `[parent message]` / \
+         `[child message]` PlanReminder. Do NOT use for greetings; this \
+         is for coordination signals like 'pause', 'stop', 'report status', \
+         or short context handoffs."
+    }
+
+    fn parameters_schema(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "target": {
+                    "type": "string",
+                    "description": "Recipient: \"parent\" or \"child:<session_id>\"",
+                },
+                "message": {
+                    "type": "string",
+                    "description": "Body of the note (plain text, ≤ 500 chars recommended)",
+                },
+            },
+            "required": ["target", "message"],
+            "additionalProperties": false,
+        })
+    }
+
+    async fn execute(&self, params: Value, ctx: &ToolContext) -> PeriResult<ToolResult> {
+        let target = required_str(&params, "target")?.to_string();
+        let message = required_str(&params, "message")?.to_string();
+        let Some(bus) = ctx.message_bus.clone() else {
+            // No bus wired in — common in single-session runs and tests.
+            // Return success with a clear hint so the model can see why
+            // its note didn't go anywhere.
+            return Ok(ToolResult::success(
+                "agent_message: no bus configured (single-session run); note was not delivered"
+                    .to_string(),
+                serde_json::json!({ "delivered": false, "target": target }),
+            ));
+        };
+        let from = bus
+            .current_session_id()
+            .unwrap_or_else(|| "anonymous".to_string());
+        if target == "parent" {
+            match bus.send_to_parent(&from, &message).await {
+                Ok(parent_id) => Ok(ToolResult::success(
+                    format!("agent_message delivered to parent {parent_id}"),
+                    serde_json::json!({
+                        "delivered": true,
+                        "target": "parent",
+                        "parent_id": parent_id,
+                    }),
+                )),
+                Err(err) => Ok(ToolResult::failure(format!(
+                    "agent_message: failed to reach parent: {err}"
+                ))),
+            }
+        } else if let Some(child_id) = target.strip_prefix("child:") {
+            let child_id = child_id.trim();
+            if child_id.is_empty() {
+                return Err(PeriError::Config(
+                    "agent_message: `child:` target requires a session id (e.g. `child:teammate-42`)"
+                        .to_string(),
+                ));
+            }
+            match bus.send_to_child(&from, child_id, &message).await {
+                Ok(()) => Ok(ToolResult::success(
+                    format!("agent_message delivered to child {child_id}"),
+                    serde_json::json!({
+                        "delivered": true,
+                        "target": "child",
+                        "child_id": child_id,
+                    }),
+                )),
+                Err(err) => Ok(ToolResult::failure(format!(
+                    "agent_message: failed to reach child {child_id}: {err}"
+                ))),
+            }
+        } else {
+            Err(PeriError::Config(format!(
+                "agent_message: unsupported target `{target}` (expected `parent` or `child:<id>`)"
+            )))
+        }
+    }
+
+    fn validate_params(&self, params: &Value) -> PeriResult<()> {
+        let _ = required_str(params, "target")?;
+        let _ = required_str(params, "message")?;
+        Ok(())
+    }
+
+    fn permission_level(&self) -> PermissionLevel {
+        PermissionLevel::Write
+    }
+
+    fn can_run_concurrent(&self) -> bool {
+        true
+    }
+}

@@ -233,6 +233,14 @@ its parent transcript (M4), and the attention notifier line (M5).
   so the bare workspace build stays free of D-Bus / dbus / zbus link
   dependencies; `cargo build -p peridot-cli --features os-notify` opts in.
 
+### M40 — Parent-child `agent_message` queue (landed in v0.6.0)
+- `SessionHandle.inbox: Arc<Mutex<VecDeque<InboxMessage>>>` carries a per-session FIFO message queue alongside the existing cancel token and compaction flag.
+- `RouterMessageBus` implements `peridot_tools::AgentMessageBus` against a shared `Arc<Mutex<SessionRouter>>`. It exposes `send_to_parent`, `send_to_child`, `drain_inbox`, plus a `with_current_session(id)` clone that binds the bus to a specific sender.
+- `HarnessAgent::set_message_bus` + `set_session_id` install the bus into every `ToolContext` (so `agent_message` calls actually route) AND drain the harness's own inbox at the start of every turn. Drained entries become trusted `[peer message from <id>]` `PlanReminder` context entries — the model sees coordination signals on its very next LLM call without an explicit tool round-trip.
+- `InnerLoopSubAgent` deliberately does NOT propagate the bus to grandchild `ToolContext` instances. This caps `agent_message` depth at one, matching the existing fork-bomb safety policy for `agent_delegate`.
+- Sibling addressing is rejected: `send_to_child(from, target, _)` checks that `target.parent_id == from`. A subagent can only message its own direct children, never arbitrary peers.
+- The new `agent_message` built-in tool ships in `peridot-tools/src/tools/agent.rs`. Without a bus attached (single-session run, headless, tests), it returns a polite noop result with a hint so the model can see why its note didn't deliver.
+
 ### M39 — Single-session tab bar + startup session list + LLM title generation (landed)
 - Tab bar now renders only the current foreground session title instead of all sessions. `render_tab_bar_text` mirrors the same single-session display. Display-width-safe truncation at 48 columns preserves CJK safety.
 - On startup, if two or more persisted sessions exist, a formatted session list (title + status, `>` for active) is pushed to the transcript as a notice so the operator sees what's available without a crowded tab bar.

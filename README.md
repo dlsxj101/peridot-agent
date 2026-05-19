@@ -4,9 +4,21 @@ Peridot Agent is a Rust CLI/TUI autonomous coding agent with multi-session orche
 
 ## Status
 
-Current version: **0.5.1**
+Current version: **0.6.0**
 
-Implemented:
+### What's new in v0.6.0
+
+Nine SPEC-consistency issues from the v0.5.1 audit are now resolved (see [CHANGELOG.md](CHANGELOG.md) for the full list):
+
+- **Verify pipeline grader**: `peridot verify --with-grader --grader-task "<text>"` now runs the LLM grader after deterministic stages, so the CLI verify report includes the grader stage that previously only existed in the agent loop's `auto_grade_on_done` path.
+- **Anthropic prompt cache_control**: 3-breakpoint cache markings (tools / system / conversation prefix) are now stamped automatically for providers that advertise `supports_cache()`. Expect lower input-token costs on long sessions; cache stats surface via `usage.cache_read_input_tokens`.
+- **`agent_message` built-in tool**: subagents can now message their parent or named children via `agent_message {target, message}`. The recipient sees the note as a `[peer message from <id>]` PlanReminder at the start of its next turn.
+- **Lint stage gets its own variant**: `VerifyStage::Lint` is no longer aliased to `Deterministic`, so failing lints show up as `FAIL Lint:` instead of `FAIL Deterministic:` in verify reports.
+- **Fork / Teammate isolation parity**: `LocalSubAgentRunner` now provisions a real git worktree for both `Worktree` and `Teammate` kinds (Fork stays shared-workspace by design).
+- **New `peridot-grader` crate**: the grader logic moved out of `peridot-core` so `peridot-verify` can call it without a dependency cycle. `peridot-core::grader::*` keeps re-exporting the public API.
+- SPEC v1.9 updates: 4-Tier compaction → 2-Tier (deterministic + LLM), Append-Only is `in-turn` only, tool list reflects the 34 actually registered tools (`agent_fork`/`agent_worktree` merged into `agent_delegate`).
+
+### Implemented
 
 - Cargo workspace with 13 spec crates (`peridot-cli`, `peridot-core`, `peridot-llm`, `peridot-tui`, etc.).
 - Provider-neutral LLM contracts with Claude Messages, OpenAI Chat Completions, OpenAI Codex OAuth, and OpenRouter providers. Native tool calling and streaming.
