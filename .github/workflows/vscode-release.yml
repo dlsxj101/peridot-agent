@@ -1,0 +1,81 @@
+name: VSCode Release
+
+on:
+  push:
+    tags:
+      # Tag format keeps Rust release ('v*') and extension release
+      # ('vsce/v*') separate so each pipeline only fires for its own
+      # artefacts.
+      - "vsce/v*"
+
+jobs:
+  verify-secrets:
+    name: Verify publish secrets present
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check secrets
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: |
+          if [ -z "${VSCE_PAT}" ]; then
+            echo "::error::VSCE_PAT repository secret is not set"
+            exit 1
+          fi
+          if [ -z "${OVSX_PAT}" ]; then
+            echo "::error::OVSX_PAT repository secret is not set"
+            exit 1
+          fi
+          echo "Both VSCE_PAT and OVSX_PAT are configured."
+
+  publish:
+    name: Publish to Marketplace + Open VSX
+    needs: verify-secrets
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: extensions/vscode
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: "20"
+
+      - name: Install
+        run: npm ci || npm install
+
+      - name: Compile
+        run: npm run compile
+
+      - name: Package (.vsix)
+        run: npx vsce package --no-dependencies
+
+      - name: Publish to VS Code Marketplace
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        # Pushes whatever version is in package.json. The git tag and
+        # package.json version are expected to match; mismatched
+        # uploads are rejected by the Marketplace.
+        run: npx vsce publish --no-dependencies -p "$VSCE_PAT"
+
+      - name: Publish to Open VSX
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        # ovsx reads the same .vsix produced above. Namespace must
+        # already exist (`ovsx create-namespace dlsxj101 -p <pat>`
+        # was a one-time setup step).
+        run: npx ovsx publish *.vsix -p "$OVSX_PAT"
+
+      - name: Upload .vsix to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: extensions/vscode/*.vsix
+          fail_on_unmatched_files: true
+          # Auto-creates the GitHub Release from the tag, attaches the
+          # .vsix as a downloadable asset for sideloading
+          # (`code --install-extension peridot-vscode-X.Y.Z.vsix`).
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,74 @@
+{
+  "name": "peridot-vscode",
+  "displayName": "Peridot Agent",
+  "description": "Rust CLI/TUI autonomous coding agent with multi-LLM committee mode, native tool calling, and 2-Tier context management. VS Code panel layered on top of the `peridot` daemon.",
+  "version": "0.0.1",
+  "publisher": "dlsxj101",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "AI",
+    "Chat",
+    "Programming Languages",
+    "Other"
+  ],
+  "keywords": [
+    "ai",
+    "agent",
+    "coding",
+    "claude",
+    "openai",
+    "manus",
+    "hermes",
+    "rust"
+  ],
+  "homepage": "https://github.com/dlsxj101/peridot-agent",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dlsxj101/peridot-agent.git",
+    "directory": "extensions/vscode"
+  },
+  "bugs": {
+    "url": "https://github.com/dlsxj101/peridot-agent/issues"
+  },
+  "main": "./dist/extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "commands": [
+      {
+        "command": "peridot.hello",
+        "title": "Peridot: Hello",
+        "category": "Peridot"
+      },
+      {
+        "command": "peridot.checkVersion",
+        "title": "Peridot: Check Daemon Version",
+        "category": "Peridot"
+      }
+    ],
+    "configuration": {
+      "title": "Peridot Agent",
+      "properties": {
+        "peridot.binaryPath": {
+          "type": "string",
+          "default": "",
+          "description": "Absolute path to the `peridot` binary. Leave empty to use the binary bundled inside the extension (preferred) or fall back to the system PATH."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package --no-dependencies",
+    "vscode:prepublish": "npm run compile"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.2.0",
+    "typescript": "^5.4.0"
+  }
+}

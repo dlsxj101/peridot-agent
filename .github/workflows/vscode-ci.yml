@@ -1,0 +1,45 @@
+name: VSCode CI
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "extensions/vscode/**"
+      - ".github/workflows/vscode-ci.yml"
+  pull_request:
+    branches: ["main"]
+    paths:
+      - "extensions/vscode/**"
+      - ".github/workflows/vscode-ci.yml"
+
+jobs:
+  compile:
+    name: TypeScript compile + package
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: extensions/vscode
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: "20"
+
+      - name: Install
+        run: npm ci || npm install
+
+      - name: Compile
+        run: npm run compile
+
+      - name: Package (.vsix)
+        run: npx vsce package --no-dependencies
+
+      - name: Upload .vsix artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: peridot-vscode-vsix
+          path: extensions/vscode/*.vsix
+          if-no-files-found: error

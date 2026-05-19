@@ -1,6 +1,0 @@
-VSCode extension scaffold lands here. See:
-  https://github.com/dlsxj101/peridot-agent/blob/main/PERIDOT_SPEC_v1.md#21510 (Beyond-v1 deferral)
-  https://code.visualstudio.com/api/get-started/your-first-extension
-
-TypeScript-side workflow lives in `.github/workflows/vscode-release.yml`
-(to be added) and uses `VSCE_PAT` / `OVSX_PAT` repository secrets.

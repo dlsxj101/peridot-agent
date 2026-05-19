@@ -4,7 +4,16 @@ Peridot Agent is a Rust CLI/TUI autonomous coding agent with multi-session orche
 
 ## Status
 
-Current version: **0.7.4**
+Current version: **0.7.5**
+
+### What's new in v0.7.5
+
+Extension foundation:
+
+- **`peridot daemon`** subcommand — line-delimited JSON-RPC 2.0 over stdio. v0.0.1 surface (`peridot.version` / `peridot.echo` / `shutdown`) verifies the publish pipeline end-to-end before real agent work lands. Real `session.start` / `approval.respond` / `ask_user.respond` arrive in v0.7.6.
+- **VS Code extension scaffold** at `extensions/vscode/` (`dlsxj101.peridot-vscode`). Two commands (`Peridot: Hello`, `Peridot: Check Daemon Version`) prove the spawn + JSON-RPC pipeline.
+- **Publish pipeline**: `.github/workflows/vscode-release.yml` triggers on `vsce/v*` tag, publishes to **both** VS Code Marketplace and Open VSX Registry, attaches `.vsix` to GitHub Release. CI compiles + packages on every PR.
+- Tag prefix scheme: Rust releases on `v*`, extension releases on `vsce/v*`.
 
 ### What's new in v0.7.4
 

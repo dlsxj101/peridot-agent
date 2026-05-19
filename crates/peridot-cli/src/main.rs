@@ -216,6 +216,12 @@ enum Command {
     Verify(VerifyArgs),
     /// Initialize project-local Peridot files.
     Setup,
+    /// JSON-RPC over stdio server. Editor extensions (VS Code, desktop
+    /// app) spawn `peridot daemon` and speak line-delimited JSON-RPC
+    /// 2.0 to drive sessions bidirectionally. v0.0.1 surface is
+    /// `peridot.version` / `peridot.echo` / `shutdown` — real
+    /// `session.start` arrives once the extension WebView is ready.
+    Daemon,
     /// End-to-end health check: validates config, provider auth, MCP
     /// servers, AGENTS metadata, and permissions. Exit code 0 when
     /// everything passes, non-zero when any check fails.
@@ -391,6 +397,10 @@ async fn main() -> Result<()> {
         }
         Some(Command::Setup) => {
             run_setup_command(&project_root, cli.output)?;
+            return Ok(());
+        }
+        Some(Command::Daemon) => {
+            commands::run_daemon_command(&project_root)?;
             return Ok(());
         }
         Some(Command::Doctor) => {

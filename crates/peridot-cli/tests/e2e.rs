@@ -1,7 +1,7 @@
 #![cfg(feature = "e2e")]
 
 use std::fs;
-use std::io::Write;
+use std::io::{BufRead, BufReader, Write};
 use std::process::{Command, Stdio};
 
 fn peridot() -> &'static str {
@@ -490,6 +490,59 @@ run = ".peridot/hooks/verify.sh {stage} {status}"
     );
     let log = fs::read_to_string(root.join("verify.log")).unwrap();
     assert!(log.contains("diff_review:passed"));
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn daemon_responds_to_version_echo_and_shutdown() {
+    // Drives the daemon end-to-end over real stdio so the framing,
+    // flushing, and dispatcher all run in the production code path.
+    // Extension developers should be able to read this test and crib
+    // the wire format exactly.
+    let root = temp_project("daemon");
+
+    let mut child = Command::new(peridot())
+        .args(["--project", root.to_str().unwrap(), "daemon"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let mut stdin = child.stdin.take().unwrap();
+    let stdout = child.stdout.take().unwrap();
+    let mut reader = BufReader::new(stdout);
+
+    // 1. peridot.version
+    writeln!(
+        stdin,
+        r#"{{"jsonrpc":"2.0","id":1,"method":"peridot.version"}}"#
+    )
+    .unwrap();
+    let mut line = String::new();
+    reader.read_line(&mut line).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+    assert_eq!(parsed["id"], 1);
+    assert!(parsed["result"]["version"].is_string());
+
+    // 2. peridot.echo
+    line.clear();
+    writeln!(
+        stdin,
+        r#"{{"jsonrpc":"2.0","id":2,"method":"peridot.echo","params":{{"text":"hi"}}}}"#
+    )
+    .unwrap();
+    reader.read_line(&mut line).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+    assert_eq!(parsed["id"], 2);
+    assert_eq!(parsed["result"]["echo"], "hi");
+
+    // 3. shutdown — closes the loop cleanly.
+    writeln!(stdin, r#"{{"jsonrpc":"2.0","id":3,"method":"shutdown"}}"#).unwrap();
+    drop(stdin);
+    let status = child.wait().unwrap();
+    assert!(status.success(), "daemon exited with {status:?}");
 
     fs::remove_dir_all(root).unwrap();
 }

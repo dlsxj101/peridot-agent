@@ -12,6 +12,78 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 
 ---
 
+## [0.7.5] — 2026-05-19
+
+Extension foundation. Adds the `peridot daemon` JSON-RPC subcommand
+and a VS Code extension scaffold (`extensions/vscode/`) so future
+phases can build chat UI / diff viewer / approval flow against a
+stable wire protocol.
+
+### Added — `peridot daemon` subcommand
+
+- New `crates/peridot-cli/src/commands/daemon.rs`. Drives a stdin
+  loop, parses line-delimited JSON-RPC 2.0 requests, dispatches each
+  to its handler, writes the response (one `\n`-terminated JSON line)
+  to stdout. Flushes after every write so editor extensions see
+  responses in real time.
+- v0.0.1 method surface (just enough to verify the pipeline
+  end-to-end before real agent work lands):
+  - `peridot.version` → `{ "version": "0.7.5" }`
+  - `peridot.echo` → echoes `params.text` back to the client
+  - `shutdown` → cleanly closes the stdin loop (ack carries
+    `{ "shutdown": true }` when the client included an `id`)
+- Spec-compliant error codes: -32700 parse error, -32600 invalid
+  request, -32601 method not found, -32602 invalid params.
+- 9 unit tests cover happy path, malformed JSON, missing `jsonrpc`
+  field, unknown methods, notification-vs-request shutdown.
+- 1 e2e test (gated behind the `e2e` feature) spawns the real
+  `peridot daemon` binary over stdio and round-trips
+  version+echo+shutdown so the framing, flushing, and binary
+  argument parsing are all exercised together.
+
+### Added — VS Code extension scaffold
+
+- `extensions/vscode/package.json` registers two commands
+  (`peridot.hello` sanity toast, `peridot.checkVersion` daemon
+  round-trip) under publisher `dlsxj101`.
+- `extensions/vscode/src/daemon.ts`: TypeScript JSON-RPC client.
+  Spawns the daemon subprocess, correlates requests/responses by
+  monotonically increasing id, exposes `send(method, params)` and
+  `shutdown()`. Built to grow into the v0.1.0 agent driver
+  (notification dispatcher, session lifecycle).
+- `extensions/vscode/src/peridotBin.ts`: 3-tier binary lookup —
+  `peridot.binaryPath` config override → bundled `<extension>/
+  resources/peridot[.exe]` → system PATH. Bundling pipeline lands
+  in v0.0.2.
+- `extensions/vscode/src/extension.ts`: command registration +
+  graceful daemon spawn-and-shutdown wrapper for the
+  `checkVersion` command.
+
+### Added — extension CI/CD
+
+- `.github/workflows/vscode-ci.yml`: TS compile + `.vsix` package +
+  artifact upload on every push to `extensions/vscode/**`.
+- `.github/workflows/vscode-release.yml`: on `vsce/v*` tag,
+  publishes the `.vsix` to **both** VS Code Marketplace (`vsce
+  publish`) and Open VSX Registry (`ovsx publish`), then attaches
+  the `.vsix` to a freshly created GitHub Release.
+- Tag prefix scheme — Rust releases stay on `v*`, extension
+  releases on `vsce/v*` — so each pipeline only fires for its own
+  artefacts.
+
+### Migration notes
+
+- The Rust workspace gains no new dependencies; daemon uses
+  `serde`/`serde_json` already in the tree.
+- Extension publishing requires two repository secrets
+  (`VSCE_PAT`, `OVSX_PAT`); the workflow's first job verifies
+  they're present and fails fast with a clear error otherwise.
+- v0.0.1 .vsix expects the `peridot` binary on the system PATH —
+  bundled binaries arrive in v0.0.2 once the platform-target
+  publish matrix is dialled in.
+
+---
+
 ## [0.7.4] — 2026-05-19
 
 Repo layout cleanup before extension work. No behaviour or API change
