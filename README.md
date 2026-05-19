@@ -4,7 +4,14 @@ Peridot Agent is a Rust CLI/TUI autonomous coding agent with multi-session orche
 
 ## Status
 
-Current version: **0.7.6**
+Current version: **0.7.7**
+
+### What's new in v0.7.7
+
+Three more TUI fixes from live v0.7.6 use on Windows:
+
+- **Textarea filled with raw escape sequences after `shell_exec`** — child processes (npm, vite, spinner libs) inherited the TUI's tty stdin and reset its termios on exit, so arrow keys / PageUp / PageDown arrived as raw `[A` / `[B` / `[5~`. Fixed by (1) setting `Stdio::null()` for shell child stdin and (2) re-asserting `enable_raw_mode()` every event-loop tick.
+- **Korean / CJK cursor lag** — `render.rs` used `chars().count()` to position the textarea caret; CJK glyphs occupy 2 cells, so the caret fell behind one cell per wide character. Switched to `UnicodeWidthStr::width`.
 
 ### What's new in v0.7.6
 

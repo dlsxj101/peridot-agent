@@ -1563,10 +1563,16 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
     // scroll offset that keeps the cursor on-screen.
     let prefix_chars: String = state.input.chars().take(state.input_cursor).collect();
     let cursor_line = prefix_chars.matches('\n').count();
+    // Cursor X is measured in *terminal cells*, not characters.
+    // Wide glyphs (한국어, 中文, emoji) occupy two cells each; if we
+    // count `chars()` the rendered caret lags one cell per CJK
+    // character typed, so the user's visible cursor ends up mid-
+    // glyph or trailing the last character. `UnicodeWidthStr`
+    // returns the same width the terminal will actually draw.
     let cursor_col_chars = prefix_chars
         .rsplit('\n')
         .next()
-        .map(|tail| tail.chars().count())
+        .map(unicode_width::UnicodeWidthStr::width)
         .unwrap_or(0);
     // Render each logical line on its own visible row. The first row
     // carries the `❯ ` glyph; continuation rows get a 2-space gutter so

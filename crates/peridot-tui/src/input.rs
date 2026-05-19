@@ -15,6 +15,12 @@ pub fn run_interactive(mut state: TuiState) -> io::Result<TuiExit> {
     state.resize(width, height);
     let mut ctrl_c_armed = false;
     let submitted = loop {
+        // See the comment in `run_interactive_with_events` — child
+        // processes can disable our raw mode, and re-asserting it
+        // here is the cheapest place to recover.
+        if let Ok(false) = crossterm::terminal::is_raw_mode_enabled() {
+            let _ = enable_raw_mode();
+        }
         state.tick_spinner();
         terminal.terminal.draw(|frame| draw(frame, &state))?;
         if event::poll(Duration::from_millis(250))? {
@@ -89,6 +95,16 @@ where
     let mut last_foreground = state.current_session_id.clone();
     let mut ctrl_c_armed = false;
     loop {
+        // Re-assert raw mode every tick. Child processes spawned by
+        // `shell_exec` (npm, vite, spinner libraries, …) can reach
+        // the controlling terminal directly and reset its termios on
+        // exit, which leaves the TUI receiving raw escape sequences
+        // (`[A`, `[B`, `[5~`) in the textarea instead of typed key
+        // events. `enable_raw_mode` is idempotent — a single ioctl
+        // call when already enabled — so the cost is negligible.
+        if let Ok(false) = crossterm::terminal::is_raw_mode_enabled() {
+            let _ = enable_raw_mode();
+        }
         for (session_id, event) in runtime_events.try_iter() {
             if state.current_session_id.is_empty() || session_id == state.current_session_id {
                 state.apply_runtime_event(event);

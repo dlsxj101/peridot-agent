@@ -12,6 +12,62 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 
 ---
 
+## [0.7.7] — 2026-05-19
+
+Three more TUI papercuts from live v0.7.6 use on Windows.
+
+### Fixed — textarea filled with raw escape sequences after `shell_exec`
+
+After a `shell_exec` finished (e.g. `npm ci`, `cargo build`, vite),
+the input textarea started receiving raw ANSI escapes
+(`[A`, `[B`, `[5~`, `[6~`) instead of arrow / PageUp / PageDown
+events. Two root causes:
+
+1. **Child inherited the TUI's tty stdin.** `shell_exec` spawned
+   child processes with no explicit `stdin` setting, so the child
+   inherited the TUI's controlling terminal. Keystrokes raced
+   between the child and the TUI input loop, and child libraries
+   that send termios escape sequences to /dev/tty (spinner libs,
+   npm progress, vite dev banner) reset the parent's keypad-mode
+   on exit. Now `shell_exec` always sets
+   `Stdio::null()` for child stdin — applies to both the cancel-
+   token / timeout path and the legacy `output()` fast path.
+   `crates/peridot-tools/src/tools/shell.rs`.
+2. **TUI did not re-assert raw mode after a child returned.**
+   Even with child stdin closed, a child can write termios escape
+   sequences directly to its controlling terminal and corrupt the
+   parent's state. Re-asserts `enable_raw_mode()` at the top of
+   every event-loop tick when `is_raw_mode_enabled()` reports
+   false. `enable_raw_mode` is idempotent, so the steady-state
+   cost is one ioctl per tick. Applies to both `run_interactive`
+   and `run_interactive_with_events`.
+   `crates/peridot-tui/src/input.rs`.
+
+### Fixed — cursor lagged behind the actual position when typing Korean / CJK
+
+`render.rs` computed the textarea cursor X position with
+`prefix.chars().count()`, which treats every Unicode scalar as one
+terminal cell. CJK glyphs (한국어, 中文) and most emoji occupy two
+cells, so the rendered caret fell behind the actual edit position
+by one cell per wide glyph already on the line. Typing "안녕하세요"
+would leave the caret hovering over the third character even though
+the cursor index was at the end of the string. Switched to
+`unicode_width::UnicodeWidthStr::width(tail)` so the caret's cell
+position matches what the terminal is actually drawing.
+`crates/peridot-tui/src/render.rs`.
+
+### Migration notes
+
+- Workspace 0.7.6 → 0.7.7. Pure bug-fix release, no API changes.
+- Children that legitimately needed to read the operator's
+  keystrokes (interactive REPLs invoked through `shell_exec`) now
+  see immediate EOF on stdin. None of the in-repo helpers do, and
+  agent shell commands are non-interactive by policy, so this is
+  the right default. Add an opt-in flag if a future use case
+  requires the old behaviour.
+
+---
+
 ## [0.7.6] — 2026-05-19
 
 Three Windows / OAuth bug fixes that surfaced during real-world v0.7.5

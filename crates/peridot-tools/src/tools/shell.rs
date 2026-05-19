@@ -103,6 +103,14 @@ pub(crate) fn spawn_and_wait_interruptible(
 ) -> PeriResult<std::process::Output> {
     let cancel = ctx.cancel.clone();
     let timeout_seconds = ctx.security.shell_command_timeout_seconds;
+    // Child stdin = /dev/null on every path. Otherwise the child
+    // inherits the TUI's tty stdin, racing the operator for
+    // keystrokes; on Unix it also lets the child reach the
+    // controlling terminal directly (npm / vite / spinner libs send
+    // escape sequences that reset keypad mode), which corrupts the
+    // TUI textarea after the command exits — arrow keys then
+    // arrive as raw `[A` / `[B` / `[5~` instead of typed events.
+    command.stdin(std::process::Stdio::null());
     // Fast path: no cancel token attached and no timeout configured →
     // keep the legacy blocking output() behaviour so non-TUI callers
     // (tests, headless smokes) see the same shape as before.
