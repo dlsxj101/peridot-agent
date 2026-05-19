@@ -4,7 +4,11 @@ Peridot Agent is a Rust CLI/TUI autonomous coding agent with multi-session orche
 
 ## Status
 
-Current version: **0.7.7**
+Current version: **0.7.8**
+
+### What's new in v0.7.8
+
+- **Auto-grade no longer loops forever on chat / Q&A turns.** Empty `git diff HEAD` now short-circuits the grader: a plan-reminder is logged, `Finished` fires, the run exits cleanly. Previously the grader rejected every non-coding turn ("No change was provided to address the request"), the agent re-answered, and the loop spun until `max_turns`.
 
 ### What's new in v0.7.7
 

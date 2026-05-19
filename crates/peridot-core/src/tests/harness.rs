@@ -730,6 +730,11 @@ async fn auto_grade_failure_keeps_loop_running() {
         registry,
     );
     agent.set_auto_grade_on_done(true);
+    // Inject a non-empty diff so the empty-diff fast path (added to
+    // unblock chat / Q&A turns from looping forever) does NOT trigger
+    // here. We want the grader path proper to run so we can verify
+    // the rejection-then-pass loop.
+    agent.set_grader_diff_provider(|_| "+ pretend change\n".to_string());
     // Provider responses, in order:
     //   1. agent_done (first attempt — grader rejects)
     //   2. grader verdict: passed=false + recommendations

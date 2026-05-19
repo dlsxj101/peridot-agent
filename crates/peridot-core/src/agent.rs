@@ -34,6 +34,11 @@ use crate::state::AgentState;
 use crate::usage::{accumulate_usage, stream_completion_with_chunks};
 use peridot_common::CancelToken;
 
+/// Function the auto-grade gate consults to produce a worktree diff
+/// when the production `collect_git_diff` is unsuitable (e.g. in
+/// unit tests that don't bootstrap a real git repo).
+pub type GraderDiffProvider = Box<dyn Fn(&std::path::Path) -> String + Send + Sync>;
+
 /// Peridot harness agent shell.
 pub struct HarnessAgent {
     state: AgentState,
@@ -58,6 +63,11 @@ pub struct HarnessAgent {
     auto_verify_after_mutation: bool,
     auto_grade_on_done: bool,
     auto_fix_cap: u32,
+    /// Optional override for the worktree diff fed to the auto-grade
+    /// gate. Tests inject a closure here so the empty-diff fast path
+    /// can be exercised without a real git repo; production leaves
+    /// this `None` and the gate calls `collect_git_diff` directly.
+    grader_diff_provider: Option<GraderDiffProvider>,
     /// Optional flag the operator sets via `/compact` to force an LLM
     /// recap on the next turn boundary, even when the buffer is well
     /// below the auto trigger. Atomic so the slash command thread and
@@ -100,6 +110,7 @@ impl HarnessAgent {
             auto_verify_after_mutation: false,
             auto_grade_on_done: false,
             auto_fix_cap: 3,
+            grader_diff_provider: None,
             compact_request: None,
             pending_resume_path: None,
             cached_tool_definitions,
@@ -171,6 +182,16 @@ impl HarnessAgent {
     /// Off by default.
     pub fn set_auto_grade_on_done(&mut self, enabled: bool) {
         self.auto_grade_on_done = enabled;
+    }
+
+    /// Overrides the diff source used by the auto-grade gate. Tests
+    /// call this to inject a deterministic diff so the empty-diff
+    /// fast path can be skipped without a real git repo.
+    pub fn set_grader_diff_provider<F>(&mut self, provider: F)
+    where
+        F: Fn(&std::path::Path) -> String + Send + Sync + 'static,
+    {
+        self.grader_diff_provider = Some(Box::new(provider));
     }
 
     /// Sets the maximum identical-failure attempts before the auto-fix
@@ -1160,7 +1181,37 @@ impl HarnessAgent {
                 // instead of finishing. Cheap callers can keep this
                 // off; the gate is `auto_grade_on_done`.
                 if self.auto_grade_on_done {
-                    let diff = collect_git_diff(&request.project_root);
+                    let diff = self
+                        .grader_diff_provider
+                        .as_ref()
+                        .map(|f| f(&request.project_root))
+                        .unwrap_or_else(|| collect_git_diff(&request.project_root));
+                    // No-diff fast path: chat / explanation / "do you
+                    // remember the last conversation?" turns finish
+                    // without touching the worktree. The grader's
+                    // whole question is "is the change acceptable to
+                    // ship?", so feeding it an empty diff makes it
+                    // dutifully reject every non-coding turn with
+                    // "No change was provided to address the
+                    // request", looping the agent forever. Skip the
+                    // grader when there is nothing for it to grade.
+                    if diff.trim().is_empty() {
+                        self.context.append(ContextEntry::trusted(
+                            ContextSource::PlanReminder,
+                            "[auto-grade] Skipped: no worktree changes to grade (chat or explanation turn)."
+                                .to_string(),
+                        ));
+                        let summary = AgentRunSummary {
+                            turns: outcomes,
+                            usage: total_usage,
+                            stopped_reason: StopReason::Done,
+                            duration_ms: started_at.elapsed().as_millis() as u64,
+                        };
+                        events(AgentRunEvent::Finished {
+                            summary: summary.clone(),
+                        });
+                        return Ok(summary);
+                    }
                     let verify_summary = recent_verify_summary(&self.context).unwrap_or_default();
                     match crate::grader::grade_work(
                         provider,

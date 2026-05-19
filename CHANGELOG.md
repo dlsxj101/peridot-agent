@@ -12,6 +12,53 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 
 ---
 
+## [0.7.8] — 2026-05-19
+
+### Fixed — auto-grade looped forever on chat / Q&A turns
+
+When `defaults.auto_grade_on_done = true` (the default), every
+`agent_done` invocation was fed to the LLM grader. The grader's
+system prompt only knows how to evaluate coding tasks — "Pass when
+the change addresses the task" — so any non-coding turn (chat,
+explanation, "do you remember our last conversation?") finished
+with an empty `git diff HEAD` and got rejected with
+"No change was provided to address the request". The
+recommendations were folded back into context, the agent dutifully
+re-answered, the next `agent_done` produced another empty diff,
+and the loop repeated until `max_turns` ran out. Operators saw
+the cascade as
+
+```
+⚠ recovery: auto-grade failed: No change was provided …
+⚠ recovery: auto-grade failed: No changes were provided …
+```
+
+Fixed by short-circuiting the grader when the worktree diff is
+empty: the gate now logs `[auto-grade] Skipped: no worktree
+changes to grade` to the plan reminder, fires `AgentRunEvent::
+Finished`, and exits cleanly. Code paths where the agent is
+genuinely supposed to ship a change still see the grader (an
+empty diff in those cases means the model wrongly claimed done
+without editing anything — but the grader's reject-loop never
+made progress on that scenario either, so we lose nothing).
+
+`crates/peridot-core/src/agent.rs`.
+
+### Added — `HarnessAgent::set_grader_diff_provider`
+
+Internal-only hook so tests can pre-load a non-empty diff and
+exercise the grader-rejection path that the empty-diff fast path
+would otherwise skip. Production code never sets it; the default
+(`None`) keeps the `collect_git_diff` call we've always had.
+
+### Migration notes
+
+- Pure bug-fix release. No config or API surface changes for
+  end users.
+- Workspace 0.7.7 → 0.7.8.
+
+---
+
 ## [0.7.7] — 2026-05-19
 
 Three more TUI papercuts from live v0.7.6 use on Windows.
