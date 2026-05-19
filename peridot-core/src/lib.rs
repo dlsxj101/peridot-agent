@@ -26,7 +26,7 @@ pub use peridot_common::CancelToken;
 pub use permissions::allowed_tool_groups;
 pub use requests::{
     AgentRunEvent, AgentRunRequest, AgentRunSummary, AgentTurnOutcome, AgentTurnRequest,
-    McpStatusUpdate, PlanStepUpdate, ReviewerVerdict, StopReason,
+    FileDiffPayload, McpStatusUpdate, PlanStepUpdate, ReviewerVerdict, StopReason,
 };
 pub use role::AgentRole;
 pub use slash::{AutoFixAction, SlashCommand, SubagentModelChange, parse_slash_command};

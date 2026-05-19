@@ -26,7 +26,8 @@ use crate::recovery::{
     run_error_event_hooks, run_recovery_event_hook, should_emit_budget_warning,
 };
 use crate::requests::{
-    AgentRunEvent, AgentRunRequest, AgentRunSummary, AgentTurnOutcome, AgentTurnRequest, StopReason,
+    AgentRunEvent, AgentRunRequest, AgentRunSummary, AgentTurnOutcome, AgentTurnRequest,
+    FileDiffPayload, StopReason,
 };
 use crate::role::AgentRole;
 use crate::state::AgentState;
@@ -269,17 +270,26 @@ impl HarnessAgent {
         project_root: impl Into<PathBuf>,
         denied_paths: Vec<PathBuf>,
     ) -> PeriResult<ToolResult> {
-        self.execute_tool_call_with_runtime(
-            call,
-            project_root,
-            denied_paths,
-            peridot_common::HooksConfig::default(),
-            SecurityConfig::default(),
-        )
-        .await
+        let (result, _diff) = self
+            .execute_tool_call_with_runtime(
+                call,
+                project_root,
+                denied_paths,
+                peridot_common::HooksConfig::default(),
+                SecurityConfig::default(),
+            )
+            .await?;
+        Ok(result)
     }
 
     /// Executes one tool call with explicit boundaries and hook configuration.
+    ///
+    /// Returns the tool result paired with an optional [`FileDiffPayload`]
+    /// describing the before/after content when the call mutated a file
+    /// (`file_write` / `file_patch`). Callers wired into the
+    /// [`AgentRunEvent`] stream forward the diff via
+    /// [`AgentRunEvent::FileDiff`]; internal callers (auto-verify, the
+    /// `agent_done` shortcut) discard it.
     pub async fn execute_tool_call_with_runtime(
         &self,
         call: ToolCall,
@@ -287,7 +297,7 @@ impl HarnessAgent {
         denied_paths: Vec<PathBuf>,
         hooks: peridot_common::HooksConfig,
         security: SecurityConfig,
-    ) -> PeriResult<ToolResult> {
+    ) -> PeriResult<(ToolResult, Option<FileDiffPayload>)> {
         let tool = self
             .tools
             .get(&call.name)
@@ -323,14 +333,32 @@ impl HarnessAgent {
         runner.run_tool_hooks(&format!("pre:{}", call.name), &variables)?;
         let tool_name = call.name.clone();
         let params = call.parameters.clone();
-        let checkpoint_id = if tool.modifies_state() {
+        let checkpoint = if tool.modifies_state() {
             write_file_checkpoint(&project_root, &tool_name, &params)
                 .ok()
                 .flatten()
         } else {
             None
         };
+        let checkpoint_id = checkpoint.as_ref().map(|cp| cp.id.clone());
         let result = tool.execute(call.parameters, &ctx).await?;
+        // Capture the post-mutation content for the file_diff event so
+        // the TUI / future extension clients can render a real before/
+        // after diff without re-walking the filesystem. Best-effort:
+        // a stat or read failure just suppresses the event — the
+        // checkpoint on disk is still the canonical rollback source.
+        let file_diff = checkpoint.as_ref().and_then(|cp| {
+            if !result.success {
+                return None;
+            }
+            let after = std::fs::read_to_string(&cp.absolute_path).ok()?;
+            Some(FileDiffPayload {
+                tool_name: tool_name.clone(),
+                path: cp.relative_path.clone(),
+                before: cp.previous_content.clone(),
+                after,
+            })
+        });
         let _ = append_audit_event(
             &project_root,
             &AuditEvent::tool_call(
@@ -353,7 +381,7 @@ impl HarnessAgent {
             })?,
         );
         runner.run_tool_hooks(&format!("post:{}", call.name), &variables)?;
-        Ok(result)
+        Ok((result, file_diff))
     }
 
     /// Runs one model/tool turn and records the observation in context.
@@ -535,7 +563,7 @@ impl HarnessAgent {
                 parameters: serde_json::json!({ "summary": summary }),
             };
             self.state.phase = AgentPhase::Executing;
-            let tool_result = self
+            let (tool_result, _file_diff) = self
                 .execute_tool_call_with_runtime(
                     tool_call,
                     request.project_root,
@@ -591,7 +619,7 @@ impl HarnessAgent {
             name: tool_name.clone(),
             parameters: tool_parameters.clone(),
         };
-        let tool_result = match self
+        let (tool_result, file_diff) = match self
             .execute_tool_call_with_runtime(
                 ToolCall {
                     name: tool_name.clone(),
@@ -604,7 +632,7 @@ impl HarnessAgent {
             )
             .await
         {
-            Ok(result) => result,
+            Ok(outcome) => outcome,
             Err(err) => {
                 if let PeriError::PermissionDenied(reason) = &err {
                     // Persist the exact pending tool call so the next
@@ -634,6 +662,9 @@ impl HarnessAgent {
         // unused binding when only one branch consumes it.
         let _ = &tool_call;
         if !suppress_done_ui {
+            if let Some(diff) = file_diff {
+                events(AgentRunEvent::FileDiff(diff));
+            }
             events(AgentRunEvent::ToolFinished {
                 name: tool_name.clone(),
                 result: tool_result.clone(),
@@ -719,7 +750,10 @@ impl HarnessAgent {
                 )
                 .await
             {
-                Ok(result) => {
+                Ok((result, file_diff)) => {
+                    if let Some(diff) = file_diff {
+                        events(AgentRunEvent::FileDiff(diff));
+                    }
                     events(AgentRunEvent::ToolFinished {
                         name: pending_name.clone(),
                         result: result.clone(),
@@ -958,7 +992,7 @@ impl HarnessAgent {
                     )
                     .await;
                 match auto_verify {
-                    Ok(result) => {
+                    Ok((result, _file_diff)) => {
                         let note = if result.success {
                             format!("[auto-verify] verify_build passed: {}", result.summary)
                         } else {
@@ -1272,11 +1306,25 @@ fn take_pending_resume(path: Option<&PathBuf>) -> Option<ToolCall> {
     Some(call)
 }
 
+/// Snapshot captured immediately before a mutating file tool runs.
+///
+/// Carries the previous file content (for diff rendering and rollback)
+/// alongside the persisted checkpoint id (for audit-log correlation)
+/// and the absolute path the tool will mutate (so the caller can re-read
+/// the new content without re-walking `params`).
+#[derive(Clone, Debug)]
+pub(crate) struct FileCheckpoint {
+    pub(crate) id: String,
+    pub(crate) relative_path: String,
+    pub(crate) absolute_path: PathBuf,
+    pub(crate) previous_content: Option<String>,
+}
+
 fn write_file_checkpoint(
     project_root: &std::path::Path,
     tool_name: &str,
     params: &serde_json::Value,
-) -> PeriResult<Option<String>> {
+) -> PeriResult<Option<FileCheckpoint>> {
     if !matches!(tool_name, "file_write" | "file_patch") {
         return Ok(None);
     }
@@ -1327,7 +1375,12 @@ fn write_file_checkpoint(
             checkpoint_path.display()
         ))
     })?;
-    Ok(Some(id))
+    Ok(Some(FileCheckpoint {
+        id,
+        relative_path: relative.to_string(),
+        absolute_path: path,
+        previous_content,
+    }))
 }
 
 /// Builds the `[sub-agent review]` directive injected after a
@@ -1700,17 +1753,21 @@ mod helpers_tests {
         std::fs::create_dir_all(root.join("src")).unwrap();
         std::fs::write(root.join("src/lib.rs"), "old").unwrap();
 
-        let id = write_file_checkpoint(
+        let checkpoint = write_file_checkpoint(
             &root,
             "file_patch",
             &serde_json::json!({"path": "src/lib.rs"}),
         )
         .unwrap()
         .unwrap();
-        let checkpoint =
-            std::fs::read_to_string(root.join(".peridot/checkpoints").join(format!("{id}.json")))
-                .unwrap();
-        let value: serde_json::Value = serde_json::from_str(&checkpoint).unwrap();
+        assert_eq!(checkpoint.relative_path, "src/lib.rs");
+        assert_eq!(checkpoint.previous_content.as_deref(), Some("old"));
+        let serialised = std::fs::read_to_string(
+            root.join(".peridot/checkpoints")
+                .join(format!("{}.json", checkpoint.id)),
+        )
+        .unwrap();
+        let value: serde_json::Value = serde_json::from_str(&serialised).unwrap();
 
         assert_eq!(value["path"], "src/lib.rs");
         assert_eq!(value["existed"], true);

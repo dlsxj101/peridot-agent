@@ -285,6 +285,12 @@ pub enum TuiRuntimeEvent {
         /// Structured tool output.
         output: serde_json::Value,
     },
+    /// A file-mutating tool finished and the harness captured the
+    /// before/after content. The TUI computes hunks via
+    /// [`crate::diff_hunks::diff_hunks`] and pushes them into the
+    /// transcript as `TranscriptKind::Diff` entries so the chat view
+    /// shows a real unified diff for both `file_write` and `file_patch`.
+    FileDiff(FileDiffPayload),
     /// Tool execution is waiting on explicit user approval.
     ApprovalRequested {
         /// Tool name.
@@ -1539,13 +1545,56 @@ impl TuiState {
         for line in tool_parameter_preview(&tool_name, &parameters) {
             self.push_transcript_entry(TranscriptKind::ToolStart, line);
         }
-        // file_patch (and any future inline-diff-producing tool) gets a
-        // dedicated stream of `Diff`-kind entries — one entry per diff line —
-        // so the chat view can colour `-` / `+` independently and clip long
-        // diffs without losing structure. Other tools' preview lines remain
-        // ToolStart and are hidden from the chat by default.
-        for line in tool_diff_lines(&tool_name, &parameters) {
-            self.push_transcript_entry(TranscriptKind::Diff, line);
+        // Per-line diff rendering used to fire from `parameters` here for
+        // `file_patch` only — `file_write` couldn't participate because the
+        // tool only carries the new content. The harness now emits a
+        // dedicated `FileDiff` event after the mutation completes, so both
+        // tools render through `record_file_diff` and the inline path is
+        // gone.
+    }
+
+    /// Materialises a [`FileDiffPayload`] into per-line transcript entries
+    /// so the chat view shows a real unified diff for both `file_write`
+    /// and `file_patch`.
+    ///
+    /// Each `Diff` entry holds a single `- old` / `+ new` line so the
+    /// renderer can colour them independently (red / green) and clip a
+    /// long patch cleanly. The cap matches the legacy inline path so
+    /// large mass-rewrites don't drown the transcript.
+    pub fn record_file_diff(&mut self, payload: FileDiffPayload) {
+        const DIFF_RENDER_LIMIT: usize = 40;
+        let header = match payload.before.as_deref() {
+            None => format!("diff: {} (new file)", payload.path),
+            Some(_) => format!("diff: {}", payload.path),
+        };
+        self.push_transcript_entry(TranscriptKind::Diff, header);
+        let before = payload.before.as_deref().unwrap_or("");
+        let hunks = crate::diff_hunks::diff_hunks(before, &payload.after);
+        let mut emitted = 0usize;
+        let mut clipped = 0usize;
+        for hunk in &hunks {
+            for line in &hunk.old_lines {
+                if emitted >= DIFF_RENDER_LIMIT {
+                    clipped += 1;
+                    continue;
+                }
+                self.push_transcript_entry(TranscriptKind::Diff, format!("- {line}"));
+                emitted += 1;
+            }
+            for line in &hunk.new_lines {
+                if emitted >= DIFF_RENDER_LIMIT {
+                    clipped += 1;
+                    continue;
+                }
+                self.push_transcript_entry(TranscriptKind::Diff, format!("+ {line}"));
+                emitted += 1;
+            }
+        }
+        if clipped > 0 {
+            self.push_transcript_entry(
+                TranscriptKind::Diff,
+                format!("... +{clipped} more diff lines"),
+            );
         }
     }
 
@@ -1779,6 +1828,9 @@ impl TuiState {
                 summary,
                 output,
             } => self.record_tool_result(name, success, summary, output),
+            TuiRuntimeEvent::FileDiff(payload) => {
+                self.record_file_diff(payload);
+            }
             TuiRuntimeEvent::AskUserRequested {
                 request_id,
                 request,
@@ -2324,40 +2376,10 @@ fn file_patch_parameter_preview(parameters: &serde_json::Value) -> Vec<String> {
     if let Some(path) = parameters.get("path").and_then(serde_json::Value::as_str) {
         lines.push(format!("  path: {path}"));
     }
-    // The diff bodies themselves are emitted as `Diff`-kind entries by
-    // `tool_diff_lines`, so this preview only carries the path. Anything
-    // else here would double-render in the chat once Diff lines become
-    // visible.
-    lines
-}
-
-/// Emits one diff line per element for tools that produce a +/- diff. Each
-/// line is prefixed with `- ` (removed) or `+ ` (added) and trimmed to the
-/// preview cap so the chat doesn't drown in a 500-line patch. The caller
-/// pushes each as its own `TranscriptKind::Diff` entry so the renderer can
-/// colour them independently and wrap them per-line.
-fn tool_diff_lines(tool_name: &str, parameters: &serde_json::Value) -> Vec<String> {
-    const DIFF_PREVIEW_LIMIT: usize = 20;
-    if tool_name != "file_patch" {
-        return Vec::new();
-    }
-    let mut lines = Vec::new();
-    if let Some(old_text) = parameters
-        .get("old_text")
-        .and_then(serde_json::Value::as_str)
-    {
-        for line in preview_lines(old_text, DIFF_PREVIEW_LIMIT) {
-            lines.push(format!("- {line}"));
-        }
-    }
-    if let Some(new_text) = parameters
-        .get("new_text")
-        .and_then(serde_json::Value::as_str)
-    {
-        for line in preview_lines(new_text, DIFF_PREVIEW_LIMIT) {
-            lines.push(format!("+ {line}"));
-        }
-    }
+    // The diff bodies themselves arrive as a dedicated `FileDiff` event
+    // after the tool finishes (see `record_file_diff`), so the ToolStart
+    // preview only carries the path. Anything else here would
+    // double-render in the chat alongside the post-execution diff.
     lines
 }
 

@@ -2809,6 +2809,7 @@ fn tui_runtime_event_from_agent(event: AgentRunEvent) -> TuiRuntimeEvent {
             summary: result.summary,
             output: result.output,
         },
+        AgentRunEvent::FileDiff(payload) => TuiRuntimeEvent::FileDiff(payload),
         AgentRunEvent::ApprovalRequested {
             tool_name,
             reason,

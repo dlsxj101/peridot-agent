@@ -12,7 +12,42 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 
 ---
 
-## [Unreleased]
+## [0.7.1] — 2026-05-19
+
+Polish pass before extension work begins. Three additive changes that
+prepare the agent loop and the provider trait surface for first-class
+extension/desktop clients (no breaking API removals; `AgentRunEvent` /
+`TuiRuntimeEvent` gain a new variant but the enums remain
+`#[serde(tag = "kind")]` and existing variants are unchanged).
+
+### Added — before/after diff rendering for every file mutation
+
+- New `AgentRunEvent::FileDiff(FileDiffPayload)` variant. Fires after a
+  successful `file_write` or `file_patch` carrying the project-relative
+  path, the previous content (`None` when the file was just created),
+  and the new content. Surfaced to the TUI through a matching
+  `TuiRuntimeEvent::FileDiff` and rendered by a new
+  `TuiState::record_file_diff` that uses the existing
+  `peridot-tui::diff_hunks` LCS algorithm to emit per-line
+  `TranscriptKind::Diff` entries (red `-` / green `+`, 40-line cap with
+  `... +N more diff lines` clip footer).
+- `file_write` now participates in the diff stream too — previously only
+  `file_patch` got a transcript diff because the tool's params didn't
+  carry a "before" half. The harness fills the gap by reading the
+  previous content from the on-disk
+  `.peridot/checkpoints/<id>.json` snapshot it was already writing for
+  rollback, so no new disk writes are required.
+- `write_file_checkpoint` returns a `FileCheckpoint` struct
+  (`id`, `relative_path`, `absolute_path`, `previous_content`) instead
+  of just the id. Callers that only needed the id still work via
+  `.id` field access.
+- `execute_tool_call_with_runtime` now returns
+  `(ToolResult, Option<FileDiffPayload>)`. The 2 internal call sites
+  that drive the event stream forward the diff via
+  `AgentRunEvent::FileDiff`; the 2 internal call sites without an
+  event sink discard it. Existing `execute_tool_call` /
+  `execute_tool_call_with_denied_paths` wrappers unwrap the tuple, so
+  external callers see no signature change.
 
 ### Added — anti-hallucination guardrail
 

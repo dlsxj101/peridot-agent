@@ -183,6 +183,34 @@ pub enum AgentRunEvent {
         /// Approximate token count for this pass.
         tokens: u64,
     },
+    /// A file-mutating tool (`file_write` / `file_patch`) finished
+    /// successfully. Carries the previous and new file content so the TUI
+    /// — and any future extension client subscribing to the event stream —
+    /// can render a unified before/after diff without re-reading the
+    /// workspace or the audit log. `before` is `None` when the tool
+    /// created a brand-new file.
+    FileDiff(FileDiffPayload),
+}
+
+/// Before/after payload emitted alongside [`AgentRunEvent::FileDiff`].
+///
+/// The harness reads `before` from the on-disk `.peridot/checkpoints/`
+/// entry written immediately before the mutation, and reads `after`
+/// from the resulting file on disk. Both are full file contents so
+/// downstream consumers can run their own hunk algorithm (LCS, Myers,
+/// patience, …) without trusting the agent's serialised arguments.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct FileDiffPayload {
+    /// Mutating tool name (`file_write` or `file_patch`).
+    pub tool_name: String,
+    /// Project-relative path that was mutated.
+    pub path: String,
+    /// File content before the mutation. `None` when the file did not
+    /// exist (e.g. fresh `file_write`).
+    pub before: Option<String>,
+    /// File content after the mutation. Always populated when the event
+    /// fires.
+    pub after: String,
 }
 
 /// Verdict returned by the reviewer agent after inspecting one executor

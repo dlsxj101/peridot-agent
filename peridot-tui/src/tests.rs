@@ -1,5 +1,5 @@
 use peridot_common::{AskUserRequest, ExecutionMode, Locale, PermissionMode, TuiConfig};
-use peridot_core::{GoalStatus, SlashCommand};
+use peridot_core::{FileDiffPayload, GoalStatus, SlashCommand};
 
 use super::fixtures::{TestScenario, fixture_state};
 use super::input::swap_foreground_state;
@@ -249,16 +249,51 @@ fn tool_started_preview_shows_patch_and_write_details() {
     });
 
     let snapshot = render_text_snapshot(&state);
+    // ToolStarted preview only carries the path now; diff bodies arrive
+    // via FileDiff after the mutation runs (verified separately by
+    // `file_diff_event_renders_unified_diff_lines`).
     assert!(snapshot.contains("tool file_patch: running"));
     assert!(snapshot.contains("  path: src/lib.rs"));
-    // Diff lines now flow through `TranscriptKind::Diff` so the chat can
-    // colour them — the `    - ` / `    + ` indented preview prefixes are
-    // gone in favour of plain `- ` / `+ ` lines under the Diff kind.
-    assert!(snapshot.contains("- fn old() {"));
-    assert!(snapshot.contains("+ fn old() {"));
     assert!(snapshot.contains("tool file_write: running"));
     assert!(snapshot.contains("  content:"));
     assert!(snapshot.contains("    # Peridot"));
+}
+
+#[test]
+fn file_diff_event_renders_unified_diff_lines() {
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+
+    // file_patch case: both before and after exist; the LCS-driven hunk
+    // algorithm should emit `- todo!()` removed line and `+ 42` added line
+    // for the body change. The unchanged `fn old() {` / `}` lines are NOT
+    // in the diff because they match across both versions.
+    state.apply_runtime_event(TuiRuntimeEvent::FileDiff(FileDiffPayload {
+        tool_name: "file_patch".to_string(),
+        path: "src/lib.rs".to_string(),
+        before: Some("fn old() {\n    todo!()\n}\n".to_string()),
+        after: "fn old() {\n    42\n}\n".to_string(),
+    }));
+    // file_write of a brand-new file: before is None, after is the full
+    // content. Every line is an addition.
+    state.apply_runtime_event(TuiRuntimeEvent::FileDiff(FileDiffPayload {
+        tool_name: "file_write".to_string(),
+        path: "README.md".to_string(),
+        before: None,
+        after: "# Peridot\n\nhello\n".to_string(),
+    }));
+
+    let snapshot = render_text_snapshot(&state);
+    assert!(snapshot.contains("diff: src/lib.rs"));
+    assert!(snapshot.contains("- "));
+    assert!(snapshot.contains("    todo!()"));
+    assert!(snapshot.contains("+ "));
+    assert!(snapshot.contains("    42"));
+    assert!(snapshot.contains("diff: README.md (new file)"));
+    assert!(snapshot.contains("+ # Peridot"));
 }
 
 #[test]

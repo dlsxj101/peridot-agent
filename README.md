@@ -4,7 +4,17 @@ Peridot Agent is a Rust CLI/TUI autonomous coding agent with multi-session orche
 
 ## Status
 
-Current version: **0.7.0**
+Current version: **0.7.1**
+
+### What's new in v0.7.1
+
+Polish pass before extension work begins:
+
+- **Before/after diff for every file mutation**: new `AgentRunEvent::FileDiff` carries `(path, before, after)` after every successful `file_write` / `file_patch`, so the TUI now renders a real unified diff for both tools (previously only `file_patch` had one because its params carried `old_text` / `new_text`; `file_write` was new-content-only). The before half comes from the `.peridot/checkpoints/<id>.json` snapshot the harness was already writing for `/undo`, so no extra disk writes. Future extension / desktop clients consume the same event for their own diff viewers.
+- **Provider-trait gap closed**: `LlmProvider::pricing()` and `auth_method()` are now consulted by `peridot doctor` via the new `provider:pricing` and `provider:auth_method` checks (previously declared on every impl but never called). OpenAI / OpenAI-Codex providers now downgrade `auth_method()` to `NotConfigured` when credentials are absent, matching ClaudeProvider's behaviour.
+- **`supports_prefill()` intent documented**: doc comment on the trait method now explicitly records the deferral — Anthropic-only, Claude OAuth not supported, lowest-common-denominator stance keeps the optimisation deferred until first-class Claude OAuth lands.
+- **Grounding rules in system prompt**: new `Grounding rules` block enforces "read source before answering, cite `path:line` for every load-bearing claim, hedge instead of fabricating confidence." Applied to every mode and every role; lives in Section B (Protocol) so the provider cache stays warm.
+- **Documentation cleanup**: SPEC §7.2 tool count corrected (33, not 34); §21.5.10 deferral list trimmed — turn-level branching, diff hunk staging, auto-fix loop were already implemented in v1 and have moved to §21.5.9.
 
 ### What's new in v0.7.0
 

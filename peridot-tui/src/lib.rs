@@ -23,7 +23,7 @@ use crossterm::{
     },
 };
 use peridot_common::{AskUserAnswer, AskUserRequest, ExecutionMode, PermissionMode, TuiConfig};
-use peridot_core::{GoalStatus, SlashCommand, parse_slash_command};
+use peridot_core::{FileDiffPayload, GoalStatus, SlashCommand, parse_slash_command};
 use ratatui::{
     Frame, Terminal,
     backend::CrosstermBackend,
