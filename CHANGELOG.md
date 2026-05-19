@@ -12,6 +12,61 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 
 ---
 
+## [0.7.10] — 2026-05-19
+
+### Changed — Peridot deer mascot redrawn at 16×16, eight mood-specific frames
+
+The mascot lived at 8×8 with a 7-entry palette and one or two
+frames per mood. v0.7.10 redraws it from a reference pixel-art
+deer (tall paired antlers, big round head with two black eyes
+flanking a pink nose, peridot gem at the chest, stocky body
+ending in two brown hooves). Sprite is now 16×16 with a 9-entry
+palette, but the rendered footprint stays at **8 cols × 4 rows
+of terminal cells** — same as before — because each 2×2 sub-
+pixel block is compressed into one cell via Unicode quadrant-
+block glyphs (`▘▝▖▗▙▟▛▜▀▄▌▐█ `). Pixel detail is 4× higher in
+the same screen real estate.
+
+Per-mood frame design:
+
+| Mood | Frames | What changes |
+|---|---|---|
+| Idle | 2 | Slow blink (pupils → highlight tone) |
+| Thinking | 2 | Right-antler tip shifts inward (head tilt) |
+| ToolRunning | 3 | Chest gem pulses dim → mid → bright |
+| ApprovalWaiting | 1 | Pupils flanked by sparkle highlights (alert) |
+| AskUser | 1 | Sparkle pixels on the head crown (raised ears) |
+| Done | 2 | Hooves lift one row (happy bounce) |
+| Failed | 1 | Antler branches collapsed + sad closed eyes |
+| Interrupted | 1 | Antlers straight up + enlarged 2-cell pupils |
+
+### Implementation notes
+
+- `peridot-tui/src/mascot/frames.rs` defines a 9-colour palette
+  (`peridot_palette`) tuned to the reference art: deep antler
+  green, mid body green, light body highlight, a 3-step peridot
+  gem (outer / core / sparkle), eye black, nose pink, hoof brown.
+- Each frame is 16×16 `Pixel`s. The design rule is "≤ 2 distinct
+  colours per 2×2 quadrant" so every cell maps cleanly to a
+  quadrant glyph with one foreground + one background colour.
+  When a frame breaks the rule the renderer picks the first two
+  palette indices and falls back to those — sprite still renders,
+  just a touch less faithful.
+- `peridot-tui/src/mascot/render.rs` was rewritten around
+  `quadrant_cell` (2×2 → glyph + fg + bg) and `quadrant_glyph`
+  (4-bit mask → Unicode codepoint).
+- Sprite-rendering test suite trimmed from the half-block layout
+  to a quadrant-aware one: 5 tests covering "fills every cell",
+  "transparent → reset colours", "solid → █", "mixed → correct
+  quadrant glyph", "no-op when area too small".
+
+### Migration notes
+
+- No config or API surface changes for end users.
+- Workspace 0.7.9 → 0.7.10.
+
+---
+
 ## [0.7.9] — 2026-05-19
 
 Four TUI / runtime UX fixes from live v0.7.8 use.

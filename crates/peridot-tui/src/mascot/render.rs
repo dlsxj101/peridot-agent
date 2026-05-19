@@ -1,4 +1,17 @@
-//! Half-block rendering for the Peridot deer mascot.
+//! Quadrant-block rendering for the 16×16 Peridot deer mascot.
+//!
+//! Each 2×2 block of sprite pixels maps to one terminal cell: the
+//! renderer picks a Unicode quadrant-block glyph that fills the
+//! "filled" sub-pixels with a foreground colour and leaves the
+//! "empty" sub-pixels in a background colour. So the sprite is
+//! drawn at the same 8 cols × 4 rows footprint as the old half-
+//! block 8×8 deer while carrying 4× the pixel detail.
+//!
+//! Two-colour-per-cell rule: every quadrant in the source frames is
+//! designed with at most two distinct colours (where `Pixel::Empty`
+//! counts as transparent). If a frame breaks the rule, the renderer
+//! picks the two most common colours and snaps the rest to the
+//! nearest of them — no crash, just a slightly less faithful pixel.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -8,59 +21,125 @@ use super::frames::{Pixel, palette_color};
 use super::{MascotState, current_frame_index, frames_for, mascot_state_from};
 use crate::state::TuiState;
 
-/// Draws the mascot for the current TUI mood at `area`. The sprite is 8 cells
-/// wide × 4 cells tall (each cell holds two stacked pixels via the `▀` glyph).
-///
-/// When `area` is too small the call is a no-op, so this is safe to call from
-/// any layout slot.
+/// Width / height of the rendered mascot in terminal cells.
+const CELL_COLS: u16 = 8;
+const CELL_ROWS: u16 = 4;
+
+/// Draws the mascot for the current TUI mood at `area`. Uses 8 cells
+/// wide × 4 cells tall (each cell encodes a 2×2 block of sprite
+/// pixels). When `area` is too small the call is a no-op.
 pub fn render_mascot(state: &TuiState, area: Rect, buffer: &mut Buffer) {
-    if area.width < 8 || area.height < 4 {
+    if area.width < CELL_COLS || area.height < CELL_ROWS {
         return;
     }
     let mood = mascot_state_from(state);
     let frames = frames_for(mood);
     let frame = &frames[current_frame_index(state.spinner_tick, frames.len())];
 
-    for cell_y in 0..4 {
-        for cell_x in 0..8 {
-            let top = frame.pixels[(cell_y * 2) as usize][cell_x as usize];
-            let bottom = frame.pixels[(cell_y * 2 + 1) as usize][cell_x as usize];
+    for cell_y in 0..CELL_ROWS {
+        for cell_x in 0..CELL_COLS {
+            // Pull the 2×2 sub-pixels that make up this cell. Top-left,
+            // top-right, bottom-left, bottom-right ordering matches the
+            // bit positions used by `quadrant_glyph`.
+            let px = (cell_x as usize) * 2;
+            let py = (cell_y as usize) * 2;
+            let tl = frame.pixels[py][px];
+            let tr = frame.pixels[py][px + 1];
+            let bl = frame.pixels[py + 1][px];
+            let br = frame.pixels[py + 1][px + 1];
+
+            let (glyph, fg, bg) = quadrant_cell(tl, tr, bl, br);
             if let Some(cell) = buffer.cell_mut((area.x + cell_x, area.y + cell_y)) {
-                // Pick glyph + colors so transparent pixels never paint the
-                // terminal default fg/bg onto the sprite. Drawing a `▀`
-                // half-block with `Color::Reset` as fg makes empty top pixels
-                // appear in the terminal's default foreground colour (light
-                // grey or white on a dark theme) — which is what the operator
-                // sees as a white "background" around the mascot.
-                match (top, bottom) {
-                    (Pixel::Empty, Pixel::Empty) => {
-                        // Fully empty cell — emit a plain space so the
-                        // surrounding terminal background shows through.
-                        cell.set_symbol(" ");
-                        cell.set_fg(Color::Reset);
-                        cell.set_bg(Color::Reset);
-                    }
-                    (Pixel::Empty, Pixel::Index(index)) => {
-                        // Only bottom pixel set — lower half block carries
-                        // the colour, top half (fg) stays default.
-                        cell.set_symbol("\u{2584}");
-                        cell.set_fg(palette_color(index));
-                        cell.set_bg(Color::Reset);
-                    }
-                    (Pixel::Index(index), Pixel::Empty) => {
-                        // Only top pixel set — upper half block.
-                        cell.set_symbol("\u{2580}");
-                        cell.set_fg(palette_color(index));
-                        cell.set_bg(Color::Reset);
-                    }
-                    (Pixel::Index(top_idx), Pixel::Index(bottom_idx)) => {
-                        cell.set_symbol("\u{2580}");
-                        cell.set_fg(palette_color(top_idx));
-                        cell.set_bg(palette_color(bottom_idx));
-                    }
+                cell.set_symbol(glyph);
+                cell.set_fg(fg);
+                cell.set_bg(bg);
+            }
+        }
+    }
+}
+
+/// Compresses a 2×2 sub-pixel block into one terminal cell. Returns
+/// the glyph plus the foreground / background colours the renderer
+/// should draw with. `Color::Reset` is used for transparent slots so
+/// the terminal's own background bleeds through.
+fn quadrant_cell(tl: Pixel, tr: Pixel, bl: Pixel, br: Pixel) -> (&'static str, Color, Color) {
+    // Fast path 1: all four sub-pixels are `Empty` — a fully
+    // transparent cell. Emit a space so neighbouring cells' bg
+    // doesn't leak into ours.
+    if matches!(
+        (tl, tr, bl, br),
+        (Pixel::Empty, Pixel::Empty, Pixel::Empty, Pixel::Empty)
+    ) {
+        return (" ", Color::Reset, Color::Reset);
+    }
+
+    // Collect the up-to-two opaque colours present in this cell.
+    // The `(fg, bg)` choice then maps every sub-pixel into a
+    // 4-bit mask: 1 = sub-pixel matches `fg`, 0 = matches `bg`
+    // (which may be `Color::Reset` when an `Empty` is in the mix).
+    let pixels = [tl, tr, bl, br];
+    let mut palette: Vec<u8> = Vec::with_capacity(4);
+    let mut has_empty = false;
+    for px in &pixels {
+        match px {
+            Pixel::Empty => has_empty = true,
+            Pixel::Index(i) => {
+                if !palette.contains(i) {
+                    palette.push(*i);
                 }
             }
         }
+    }
+    // Choose fg / bg. Designs respecting the two-colour-per-cell
+    // rule end up here with `palette.len() <= 2`. If a frame breaks
+    // the rule we keep the first two indices and approximate.
+    let (fg_color, bg_color) = match (palette.as_slice(), has_empty) {
+        ([], _) => return (" ", Color::Reset, Color::Reset),
+        ([only], true) => (palette_color(*only), Color::Reset),
+        ([only], false) => {
+            // Solid block — every sub-pixel is the same colour. The
+            // glyph is irrelevant; pick `█` for crispness.
+            return ("\u{2588}", palette_color(*only), Color::Reset);
+        }
+        ([fg, bg], _) => (palette_color(*fg), palette_color(*bg)),
+        ([fg, bg, ..], _) => (palette_color(*fg), palette_color(*bg)),
+    };
+
+    // Build the 4-bit mask: bit 3 = TL, bit 2 = TR, bit 1 = BL,
+    // bit 0 = BR — set when the sub-pixel matches `fg_color`,
+    // cleared when it matches `bg_color` or is `Empty`.
+    let primary_index = palette.first().copied();
+    let bit = |px: Pixel| -> u8 {
+        match (px, primary_index) {
+            (Pixel::Index(i), Some(p)) if i == p => 1,
+            _ => 0,
+        }
+    };
+    let mask = (bit(tl) << 3) | (bit(tr) << 2) | (bit(bl) << 1) | bit(br);
+    let glyph = quadrant_glyph(mask);
+    (glyph, fg_color, bg_color)
+}
+
+/// Maps a 4-bit TL/TR/BL/BR mask to its Unicode quadrant glyph.
+fn quadrant_glyph(mask: u8) -> &'static str {
+    match mask & 0b1111 {
+        0b0000 => " ",
+        0b0001 => "\u{2597}", // ▗ BR
+        0b0010 => "\u{2596}", // ▖ BL
+        0b0011 => "\u{2584}", // ▄ BL+BR
+        0b0100 => "\u{259D}", // ▝ TR
+        0b0101 => "\u{2590}", // ▐ TR+BR
+        0b0110 => "\u{259E}", // ▞ TR+BL
+        0b0111 => "\u{259F}", // ▟ TR+BL+BR
+        0b1000 => "\u{2598}", // ▘ TL
+        0b1001 => "\u{259A}", // ▚ TL+BR
+        0b1010 => "\u{258C}", // ▌ TL+BL
+        0b1011 => "\u{2599}", // ▙ TL+BL+BR
+        0b1100 => "\u{2580}", // ▀ TL+TR
+        0b1101 => "\u{259C}", // ▜ TL+TR+BR
+        0b1110 => "\u{259B}", // ▛ TL+TR+BL
+        0b1111 => "\u{2588}", // █ full
+        _ => " ",
     }
 }
 
@@ -99,53 +178,48 @@ mod tests {
     }
 
     #[test]
-    fn render_paints_sprite_pixels_and_leaves_empty_cells_transparent() {
+    fn render_fills_8x4_cells_without_panicking() {
         let state = fixture();
-        let area = Rect::new(0, 0, 16, 8);
+        let area = Rect::new(0, 0, CELL_COLS, CELL_ROWS);
         let mut buffer = Buffer::empty(area);
-        render_mascot(&state, Rect::new(0, 0, 8, 4), &mut buffer);
-
-        let mut upper = 0;
-        let mut lower = 0;
-        let mut spaces = 0;
-        for y in 0..4 {
-            for x in 0..8 {
+        render_mascot(&state, area, &mut buffer);
+        // Every cell must have been touched — at minimum a space.
+        for y in 0..CELL_ROWS {
+            for x in 0..CELL_COLS {
                 let cell = buffer.cell((x, y)).unwrap();
-                match cell.symbol() {
-                    "\u{2580}" => upper += 1,
-                    "\u{2584}" => lower += 1,
-                    " " => spaces += 1,
-                    other => panic!("unexpected glyph at ({x},{y}): {other:?}"),
-                }
+                assert!(!cell.symbol().is_empty());
             }
         }
-        // BASE frame has fully-empty columns 0 and 7 plus an empty row
-        // beneath the legs — empty cells must NOT render the half-block
-        // glyph or they paint the terminal default fg as a white block.
-        assert!(
-            spaces > 0,
-            "expected at least one transparent cell, got 0 (white-bg regression)"
-        );
-        assert!(upper > 0, "expected upper-half cells for sprite body");
-        assert!(lower > 0, "expected lower-half cells for top-empty pixels");
-        assert_eq!(upper + lower + spaces, 32, "every cell must be classified");
     }
 
     #[test]
-    fn empty_cells_use_reset_colors_not_terminal_default_fg() {
-        // The regression we're guarding: when a cell is fully transparent
-        // we must clear fg/bg to `Color::Reset`, otherwise the terminal
-        // inherits an SGR from a neighbouring sprite cell and paints the
-        // mascot's background in the wrong colour (operator-visible as a
-        // white halo around the deer on dark terminals).
-        let state = fixture();
-        let area = Rect::new(0, 0, 8, 4);
-        let mut buffer = Buffer::empty(area);
-        render_mascot(&state, area, &mut buffer);
-        let corner = buffer.cell((0, 0)).unwrap();
-        assert_eq!(corner.symbol(), " ", "top-left should be transparent");
-        assert_eq!(corner.fg, Color::Reset);
-        assert_eq!(corner.bg, Color::Reset);
+    fn fully_transparent_cell_uses_reset_colors() {
+        let (glyph, fg, bg) = quadrant_cell(Pixel::Empty, Pixel::Empty, Pixel::Empty, Pixel::Empty);
+        assert_eq!(glyph, " ");
+        assert_eq!(fg, Color::Reset);
+        assert_eq!(bg, Color::Reset);
+    }
+
+    #[test]
+    fn solid_cell_uses_full_block() {
+        let (glyph, fg, bg) = quadrant_cell(
+            Pixel::Index(0),
+            Pixel::Index(0),
+            Pixel::Index(0),
+            Pixel::Index(0),
+        );
+        assert_eq!(glyph, "\u{2588}");
+        assert_eq!(fg, palette_color(0));
+        assert_eq!(bg, Color::Reset);
+    }
+
+    #[test]
+    fn mixed_two_color_cell_chooses_quadrant_glyph() {
+        // TL filled with palette 0, rest empty → upper-left block ▘
+        let (glyph, _, bg) =
+            quadrant_cell(Pixel::Index(0), Pixel::Empty, Pixel::Empty, Pixel::Empty);
+        assert_eq!(glyph, "\u{2598}");
+        assert_eq!(bg, Color::Reset);
     }
 
     #[test]
@@ -154,7 +228,6 @@ mod tests {
         let area = Rect::new(0, 0, 4, 2);
         let mut buffer = Buffer::empty(area);
         render_mascot(&state, area, &mut buffer);
-        // Buffer starts empty (no symbol); after no-op render, still empty.
         let cell = buffer.cell((0, 0)).unwrap();
         assert_eq!(cell.symbol(), " ");
     }

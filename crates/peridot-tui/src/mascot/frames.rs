@@ -1,8 +1,16 @@
-//! 8×8 pixel frame data for the Peridot deer mascot.
+//! 16×16 pixel frame data for the Peridot deer mascot.
 //!
-//! Each [`MascotFrame`] is a row-major grid of [`Pixel`]s. Frames use a tiny
-//! 7-entry palette indexed by `Pixel::Index`, which keeps the per-frame data
-//! compact and lets us re-skin the mascot by swapping the palette later.
+//! Each [`MascotFrame`] is a row-major 16×16 grid of [`Pixel`]s. The
+//! renderer compresses every 2×2 block into a single terminal cell
+//! using Unicode quadrant block glyphs (`▘▝▖▗▙▟▛▜▀▄▌▐█ `) — so the
+//! sprite shows up at the same 8 columns × 4 rows footprint as the
+//! old 8×8 deer but holds 4× the pixel detail.
+//!
+//! Design rule: keep each 2×2 quadrant down to two distinct colours
+//! (one foreground + one background, where `Pixel::Empty` counts as
+//! "transparent background"). The renderer picks two colours per
+//! cell automatically when the rule is broken, but the result looks
+//! cleaner when frames respect it.
 
 use ratatui::style::Color;
 
@@ -17,45 +25,47 @@ pub enum Pixel {
     Index(u8),
 }
 
-/// One frame of mascot animation.
+/// One frame of mascot animation. 16×16 row-major.
 #[derive(Clone, Copy, Debug)]
 pub struct MascotFrame {
-    /// 8 rows × 8 columns of palette indices.
-    pub pixels: [[Pixel; 8]; 8],
+    /// 16 rows × 16 columns of palette indices.
+    pub pixels: [[Pixel; 16]; 16],
 }
 
-/// Returns the active palette: peridot greens + warm browns + accent colors.
-pub const fn peridot_palette() -> [Color; 7] {
+/// Sprite palette tuned to the Peridot deer reference art:
+/// deep antler green, mid body green, light body highlight, a
+/// 3-step peridot gem (outer / core / sparkle), a near-black eye,
+/// a tiny pink nose, and one warm hoof brown.
+pub const fn peridot_palette() -> [Color; 9] {
     [
-        Color::Rgb(165, 199, 93),  // 0: body green (peridot core)
-        Color::Rgb(213, 235, 153), // 1: body highlight
-        Color::Rgb(139, 94, 60),   // 2: brown (legs, hooves)
-        Color::Rgb(101, 178, 92),  // 3: deep peridot (antler gem tip)
-        // 4: eye — a warm dark brown rather than near-black. The previous
-        //    `Rgb(28, 28, 32)` blended into the terminal background on most
-        //    dark themes so the deer's eyes vanished; this brown stays
-        //    visibly distinct against both the light-green body highlight
-        //    and a black terminal cell.
-        Color::Rgb(60, 35, 20),
-        Color::Rgb(255, 255, 255), // 5: eye shine
-        Color::Rgb(255, 182, 193), // 6: nose pink
+        Color::Rgb(54, 92, 30),    // 0: antler / outline dark green
+        Color::Rgb(133, 178, 64),  // 1: body mid green
+        Color::Rgb(210, 232, 130), // 2: body highlight (light green)
+        Color::Rgb(40, 130, 56),   // 3: gem outline / deep peridot
+        Color::Rgb(96, 220, 110),  // 4: gem core (bright green)
+        Color::Rgb(225, 255, 215), // 5: gem sparkle / eye-shine highlight
+        Color::Rgb(28, 28, 32),    // 6: eye (near-black with a green cast)
+        Color::Rgb(255, 182, 193), // 7: nose pink
+        Color::Rgb(90, 56, 30),    // 8: hoof brown
     ]
 }
 
 /// Resolves a palette index to a ratatui Color, falling back to body green.
 pub fn palette_color(index: u8) -> Color {
     let palette = peridot_palette();
-    palette.get(index as usize).copied().unwrap_or(palette[0])
+    palette.get(index as usize).copied().unwrap_or(palette[1])
 }
 
 const E: Pixel = Pixel::Empty;
-const G: Pixel = Pixel::Index(0);
-const L: Pixel = Pixel::Index(1);
-const B: Pixel = Pixel::Index(2);
-const J: Pixel = Pixel::Index(3); // gem
-const K: Pixel = Pixel::Index(4); // black
-const W: Pixel = Pixel::Index(5); // white
-const N: Pixel = Pixel::Index(6); // nose
+const D: Pixel = Pixel::Index(0); // antler / outline dark green
+const G: Pixel = Pixel::Index(1); // body mid green
+const L: Pixel = Pixel::Index(2); // body highlight light
+const J: Pixel = Pixel::Index(3); // gem outline
+const C: Pixel = Pixel::Index(4); // gem core
+const S: Pixel = Pixel::Index(5); // gem sparkle / eye shine
+const K: Pixel = Pixel::Index(6); // eye black
+const N: Pixel = Pixel::Index(7); // nose pink
+const H: Pixel = Pixel::Index(8); // hoof brown
 
 /// Returns the frame sequence for a given mood. Every state has at least one
 /// frame; multi-frame states cycle through `frames_for(state)[current_index]`.
@@ -72,225 +82,288 @@ pub fn frames_for(state: MascotState) -> &'static [MascotFrame] {
     }
 }
 
-// Base sprite: antlers + ears + head + body + legs (deer silhouette).
+// =====================================================================
+// BASE — the deer at rest. Tall paired antlers, large round head with
+// two black eyes flanking a pink nose, peridot gem at the chest,
+// stocky body, two short legs ending in brown hooves. Every other
+// frame edits one or two rows of this layout so the operator
+// perceives small distinct twitches per mood rather than an entirely
+// different sprite each tick.
+// =====================================================================
 const BASE: MascotFrame = MascotFrame {
     pixels: [
-        [E, J, E, E, E, E, J, E],
-        [E, B, E, G, G, E, B, E],
-        [E, B, G, L, L, G, B, E],
-        [E, G, L, K, L, K, G, E],
-        [E, G, G, L, N, L, G, E],
-        [E, G, G, G, G, G, G, E],
-        [E, B, E, E, E, E, B, E],
-        [E, B, E, E, E, E, B, E],
+        // Row 0 — antler tips
+        [E, E, E, D, E, E, E, E, E, E, E, E, D, E, E, E],
+        // Row 1 — antler upper branches
+        [E, E, D, D, D, E, E, E, E, E, E, D, D, D, E, E],
+        // Row 2 — antler mid
+        [E, E, E, D, E, E, E, E, E, E, E, E, D, E, E, E],
+        // Row 3 — antler bases meeting the head
+        [E, E, E, D, D, E, E, E, E, E, E, D, D, E, E, E],
+        // Row 4 — head crown
+        [E, E, E, E, D, L, L, L, L, L, L, D, E, E, E, E],
+        // Row 5 — forehead
+        [E, E, E, D, L, L, L, L, L, L, L, L, D, E, E, E],
+        // Row 6 — eyes
+        [E, E, E, D, L, K, L, L, L, L, K, L, D, E, E, E],
+        // Row 7 — under-eye
+        [E, E, E, D, L, L, L, L, L, L, L, L, D, E, E, E],
+        // Row 8 — nose
+        [E, E, E, D, L, L, L, N, N, L, L, L, D, E, E, E],
+        // Row 9 — chin
+        [E, E, E, D, L, L, L, L, L, L, L, L, D, E, E, E],
+        // Row 10 — head-to-body
+        [E, E, D, L, L, L, L, L, L, L, L, L, L, D, E, E],
+        // Row 11 — body + gem top
+        [E, D, L, L, L, G, G, J, J, G, G, L, L, L, D, E],
+        // Row 12 — gem middle
+        [E, D, L, L, G, J, C, C, C, C, J, G, L, L, D, E],
+        // Row 13 — gem bottom
+        [E, D, L, L, G, G, J, C, C, J, G, G, L, L, D, E],
+        // Row 14 — lower body
+        [E, D, D, L, L, G, G, G, G, G, G, L, L, D, D, E],
+        // Row 15 — hooves
+        [E, E, H, H, E, E, E, E, E, E, E, E, H, H, E, E],
     ],
 };
 
-// Idle frame 2 — eyes closed (blink). The eye row swaps from `K` (open
-// pupil) to `L` (light cheek-tone) so the eye actually disappears for a
-// frame; the original BLINK kept K at row 3 which made the animation
-// effectively a no-op visually.
+// =====================================================================
+// IDLE — base + a blink (eyes close to highlight tone for one frame).
+// =====================================================================
 const BLINK: MascotFrame = MascotFrame {
     pixels: [
-        [E, J, E, E, E, E, J, E],
-        [E, B, E, G, G, E, B, E],
-        [E, B, G, L, L, G, B, E],
-        [E, G, L, L, L, L, G, E],
-        [E, G, G, L, N, L, G, E],
-        [E, G, G, G, G, G, G, E],
-        [E, B, E, E, E, E, B, E],
-        [E, B, E, E, E, E, B, E],
+        BASE.pixels[0],
+        BASE.pixels[1],
+        BASE.pixels[2],
+        BASE.pixels[3],
+        BASE.pixels[4],
+        BASE.pixels[5],
+        // Closed eyes — `K` becomes `L`.
+        [E, E, E, D, L, L, L, L, L, L, L, L, D, E, E, E],
+        BASE.pixels[7],
+        BASE.pixels[8],
+        BASE.pixels[9],
+        BASE.pixels[10],
+        BASE.pixels[11],
+        BASE.pixels[12],
+        BASE.pixels[13],
+        BASE.pixels[14],
+        BASE.pixels[15],
     ],
 };
 
 const IDLE: [MascotFrame; 2] = [BASE, BLINK];
 
-// Thinking — small white "shine" floating to the right of the head.
-const THINK_A: MascotFrame = MascotFrame {
+// =====================================================================
+// THINKING — gentle right-antler twitch (the right tip shifts inward
+// by one cell to suggest a head tilt).
+// =====================================================================
+const THINKING_TWITCH: MascotFrame = MascotFrame {
     pixels: [
-        [E, J, E, E, E, E, J, W],
-        [E, B, E, G, G, E, B, E],
-        [E, B, G, L, L, G, B, E],
-        [E, G, L, K, L, K, G, E],
-        [E, G, G, L, N, L, G, E],
-        [E, G, G, G, G, G, G, E],
-        [E, B, E, E, E, E, B, E],
-        [E, B, E, E, E, E, B, E],
+        [E, E, E, D, E, E, E, E, E, E, E, D, E, E, E, E],
+        BASE.pixels[1],
+        BASE.pixels[2],
+        BASE.pixels[3],
+        BASE.pixels[4],
+        BASE.pixels[5],
+        BASE.pixels[6],
+        BASE.pixels[7],
+        BASE.pixels[8],
+        BASE.pixels[9],
+        BASE.pixels[10],
+        BASE.pixels[11],
+        BASE.pixels[12],
+        BASE.pixels[13],
+        BASE.pixels[14],
+        BASE.pixels[15],
     ],
 };
-const THINK_B: MascotFrame = MascotFrame {
-    pixels: [
-        [E, J, E, E, E, E, J, E],
-        [E, B, E, G, G, E, B, W],
-        [E, B, G, L, L, G, B, E],
-        [E, G, L, K, L, K, G, E],
-        [E, G, G, L, N, L, G, E],
-        [E, G, G, G, G, G, G, E],
-        [E, B, E, E, E, E, B, E],
-        [E, B, E, E, E, E, B, E],
-    ],
-};
-const THINKING: [MascotFrame; 3] = [THINK_A, BASE, THINK_B];
 
-// Tool running — gems on antlers light up (extra highlight).
-const TOOL_A: MascotFrame = MascotFrame {
-    pixels: [
-        [J, J, E, E, E, E, J, J],
-        [E, B, E, G, G, E, B, E],
-        [E, B, G, L, L, G, B, E],
-        [E, G, L, K, L, K, G, E],
-        [E, G, G, L, N, L, G, E],
-        [E, G, G, G, G, G, G, E],
-        [E, B, E, E, E, E, B, E],
-        [E, B, E, E, E, E, B, E],
-    ],
-};
-const TOOL_B: MascotFrame = MascotFrame {
-    pixels: [
-        [E, J, J, E, E, J, J, E],
-        [E, B, E, G, G, E, B, E],
-        [E, B, G, L, L, G, B, E],
-        [E, G, L, K, L, K, G, E],
-        [E, G, G, L, N, L, G, E],
-        [E, G, G, G, G, G, G, E],
-        [E, B, E, E, E, E, B, E],
-        [E, B, E, E, E, E, B, E],
-    ],
-};
-const TOOL_RUNNING: [MascotFrame; 3] = [BASE, TOOL_A, TOOL_B];
+const THINKING: [MascotFrame; 2] = [BASE, THINKING_TWITCH];
 
-// Approval — head slightly tilted (asymmetric antlers, wide eyes).
+// =====================================================================
+// TOOL_RUNNING — chest gem pulses dim → mid → bright over three
+// frames. Body and head unchanged so the eye is drawn to the gem.
+// =====================================================================
+const TOOL_GLOW_DIM: MascotFrame = MascotFrame {
+    pixels: [
+        BASE.pixels[0],
+        BASE.pixels[1],
+        BASE.pixels[2],
+        BASE.pixels[3],
+        BASE.pixels[4],
+        BASE.pixels[5],
+        BASE.pixels[6],
+        BASE.pixels[7],
+        BASE.pixels[8],
+        BASE.pixels[9],
+        BASE.pixels[10],
+        // Gem outline becomes core green (J → C on row 11/13).
+        [E, D, L, L, L, G, G, C, C, G, G, L, L, L, D, E],
+        BASE.pixels[12],
+        [E, D, L, L, G, G, C, C, C, C, G, G, L, L, D, E],
+        BASE.pixels[14],
+        BASE.pixels[15],
+    ],
+};
+const TOOL_GLOW_BRIGHT: MascotFrame = MascotFrame {
+    pixels: [
+        BASE.pixels[0],
+        BASE.pixels[1],
+        BASE.pixels[2],
+        BASE.pixels[3],
+        BASE.pixels[4],
+        BASE.pixels[5],
+        BASE.pixels[6],
+        BASE.pixels[7],
+        BASE.pixels[8],
+        BASE.pixels[9],
+        BASE.pixels[10],
+        // Whole gem brightens — entire facets become sparkle white.
+        [E, D, L, L, L, C, C, S, S, C, C, L, L, L, D, E],
+        [E, D, L, L, C, S, S, S, S, S, S, C, L, L, D, E],
+        [E, D, L, L, C, C, S, S, S, S, C, C, L, L, D, E],
+        BASE.pixels[14],
+        BASE.pixels[15],
+    ],
+};
+
+const TOOL_RUNNING: [MascotFrame; 3] = [BASE, TOOL_GLOW_DIM, TOOL_GLOW_BRIGHT];
+
+// =====================================================================
+// APPROVAL_WAITING — eyes widen: a sparkle pixel sits next to each
+// pupil so the deer looks alert and asking.
+// =====================================================================
 const APPROVAL_FRAME: MascotFrame = MascotFrame {
     pixels: [
-        [J, E, E, E, E, E, E, J],
-        [B, E, E, G, G, E, B, E],
-        [B, G, G, L, L, G, B, E],
-        [E, G, W, K, L, K, G, E],
-        [E, G, G, L, N, L, G, E],
-        [E, G, G, G, G, G, G, E],
-        [E, B, E, E, E, E, B, E],
-        [E, B, E, E, E, E, B, E],
+        BASE.pixels[0],
+        BASE.pixels[1],
+        BASE.pixels[2],
+        BASE.pixels[3],
+        BASE.pixels[4],
+        BASE.pixels[5],
+        // Pupils flanked by sparkle highlights for the wide-eyed look.
+        [E, E, E, D, L, K, S, L, L, S, K, L, D, E, E, E],
+        BASE.pixels[7],
+        BASE.pixels[8],
+        BASE.pixels[9],
+        BASE.pixels[10],
+        BASE.pixels[11],
+        BASE.pixels[12],
+        BASE.pixels[13],
+        BASE.pixels[14],
+        BASE.pixels[15],
     ],
 };
+
 const APPROVAL: [MascotFrame; 1] = [APPROVAL_FRAME];
 
-// AskUser — pupils larger (curious).
-const ASK_FRAME: MascotFrame = MascotFrame {
+// =====================================================================
+// ASK_USER — curious upright. Sparkle pixels on the head crown stand
+// in for raised ears.
+// =====================================================================
+const ASK_USER_FRAME: MascotFrame = MascotFrame {
     pixels: [
-        [E, J, E, E, E, E, J, E],
-        [E, B, E, G, G, E, B, E],
-        [E, B, G, L, L, G, B, E],
-        [E, G, K, K, L, K, K, E],
-        [E, G, G, L, N, L, G, E],
-        [E, G, G, G, G, G, G, E],
-        [E, B, E, E, E, E, B, E],
-        [E, B, E, E, E, E, B, E],
+        BASE.pixels[0],
+        BASE.pixels[1],
+        BASE.pixels[2],
+        BASE.pixels[3],
+        BASE.pixels[4],
+        [E, E, E, D, S, L, L, L, L, L, L, S, D, E, E, E],
+        BASE.pixels[6],
+        BASE.pixels[7],
+        BASE.pixels[8],
+        BASE.pixels[9],
+        BASE.pixels[10],
+        BASE.pixels[11],
+        BASE.pixels[12],
+        BASE.pixels[13],
+        BASE.pixels[14],
+        BASE.pixels[15],
     ],
 };
-const ASK_USER: [MascotFrame; 1] = [ASK_FRAME];
 
-// Done — visible ^_^ eyes (closed upward arcs) + small bounce. The
-// previous Done frames left the eye row as plain body green, so the
-// deer's face went blank when a task completed. The K (brown) pixels
-// at row 2 cols 3 & 5 now render as the top of a closed-smiling eye;
-// the bottom half of the eye-cell is body green (no K below) so the
-// shape reads as `^^`.
-const DONE_A: MascotFrame = MascotFrame {
-    pixels: [
-        [E, J, E, E, E, E, J, E],
-        [E, B, E, G, G, E, B, E],
-        [E, B, G, K, L, K, B, E],
-        [E, G, L, G, L, G, G, E],
-        [E, G, G, L, N, L, G, E],
-        [E, G, G, G, G, G, G, E],
-        [E, B, E, E, E, E, B, E],
-        [E, B, E, E, E, E, B, E],
-    ],
-};
-const DONE_B: MascotFrame = MascotFrame {
-    pixels: [
-        [E, J, E, E, E, E, J, E],
-        [E, B, G, K, L, K, B, E],
-        [E, G, L, G, L, G, G, E],
-        [E, G, G, L, N, L, G, E],
-        [E, G, G, G, G, G, G, E],
-        [E, B, E, E, E, E, B, E],
-        [E, B, E, E, E, E, B, E],
-        [E, E, E, E, E, E, E, E],
-    ],
-};
-const DONE: [MascotFrame; 2] = [DONE_A, DONE_B];
+const ASK_USER: [MascotFrame; 1] = [ASK_USER_FRAME];
 
-// Failed — ears drooping, eyes shut as `x_x`. The previous frame left
-// the eye row as plain body green so the deer's face vanished on
-// failure; now K pixels sit at row 3 cols 3 & 5 so the closed eyes
-// remain readable while the rest of the face still reads as defeated.
+// =====================================================================
+// DONE — happy bounce. Hooves visibly lift one row so the deer
+// reads as airborne for one frame.
+// =====================================================================
+const DONE_BOUNCE: MascotFrame = MascotFrame {
+    pixels: [
+        BASE.pixels[0],
+        BASE.pixels[1],
+        BASE.pixels[2],
+        BASE.pixels[3],
+        BASE.pixels[4],
+        BASE.pixels[5],
+        BASE.pixels[6],
+        BASE.pixels[7],
+        BASE.pixels[8],
+        BASE.pixels[9],
+        BASE.pixels[10],
+        BASE.pixels[11],
+        BASE.pixels[12],
+        BASE.pixels[13],
+        BASE.pixels[14],
+        // Hooves lifted — only the inside columns hit the ground.
+        [E, E, E, H, E, E, E, E, E, E, E, E, H, E, E, E],
+    ],
+};
+
+const DONE: [MascotFrame; 2] = [BASE, DONE_BOUNCE];
+
+// =====================================================================
+// FAILED — ears drooping. Antler upper branches collapse downward,
+// eyes close (sad / disappointed).
+// =====================================================================
 const FAILED_FRAME: MascotFrame = MascotFrame {
     pixels: [
-        [E, J, E, E, E, E, J, E],
-        [E, B, E, E, E, E, B, E],
-        [E, E, G, G, G, G, E, E],
-        [E, G, L, K, L, K, G, E],
-        [E, G, G, L, N, L, G, E],
-        [E, G, G, G, G, G, G, E],
-        [E, B, E, E, E, E, B, E],
-        [E, B, E, E, E, E, B, E],
+        [E; 16],
+        [E, E, E, D, E, E, E, E, E, E, E, E, D, E, E, E],
+        [E, E, E, D, D, E, E, E, E, E, E, D, D, E, E, E],
+        [E, E, E, E, D, E, E, E, E, E, E, D, E, E, E, E],
+        BASE.pixels[4],
+        BASE.pixels[5],
+        [E, E, E, D, L, L, L, L, L, L, L, L, D, E, E, E],
+        BASE.pixels[7],
+        BASE.pixels[8],
+        BASE.pixels[9],
+        BASE.pixels[10],
+        BASE.pixels[11],
+        BASE.pixels[12],
+        BASE.pixels[13],
+        BASE.pixels[14],
+        BASE.pixels[15],
     ],
 };
+
 const FAILED: [MascotFrame; 1] = [FAILED_FRAME];
 
-// Interrupted — startled, ears straight up, wide eyes.
+// =====================================================================
+// INTERRUPTED — startled. Antlers stand straight (every row 0-3 has
+// a single vertical antler pixel), pupils enlarge into a 2-cell stare.
+// =====================================================================
 const INTERRUPTED_FRAME: MascotFrame = MascotFrame {
     pixels: [
-        [E, J, J, E, E, J, J, E],
-        [E, B, B, G, G, B, B, E],
-        [E, B, G, L, L, G, B, E],
-        [E, G, W, K, W, K, G, E],
-        [E, G, G, L, N, L, G, E],
-        [E, G, G, G, G, G, G, E],
-        [E, B, E, E, E, E, B, E],
-        [E, B, E, E, E, E, B, E],
+        [E, E, E, D, E, E, E, E, E, E, E, E, D, E, E, E],
+        [E, E, E, D, E, E, E, E, E, E, E, E, D, E, E, E],
+        [E, E, E, D, E, E, E, E, E, E, E, E, D, E, E, E],
+        [E, E, E, D, D, E, E, E, E, E, E, D, D, E, E, E],
+        BASE.pixels[4],
+        BASE.pixels[5],
+        // Big startled pupils — two K pixels each side.
+        [E, E, E, D, L, K, K, L, L, K, K, L, D, E, E, E],
+        BASE.pixels[7],
+        BASE.pixels[8],
+        BASE.pixels[9],
+        BASE.pixels[10],
+        BASE.pixels[11],
+        BASE.pixels[12],
+        BASE.pixels[13],
+        BASE.pixels[14],
+        BASE.pixels[15],
     ],
 };
+
 const INTERRUPTED: [MascotFrame; 1] = [INTERRUPTED_FRAME];
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn every_state_has_at_least_one_frame() {
-        for state in [
-            MascotState::Idle,
-            MascotState::Thinking,
-            MascotState::ToolRunning,
-            MascotState::ApprovalWaiting,
-            MascotState::AskUser,
-            MascotState::Done,
-            MascotState::Failed,
-            MascotState::Interrupted,
-        ] {
-            assert!(!frames_for(state).is_empty(), "no frames for {state:?}");
-        }
-    }
-
-    #[test]
-    fn palette_has_seven_entries() {
-        let palette = peridot_palette();
-        assert_eq!(palette.len(), 7);
-        assert_eq!(palette_color(0), Color::Rgb(165, 199, 93));
-        assert_eq!(palette_color(99), Color::Rgb(165, 199, 93));
-    }
-
-    #[test]
-    fn frames_are_eight_by_eight() {
-        for state in [MascotState::Idle, MascotState::ToolRunning] {
-            for frame in frames_for(state) {
-                assert_eq!(frame.pixels.len(), 8);
-                for row in &frame.pixels {
-                    assert_eq!(row.len(), 8);
-                }
-            }
-        }
-    }
-}

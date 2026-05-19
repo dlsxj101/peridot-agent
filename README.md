@@ -4,7 +4,11 @@ Peridot Agent is a Rust CLI/TUI autonomous coding agent with multi-session orche
 
 ## Status
 
-Current version: **0.7.9**
+Current version: **0.7.10**
+
+### What's new in v0.7.10
+
+- **Peridot deer mascot redrawn at 16×16** with eight mood-specific frame sets (Idle blink, Thinking head-tilt, ToolRunning 3-frame gem pulse, ApprovalWaiting alert eyes, AskUser raised ears, Done bounce, Failed droop, Interrupted startle). Rendered footprint stays at 8 cols × 4 rows because every 2×2 pixel block compresses into one terminal cell via Unicode quadrant-block glyphs.
 
 ### What's new in v0.7.9
 
