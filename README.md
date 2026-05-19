@@ -32,7 +32,7 @@ Nine SPEC-consistency issues from the v0.5.1 audit are now resolved (see [CHANGE
 - **Lint stage gets its own variant**: `VerifyStage::Lint` is no longer aliased to `Deterministic`, so failing lints show up as `FAIL Lint:` instead of `FAIL Deterministic:` in verify reports.
 - **Fork / Teammate isolation parity**: `LocalSubAgentRunner` now provisions a real git worktree for both `Worktree` and `Teammate` kinds (Fork stays shared-workspace by design).
 - **New `peridot-grader` crate**: the grader logic moved out of `peridot-core` so `peridot-verify` can call it without a dependency cycle. `peridot-core::grader::*` keeps re-exporting the public API.
-- SPEC v1.9 updates: 4-Tier compaction → 2-Tier (deterministic + LLM), Append-Only is `in-turn` only, tool list reflects the 34 actually registered tools (`agent_fork`/`agent_worktree` merged into `agent_delegate`).
+- SPEC v1.9 updates: 4-Tier compaction → 2-Tier (deterministic + LLM), Append-Only is `in-turn` only, tool list reflects the 33 actually registered tools (`agent_fork`/`agent_worktree` merged into `agent_delegate`).
 
 ### Implemented
 
