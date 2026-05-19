@@ -110,6 +110,34 @@ fn goal_prompt_runs_clarification_on_initial_request() {
 }
 
 #[test]
+fn every_mode_prompt_contains_grounding_rules() {
+    for mode in [
+        ExecutionMode::Plan,
+        ExecutionMode::Execute,
+        ExecutionMode::Goal,
+    ] {
+        let prompt = system_prompt_for_mode(mode);
+
+        assert!(
+            prompt.contains("Grounding rules"),
+            "{mode:?} prompt missing Grounding rules header"
+        );
+        assert!(
+            prompt.contains("read first, answer second"),
+            "{mode:?} prompt missing read-first directive"
+        );
+        assert!(
+            prompt.contains("Cite a concrete source"),
+            "{mode:?} prompt missing citation directive"
+        );
+        assert!(
+            prompt.contains("Do not soften speculation"),
+            "{mode:?} prompt missing anti-speculation directive"
+        );
+    }
+}
+
+#[test]
 fn reads_plan_reminder_from_todo_md() {
     let root =
         std::env::temp_dir().join(format!("peridot-core-plan-reminder-{}", std::process::id()));

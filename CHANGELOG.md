@@ -14,6 +14,20 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 
 ## [Unreleased]
 
+### Added — anti-hallucination guardrail
+
+- New `Grounding rules` block in the base system prompt
+  (`peridot-core/src/prompt.rs::system_prompt_for_mode`), applied to
+  every mode and every role. Forces the model to read source with
+  file_read / file_outline / file_search before answering "how does X
+  work?" questions, requires a concrete `path:line` (or tool name +
+  quote, or URL + quote) citation for every load-bearing factual
+  claim, and forbids softening speculation into confident assertions.
+  Lives in Section B (Protocol) of the prompt so it stays inside the
+  provider cache breakpoint and costs zero per turn after the first
+  one. Covered by a `every_mode_prompt_contains_grounding_rules`
+  regression test.
+
 ### Changed — provider trait surface
 
 - `LlmProvider::pricing()` and `LlmProvider::auth_method()` are no
