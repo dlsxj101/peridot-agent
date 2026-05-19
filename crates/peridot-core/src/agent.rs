@@ -652,7 +652,28 @@ impl HarnessAgent {
                         reason: reason.clone(),
                         parameters: tool_parameters,
                     });
+                    return Err(err);
                 }
+                // The tool_call entry was already appended above.
+                // Bailing here without a matching
+                // function_call_output left the conversation
+                // malformed: the very next request to Responses-
+                // style providers (OpenAI Codex) was rejected with
+                // `400 No tool output found for function call
+                // <id>`. Synthesise a failed ToolResult and append
+                // it as the paired output BEFORE bubbling the
+                // error, so the recovery layer above can still add
+                // its plan-reminder while the conversation stays
+                // well-formed.
+                let failure_result =
+                    peridot_common::ToolResult::failure(format!("tool failed: {err}"));
+                let observation = serde_json::to_string(&failure_result).map_err(|serr| {
+                    PeriError::Parse(format!("failed to serialize tool failure: {serr}"))
+                })?;
+                self.context.append(
+                    ContextEntry::trusted(ContextSource::Tool, observation)
+                        .with_tool_call_id(tool_call_id),
+                );
                 return Err(err);
             }
         };

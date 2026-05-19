@@ -449,20 +449,19 @@ pub(super) fn wait_for_oauth_code(port: u16, expected_state: &str) -> Result<Str
     }
     let listener = listener.unwrap();
     listener.set_nonblocking(true)?;
-    let (tx, rx) = std::sync::mpsc::channel::<String>();
-    if std::io::stdin().is_terminal() {
-        std::thread::spawn(move || {
-            let mut input = String::new();
-            if std::io::stdin().read_line(&mut input).is_ok() && !input.trim().is_empty() {
-                let _ = tx.send(input);
-            }
-        });
-    }
+    // Earlier versions also spawned a background stdin reader so the
+    // user could paste the redirect URL as a fallback. That reader
+    // outlived the listener path: once the OAuth callback arrived
+    // and this function returned, the still-blocked `read_line`
+    // would silently swallow the user's *next* terminal input (the
+    // setup wizard's model-picker prompt). On Windows that surfaced
+    // as "I have to press Enter twice to register my choice", with
+    // the first keystroke actually selecting the prompt's default.
+    // Paste-fallback is only meaningful when the listener fails to
+    // bind, and that path is already handled above, so the reader
+    // is gone here.
     let deadline = SystemTime::now() + Duration::from_secs(300);
     loop {
-        if let Ok(input) = rx.try_recv() {
-            return parse_authorization_input(&input, expected_state);
-        }
         match listener.accept() {
             Ok((mut stream, _)) => {
                 stream.set_read_timeout(Some(Duration::from_secs(5)))?;
@@ -589,21 +588,43 @@ pub(super) fn random_urlsafe(bytes: usize) -> String {
     URL_SAFE_NO_PAD.encode(random)
 }
 
+#[cfg(target_os = "macos")]
 pub(super) fn open_browser(url: &str) -> bool {
-    let mut command = if cfg!(target_os = "macos") {
-        let mut command = Command::new("open");
-        command.arg(url);
-        command
-    } else if cfg!(target_os = "windows") {
-        let mut command = Command::new("cmd");
-        command.args(["/C", "start", "", url]);
-        command
-    } else {
-        let mut command = Command::new("xdg-open");
-        command.arg(url);
-        command
-    };
-    command
+    Command::new("open")
+        .arg(url)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .is_ok()
+}
+
+#[cfg(target_os = "windows")]
+pub(super) fn open_browser(url: &str) -> bool {
+    // `cmd /C start "" "<url>"`. The URL has to live inside its own
+    // pair of double quotes because cmd treats `&` as a command
+    // separator — OAuth URLs are nothing but `&`-joined params, so
+    // without the quoting the browser opens whatever sits before the
+    // first `&` (which is what every Windows user reports as "wrong
+    // URL"). Rust's normal `args()` lets CreateProcess quote each
+    // arg, but cmd's *internal* parser ignores that quoting and
+    // re-splits the raw command line, so we have to assemble the
+    // line ourselves via `raw_arg`.
+    use std::os::windows::process::CommandExt;
+    let quoted = format!(r#"/C start "" "{}""#, url.replace('"', "%22"));
+    Command::new("cmd")
+        .raw_arg(quoted)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .is_ok()
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+pub(super) fn open_browser(url: &str) -> bool {
+    Command::new("xdg-open")
+        .arg(url)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())

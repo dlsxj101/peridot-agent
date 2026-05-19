@@ -12,6 +12,72 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 
 ---
 
+## [0.7.6] — 2026-05-19
+
+Three Windows / OAuth bug fixes that surfaced during real-world v0.7.5
+setup on a Windows 11 host. All three blocked the first-run experience
+(`peri` -> "OpenAI OAuth direct / ChatGPT login" path) before any agent
+turn could run.
+
+### Fixed — OAuth URL truncated to first `&` on Windows
+
+`open_browser` on Windows used to spawn `cmd /C start "" <url>` with
+the URL passed as a regular Rust argument. `cmd.exe`'s internal
+parser ignores `CreateProcess` arg quoting and re-splits the raw
+command line, treating `&` as a command separator. OAuth URLs are
+`&`-joined query strings, so the browser only ever received the
+fragment before the first `&` ("https://auth.openai.com/oauth/authorize?response_type=code")
+which OpenAI then rejected as a malformed authorize request. Fixed
+by assembling the command line with `CommandExt::raw_arg` so the
+URL lives inside its own pair of double quotes:
+`cmd /C start "" "<url>"`. `crates/peridot-cli/src/commands/auth.rs`.
+
+### Fixed — setup wizard's next prompt required Enter twice
+
+After a successful OAuth callback the model picker
+(`OpenAI OAuth main model: 1. gpt-5.5 ... Choose [1]:`) silently
+swallowed the user's first keystroke. Root cause:
+`wait_for_oauth_code` spawned a background stdin reader so the user
+could paste the redirect URL as a fallback, but that reader's
+`std::io::stdin().read_line()` blocked indefinitely and outlived
+the listener path. When the local HTTP listener received the OAuth
+callback and the function returned, the zombie reader was still
+blocked on stdin — the next time the wizard called `read_line` from
+the main thread, the user's `2` was consumed by the zombie (whose
+channel `tx` had already been dropped) and the wizard saw nothing
+until the user pressed Enter again, at which point the wizard
+defaulted to choice 1. Removed the background reader; paste-fallback
+remains in the path that already handles `TcpListener::bind`
+failure. `crates/peridot-cli/src/commands/auth.rs`.
+
+### Fixed — `400 No tool output found for function call` after a failed tool
+
+When a tool errored (e.g. `file_read` on a missing path), the agent
+loop appended the assistant's `tool_calls` entry to the conversation
+but bubbled the `Err` to the recovery layer without appending the
+matching `function_call_output`. The recovery layer added its plan-
+reminder and looped, sending the now-malformed history back to
+Responses-style providers (OpenAI Codex), which rejected it with
+`400 No tool output found for function call <id>`. The user saw a
+silent stall punctuated by repeated 400s. Fixed by synthesising a
+failed `ToolResult` and appending it as the paired
+`function_call_output` *before* bubbling the error — recovery
+still runs (existing `recovery_message` plan-reminder still lands
+in context), but the conversation stays well-formed for native-
+tool-call providers. `crates/peridot-core/src/agent.rs`.
+
+### Migration notes
+
+- Pure bug-fix release; no API or config surface changes.
+- Workspace version 0.7.5 → 0.7.6. Extension version stays at 0.0.1
+  (no extension changes).
+- Windows users still on v0.7.0 or earlier (no self-update fix)
+  must first bootstrap via the v0.7.5 manual install from the
+  release page; `peridot update` then carries them forward from
+  v0.7.5 to v0.7.6 normally.
+
+---
+
 ## [0.7.5] — 2026-05-19
 
 Extension foundation. Adds the `peridot daemon` JSON-RPC subcommand

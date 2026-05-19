@@ -4,7 +4,15 @@ Peridot Agent is a Rust CLI/TUI autonomous coding agent with multi-session orche
 
 ## Status
 
-Current version: **0.7.5**
+Current version: **0.7.6**
+
+### What's new in v0.7.6
+
+Three Windows / OAuth bug fixes from a real v0.7.5 first-run on Windows 11:
+
+- **OAuth URL truncated at first `&`** — `cmd /C start "" <url>` had no quoting around the URL, so cmd.exe treated every `&` as a command separator and the browser opened `https://auth.openai.com/oauth/authorize?response_type=code` instead of the full URL. Fixed by quoting the URL via `CommandExt::raw_arg`.
+- **Setup wizard required Enter twice** — `wait_for_oauth_code` spawned a background stdin reader that outlived the listener path and silently swallowed the user's next keystroke (e.g. their `2` for `gpt-5.5-fast`). Reader removed; paste-fallback still runs when `TcpListener::bind` fails.
+- **`400 No tool output found for function call`** — when a tool errored, the agent loop appended the `tool_call` but bailed before appending the matching `function_call_output`, malforming the conversation for OpenAI Codex (Responses API). Fixed by synthesising a failed `ToolResult` and appending it before bubbling the error to the recovery layer.
 
 ### What's new in v0.7.5
 
