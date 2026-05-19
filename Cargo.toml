@@ -1,24 +1,24 @@
 [workspace]
 members = [
-    "peridot-agents",
-    "peridot-cli",
-    "peridot-common",
-    "peridot-context",
-    "peridot-core",
-    "peridot-git",
-    "peridot-grader",
-    "peridot-llm",
-    "peridot-mcp",
-    "peridot-memory",
-    "peridot-project",
-    "peridot-tools",
-    "peridot-tui",
-    "peridot-verify",
+    "crates/peridot-agents",
+    "crates/peridot-cli",
+    "crates/peridot-common",
+    "crates/peridot-context",
+    "crates/peridot-core",
+    "crates/peridot-git",
+    "crates/peridot-grader",
+    "crates/peridot-llm",
+    "crates/peridot-mcp",
+    "crates/peridot-memory",
+    "crates/peridot-project",
+    "crates/peridot-tools",
+    "crates/peridot-tui",
+    "crates/peridot-verify",
 ]
 resolver = "3"
 
 [workspace.package]
-version = "0.7.3"
+version = "0.7.4"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/dlsxj101/peridot-agent"

@@ -12,6 +12,62 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 
 ---
 
+## [0.7.4] — 2026-05-19
+
+Repo layout cleanup before extension work. No behaviour or API change
+for the 14 published crates — only paths and the workspace `members`
+list moved. Out-of-process callers (`cargo run -p peridot-cli`, the
+`-p` flag in CI) are unaffected because Cargo resolves by package
+name, not directory.
+
+### Changed — repository layout
+
+- All 14 `peridot-*` crates moved from the workspace root to
+  `crates/peridot-*/`. The root is now uncluttered:
+
+  ```
+  peridot-agent/
+  ├── Cargo.toml          # workspace root
+  ├── README.md, CHANGELOG.md, AGENTS.md, PERIDOT_SPEC_v1.md
+  ├── install.sh
+  ├── crates/             # 14 Rust crates
+  │   ├── peridot-cli/
+  │   ├── peridot-core/
+  │   └── …
+  ├── extensions/         # NEW — non-Rust client surfaces land here
+  │   └── vscode/         # placeholder; TS extension comes in v0.8.x
+  ├── docs/
+  └── .github/workflows/
+  ```
+
+- `Cargo.toml` workspace `members` updated to `crates/peridot-*`.
+- Internal `path = "../peridot-X"` dependencies untouched —
+  siblings stay siblings under `crates/`, so the resolution
+  semantics don't change.
+- `AGENTS.md` filesystem-path references updated
+  (`peridot-cli/src/main.rs` → `crates/peridot-cli/src/main.rs`).
+
+### Added — extension scaffold placeholder
+
+- `extensions/vscode/.gitkeep` reserves the TypeScript extension
+  directory and points future contributors at the SPEC §21.5.10
+  deferral note plus the VS Code Extension API docs. The actual
+  extension lands in a subsequent release once the
+  `peridot daemon` JSON-RPC surface ships.
+
+### Migration notes
+
+- `cargo run -p peridot-cli` still works exactly as before — Cargo
+  resolves `-p` against package names, not directories.
+- IDE jumps from `path = "../peridot-common"` etc. continue to
+  resolve because both sides moved together.
+- Doc snapshots in `docs/plans/*.md` that reference legacy paths
+  like `peridot-tui/src/render.rs` are historical and were not
+  rewritten; treat them as time-stamped records, not live
+  pointers.
+
+---
+
 ## [0.7.3] — 2026-05-19
 
 Defaults flipped, harness self-tuning added. Operator no longer has to

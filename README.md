@@ -4,7 +4,15 @@ Peridot Agent is a Rust CLI/TUI autonomous coding agent with multi-session orche
 
 ## Status
 
-Current version: **0.7.3**
+Current version: **0.7.4**
+
+### What's new in v0.7.4
+
+Repo layout cleanup before extension work:
+
+- All 14 Rust crates moved from workspace root to `crates/peridot-*/` for a less cluttered root.
+- New `extensions/` directory reserves space for non-Rust client surfaces (VS Code, JetBrains, desktop). VS Code scaffold lands in a subsequent release once `peridot daemon` ships.
+- No behaviour change: `cargo run -p peridot-cli` and all other package-name commands work identically. Path-dependency resolution (`../peridot-common`) preserved because siblings stayed siblings under `crates/`.
 
 ### What's new in v0.7.3
 
