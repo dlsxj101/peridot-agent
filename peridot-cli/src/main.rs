@@ -3031,25 +3031,57 @@ async fn maybe_run_idle_curator(config: &PeridotConfig, project_root: &Path) {
     let config = config.clone();
     tokio::spawn(async move {
         let store = MemoryStore::new(project_root.join(".peridot/memory.db"));
-        match providers::live_provider(&config, &curator_model, &project_root).await {
-            Ok(provider) => match curator::run_llm_curator(
-                provider.as_ref(),
-                &curator_model,
-                &store,
-                &project_root,
-                now,
-            )
-            .await
-            {
-                Ok(report) => eprintln!(
-                    "[curator] background pass done: evaluated {}, applied {}, ignored {}",
-                    report.evaluated.len(),
-                    report.applied.len(),
-                    report.ignored.len(),
-                ),
-                Err(err) => eprintln!("[curator] background LLM failed: {err}"),
-            },
-            Err(err) => eprintln!("[curator] background provider unavailable: {err}"),
+        let provider = match providers::live_provider(&config, &curator_model, &project_root).await
+        {
+            Ok(provider) => provider,
+            Err(err) => {
+                eprintln!("[curator] background provider unavailable: {err}");
+                return;
+            }
+        };
+        // Pass 1: Curator (single-session skill review + 30/90 day
+        // archive). Always runs on the 7-day trigger.
+        match curator::run_llm_curator(
+            provider.as_ref(),
+            &curator_model,
+            &store,
+            &project_root,
+            now,
+        )
+        .await
+        {
+            Ok(report) => eprintln!(
+                "[curator] background pass done: evaluated {}, applied {}, ignored {}",
+                report.evaluated.len(),
+                report.applied.len(),
+                report.ignored.len(),
+            ),
+            Err(err) => eprintln!("[curator] background LLM failed: {err}"),
+        }
+        // Pass 2: Reflection (cross-session n-gram pattern promotion).
+        // Opt-in via memory.auto_skill_reflection because it adds an
+        // extra LLM call to the idle trigger.
+        if !config.memory.auto_skill_reflection {
+            return;
+        }
+        match curator::run_ngram_reflection(
+            provider.as_ref(),
+            &curator_model,
+            &store,
+            &project_root,
+            config.memory.ngram_min_count,
+            config.memory.ngram_batch_cap,
+            now,
+            config.memory.skills_review,
+        )
+        .await
+        {
+            Ok(report) => eprintln!(
+                "[reflection] background pass done: promoted {}, skipped {}",
+                report.promoted.len(),
+                report.skipped.len(),
+            ),
+            Err(err) => eprintln!("[reflection] background pass failed: {err}"),
         }
     });
 }

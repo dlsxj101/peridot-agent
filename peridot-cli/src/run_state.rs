@@ -60,6 +60,28 @@ pub(super) fn save_run_session(
             memory.skills_review,
         )?;
     }
+    // Persist the tool sequence + bump n-gram counters whenever
+    // cross-session reflection is enabled. Runs on EVERY completed
+    // session (not just the 4-condition-gated ones) so we observe the
+    // patterns that show up across many cheap sessions too — which is
+    // exactly what reflection wants to see. Cheap: one INSERT + N
+    // UPSERTs gated by the per-session cap.
+    if memory.auto_skill_reflection {
+        let tool_sequence: Vec<String> = summary
+            .turns
+            .iter()
+            .map(|turn| turn.tool_name.clone())
+            .collect();
+        let now = unix_timestamp();
+        // Best-effort: a failed sequence save doesn't break the run.
+        let _ = store.save_tool_sequence(
+            session_id,
+            &tool_sequence,
+            &task,
+            memory.ngram_max_length,
+            now,
+        );
+    }
     Ok(())
 }
 

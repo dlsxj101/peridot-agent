@@ -4,7 +4,16 @@ Peridot Agent is a Rust CLI/TUI autonomous coding agent with multi-session orche
 
 ## Status
 
-Current version: **0.7.1**
+Current version: **0.7.2**
+
+### What's new in v0.7.2
+
+Cross-session reflection — second half of the Hermes-style Self-Improvement Loop:
+
+- **N-gram pattern detection**: every completed session's tool sequence is recorded; bigrams and trigrams accumulate counts in `tool_ngrams`. A pipe-joined tool list serves as the stable hash key. Self-repeats (`file_read × 3`) are filtered.
+- **LLM reflection pass**: the 7-day idle Curator trigger now also asks an LLM whether any pattern that crossed `memory.ngram_min_count` (default 5) is worth promoting into a skill. Promoted patterns land as `.peridot/skills/auto/pattern-<title>.md` with `review_required: true`.
+- **Opt-in**: `memory.auto_skill_reflection = false` by default. Single-session capture (`auto_skills`) keeps working unchanged; this is purely additive.
+- **Knobs**: `ngram_min_count`, `ngram_max_length`, `ngram_batch_cap` for tuning the threshold, window width, and batch cost.
 
 ### What's new in v0.7.1
 

@@ -12,6 +12,68 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 
 ---
 
+## [0.7.2] — 2026-05-19
+
+Cross-session reflection: the harness now spots tool-call patterns the
+operator runs across many sessions and promotes them into auto-skills
+via an LLM reflection pass. Closes the second half of Hermes Agent's
+Self-Improvement Loop — the single-session capture (`auto_skills`)
+already handled "this one session looks skill-worthy"; this release
+adds "this pattern keeps showing up across sessions."
+
+### Added — cross-session n-gram reflection
+
+- New SQLite tables `tool_sequences` (one row per completed session,
+  pipe-joined tool list + truncated task summary) and `tool_ngrams`
+  (rolling occurrence counters keyed by a stable hash of the tool
+  list). `MemoryStore::save_tool_sequence` populates both, capped at
+  50 n-gram updates per session so long sessions can't blow up the
+  table. Self-repeats (`file_read x 4`) are filtered before counting.
+- `MemoryStore::list_promotion_candidates(min_count, max_results)`
+  returns un-promoted n-grams that have crossed the threshold,
+  sorted by occurrence_count descending so the reflection pass
+  tackles the most-used patterns first.
+- `MemoryStore::mark_ngram_promoted(hash, at_unix)` stamps the row
+  so future passes skip it, preventing the same pattern from being
+  re-promoted on every idle trigger.
+- New `peridot-cli::curator::run_ngram_reflection`: pulls candidates,
+  asks the LLM (one batch, capped at `memory.ngram_batch_cap = 8`)
+  whether each pattern is skill-worthy, writes promoted ones as
+  `pattern-<title>.md` under `.peridot/skills/auto/` with
+  `review_required: true`. The LLM cannot promote a pattern the
+  operator never actually ran — the prompt requires the model to
+  echo the exact pipe-joined tool string, which the harness
+  correlates against the supplied candidates before saving.
+- 7-day idle trigger (`maybe_run_idle_curator`) now runs the
+  reflection pass after the standard Curator pass when
+  `memory.auto_skill_reflection = true`.
+
+### Added — config surface
+
+- `memory.auto_skill_reflection: bool` (default `false`) — opt-in
+  master switch.
+- `memory.ngram_min_count: u32` (default `5`) — occurrences before a
+  pattern is eligible for promotion.
+- `memory.ngram_max_length: u32` (default `3`) — bigrams + trigrams
+  by default; widening pays diminishing returns.
+- `memory.ngram_batch_cap: usize` (default `8`) — LLM batch cap,
+  mirrors the Curator's `MAX_SKILLS_PER_RUN`.
+
+### Migration notes
+
+- Two new tables, both created via `CREATE TABLE IF NOT EXISTS` on
+  first `MemoryStore::initialize` — existing DBs from 0.7.1 keep
+  loading. Historical sessions get no n-grams (only sessions
+  recorded after the upgrade contribute).
+- Single-session auto-skill workflow (`save_auto_skill` after the
+  4-condition gate) is unchanged. Cross-session promotion is
+  additive.
+- The reflection pass is gated behind `memory.auto_skill_reflection`
+  and never runs unless the operator opts in, so token cost is
+  zero by default.
+
+---
+
 ## [0.7.1] — 2026-05-19
 
 Polish pass before extension work begins. Three additive changes that

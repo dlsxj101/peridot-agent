@@ -1092,6 +1092,42 @@ pub struct MemoryConfig {
     /// novel generation.
     #[serde(default)]
     pub curator_model: Option<String>,
+    /// Whether the cross-session reflection pass promotes repeated
+    /// tool-call patterns into auto-skills. Off by default — the
+    /// single-session capture (`auto_skills`) is conservative and
+    /// always-on; the cross-session pass costs one LLM call per
+    /// promoted pattern, so operators opt in.
+    #[serde(default)]
+    pub auto_skill_reflection: bool,
+    /// Minimum occurrence count an n-gram must reach before the
+    /// reflection pass considers it for promotion. Default 5 — high
+    /// enough to suppress one-off pairings, low enough that a
+    /// daily-shipping routine reaches it inside a week.
+    #[serde(default = "default_ngram_min_count")]
+    pub ngram_min_count: u32,
+    /// Maximum n-gram length recorded by `save_tool_sequence`. Default
+    /// 3 — bigrams catch "A→B always together" patterns, trigrams
+    /// catch end-to-end mini-workflows. Wider n-grams explode the
+    /// table without paying for themselves on most workspaces.
+    #[serde(default = "default_ngram_max_length")]
+    pub ngram_max_length: u32,
+    /// Maximum number of n-grams the reflection pass promotes per run.
+    /// Caps cost on the first run against an aged DB that has lots of
+    /// pending candidates.
+    #[serde(default = "default_ngram_batch_cap")]
+    pub ngram_batch_cap: usize,
+}
+
+fn default_ngram_min_count() -> u32 {
+    5
+}
+
+fn default_ngram_max_length() -> u32 {
+    3
+}
+
+fn default_ngram_batch_cap() -> usize {
+    8
 }
 
 impl Default for MemoryConfig {
@@ -1102,6 +1138,10 @@ impl Default for MemoryConfig {
             skills_review: true,
             max_sessions_stored: default_max_sessions_stored(),
             curator_model: None,
+            auto_skill_reflection: false,
+            ngram_min_count: default_ngram_min_count(),
+            ngram_max_length: default_ngram_max_length(),
+            ngram_batch_cap: default_ngram_batch_cap(),
         }
     }
 }

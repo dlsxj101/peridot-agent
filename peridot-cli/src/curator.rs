@@ -247,6 +247,257 @@ fn apply_actions(
     Ok(report)
 }
 
+// ============================================================
+// Cross-session reflection — n-gram promotion.
+// ============================================================
+//
+// While `run_llm_curator` reviews skills the harness already created
+// (one skill per qualifying session), `run_ngram_reflection` watches
+// the `tool_ngrams` table and promotes patterns the operator runs
+// repeatedly across many sessions into their own skill.
+//
+// This is the second half of Hermes' Self-Improvement Loop: not "did
+// this one session look skill-worthy?" but "is the operator doing X
+// over and over across many sessions?"
+
+/// Result of one reflection pass.
+#[derive(Debug, Default)]
+pub struct ReflectionReport {
+    /// (skill_name, ngram_tools_joined) pairs that were created.
+    pub promoted: Vec<(String, String)>,
+    /// N-grams considered but skipped (collision, parse failure, …).
+    pub skipped: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ReflectionItem {
+    /// Pipe-joined tool names, must match the candidate's
+    /// `ngram_tools` line exactly so the LLM cannot promote a pattern
+    /// the operator never ran.
+    tools: String,
+    /// Whether to promote this pattern at all. Allows the LLM to skip
+    /// junk patterns ("file_list, file_list, file_read" is just
+    /// browsing) without us doing the filtering.
+    #[serde(default = "default_true_bool")]
+    promote: bool,
+    /// Title for the skill heading. Forced kebab-case below to keep
+    /// filenames safe.
+    title: String,
+    /// Markdown body — the model writes "when to use", "what it does",
+    /// "watch out for" prose grounded in the supplied task summaries.
+    body: String,
+}
+
+fn default_true_bool() -> bool {
+    true
+}
+
+#[derive(Debug, Deserialize)]
+struct ReflectionResponse {
+    items: Vec<ReflectionItem>,
+}
+
+const REFLECTION_SYSTEM_PROMPT: &str = "\
+You are the Peridot Reflection sub-agent. The harness has been recording\n\
+tool-call sequences across many sessions. You receive a small batch of\n\
+n-grams (length 2-3) that have shown up at least N times along with the\n\
+task summaries from those sessions. For each pattern, decide:\n\
+\n\
+- promote=true: this is a real, repeated workflow worth saving as a\n\
+  skill so the next agent recognises it faster. Write a useful body\n\
+  (when to use, what it does, edges to watch). Keep the body under\n\
+  ~400 words.\n\
+- promote=false: this pattern is a coincidence, exploration noise, or\n\
+  too generic to be useful. Skip it.\n\
+\n\
+Respond with strict JSON, no prose, no code fences:\n\
+{\"items\":[{\"tools\":\"<verbatim pipe-joined names>\",\"promote\":true|false,\
+\"title\":\"<short kebab-case skill title>\",\"body\":\"<markdown body>\"}]}\n\
+\n\
+The `tools` value MUST match the candidate's tools line exactly so the\n\
+harness can correlate; do not paraphrase or reorder. Prefer promote=false\n\
+when a pattern is purely informational (file_read pairs), and prefer\n\
+promote=true when there's a clear write/verify/commit story.";
+
+/// Runs one reflection pass: pulls promotion candidates from the
+/// store, asks the LLM whether each is skill-worthy, and saves the
+/// promoted ones as `scope='auto'` skills marked for human review.
+///
+/// Caller is responsible for gating on
+/// `MemoryConfig::auto_skill_reflection`. Best-effort: any failure is
+/// surfaced as a `ReflectionReport` skip line, never an error, so a
+/// 7-day idle trigger never blocks startup on Curator's account.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_ngram_reflection(
+    provider: &dyn LlmProvider,
+    model: &str,
+    store: &MemoryStore,
+    project_root: &Path,
+    min_count: u32,
+    batch_cap: usize,
+    now_unix: u64,
+    needs_review: bool,
+) -> Result<ReflectionReport> {
+    let candidates = store
+        .list_promotion_candidates(min_count, batch_cap)
+        .map_err(|err| anyhow!("list_promotion_candidates: {err}"))?;
+    if candidates.is_empty() {
+        return Ok(ReflectionReport::default());
+    }
+    let prompt = build_reflection_prompt(&candidates);
+    let request = CompletionRequest {
+        model: model.to_string(),
+        system: Some(REFLECTION_SYSTEM_PROMPT.to_string()),
+        messages: vec![LlmMessage::new(MessageRole::User, prompt)],
+        max_tokens: Some(4096),
+        thinking: false,
+        reasoning_effort: ReasoningEffort::Off,
+        service_tier: None,
+        tools: Vec::new(),
+        tool_choice: ToolChoice::None,
+    };
+    let response = provider
+        .complete(request)
+        .await
+        .with_context(|| "Reflection LLM call failed")?;
+    let parsed = parse_reflection_response(&response.text)
+        .with_context(|| format!("invalid Reflection JSON: {}", response.text))?;
+    apply_reflection_items(
+        store,
+        project_root,
+        &candidates,
+        parsed,
+        now_unix,
+        needs_review,
+    )
+}
+
+fn build_reflection_prompt(candidates: &[peridot_memory::ToolNgram]) -> String {
+    let mut prompt = String::with_capacity(candidates.len() * 256);
+    prompt.push_str(
+        "Here are the candidate n-grams. Each shows the exact tool sequence \
+         (pipe-joined), how many times it appeared, and the task summary from \
+         the most recent session that produced it.\n\n",
+    );
+    for ngram in candidates {
+        prompt.push_str(&format!(
+            "### tools: {}\noccurrences: {}\nlast_task: {}\n\n",
+            ngram.tools.join("|"),
+            ngram.occurrence_count,
+            ngram.last_task_summary.trim(),
+        ));
+    }
+    prompt
+}
+
+fn parse_reflection_response(text: &str) -> Result<ReflectionResponse> {
+    let trimmed = text.trim();
+    let body = trimmed
+        .strip_prefix("```json")
+        .or_else(|| trimmed.strip_prefix("```"))
+        .map(str::trim_start)
+        .unwrap_or(trimmed);
+    let body = body.trim_end_matches("```").trim();
+    serde_json::from_str(body).map_err(|err| anyhow!("JSON parse: {err}"))
+}
+
+fn apply_reflection_items(
+    store: &MemoryStore,
+    project_root: &Path,
+    candidates: &[peridot_memory::ToolNgram],
+    response: ReflectionResponse,
+    now_unix: u64,
+    needs_review: bool,
+) -> Result<ReflectionReport> {
+    let mut report = ReflectionReport::default();
+    for item in response.items {
+        // Correlate the LLM's "tools" string back to the candidate
+        // sent in. We don't trust the model to invent a new pattern.
+        let Some(candidate) = candidates.iter().find(|c| c.tools.join("|") == item.tools) else {
+            report
+                .skipped
+                .push(format!("unknown tools: {}", item.tools));
+            continue;
+        };
+        if !item.promote {
+            // Promote=false on a candidate still counts as "we've seen
+            // it" — stamp promoted_at_unix so future passes don't ask
+            // the LLM about it again. Caller still archives via
+            // skill_curate if they want to reconsider.
+            let _ = store.mark_ngram_promoted(&candidate.hash, now_unix);
+            continue;
+        }
+        let title_slug = kebab_case(&item.title);
+        let name = if title_slug.is_empty() {
+            format!("pattern-{}", candidate.hash)
+        } else {
+            format!("pattern-{title_slug}")
+        };
+        // Collision guard: if a skill with this name already exists,
+        // skip this item (don't overwrite curated content).
+        let existing = store
+            .list_skills()
+            .map_err(|err| anyhow!("list_skills: {err}"))?;
+        if existing.iter().any(|skill| skill.name == name) {
+            report.skipped.push(format!("name collision: {name}"));
+            continue;
+        }
+        let body = format_skill_body(&item, candidate, needs_review, now_unix);
+        store
+            .save_skill(&peridot_memory::StoredSkill {
+                name: name.clone(),
+                body: body.clone(),
+                scope: "auto".to_string(),
+                ..Default::default()
+            })
+            .map_err(|err| anyhow!("save_skill({name}): {err}"))?;
+        let skills_dir = project_root.join(".peridot/skills/auto");
+        std::fs::create_dir_all(&skills_dir)
+            .with_context(|| format!("creating {}", skills_dir.display()))?;
+        std::fs::write(skills_dir.join(format!("{name}.md")), &body)
+            .with_context(|| format!("writing {name}.md"))?;
+        let _ = store.mark_ngram_promoted(&candidate.hash, now_unix);
+        report.promoted.push((name, candidate.tools.join("|")));
+    }
+    Ok(report)
+}
+
+fn kebab_case(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    let mut last_dash = false;
+    for ch in value.chars().flat_map(char::to_lowercase) {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch);
+            last_dash = false;
+        } else if !last_dash && !out.is_empty() {
+            out.push('-');
+            last_dash = true;
+        }
+        if out.len() >= 48 {
+            break;
+        }
+    }
+    out.trim_matches('-').to_string()
+}
+
+fn format_skill_body(
+    item: &ReflectionItem,
+    candidate: &peridot_memory::ToolNgram,
+    needs_review: bool,
+    now_unix: u64,
+) -> String {
+    let review_flag = if needs_review { "true" } else { "false" };
+    format!(
+        "# {}\n\nreview_required: {review_flag}\nsource: reflection\noccurrences: {}\npromoted_at_unix: {}\ntool_pattern: {}\nlast_session: {}\n\n{}\n",
+        item.title.trim(),
+        candidate.occurrence_count,
+        now_unix,
+        candidate.tools.join(" → "),
+        candidate.last_session_id,
+        item.body.trim(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -361,6 +612,128 @@ mod tests {
         assert!(active.iter().all(|s| s.name != "b"));
         assert!(active.iter().all(|s| s.name != "c"));
 
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn reflection_response_parses_and_filters() {
+        let raw = "{\"items\":[\
+            {\"tools\":\"verify_build|git_commit|git_push\",\"promote\":true,\
+             \"title\":\"ship daily\",\
+             \"body\":\"## When to use\\n\\nWhen tests pass and you want to publish.\\n\"},\
+            {\"tools\":\"file_read|file_read\",\"promote\":false,\
+             \"title\":\"browse\",\"body\":\"\"}\
+        ]}";
+        let parsed = parse_reflection_response(raw).unwrap();
+        assert_eq!(parsed.items.len(), 2);
+        assert!(parsed.items[0].promote);
+        assert!(!parsed.items[1].promote);
+        assert_eq!(parsed.items[0].tools, "verify_build|git_commit|git_push");
+    }
+
+    #[test]
+    fn kebab_case_handles_spaces_and_punctuation() {
+        assert_eq!(kebab_case("Ship Daily"), "ship-daily");
+        assert_eq!(kebab_case("Build & test & push"), "build-test-push");
+        assert_eq!(kebab_case("   leading   "), "leading");
+        assert_eq!(kebab_case("!!@@##"), "");
+    }
+
+    #[test]
+    fn apply_reflection_items_creates_skill_and_marks_promoted() {
+        let root = std::env::temp_dir().join(format!(
+            "peridot-reflection-apply-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or_default()
+        ));
+        let store = MemoryStore::new(root.join("memory.db"));
+        store.initialize().unwrap();
+        // Seed the n-gram so the candidate has a hash we can correlate.
+        let tools: Vec<String> = vec!["verify_build", "git_commit", "git_push"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        for i in 0..5 {
+            store
+                .save_tool_sequence(
+                    &format!("s-{i}"),
+                    &tools,
+                    "release the v0.8",
+                    3,
+                    1_700_000_000 + i as u64,
+                )
+                .unwrap();
+        }
+        let candidates = store.list_promotion_candidates(5, 10).unwrap();
+        // The full trigram should be one of the candidates.
+        let trigram = candidates
+            .iter()
+            .find(|c| c.tools.len() == 3)
+            .expect("trigram candidate present")
+            .clone();
+
+        let response = ReflectionResponse {
+            items: vec![ReflectionItem {
+                tools: trigram.tools.join("|"),
+                promote: true,
+                title: "Ship Daily".into(),
+                body: "Run verify_build, then commit, then push.".into(),
+            }],
+        };
+        let report = apply_reflection_items(
+            &store,
+            &root,
+            &[trigram.clone()],
+            response,
+            1_700_001_000,
+            true,
+        )
+        .unwrap();
+        assert_eq!(report.promoted.len(), 1);
+        assert_eq!(report.promoted[0].0, "pattern-ship-daily");
+        assert!(report.skipped.is_empty());
+
+        // Skill row exists, file written, n-gram stamped promoted.
+        let skills = store.list_skills().unwrap();
+        assert!(skills.iter().any(|s| s.name == "pattern-ship-daily"));
+        let md_path = root.join(".peridot/skills/auto/pattern-ship-daily.md");
+        assert!(md_path.exists());
+        let leftover = store.list_promotion_candidates(5, 10).unwrap();
+        assert!(
+            leftover.iter().all(|c| c.hash != trigram.hash),
+            "promoted ngram should not reappear as a candidate"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn apply_reflection_items_skips_unknown_tools() {
+        let root = std::env::temp_dir().join(format!(
+            "peridot-reflection-unknown-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or_default()
+        ));
+        let store = MemoryStore::new(root.join("memory.db"));
+        store.initialize().unwrap();
+        let response = ReflectionResponse {
+            items: vec![ReflectionItem {
+                tools: "fabricated|tool|chain".into(),
+                promote: true,
+                title: "fake".into(),
+                body: "should not land".into(),
+            }],
+        };
+        let report =
+            apply_reflection_items(&store, &root, &[], response, 1_700_000_000, true).unwrap();
+        assert!(report.promoted.is_empty());
+        assert_eq!(report.skipped.len(), 1);
+        assert!(report.skipped[0].starts_with("unknown tools"));
         std::fs::remove_dir_all(root).unwrap();
     }
 }

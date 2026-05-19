@@ -184,6 +184,44 @@ pub struct ErrorResolution {
     pub resolution: String,
 }
 
+/// One n-gram (length 2 or 3) of tool names observed across sessions.
+/// Used by the cross-session reflection pass to spot patterns the
+/// operator runs repeatedly and promote them into auto-skills.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ToolNgram {
+    /// Stable hash key (BLAKE2 / sha-style) used for upserts.
+    pub hash: String,
+    /// Ordered tool names that make up this n-gram.
+    pub tools: Vec<String>,
+    /// How many times this n-gram has been observed across all sessions.
+    pub occurrence_count: u32,
+    /// Unix timestamp of the most recent observation.
+    pub last_seen_unix: u64,
+    /// Unix timestamp at which this n-gram was promoted into an
+    /// auto-skill. `0` means it has not been promoted yet.
+    pub promoted_at_unix: u64,
+    /// Session id where this n-gram was last observed (used for
+    /// reflection prompts).
+    pub last_session_id: String,
+    /// Truncated task summary from the most recent session that
+    /// produced this n-gram. Useful context for the reflection prompt
+    /// without storing every historical occurrence.
+    pub last_task_summary: String,
+}
+
+impl ToolNgram {
+    /// Returns the n-gram length (number of tools).
+    pub fn length(&self) -> usize {
+        self.tools.len()
+    }
+
+    /// Returns true when this n-gram has already been promoted into a
+    /// skill (and so should not be promoted again).
+    pub fn is_promoted(&self) -> bool {
+        self.promoted_at_unix > 0
+    }
+}
+
 /// SQLite-backed memory store.
 #[derive(Clone, Debug)]
 pub struct MemoryStore {
@@ -247,6 +285,22 @@ impl MemoryStore {
                     total_tokens INTEGER NOT NULL DEFAULT 0,
                     total_cost_usd REAL NOT NULL DEFAULT 0.0,
                     turns_used INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE TABLE IF NOT EXISTS tool_sequences (
+                    session_id        TEXT PRIMARY KEY,
+                    sequence_json     TEXT NOT NULL,
+                    task_summary      TEXT NOT NULL DEFAULT '',
+                    created_at_unix   INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE TABLE IF NOT EXISTS tool_ngrams (
+                    ngram_hash        TEXT PRIMARY KEY,
+                    ngram_tools       TEXT NOT NULL,
+                    ngram_length      INTEGER NOT NULL,
+                    occurrence_count  INTEGER NOT NULL DEFAULT 0,
+                    last_seen_unix    INTEGER NOT NULL DEFAULT 0,
+                    promoted_at_unix  INTEGER NOT NULL DEFAULT 0,
+                    last_session_id   TEXT NOT NULL DEFAULT '',
+                    last_task_summary TEXT NOT NULL DEFAULT ''
                 );
                 "#,
             )
@@ -700,9 +754,194 @@ impl MemoryStore {
         }
     }
 
+    /// Persists a session's full tool-call sequence and increments the
+    /// rolling n-gram counters that the cross-session reflection pass
+    /// reads. Idempotent on `session_id`: a re-run replaces the prior
+    /// sequence row and bumps the n-gram counts again — callers should
+    /// avoid invoking this twice for the same session.
+    ///
+    /// `tools` is the ordered list of tool names from
+    /// `summary.turns.iter().map(|t| t.tool_name.clone())`. Trivial
+    /// sequences (length < min n-gram width) are still saved so the
+    /// audit trail is complete, but they contribute no n-grams.
+    ///
+    /// `task_summary` is folded into every n-gram's `last_task_summary`
+    /// so the reflection prompt sees what the user was actually trying
+    /// to do, not just the tool names.
+    pub fn save_tool_sequence(
+        &self,
+        session_id: &str,
+        tools: &[String],
+        task_summary: &str,
+        max_ngram_length: u32,
+        now_unix: u64,
+    ) -> PeriResult<()> {
+        self.initialize()?;
+        let connection = self.connection()?;
+        // Tool names are ASCII identifiers (`file_write`, `git_push`,
+        // …) so a pipe-delimited line is a fine on-disk format. Avoids
+        // pulling serde_json into the memory crate just for an audit
+        // trail blob.
+        let sequence_blob = tools.join("|");
+        connection
+            .execute(
+                "INSERT INTO tool_sequences (session_id, sequence_json, task_summary, created_at_unix) \
+                 VALUES (?1, ?2, ?3, ?4) \
+                 ON CONFLICT(session_id) DO UPDATE SET \
+                    sequence_json = excluded.sequence_json, \
+                    task_summary = excluded.task_summary, \
+                    created_at_unix = excluded.created_at_unix",
+                rusqlite::params![
+                    session_id,
+                    sequence_blob,
+                    task_summary,
+                    now_unix as i64,
+                ],
+            )
+            .map_err(sql_error)?;
+        // Extract n-grams. Cap the per-session n-gram updates so a
+        // pathologically long session can't blow up the table — we
+        // sample evenly across the sequence above the cap.
+        const MAX_NGRAM_UPDATES_PER_SESSION: usize = 50;
+        let widths = 2..=max_ngram_length.max(2) as usize;
+        let mut candidates: Vec<Vec<String>> = Vec::new();
+        for width in widths {
+            if width > tools.len() {
+                continue;
+            }
+            for window in tools.windows(width) {
+                // Skip trivial n-grams where every tool is the same
+                // (e.g. file_read x 3 isn't a "pattern", it's just
+                // exploration).
+                let distinct = window
+                    .iter()
+                    .collect::<std::collections::HashSet<_>>()
+                    .len();
+                if distinct < 2 {
+                    continue;
+                }
+                candidates.push(window.to_vec());
+            }
+        }
+        // Sample down to the cap. Even stride preserves a representative
+        // slice instead of biasing toward the head of the sequence.
+        if candidates.len() > MAX_NGRAM_UPDATES_PER_SESSION {
+            let stride = candidates.len() / MAX_NGRAM_UPDATES_PER_SESSION;
+            candidates = candidates
+                .into_iter()
+                .step_by(stride.max(1))
+                .take(MAX_NGRAM_UPDATES_PER_SESSION)
+                .collect();
+        }
+        for window in candidates {
+            let hash = ngram_hash(&window);
+            let ngram_tools = window.join("|");
+            let ngram_length = window.len() as i64;
+            connection
+                .execute(
+                    "INSERT INTO tool_ngrams ( \
+                        ngram_hash, ngram_tools, ngram_length, occurrence_count, \
+                        last_seen_unix, last_session_id, last_task_summary \
+                     ) VALUES (?1, ?2, ?3, 1, ?4, ?5, ?6) \
+                     ON CONFLICT(ngram_hash) DO UPDATE SET \
+                        occurrence_count = occurrence_count + 1, \
+                        last_seen_unix   = excluded.last_seen_unix, \
+                        last_session_id  = excluded.last_session_id, \
+                        last_task_summary = excluded.last_task_summary",
+                    rusqlite::params![
+                        hash,
+                        ngram_tools,
+                        ngram_length,
+                        now_unix as i64,
+                        session_id,
+                        task_summary,
+                    ],
+                )
+                .map_err(sql_error)?;
+        }
+        Ok(())
+    }
+
+    /// Returns n-grams that have crossed the promotion threshold but
+    /// have not yet been turned into a skill. Sorted by occurrence_count
+    /// descending so the reflection pass tackles the most-used patterns
+    /// first. Capped to keep the batch cost bounded.
+    pub fn list_promotion_candidates(
+        &self,
+        min_count: u32,
+        max_results: usize,
+    ) -> PeriResult<Vec<ToolNgram>> {
+        self.initialize()?;
+        let connection = self.connection()?;
+        let mut stmt = connection
+            .prepare(
+                "SELECT ngram_hash, ngram_tools, ngram_length, occurrence_count, \
+                    last_seen_unix, promoted_at_unix, last_session_id, last_task_summary \
+                 FROM tool_ngrams \
+                 WHERE promoted_at_unix = 0 AND occurrence_count >= ?1 \
+                 ORDER BY occurrence_count DESC, last_seen_unix DESC \
+                 LIMIT ?2",
+            )
+            .map_err(sql_error)?;
+        let mut rows = stmt
+            .query(rusqlite::params![min_count as i64, max_results as i64])
+            .map_err(sql_error)?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().map_err(sql_error)? {
+            let tools_blob: String = row.get(1).map_err(sql_error)?;
+            let tools = tools_blob.split('|').map(str::to_string).collect();
+            out.push(ToolNgram {
+                hash: row.get(0).map_err(sql_error)?,
+                tools,
+                occurrence_count: row.get::<_, i64>(3).map_err(sql_error)? as u32,
+                last_seen_unix: row.get::<_, i64>(4).map_err(sql_error)? as u64,
+                promoted_at_unix: row.get::<_, i64>(5).map_err(sql_error)? as u64,
+                last_session_id: row.get(6).map_err(sql_error)?,
+                last_task_summary: row.get(7).map_err(sql_error)?,
+            });
+        }
+        Ok(out)
+    }
+
+    /// Stamps `promoted_at_unix` on an n-gram so the reflection pass
+    /// stops considering it for promotion. Returns true when a row was
+    /// updated.
+    pub fn mark_ngram_promoted(&self, hash: &str, at_unix: u64) -> PeriResult<bool> {
+        self.initialize()?;
+        let connection = self.connection()?;
+        let updated = connection
+            .execute(
+                "UPDATE tool_ngrams SET promoted_at_unix = ?1 \
+                 WHERE ngram_hash = ?2 AND promoted_at_unix = 0",
+                rusqlite::params![at_unix as i64, hash],
+            )
+            .map_err(sql_error)?;
+        Ok(updated > 0)
+    }
+
     fn connection(&self) -> PeriResult<Connection> {
         Connection::open(&self.path).map_err(sql_error)
     }
+}
+
+/// Hash used as the primary key for `tool_ngrams`. Joins the tool
+/// names with `|` and runs them through a SHA-256 to get a stable
+/// 64-char hex id. We don't ship a hashing crate just for this — the
+/// existing `rusqlite` brings `sqlite3` which we already trust, and
+/// `serde_json` brings nothing relevant. Roll a small inline hash
+/// using `DefaultHasher` (note: not cryptographically secure, just
+/// stable across one rustc version; that's fine because the table
+/// rebuilds gracefully on collision).
+fn ngram_hash(tools: &[String]) -> String {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    for tool in tools {
+        tool.hash(&mut hasher);
+        // Separator so ["a","bc"] and ["ab","c"] hash differently.
+        b'|'.hash(&mut hasher);
+    }
+    format!("{:016x}", hasher.finish())
 }
 
 fn session_record_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionRecord> {
@@ -1110,6 +1349,142 @@ mod tests {
                 .resolution,
             "Group related parameters into a struct."
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    fn fresh_store(label: &str) -> (PathBuf, MemoryStore) {
+        let root = std::env::temp_dir().join(format!(
+            "peridot-memory-ngram-{label}-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let store = MemoryStore::new(root.join("memory.db"));
+        store.initialize().unwrap();
+        (root, store)
+    }
+
+    fn tools(names: &[&str]) -> Vec<String> {
+        names.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn save_tool_sequence_counts_distinct_bigrams_and_trigrams() {
+        let (root, store) = fresh_store("counts");
+        store
+            .save_tool_sequence(
+                "sess-1",
+                &tools(&["file_read", "verify_build", "git_commit"]),
+                "ship the change",
+                3,
+                1_700_000_000,
+            )
+            .unwrap();
+
+        // bigrams: (file_read, verify_build), (verify_build, git_commit)
+        // trigrams: (file_read, verify_build, git_commit)
+        // All distinct so all survive the distinct-tool filter.
+        let candidates = store.list_promotion_candidates(1, 10).unwrap();
+        assert_eq!(candidates.len(), 3);
+        assert!(candidates.iter().all(|c| c.occurrence_count == 1));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn save_tool_sequence_skips_self_repeats() {
+        let (root, store) = fresh_store("skips");
+        // file_read x 4 = three (file_read, file_read) bigrams — all
+        // single-distinct-tool, must be filtered.
+        store
+            .save_tool_sequence(
+                "sess-skip",
+                &tools(&["file_read", "file_read", "file_read", "file_read"]),
+                "explore",
+                3,
+                1_700_000_000,
+            )
+            .unwrap();
+        let candidates = store.list_promotion_candidates(1, 10).unwrap();
+        assert!(
+            candidates.is_empty(),
+            "self-repeat ngrams should be filtered, got {candidates:?}"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn repeated_pattern_across_sessions_accumulates() {
+        let (root, store) = fresh_store("accumulate");
+        let seq = tools(&["verify_build", "git_commit", "git_push"]);
+        for i in 0..5 {
+            store
+                .save_tool_sequence(
+                    &format!("sess-{i}"),
+                    &seq,
+                    "ship daily",
+                    3,
+                    1_700_000_000 + i as u64,
+                )
+                .unwrap();
+        }
+        // The trigram (verify_build, git_commit, git_push) and both of
+        // its constituent bigrams should now show occurrence_count = 5.
+        let candidates = store.list_promotion_candidates(5, 10).unwrap();
+        assert!(!candidates.is_empty());
+        assert!(candidates.iter().all(|c| c.occurrence_count == 5));
+        assert!(
+            candidates.iter().any(|c| c.tools.len() == 3),
+            "the full trigram should be a candidate"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn mark_ngram_promoted_excludes_from_future_candidates() {
+        let (root, store) = fresh_store("promoted");
+        let seq = tools(&["verify_test", "git_commit"]);
+        for i in 0..3 {
+            store
+                .save_tool_sequence(
+                    &format!("sess-{i}"),
+                    &seq,
+                    "test then commit",
+                    3,
+                    1_700_000_000 + i as u64,
+                )
+                .unwrap();
+        }
+        let before = store.list_promotion_candidates(3, 10).unwrap();
+        assert_eq!(before.len(), 1);
+        let hash = before[0].hash.clone();
+
+        let updated = store.mark_ngram_promoted(&hash, 1_700_001_000).unwrap();
+        assert!(updated);
+
+        let after = store.list_promotion_candidates(3, 10).unwrap();
+        assert!(after.is_empty(), "promoted ngram should be excluded");
+        // Re-marking is a no-op (returns false).
+        let again = store.mark_ngram_promoted(&hash, 1_700_002_000).unwrap();
+        assert!(!again);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn min_count_filter_excludes_one_off_patterns() {
+        let (root, store) = fresh_store("min_count");
+        store
+            .save_tool_sequence(
+                "sess-once",
+                &tools(&["plan_create", "shell_exec"]),
+                "draft",
+                3,
+                1_700_000_000,
+            )
+            .unwrap();
+        // Threshold 5 should exclude the one-off bigram.
+        assert!(store.list_promotion_candidates(5, 10).unwrap().is_empty());
+        // Threshold 1 includes it.
+        assert_eq!(store.list_promotion_candidates(1, 10).unwrap().len(), 1);
         fs::remove_dir_all(root).unwrap();
     }
 }
