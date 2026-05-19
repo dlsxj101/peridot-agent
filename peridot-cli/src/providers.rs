@@ -112,6 +112,113 @@ pub(crate) async fn live_provider(
     }
 }
 
+/// Builds a provider for capability inspection only — does not require
+/// credentials. Used by `peridot doctor` to surface the provider's
+/// canonical `pricing()` and `auth_method()` through the trait surface.
+///
+/// Unlike `live_provider`, this never bails on missing credentials. When
+/// creds are absent the provider still reports its hardcoded
+/// `PricingTable` (single source of truth for $/M-token figures) and
+/// `auth_method()` reports `NotConfigured`, so the doctor can tell
+/// "wrong config" apart from "right config, just no keys yet."
+pub(crate) async fn inspect_provider(
+    config: &PeridotConfig,
+    model: &str,
+) -> Result<Box<dyn LlmProvider>> {
+    match config.auth.primary.as_str() {
+        "claude-api" => {
+            let api_key = std::env::var("ANTHROPIC_API_KEY")
+                .ok()
+                .or_else(|| read_stored_api_key(AuthProvider::ClaudeApi).ok().flatten());
+            Ok(Box::new(ClaudeProvider::with_transport_options(
+                model.to_string(),
+                api_key,
+                config.api.base_url.clone(),
+                config.api.timeout_seconds,
+                config.api.max_retries,
+            )))
+        }
+        "openai-api" => {
+            let api_key = std::env::var("OPENAI_API_KEY")
+                .ok()
+                .or_else(|| read_stored_api_key(AuthProvider::OpenaiApi).ok().flatten());
+            let base_url = if config.api.base_url == "https://api.anthropic.com" {
+                "https://api.openai.com".to_string()
+            } else {
+                config.api.base_url.clone()
+            };
+            Ok(Box::new(OpenAiProvider::with_transport_options(
+                model.to_string(),
+                api_key,
+                base_url,
+                AuthMethod::ApiKey,
+                config.api.timeout_seconds,
+                config.api.max_retries,
+            )))
+        }
+        "openrouter-api" => {
+            let api_key = std::env::var("OPENROUTER_API_KEY")
+                .ok()
+                .or_else(|| read_managed_env_var("OPENROUTER_API_KEY").ok().flatten());
+            let base_url = if config.api.base_url == "https://api.anthropic.com" {
+                "https://openrouter.ai/api".to_string()
+            } else {
+                config.api.base_url.clone()
+            };
+            Ok(Box::new(OpenAiProvider::with_transport_options(
+                model.to_string(),
+                api_key,
+                base_url,
+                AuthMethod::ApiKey,
+                config.api.timeout_seconds,
+                config.api.max_retries,
+            )))
+        }
+        "openai-oauth" => {
+            let credentials = match std::env::var("OPENAI_ACCESS_TOKEN").ok() {
+                Some(access_token) => {
+                    let identity = openai_oauth_access_token_identity(&access_token);
+                    Some(OpenAiOAuthCredentials {
+                        access_token,
+                        account_id: std::env::var("OPENAI_CODEX_ACCOUNT_ID")
+                            .ok()
+                            .or(identity.account_id),
+                    })
+                }
+                None => read_stored_openai_oauth_credentials().await.ok().flatten(),
+            };
+            let base_url = if matches!(
+                config.api.base_url.trim_end_matches('/'),
+                "https://api.anthropic.com"
+                    | "https://api.openai.com"
+                    | "https://api.openai.com/v1"
+            ) {
+                "https://chatgpt.com/backend-api/codex".to_string()
+            } else {
+                config.api.base_url.clone()
+            };
+            // No creds → still construct with placeholder strings so the
+            // trait methods stay queryable. auth_method() will report
+            // NotConfigured because the access token is empty.
+            let (access_token, account_id) = match credentials {
+                Some(c) => (c.access_token, c.account_id.unwrap_or_default()),
+                None => (String::new(), String::new()),
+            };
+            Ok(Box::new(OpenAiCodexProvider::with_transport_options(
+                model.to_string(),
+                access_token,
+                account_id,
+                base_url,
+                config.api.timeout_seconds,
+                config.api.max_retries,
+            )))
+        }
+        provider => anyhow::bail!(
+            "unknown auth.primary = {provider}; expected claude-api / openai-api / openrouter-api / openai-oauth"
+        ),
+    }
+}
+
 pub(super) struct FileMockProvider {
     responses: std::sync::Mutex<Vec<String>>,
 }

@@ -258,7 +258,11 @@ impl LlmProvider for OpenAiProvider {
     }
 
     fn auth_method(&self) -> AuthMethod {
-        self.auth_method.clone()
+        if self.api_key.is_none() {
+            AuthMethod::NotConfigured
+        } else {
+            self.auth_method.clone()
+        }
     }
 }
 

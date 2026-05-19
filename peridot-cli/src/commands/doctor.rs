@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 use peridot_common::PeridotConfig;
+use peridot_llm::AuthMethod;
 use peridot_mcp::McpClient;
 
 use super::{
@@ -18,6 +19,7 @@ use super::{
     output::print_json_or_text_result, read_managed_env_var, read_stored_api_key,
     read_stored_openai_oauth_credentials,
 };
+use crate::providers::inspect_provider;
 use std::path::Path;
 
 #[derive(Clone, Debug)]
@@ -58,6 +60,7 @@ pub(crate) async fn run_doctor_command(
         checks.push(check_primary_provider(config));
     }
     checks.push(check_models_config(config));
+    checks.extend(check_provider_capabilities(config).await);
     checks.push(check_agents_metadata(project_root));
     checks.extend(check_mcp_servers(config).await);
     checks.push(check_security_posture(config));
@@ -279,6 +282,64 @@ async fn check_mcp_servers(config: &PeridotConfig) -> Vec<DoctorCheck> {
         }
     }
     checks
+}
+
+/// Surfaces the active provider's self-described capabilities through the
+/// `LlmProvider` trait — pricing and auth_method. Builds the provider
+/// stub via `inspect_provider` so capability queries work even when
+/// credentials are missing (pricing is always reportable; auth_method
+/// downgrades to `NotConfigured` so the operator sees the gap).
+///
+/// Each provider's `pricing()` returns the canonical $/M-token figures
+/// stamped into the struct at construction (single source of truth that
+/// the cost estimator inside the provider also reads). Surfacing those
+/// here means an operator can sanity-check the table without grepping
+/// source, and the trait method finally has a production caller instead
+/// of staying decorative.
+async fn check_provider_capabilities(config: &PeridotConfig) -> Vec<DoctorCheck> {
+    let model = config.models.main.trim();
+    if model.is_empty() {
+        // models check already flagged this; don't double-report.
+        return Vec::new();
+    }
+    let provider = match inspect_provider(config, model).await {
+        Ok(p) => p,
+        Err(err) => {
+            return vec![DoctorCheck {
+                name: "provider:capabilities",
+                status: DoctorStatus::Warn,
+                message: format!("could not inspect provider: {err}"),
+            }];
+        }
+    };
+    let pricing = provider.pricing();
+    let auth = provider.auth_method();
+    let auth_label = match auth {
+        AuthMethod::ApiKey => "api_key",
+        AuthMethod::OAuth => "oauth",
+        AuthMethod::NotConfigured => "not_configured",
+    };
+    let auth_status = match auth {
+        AuthMethod::NotConfigured => DoctorStatus::Warn,
+        _ => DoctorStatus::Pass,
+    };
+    vec![
+        DoctorCheck {
+            name: "provider:pricing",
+            status: DoctorStatus::Pass,
+            message: format!(
+                "{model}: in ${:.2}/M, out ${:.2}/M, cache_read ${:.2}/M",
+                pricing.input_per_million,
+                pricing.output_per_million,
+                pricing.cache_read_per_million,
+            ),
+        },
+        DoctorCheck {
+            name: "provider:auth_method",
+            status: auth_status,
+            message: format!("{} reports auth_method={auth_label}", config.auth.primary),
+        },
+    ]
 }
 
 fn check_security_posture(config: &PeridotConfig) -> DoctorCheck {

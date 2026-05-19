@@ -12,6 +12,40 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 
 ---
 
+## [Unreleased]
+
+### Changed — provider trait surface
+
+- `LlmProvider::pricing()` and `LlmProvider::auth_method()` are no
+  longer decorative — both are now consulted by `peridot doctor` via
+  the new `provider:pricing` / `provider:auth_method` checks.
+  Implemented through a new `crate::providers::inspect_provider`
+  helper that builds a provider stub without requiring credentials so
+  the canonical pricing table is always reportable.
+- `OpenAiProvider::auth_method()` now downgrades to `NotConfigured`
+  when `api_key` is absent (previously echoed the stored auth method
+  regardless of whether credentials were actually present).
+- `OpenAiCodexProvider::auth_method()` now reports `NotConfigured`
+  when the OAuth access token is empty (previously always reported
+  `OAuth`). The trait method becoming honest is load-bearing for the
+  doctor's "right config, just no keys yet" signal.
+
+### Documented
+
+- `LlmProvider::supports_prefill()`: doc comment now explicitly
+  records that the method is intentionally not wired into the agent
+  loop. Response prefill is Anthropic-only, and Peridot's Claude
+  surface is API-key only (Claude OAuth / subscription path is not
+  supported), so the lowest-common-denominator stance defers wiring
+  until first-class Claude OAuth lands. Provider impls keep returning
+  their honest capability so the trait surface stays accurate.
+- `LlmProvider::supports_cache()` / `supports_thinking()` /
+  `pricing()` / `auth_method()`: doc comments now point to the
+  production caller for each so the wiring is discoverable from the
+  trait definition.
+
+---
+
 ## [0.7.0] — 2026-05-19
 
 Production-quality pass before extension work begins. Twelve targeted

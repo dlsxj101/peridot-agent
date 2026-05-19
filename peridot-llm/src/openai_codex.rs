@@ -151,7 +151,11 @@ impl LlmProvider for OpenAiCodexProvider {
     }
 
     fn auth_method(&self) -> AuthMethod {
-        AuthMethod::OAuth
+        if self.access_token.is_empty() {
+            AuthMethod::NotConfigured
+        } else {
+            AuthMethod::OAuth
+        }
     }
 }
 
