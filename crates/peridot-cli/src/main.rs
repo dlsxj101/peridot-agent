@@ -1332,6 +1332,42 @@ fn apply_session_command(
         SessionCommandEvent::UndoLastCheckpoint => {
             handle_undo_last_checkpoint(state, project_template);
         }
+        SessionCommandEvent::ClearAndRestart => {
+            // 1. Cancel anything running on the active session so the
+            //    LLM call returns immediately (the streaming helper
+            //    races this cancel via tokio::select!).
+            let old_id = state.current_session_id.clone();
+            if !old_id.is_empty() {
+                {
+                    let router = router.lock().unwrap();
+                    if let Some(handle) = router.get(&old_id) {
+                        handle.cancel.cancel();
+                    }
+                }
+                // 2. Close the old session and drop its persisted
+                //    context snapshot so the next session starts
+                //    from a truly empty memory.
+                {
+                    let mut router = router.lock().unwrap();
+                    router.close(&old_id);
+                }
+                delete_persisted_session(project_template, &old_id);
+                state.sessions.retain(|item| item.id != old_id);
+            }
+            // 3. Register a fresh session in the same workspace
+            //    template. The id format mirrors `SessionNew`.
+            let new_id = format!("session-{}-{}", std::process::id(), unix_timestamp());
+            router.lock().unwrap().register(SessionHandle::new(
+                new_id.clone(),
+                project_template.to_path_buf(),
+                WorkspaceIsolation::Shared,
+            ));
+            state
+                .sessions
+                .push(SessionDirectoryItem::new(&new_id, "new session"));
+            state.current_session_id = new_id.clone();
+            state.push_transcript(format!("session: opened {new_id} (cleared)"));
+        }
     }
     warn_on_shared_workspace_collisions(state, router, project_template);
 }

@@ -855,6 +855,14 @@ pub enum SessionCommandEvent {
     ContextTop,
     /// `/undo` — restore the latest file checkpoint.
     UndoLastCheckpoint,
+    /// `/clear` — cancel the current session and open a fresh one in
+    /// the same workspace. TUI side already wiped its visible state
+    /// via `TuiState::reset_for_clear`; the host's job here is to
+    /// signal the running agent to stop, close out the old
+    /// `SessionHandle`, and register a new one so the next user
+    /// message starts a brand-new conversation (empty context,
+    /// zeroed usage counters).
+    ClearAndRestart,
 }
 
 /// Result produced when an interactive TUI session exits.
@@ -1331,6 +1339,30 @@ impl TuiState {
         self.input.clear();
         self.input_cursor = 0;
         self.input_history_cursor = None;
+    }
+
+    /// Wipes everything `/clear` should clear: transcript, side-panel
+    /// counters, header totals, plan, panels, spinner state. The
+    /// agent's conversation context lives in `peridot-core` and has
+    /// to be cleared by the host via a `SessionCommandEvent` — but
+    /// every UI surface the operator can SEE is reset here, so the
+    /// post-clear screen looks like a fresh boot.
+    pub fn reset_for_clear(&mut self) {
+        self.transcript.clear();
+        self.activities.clear();
+        self.side_panel.stats = Default::default();
+        self.side_panel.plan.clear();
+        self.subagents.clear();
+        self.header.total_tokens = 0;
+        self.header.cache_hit_rate = 0.0;
+        self.header.cost_usd = 0.0;
+        self.active_tools.clear();
+        self.active_stream = None;
+        self.approval = None;
+        self.ask_user = None;
+        self.spinner_tick = 0;
+        self.agent_run_status = AgentRunStatus::Idle;
+        self.input_queue.clear();
     }
 
     /// Inserts one character at the current input cursor.

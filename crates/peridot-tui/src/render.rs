@@ -1620,7 +1620,20 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
         + (cursor_col_chars as u16).min(input_area.width.saturating_sub(cursor_indent + 2));
     let cursor_y_in_box = (cursor_line as u16).saturating_sub(scroll);
     let cursor_y = input_area.y + 1 + cursor_y_in_box;
-    frame.set_cursor_position(Position::new(cursor_x, cursor_y));
+    // Hide the textarea caret while the agent is working AND the
+    // operator hasn't started a draft. With it always on, terminals
+    // that draw the blinking caret on top of the previous frame
+    // make it look like a stray cursor is flashing next to the
+    // spinner / elapsed counter in the status bar — that's just
+    // the input caret painted briefly before ratatui repositions
+    // it. Suppressing it here removes the visual noise without
+    // hurting actual editing: the moment the user types a
+    // character, `state.input` is non-empty and the caret returns.
+    let agent_busy = matches!(state.agent_run_status, AgentRunStatus::Running);
+    let user_has_draft = !state.input.is_empty();
+    if !agent_busy || user_has_draft {
+        frame.set_cursor_position(Position::new(cursor_x, cursor_y));
+    }
 
     render_slash_picker(frame, state, input_area);
     render_at_picker(frame, state, input_area);

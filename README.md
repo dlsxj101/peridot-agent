@@ -4,7 +4,16 @@ Peridot Agent is a Rust CLI/TUI autonomous coding agent with multi-session orche
 
 ## Status
 
-Current version: **0.7.8**
+Current version: **0.7.9**
+
+### What's new in v0.7.9
+
+Four UX fixes from live v0.7.8:
+
+- **Phantom caret next to status bar.** The textarea caret was drawn every tick, even while the agent was streaming and the input was empty. Now suppressed when the agent is `Running` and the user hasn't started a draft.
+- **`/clear` actually clears.** Transcript, side-panel stats, header tokens / cost / cache, plan, active tools, panels, queues — all wiped. A new `SessionCommandEvent::ClearAndRestart` then cancels the live agent, closes the session, deletes its persisted context, and opens a fresh session. Next message starts with zero recall.
+- **Esc actually interrupts.** `CancelToken::cancelled()` is now an async future; `stream_completion_with_chunks` races it against the streaming LLM call. When you hit Esc, the streaming future is dropped and the connection aborts within ~50ms — no more 10-30s wait for the model to finish.
+- **`verify_build` uses project-detected commands.** Hard-coded `cargo build --workspace` fallback is gone. `verify_build` / `verify_test` / `verify_lint` now scan the project (root Cargo.toml/package.json/pyproject.toml + common monorepo subdirs like `frontend/`, `apps/web/`, `backend/`, …) and pick the right command. A Python backend + Vite `frontend/` resolves to `cd frontend && npm run build`.
 
 ### What's new in v0.7.8
 

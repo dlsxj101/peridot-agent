@@ -531,6 +531,7 @@ impl HarnessAgent {
                 tools: tool_definitions,
                 tool_choice: ToolChoice::Auto,
             },
+            self.cancel.as_ref(),
             |chunk| {
                 if !chunk.delta.is_empty() {
                     events(AgentRunEvent::AssistantDelta {

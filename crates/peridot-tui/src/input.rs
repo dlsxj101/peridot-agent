@@ -845,7 +845,13 @@ pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
             state.push_transcript("permission: yolo");
         }
         SlashCommand::Clear => {
-            state.transcript.clear();
+            // Deep clear: visible UI surface here, agent context on
+            // the host. The host wipes the running agent and opens a
+            // fresh session so the next user message starts with no
+            // recall of prior turns and zero token spend.
+            state.reset_for_clear();
+            state.push_transcript("clear: transcript + context wiped, new session");
+            state.push_pending_session_command(SessionCommandEvent::ClearAndRestart);
         }
         SlashCommand::Help => {
             let mut lines: Vec<String> = Vec::new();

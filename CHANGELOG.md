@@ -12,6 +12,100 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 
 ---
 
+## [0.7.9] — 2026-05-19
+
+Four TUI / runtime UX fixes from live v0.7.8 use.
+
+### Fixed — phantom caret blinked next to status bar while agent was working
+
+`render.rs` always called `frame.set_cursor_position(...)`, so the
+textarea caret was drawn every tick — even while the agent was
+streaming and the operator hadn't started a new draft. On some
+terminals the caret blink painted on top of the previous frame
+made it look like a stray cursor was flashing next to the spinner
+or the elapsed counter. Now the caret is suppressed while
+`AgentRunStatus::Running` and `state.input` is empty. The moment
+the user starts typing the caret returns; agent finishes → caret
+returns. `crates/peridot-tui/src/render.rs`.
+
+### Fixed — `/clear` did not actually clear the conversation
+
+The old handler called `state.transcript.clear()` and stopped
+there. The agent's `ContextManager`, the token / cost counters,
+the plan steps, the side-panel stats, the pending input queue —
+all of it stayed put, so the next message still recalled the
+previous task and the cost meter kept climbing. Fixed two ways:
+
+- TUI side: `TuiState::reset_for_clear` wipes every visible
+  surface — transcript, activities, side-panel stats, plan,
+  subagents, header tokens / cost / cache rate, active tools,
+  streaming buffer, approval / ask-user panels, spinner, input
+  queue.
+- Host side: a new `SessionCommandEvent::ClearAndRestart` makes
+  `peridot-cli` cancel the running agent, close the old session,
+  delete its persisted context snapshot, and register a fresh
+  session in the same workspace. The next user message starts
+  with zero recall and zero token spend.
+
+`crates/peridot-tui/src/state.rs`, `crates/peridot-tui/src/
+input.rs`, `crates/peridot-cli/src/main.rs`.
+
+### Fixed — Esc interrupt did not actually stop in-flight LLM calls
+
+`CancelToken` was polling-only, and the only places that polled
+it were the agent loop's turn boundary and `shell_exec`. The
+LLM provider had no awareness of cancel at all, so an Esc press
+during a streaming completion did nothing until the model
+finished naturally — sometimes 10–30 seconds later. Added
+`CancelToken::cancelled()` (an async future that polls every
+50ms) and raced it against the streaming completion in
+`stream_completion_with_chunks` via `tokio::select!`. When the
+race resolves on the cancel side, the streaming future is
+dropped (reqwest aborts the underlying connection) and the
+agent loop surfaces an `Interrupted` event immediately. Esc
+now feels as responsive as the spec suggests.
+
+`crates/peridot-common/{Cargo.toml, src/cancel.rs}`,
+`crates/peridot-core/src/{agent.rs, usage.rs}`.
+
+### Fixed — `verify_build` ran `cargo build --workspace` on non-Rust projects
+
+The verify tools hard-coded `cargo build --workspace`,
+`cargo test --workspace`, and `cargo clippy --workspace -- -D
+warnings` as their fallback when the model didn't pass a
+`command` parameter. On Python / Node-only projects the tool
+spawned `cargo`, hit `127: command not found`, and the auto-fix
+loop blamed the operator's repo. Now each verify tool calls
+`ProjectScanner::new().scan(project_root)` and uses
+`profile.commands.{build,test,lint}` as the fallback; the
+hard-coded cargo string is only the last-resort fallback when
+no project markers can be inferred.
+
+Bonus: `scanner.rs` learned to peek into common monorepo
+sub-directories (`frontend`, `web`, `client`, `ui`, `app`,
+`apps/web`, `apps/frontend`, `packages/web`, `packages/
+frontend`, `backend`, `server`, `api`, `service`) when the
+root has no language markers of its own. A Python backend at
+the root + a Vite frontend under `frontend/` — exactly the
+operator's repo that surfaced this bug — now resolves to
+`cd frontend && npm run build`.
+
+`crates/peridot-tools/Cargo.toml`,
+`crates/peridot-tools/src/tools/verify.rs`,
+`crates/peridot-project/src/scanner.rs`.
+
+### Migration notes
+
+- Workspace 0.7.8 → 0.7.9. No config or API surface changes for
+  end users.
+- `peridot-tools` now depends on `peridot-project`. No
+  dependency cycle (`peridot-project` only depends on
+  `peridot-common`).
+- `peridot-common` now depends on `tokio` (was previously
+  std-only). Needed for `CancelToken::cancelled()`.
+
+---
+
 ## [0.7.8] — 2026-05-19
 
 ### Fixed — auto-grade looped forever on chat / Q&A turns

@@ -31,6 +31,22 @@ impl CancelToken {
     pub fn is_cancelled(&self) -> bool {
         self.flag.load(Ordering::SeqCst)
     }
+
+    /// Returns a future that resolves the moment the token transitions
+    /// to cancelled. The implementation polls every 50ms so a `tokio::
+    /// select!` can race it against a long-running LLM call without
+    /// adding a notification channel or pulling tokio-util's
+    /// `CancellationToken` into the workspace. 50ms is the smallest
+    /// interval a human operator can perceive as "instant" while still
+    /// being negligible against multi-second LLM latencies.
+    pub async fn cancelled(&self) {
+        loop {
+            if self.is_cancelled() {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    }
 }
 
 #[cfg(test)]

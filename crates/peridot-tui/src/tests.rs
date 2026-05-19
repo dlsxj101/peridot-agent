@@ -682,7 +682,26 @@ fn utility_slash_commands_update_tui_surface() {
     assert!(state.transcript.last().unwrap().text.contains("/help"));
 
     apply_slash_command(&mut state, SlashCommand::Clear);
-    assert!(state.transcript.is_empty());
+    // `/clear` now performs a deep reset: it wipes the transcript +
+    // counters and pushes a single "session opened" notice plus a
+    // pending `ClearAndRestart` command for the host. The transcript
+    // therefore holds exactly one entry (the post-clear notice), and
+    // the pending session command list carries `ClearAndRestart`.
+    assert_eq!(state.transcript.len(), 1);
+    assert!(
+        state
+            .transcript
+            .last()
+            .unwrap()
+            .text
+            .contains("transcript + context wiped")
+    );
+    assert!(
+        state
+            .pending_session_commands
+            .iter()
+            .any(|cmd| matches!(cmd, SessionCommandEvent::ClearAndRestart))
+    );
 }
 
 #[test]

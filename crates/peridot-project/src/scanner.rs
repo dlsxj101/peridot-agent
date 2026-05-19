@@ -32,8 +32,88 @@ impl ProjectScanner {
         detect_root_markers(root, &mut profile);
         detect_ci(root, &mut profile);
         detect_structure(root, &mut profile);
+        // Monorepo fallback: when the root has none of the language
+        // markers we know about, peek into common sub-directory
+        // names (frontend, web, app, server, backend, …). Lots of
+        // operator projects keep the Python / FastAPI backend at
+        // the root level (no setup.py or pyproject) and the Vite /
+        // npm frontend under `frontend/`; the verify_build tool
+        // previously fell back to `cargo build --workspace` for
+        // these and exited 127 because cargo wasn't installed.
+        if profile.commands.build.is_none() {
+            detect_monorepo_subdirs(root, &mut profile);
+        }
         profile.git = detect_git_state(root);
         Ok(profile)
+    }
+}
+
+/// Walks one level into common monorepo sub-directory names looking
+/// for the language markers `detect_root_markers` checks at the root.
+/// When a marker is found, the resulting command is prefixed with
+/// `cd <subdir> &&` so the build runs from the right working directory.
+/// Only fills commands that haven't already been set by the root pass.
+fn detect_monorepo_subdirs(root: &Path, profile: &mut ProjectProfile) {
+    const CANDIDATES: &[&str] = &[
+        "frontend",
+        "web",
+        "client",
+        "ui",
+        "app",
+        "apps/web",
+        "apps/frontend",
+        "packages/web",
+        "packages/frontend",
+        "backend",
+        "server",
+        "api",
+        "service",
+    ];
+    for candidate in CANDIDATES {
+        let sub = root.join(candidate);
+        if !sub.is_dir() {
+            continue;
+        }
+        // package.json (Node/Vite/Next/...)
+        if let Ok(pkg) = fs::read_to_string(sub.join("package.json"))
+            && let Ok(value) = serde_json::from_str::<Value>(&pkg)
+        {
+            push_language(profile, "JavaScript", 60);
+            set_primary_build(profile, BuildSystem::Node);
+            let has_script = |name: &str| {
+                value
+                    .get("scripts")
+                    .and_then(|s| s.get(name))
+                    .and_then(|v| v.as_str())
+                    .is_some()
+            };
+            let cmd = |script: &str| format!("cd {candidate} && npm run {script}");
+            fill_commands(
+                &mut profile.commands,
+                ProjectCommands {
+                    build: has_script("build").then(|| cmd("build")),
+                    test: has_script("test").then(|| cmd("test")),
+                    lint: has_script("lint").then(|| cmd("lint")),
+                    format: has_script("format").then(|| cmd("format")),
+                    dev: has_script("dev").then(|| cmd("dev")),
+                },
+            );
+        }
+        // pyproject.toml / requirements.txt (Python/FastAPI/...)
+        if sub.join("pyproject.toml").exists() || sub.join("requirements.txt").exists() {
+            push_language(profile, "Python", 60);
+            set_primary_build(profile, BuildSystem::Python);
+            fill_commands(
+                &mut profile.commands,
+                ProjectCommands {
+                    build: None,
+                    test: Some(format!("cd {candidate} && pytest")),
+                    lint: Some(format!("cd {candidate} && ruff check .")),
+                    format: Some(format!("cd {candidate} && ruff format .")),
+                    dev: None,
+                },
+            );
+        }
     }
 }
 

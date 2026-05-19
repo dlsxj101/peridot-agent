@@ -1,10 +1,38 @@
 use async_trait::async_trait;
 use peridot_common::{PeriResult, PermissionLevel, ToolGroup, ToolResult};
+use peridot_project::ProjectScanner;
 use serde_json::Value;
 
 use crate::hooks::{HookRunner, HookVariables};
 use crate::tools::command::run_read_only_command;
 use crate::{Tool, ToolContext};
+
+/// Resolves the default build / test / lint / format command for the
+/// current project by scanning the workspace markers (Cargo.toml,
+/// package.json, pyproject.toml, go.mod, …). Returns `None` when
+/// the scanner can't infer a command of the requested kind; the
+/// caller decides whether to fall back to the legacy cargo default
+/// or surface an error. Centralised here so every verify_* tool
+/// uses the same detection logic instead of each one hard-coding
+/// `cargo build --workspace` / `cargo test --workspace`.
+fn detect_command(ctx: &ToolContext, kind: VerifyKind) -> Option<String> {
+    let profile = ProjectScanner::new().scan(&ctx.project_root).ok()?;
+    match kind {
+        VerifyKind::Build => profile.commands.build,
+        VerifyKind::Test => profile.commands.test,
+        VerifyKind::Lint => profile.commands.lint,
+        VerifyKind::Format => profile.commands.format,
+    }
+}
+
+#[derive(Clone, Copy)]
+enum VerifyKind {
+    Build,
+    Test,
+    Lint,
+    #[allow(dead_code)]
+    Format,
+}
 
 /// Built-in verify build tool.
 #[derive(Clone, Debug)]
@@ -25,15 +53,20 @@ impl Tool for VerifyBuildTool {
     }
 
     fn parameters_schema(&self) -> Value {
-        verify_command_schema("cargo build --workspace")
+        verify_command_schema(
+            "auto-detected from project markers (Cargo.toml / package.json / pyproject.toml / …)",
+        )
     }
 
     async fn execute(&self, params: Value, ctx: &ToolContext) -> PeriResult<ToolResult> {
-        let command = params
+        let detected = detect_command(ctx, VerifyKind::Build);
+        let command_owned: String = params
             .get("command")
             .and_then(Value::as_str)
-            .unwrap_or("cargo build --workspace");
-        run_verification_command(command, ctx, "verify build", "build")
+            .map(str::to_string)
+            .or(detected)
+            .unwrap_or_else(|| "cargo build --workspace".to_string());
+        run_verification_command(&command_owned, ctx, "verify build", "build")
     }
 
     fn permission_level(&self) -> PermissionLevel {
@@ -60,15 +93,18 @@ impl Tool for VerifyTestTool {
     }
 
     fn parameters_schema(&self) -> Value {
-        verify_command_schema("cargo test --workspace")
+        verify_command_schema("auto-detected from project markers")
     }
 
     async fn execute(&self, params: Value, ctx: &ToolContext) -> PeriResult<ToolResult> {
-        let command = params
+        let detected = detect_command(ctx, VerifyKind::Test);
+        let command_owned: String = params
             .get("command")
             .and_then(Value::as_str)
-            .unwrap_or("cargo test --workspace");
-        run_verification_command(command, ctx, "verify test", "test")
+            .map(str::to_string)
+            .or(detected)
+            .unwrap_or_else(|| "cargo test --workspace".to_string());
+        run_verification_command(&command_owned, ctx, "verify test", "test")
     }
 
     fn permission_level(&self) -> PermissionLevel {
@@ -95,15 +131,18 @@ impl Tool for VerifyLintTool {
     }
 
     fn parameters_schema(&self) -> Value {
-        verify_command_schema("cargo clippy --workspace -- -D warnings")
+        verify_command_schema("auto-detected from project markers")
     }
 
     async fn execute(&self, params: Value, ctx: &ToolContext) -> PeriResult<ToolResult> {
-        let command = params
+        let detected = detect_command(ctx, VerifyKind::Lint);
+        let command_owned: String = params
             .get("command")
             .and_then(Value::as_str)
-            .unwrap_or("cargo clippy --workspace -- -D warnings");
-        run_verification_command(command, ctx, "verify lint", "lint")
+            .map(str::to_string)
+            .or(detected)
+            .unwrap_or_else(|| "cargo clippy --workspace -- -D warnings".to_string());
+        run_verification_command(&command_owned, ctx, "verify lint", "lint")
     }
 
     fn permission_level(&self) -> PermissionLevel {
