@@ -45,6 +45,7 @@ mod checkpoints;
 mod commands;
 mod context_limits;
 mod curator;
+mod harness_learn;
 mod interactive_io;
 mod providers;
 mod run_loop;
@@ -3059,29 +3060,48 @@ async fn maybe_run_idle_curator(config: &PeridotConfig, project_root: &Path) {
             Err(err) => eprintln!("[curator] background LLM failed: {err}"),
         }
         // Pass 2: Reflection (cross-session n-gram pattern promotion).
-        // Opt-in via memory.auto_skill_reflection because it adds an
-        // extra LLM call to the idle trigger.
-        if !config.memory.auto_skill_reflection {
-            return;
+        // Gated by memory.auto_skill_reflection (default true in 0.7.3+).
+        if config.memory.auto_skill_reflection {
+            match curator::run_ngram_reflection(
+                provider.as_ref(),
+                &curator_model,
+                &store,
+                &project_root,
+                config.memory.ngram_min_count,
+                config.memory.ngram_batch_cap,
+                now,
+                config.memory.skills_review,
+            )
+            .await
+            {
+                Ok(report) => eprintln!(
+                    "[reflection] background pass done: promoted {}, skipped {}",
+                    report.promoted.len(),
+                    report.skipped.len(),
+                ),
+                Err(err) => eprintln!("[reflection] background pass failed: {err}"),
+            }
         }
-        match curator::run_ngram_reflection(
-            provider.as_ref(),
-            &curator_model,
-            &store,
-            &project_root,
-            config.memory.ngram_min_count,
-            config.memory.ngram_batch_cap,
-            now,
-            config.memory.skills_review,
-        )
-        .await
-        {
-            Ok(report) => eprintln!(
-                "[reflection] background pass done: promoted {}, skipped {}",
-                report.promoted.len(),
-                report.skipped.len(),
-            ),
-            Err(err) => eprintln!("[reflection] background pass failed: {err}"),
+        // Pass 3: Harness self-tuning. Watches the operator's recent
+        // tool usage and flips config defaults (git.auto_commit /
+        // git.auto_branch) when a clear behavioural signal emerges.
+        // Each field is auto-adjusted at most once across the
+        // project's lifetime — once the harness has spoken, the
+        // operator owns it.
+        let config_path = project_root.join(".peridot/config.toml");
+        if config_path.exists() {
+            let report = harness_learn::run_pass(&store, &config, &config_path, &project_root, now);
+            if !report.applied.is_empty() {
+                for adjustment in &report.applied {
+                    eprintln!(
+                        "[harness] auto-adjusted {} → {} ({})",
+                        adjustment.field, adjustment.new_value, adjustment.signal
+                    );
+                }
+            }
+            if !report.skipped.is_empty() {
+                eprintln!("[harness] skipped {} adjustment(s)", report.skipped.len());
+            }
         }
     });
 }

@@ -4,7 +4,16 @@ Peridot Agent is a Rust CLI/TUI autonomous coding agent with multi-session orche
 
 ## Status
 
-Current version: **0.7.2**
+Current version: **0.7.3**
+
+### What's new in v0.7.3
+
+Operator no longer needs to study the config to get the "Manus-style: finish the task end-to-end" behaviour:
+
+- **Auto-verify-after-mutation default ON**: every `file_write` / `file_patch` / `shell_exec` is followed by `verify_build` so broken compiles surface immediately.
+- **Auto-grade-on-done default ON**: every `agent_done` runs the LLM grader; failed verdicts inject recommendations and continue the loop instead of stopping. Manus-style "really finish" out of the box.
+- **Auto-skill-reflection default ON**: the 7-day idle pass now also promotes repeated tool-call patterns (5+ occurrences) into auto-skills, with `review_required: true`.
+- **Harness self-tuning**: the same idle trigger watches recent tool usage and auto-flips `git.auto_commit` / `git.auto_branch` when ≥ 50% of recent sessions used the corresponding tool manually. Each field is auto-adjusted at most once; the operator owns it after that. Every change writes an `AuditEvent` (`harness_learn` action) so the audit log explains why a default moved.
 
 ### What's new in v0.7.2
 

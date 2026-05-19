@@ -573,7 +573,7 @@ pub(super) fn config_from_wizard_profile(profile: ConfigWizardProfile) -> Perido
     config
 }
 
-pub(super) fn set_config_key(config: &mut PeridotConfig, key: &str, value: &str) -> Result<()> {
+pub(crate) fn set_config_key(config: &mut PeridotConfig, key: &str, value: &str) -> Result<()> {
     match key {
         "auth.primary" => config.auth.primary = value.to_string(),
         "api.base_url" => config.api.base_url = value.to_string(),

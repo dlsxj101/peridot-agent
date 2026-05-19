@@ -51,7 +51,9 @@ pub(crate) use auth::{
     run_logout_command,
 };
 use config::init_project_config_value;
-pub(crate) use config::{load_effective_config, maybe_run_first_launch_wizard, run_config_command};
+pub(crate) use config::{
+    load_effective_config, maybe_run_first_launch_wizard, run_config_command, set_config_key,
+};
 pub(crate) use doctor::run_doctor_command;
 pub(crate) use mcp::run_mcp_command;
 use output::print_json_or_text_result;

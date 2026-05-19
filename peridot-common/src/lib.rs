@@ -942,8 +942,14 @@ impl Default for DefaultsConfig {
             max_turns: default_max_turns(),
             budget_usd: default_budget_usd(),
             budget_warning_pct: default_budget_warning_pct(),
-            auto_verify_after_mutation: false,
-            auto_grade_on_done: false,
+            // Defaults flipped to ON in v0.7.3. The harness now verifies
+            // every mutation and grades every agent_done by default so
+            // an agent that "looks finished" really is — the operator
+            // doesn't need to know the toggle exists to get the safe
+            // behaviour. Opt out by setting these to false in
+            // `.peridot/config.toml`.
+            auto_verify_after_mutation: true,
+            auto_grade_on_done: true,
         }
     }
 }
@@ -1138,7 +1144,13 @@ impl Default for MemoryConfig {
             skills_review: true,
             max_sessions_stored: default_max_sessions_stored(),
             curator_model: None,
-            auto_skill_reflection: false,
+            // Default flipped to ON in v0.7.3. Cross-session reflection
+            // only runs on the 7-day idle trigger, so a normal session
+            // pays nothing for it; the cost only materialises after
+            // the project has been idle for a week, at which point a
+            // single batched LLM call promotes any pattern the operator
+            // has actually used 5+ times.
+            auto_skill_reflection: true,
             ngram_min_count: default_ngram_min_count(),
             ngram_max_length: default_ngram_max_length(),
             ngram_batch_cap: default_ngram_batch_cap(),

@@ -302,6 +302,13 @@ impl MemoryStore {
                     last_session_id   TEXT NOT NULL DEFAULT '',
                     last_task_summary TEXT NOT NULL DEFAULT ''
                 );
+                CREATE TABLE IF NOT EXISTS harness_adjustments (
+                    field             TEXT PRIMARY KEY,
+                    previous_value    TEXT NOT NULL DEFAULT '',
+                    new_value         TEXT NOT NULL DEFAULT '',
+                    applied_at_unix   INTEGER NOT NULL DEFAULT 0,
+                    signal            TEXT NOT NULL DEFAULT ''
+                );
                 "#,
             )
             .map_err(sql_error)?;
@@ -917,6 +924,88 @@ impl MemoryStore {
             )
             .map_err(sql_error)?;
         Ok(updated > 0)
+    }
+
+    /// Returns the most recent N tool-call sequences (whole sessions),
+    /// ordered newest first. Used by the harness-learning pass to
+    /// decide whether the operator runs `git_commit` or `git_branch`
+    /// often enough to justify flipping a default. Sessions older than
+    /// `since_unix` are excluded.
+    pub fn recent_tool_sequences(
+        &self,
+        limit: usize,
+        since_unix: u64,
+    ) -> PeriResult<Vec<Vec<String>>> {
+        self.initialize()?;
+        let connection = self.connection()?;
+        let mut stmt = connection
+            .prepare(
+                "SELECT sequence_json FROM tool_sequences \
+                 WHERE created_at_unix >= ?1 \
+                 ORDER BY created_at_unix DESC \
+                 LIMIT ?2",
+            )
+            .map_err(sql_error)?;
+        let mut rows = stmt
+            .query(rusqlite::params![since_unix as i64, limit as i64])
+            .map_err(sql_error)?;
+        let mut out: Vec<Vec<String>> = Vec::new();
+        while let Some(row) = rows.next().map_err(sql_error)? {
+            let blob: String = row.get(0).map_err(sql_error)?;
+            let tools = blob
+                .split('|')
+                .filter(|tool| !tool.is_empty())
+                .map(str::to_string)
+                .collect();
+            out.push(tools);
+        }
+        Ok(out)
+    }
+
+    /// Returns true when the harness-learning pass has already
+    /// auto-adjusted this config field. Each field is adjusted at most
+    /// once across the project's lifetime — afterwards the operator
+    /// has the final word.
+    pub fn was_field_auto_adjusted(&self, field: &str) -> PeriResult<bool> {
+        self.initialize()?;
+        let connection = self.connection()?;
+        let exists: Option<i64> = connection
+            .query_row(
+                "SELECT 1 FROM harness_adjustments WHERE field = ?1 LIMIT 1",
+                rusqlite::params![field],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(sql_error)?;
+        Ok(exists.is_some())
+    }
+
+    /// Records one harness-learning auto-adjustment so the pass
+    /// remembers not to re-tune the same field next week.
+    pub fn record_harness_adjustment(
+        &self,
+        field: &str,
+        previous_value: &str,
+        new_value: &str,
+        signal: &str,
+        at_unix: u64,
+    ) -> PeriResult<()> {
+        self.initialize()?;
+        let connection = self.connection()?;
+        connection
+            .execute(
+                "INSERT INTO harness_adjustments \
+                    (field, previous_value, new_value, applied_at_unix, signal) \
+                 VALUES (?1, ?2, ?3, ?4, ?5) \
+                 ON CONFLICT(field) DO UPDATE SET \
+                    previous_value = excluded.previous_value, \
+                    new_value      = excluded.new_value, \
+                    applied_at_unix = excluded.applied_at_unix, \
+                    signal         = excluded.signal",
+                rusqlite::params![field, previous_value, new_value, at_unix as i64, signal],
+            )
+            .map_err(sql_error)?;
+        Ok(())
     }
 
     fn connection(&self) -> PeriResult<Connection> {

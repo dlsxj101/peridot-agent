@@ -12,6 +12,73 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 
 ---
 
+## [0.7.3] — 2026-05-19
+
+Defaults flipped, harness self-tuning added. Operator no longer has to
+study the config to get the safe, end-to-end-completes-the-task
+behaviour: every mutation auto-verifies, every `agent_done` is graded,
+the 7-day idle pass promotes repeated patterns into skills, and recent
+tool-usage signals flip `git.auto_commit` / `git.auto_branch` for you
+at most once per project.
+
+### Changed — defaults flipped on
+
+- `defaults.auto_verify_after_mutation`: `false` → `true`. Every
+  successful `file_write` / `file_patch` / `shell_exec` is followed
+  by `verify_build` so a broken compile surfaces while the diff is
+  still fresh.
+- `defaults.auto_grade_on_done`: `false` → `true`. Every
+  `agent_done` is gated by the LLM grader; failed verdicts inject
+  recommendations as a `PlanReminder` and the loop continues for
+  another turn instead of stopping. Manus-style "really finish the
+  task" out of the box.
+- `memory.auto_skill_reflection`: `false` → `true`. Cross-session
+  n-gram promotion runs as Phase 2 of the 7-day idle Curator
+  trigger, so the cost only materialises when the project has been
+  idle for a week. Active sessions pay nothing.
+- `peridot-cli::commands::config::set_config_key` visibility raised
+  from `pub(super)` to `pub(crate)` so the new harness-learning
+  pass can drive the same write path as `peridot config set`.
+
+### Added — harness self-tuning
+
+- New `peridot-cli::harness_learn` module. Watches the most recent
+  30 sessions (capped at 60 days of age) and proposes config
+  adjustments when a clear behavioural signal emerges:
+  - `git.auto_commit = true` when `git_commit` appeared in ≥ 50%
+    of sampled sessions.
+  - `git.auto_branch = true` when `git_branch` appeared in ≥ 50%
+    of sampled sessions.
+- New SQLite table `harness_adjustments` (one row per auto-tuned
+  field) so each field is auto-adjusted at most once across the
+  project's lifetime — once the harness has spoken, the operator
+  owns the field. Sample size below `MIN_SAMPLE_SIZE = 5` falls
+  through silently.
+- New `MemoryStore` methods: `recent_tool_sequences`,
+  `was_field_auto_adjusted`, `record_harness_adjustment`.
+- Phase 3 of the 7-day idle Curator trigger
+  (`peridot-cli::main::maybe_run_idle_curator`) runs the harness-
+  learning pass after Curator + Reflection. Each applied
+  adjustment writes an `AuditEvent` (`harness_learn` action) so
+  the operator can read the audit log to see why the toggle moved.
+
+### Migration notes
+
+- Defaults change is *behavioural* — operators with active
+  `.peridot/config.toml` files keep whatever they had written
+  explicitly. The flip only affects fresh projects and projects
+  that left the field defaulted.
+- The `harness_adjustments` table is created via
+  `CREATE TABLE IF NOT EXISTS`; existing DBs upgrade seamlessly.
+- Operators who want the legacy "harness never touches my config"
+  behaviour can set `memory.auto_skill_reflection = false`
+  explicitly — this turns off Phase 2, but Phase 3 (harness_learn)
+  still runs. To disable Phase 3 fully, set the watched fields to
+  their target value upfront (e.g. `git.auto_commit = true`) or
+  pre-stamp the `harness_adjustments` table with a manual entry.
+
+---
+
 ## [0.7.2] — 2026-05-19
 
 Cross-session reflection: the harness now spots tool-call patterns the
