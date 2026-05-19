@@ -1,5 +1,22 @@
 # Peridot Agent — Extension Changelog
 
+## [0.0.2] — 2026-05-19
+
+### Fixed — commands invisible in Cursor's Command Palette
+
+Some Cursor builds (and older VS Code 1.74 hosts) don't auto-derive
+activation events from `contributes.commands`, so v0.0.1's empty
+`activationEvents` left the extension dormant: install succeeded, the
+extension showed in the Extensions view, but `>Peridot` in the Command
+Palette returned "No matching commands" because the host never asked
+the extension to register them.
+
+Explicitly opt into `onStartupFinished` so every host activates the
+extension after window load. Adds a tiny startup cost (one
+`activate()` call) but guarantees commands are registered on every
+target editor — including Cursor builds where the implicit
+contributes-derived activation didn't fire.
+
 ## [0.0.1] — 2026-05-19
 
 Initial scaffold release. Goal: verify the publish + spawn + JSON-RPC
