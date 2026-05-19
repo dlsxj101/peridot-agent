@@ -4,8 +4,8 @@ use crate::tools::shell::{
     reject_hard_blocked_command,
 };
 use crate::{
-    AgentAskUserTool, AgentDelegateTool, AgentMemorySearchTool, AskUserPort, FileWriteTool, Tool,
-    ToolContext, ToolRegistry, register_builtin_tools,
+    AgentAskUserTool, AgentDelegateTool, AgentMemorySearchTool, AskUserPort, FileWriteTool,
+    ShellExecTool, Tool, ToolContext, ToolRegistry, register_builtin_tools,
 };
 use async_trait::async_trait;
 use peridot_common::{
@@ -466,14 +466,32 @@ fn memory_layer_search_returns_skills_and_errors() {
 #[test]
 fn docker_shell_args_mount_workspace_without_network_by_default() {
     let root = PathBuf::from("/tmp/project");
-    let args = docker_shell_args(&root, "cargo test", "rust:1", false);
+    let args = docker_shell_args(&root, "cargo test", "rust:1", false, false, "");
 
     assert_eq!(args[0], "run");
     assert!(args.contains(&"--rm".to_string()));
     assert!(args.contains(&"/tmp/project:/workspace".to_string()));
     assert!(args.contains(&"--network".to_string()));
     assert!(args.contains(&"none".to_string()));
+    assert!(!args.contains(&"--read-only".to_string()));
+    assert!(!args.iter().any(|a| a == "--memory"));
     assert_eq!(args.last().map(String::as_str), Some("cargo test"));
+}
+
+#[test]
+fn docker_shell_args_apply_read_only_rootfs_and_memory_limit() {
+    let root = PathBuf::from("/tmp/project");
+    let args = docker_shell_args(&root, "cargo build", "rust:1", true, true, "512m");
+
+    assert!(args.contains(&"--read-only".to_string()));
+    assert!(args.iter().any(|a| a == "--tmpfs"));
+    assert!(args.iter().any(|a| a == "/tmp:rw,size=64m"));
+    assert!(args.iter().any(|a| a == "--memory"));
+    assert!(args.iter().any(|a| a == "512m"));
+    assert!(
+        !args.contains(&"--network".to_string()),
+        "network true → no --network none"
+    );
 }
 
 #[test]
@@ -619,4 +637,63 @@ async fn agent_message_rejects_invalid_target() {
         .await
         .unwrap_err();
     assert!(matches!(err, PeriError::Config(_)));
+}
+
+#[tokio::test]
+async fn shell_exec_dry_run_skips_execution_and_describes_invocation() {
+    use peridot_common::SandboxMode;
+    let root = std::env::temp_dir().join(format!("peridot-tools-dry-run-{}", std::process::id()));
+    fs::create_dir_all(&root).unwrap();
+    let security = SecurityConfig {
+        sandbox: SandboxMode::None,
+        shell_dry_run: true,
+        ..SecurityConfig::default()
+    };
+    // Touch a sentinel file the command would create if dry-run failed
+    // to short-circuit. After the call, the file must NOT exist.
+    let sentinel = root.join("sentinel.txt");
+    let ctx = ToolContext::new(&root, PermissionMode::Auto).with_security(security);
+    let result = ShellExecTool
+        .execute(
+            serde_json::json!({"command": format!("echo dry > {}", sentinel.display())}),
+            &ctx,
+        )
+        .await
+        .unwrap();
+    assert!(result.success);
+    assert_eq!(result.output["dry_run"], true);
+    assert!(
+        !sentinel.exists(),
+        "dry-run must not create files; got {}",
+        sentinel.display()
+    );
+    fs::remove_dir_all(&root).ok();
+}
+
+#[tokio::test]
+async fn shell_exec_timeout_kills_long_running_command() {
+    use peridot_common::SandboxMode;
+    let root = std::env::temp_dir().join(format!("peridot-tools-timeout-{}", std::process::id()));
+    fs::create_dir_all(&root).unwrap();
+    let security = SecurityConfig {
+        sandbox: SandboxMode::None,
+        shell_command_timeout_seconds: 1, // 1s cap, far below the 5s sleep below.
+        ..SecurityConfig::default()
+    };
+    let ctx = ToolContext::new(&root, PermissionMode::Auto).with_security(security);
+    let started = std::time::Instant::now();
+    let err = ShellExecTool
+        .execute(serde_json::json!({"command": "sleep 5"}), &ctx)
+        .await
+        .unwrap_err();
+    let elapsed = started.elapsed();
+    assert!(
+        matches!(&err, PeriError::Tool(message) if message.contains("timed out")),
+        "expected Tool(timed out ...), got: {err:?}"
+    );
+    assert!(
+        elapsed < std::time::Duration::from_secs(4),
+        "timeout should fire well before the 5s sleep; got {elapsed:?}"
+    );
+    fs::remove_dir_all(&root).ok();
 }

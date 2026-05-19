@@ -119,6 +119,21 @@ pub(crate) fn recovery_message(error: &PeriError) -> String {
             "Verification failed ({classification}): {error}. STOP all new work. Read the failing output above, find the smallest change that restores the failing check, and re-run the same verify tool to confirm. Do not add new features until the verifier passes."
         );
     }
+    if classification == "permission" {
+        // Permission-denied is *user intent*, not a transient bug. The
+        // model must stop attempting the exact same action — repeating it
+        // wastes a turn and burns trust. Encourage a read-only alternative
+        // and ask the user when the original intent can't be achieved
+        // safely without that action.
+        return format!(
+            "Permission denied ({classification}): {error}. The user (or a security policy) refused this exact action. Do NOT retry the same tool with the same arguments. \
+             Pick one of these recovery paths and explain which: \
+             (1) achieve the same goal with a read-only or less-privileged tool (e.g. file_read instead of file_write, git_status instead of git_push), \
+             (2) propose a narrower scope (single file instead of recursive, dry-run flag, smaller diff) and surface it via agent_ask_user, or \
+             (3) declare the work blocked via agent_ask_user and ask the user how to proceed. \
+             Repeating the denied action will not change the outcome."
+        );
+    }
     let templates: [&str; 5] = [
         "Recovery directive: previous turn failed with {kind}: {error}. Preserve this error in context, avoid repeating the same action, and choose a concrete recovery strategy.",
         "Turn failed ({kind}: {error}). The same approach will not work twice. Read the prior failure, switch tactics, and explain the new strategy before re-attempting the tool.",
@@ -338,5 +353,40 @@ mod tests {
             }
             other => panic!("expected Recover, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn recovery_message_permission_denied_steers_to_alternative() {
+        let err = PeriError::PermissionDenied("rm -rf node_modules requires approval".to_string());
+        let message = recovery_message(&err);
+        assert!(
+            message.contains("Permission denied"),
+            "preamble must mark this as permission-denied: {message}"
+        );
+        assert!(
+            message.contains("Do NOT retry"),
+            "directive must explicitly forbid repeating the same call: {message}"
+        );
+        assert!(
+            message.contains("read-only") || message.contains("less-privileged"),
+            "directive must suggest a safer alternative path: {message}"
+        );
+        assert!(
+            message.contains("agent_ask_user"),
+            "directive must steer to ask_user as an escape hatch: {message}"
+        );
+    }
+
+    #[test]
+    fn recovery_message_path_boundary_uses_permission_directive() {
+        let err = PeriError::PathBoundary("/etc/passwd".into());
+        let message = recovery_message(&err);
+        // PathBoundary falls under the "permission" classification, so it
+        // should also receive the alternative-seeking directive rather
+        // than the generic rotating templates.
+        assert!(
+            message.contains("Do NOT retry"),
+            "path boundary should also get the deny directive: {message}"
+        );
     }
 }

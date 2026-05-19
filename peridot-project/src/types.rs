@@ -26,6 +26,16 @@ pub enum BuildSystem {
     Go,
     /// Make based project.
     Make,
+    /// Gradle build (Java / Kotlin / Android).
+    Gradle,
+    /// Maven build (Java).
+    Maven,
+    /// CMake build (C / C++).
+    CMake,
+    /// Swift Package Manager.
+    SwiftPm,
+    /// .NET project (csproj / fsproj / vbproj).
+    Dotnet,
     /// Unknown or unsupported build system.
     #[default]
     Unknown,

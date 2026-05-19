@@ -11,10 +11,10 @@ use commands::{
     AgentsCommand, AuthProvider, ConfigCommand, EnvCommand, McpCommand, OutputFormat,
     SessionCommand, SkillCommand, load_effective_config, maybe_print_update_notice,
     maybe_run_first_launch_wizard, move_auto_skill_to_archive, print_scan, read_stored_api_key,
-    read_stored_openai_oauth_credentials, run_agents_command, run_config_command, run_env_command,
-    run_login_command, run_logout_command, run_mcp_command, run_session_command,
-    run_setting_command, run_setup_command, run_skill_command, run_update_command,
-    run_verify_command,
+    read_stored_openai_oauth_credentials, run_agents_command, run_config_command,
+    run_doctor_command, run_env_command, run_login_command, run_logout_command, run_mcp_command,
+    run_session_command, run_setting_command, run_setup_command, run_ship_command,
+    run_skill_command, run_update_command, run_verify_command,
 };
 use peridot_common::{
     AskUserAnswer, AskUserRequest, ContextConfig, ExecutionMode, MemoryConfig, PeriError,
@@ -154,6 +154,43 @@ struct VerifyArgs {
     grader_task: Option<String>,
 }
 
+/// Args struct for `peridot ship`. Bundles branch / commit / push / PR
+/// settings into a single high-level invocation.
+#[derive(Debug, clap::Args)]
+struct ShipArgs {
+    /// Target branch (created if missing). Defaults to
+    /// `peridot/ship-<unix-seconds>` so two consecutive ships never
+    /// collide silently.
+    #[arg(long)]
+    branch: Option<String>,
+    /// Commit message. Defaults to "ship: N file(s) via peridot".
+    #[arg(long, short = 'm')]
+    message: Option<String>,
+    /// Pull request title. Defaults to the first line of the commit
+    /// message.
+    #[arg(long)]
+    pr_title: Option<String>,
+    /// Pull request body. Defaults to a short notice mentioning peridot.
+    #[arg(long)]
+    pr_body: Option<String>,
+    /// Base branch for the PR. Defaults to whatever the remote considers
+    /// the default branch.
+    #[arg(long)]
+    base: Option<String>,
+    /// Open the PR as a draft.
+    #[arg(long)]
+    draft: bool,
+    /// Skip the `gh pr create` step entirely. Useful when the PR is
+    /// raised manually after `ship` lands the commit on the remote.
+    #[arg(long)]
+    no_pr: bool,
+    /// Allow shipping directly onto main / master / trunk. Off by
+    /// default — `ship` refuses to push to a protected branch unless
+    /// the operator opts in explicitly.
+    #[arg(long)]
+    allow_protected_branch: bool,
+}
+
 /// Top-level subcommands.
 #[derive(Debug, Subcommand)]
 enum Command {
@@ -178,6 +215,14 @@ enum Command {
     Verify(VerifyArgs),
     /// Initialize project-local Peridot files.
     Setup,
+    /// End-to-end health check: validates config, provider auth, MCP
+    /// servers, AGENTS metadata, and permissions. Exit code 0 when
+    /// everything passes, non-zero when any check fails.
+    Doctor,
+    /// One-shot publish flow: branch → commit → push → PR. Wraps the
+    /// per-step `git_*` and `gh_pr_*` tools so an operator can move
+    /// from "I have local changes" to "PR is open" in a single call.
+    Ship(ShipArgs),
     /// Configuration commands.
     Config {
         /// Config subcommand.
@@ -345,6 +390,24 @@ async fn main() -> Result<()> {
         }
         Some(Command::Setup) => {
             run_setup_command(&project_root, cli.output)?;
+            return Ok(());
+        }
+        Some(Command::Doctor) => {
+            run_doctor_command(&project_root, &config, cli.output).await?;
+            return Ok(());
+        }
+        Some(Command::Ship(args)) => {
+            let options = commands::ShipOptions {
+                branch: args.branch.clone(),
+                commit_message: args.message.clone(),
+                pr_title: args.pr_title.clone(),
+                pr_body: args.pr_body.clone(),
+                base: args.base.clone(),
+                draft: args.draft,
+                no_pr: args.no_pr,
+                allow_protected_branch: args.allow_protected_branch,
+            };
+            run_ship_command(&project_root, &config, options, cli.output).await?;
             return Ok(());
         }
         Some(Command::Config { command }) => {

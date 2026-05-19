@@ -226,3 +226,83 @@ fn parses_agents_preferences() {
     );
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn detects_gradle_kotlin_dsl() {
+    let root = std::env::temp_dir().join(format!("peridot-project-gradle-{}", std::process::id()));
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("build.gradle.kts"), "plugins {}\n").unwrap();
+    let profile = ProjectScanner::new().scan(&root).unwrap();
+    assert_eq!(profile.build_system, BuildSystem::Gradle);
+    assert!(
+        profile
+            .languages
+            .iter()
+            .any(|l| l.name == "Kotlin" || l.name == "Java"),
+        "expected Kotlin/Java languages: {:?}",
+        profile.languages
+    );
+    assert!(
+        profile
+            .commands
+            .test
+            .as_deref()
+            .unwrap_or("")
+            .contains("test"),
+        "expected gradle test command, got {:?}",
+        profile.commands.test
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn detects_maven_pom() {
+    let root = std::env::temp_dir().join(format!("peridot-project-maven-{}", std::process::id()));
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("pom.xml"), "<project/>\n").unwrap();
+    let profile = ProjectScanner::new().scan(&root).unwrap();
+    assert_eq!(profile.build_system, BuildSystem::Maven);
+    assert!(profile.languages.iter().any(|l| l.name == "Java"));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn detects_cmake_project() {
+    let root = std::env::temp_dir().join(format!("peridot-project-cmake-{}", std::process::id()));
+    fs::create_dir_all(&root).unwrap();
+    fs::write(
+        root.join("CMakeLists.txt"),
+        "cmake_minimum_required(VERSION 3.10)\n",
+    )
+    .unwrap();
+    let profile = ProjectScanner::new().scan(&root).unwrap();
+    assert_eq!(profile.build_system, BuildSystem::CMake);
+    assert!(profile.languages.iter().any(|l| l.name == "C++"));
+    assert_eq!(
+        profile.commands.build.as_deref(),
+        Some("cmake --build build")
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn detects_swift_package() {
+    let root = std::env::temp_dir().join(format!("peridot-project-swift-{}", std::process::id()));
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("Package.swift"), "// swift-tools-version:5.9\n").unwrap();
+    let profile = ProjectScanner::new().scan(&root).unwrap();
+    assert_eq!(profile.build_system, BuildSystem::SwiftPm);
+    assert!(profile.languages.iter().any(|l| l.name == "Swift"));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn detects_dotnet_csproj() {
+    let root = std::env::temp_dir().join(format!("peridot-project-dotnet-{}", std::process::id()));
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("App.csproj"), "<Project/>\n").unwrap();
+    let profile = ProjectScanner::new().scan(&root).unwrap();
+    assert_eq!(profile.build_system, BuildSystem::Dotnet);
+    assert!(profile.languages.iter().any(|l| l.name == "C#"));
+    fs::remove_dir_all(root).unwrap();
+}

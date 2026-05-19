@@ -748,6 +748,34 @@ pub struct SecurityConfig {
     /// Whether Docker sandboxed commands can access the network.
     #[serde(default)]
     pub docker_network: bool,
+    /// Whether the docker filesystem should be read-only outside the
+    /// `/workspace` mount. When `true`, the container is invoked with
+    /// `--read-only --tmpfs /tmp:rw,size=64m`, so the only writable
+    /// surface is the project mount. Defaults to `false` for backward
+    /// compatibility — existing installs that depend on transient
+    /// writes outside the workspace (rustup, cargo target outside the
+    /// project, npm global cache) keep working without surprise.
+    #[serde(default)]
+    pub docker_read_only_rootfs: bool,
+    /// Soft per-command timeout in seconds. `0` (default) disables the
+    /// cap; otherwise a `shell_exec` invocation that runs longer than
+    /// this is killed (via the same path as Esc cancel) and reported as
+    /// a timeout error. Acts as a guard against runaway loops in
+    /// long-running goal-mode runs.
+    #[serde(default = "default_shell_command_timeout_seconds")]
+    pub shell_command_timeout_seconds: u64,
+    /// Optional Docker memory limit (e.g. `"512m"`, `"2g"`). Empty
+    /// string disables it. Forwarded as `--memory` so the kernel OOM
+    /// killer terminates a runaway container instead of pinning the
+    /// host.
+    #[serde(default)]
+    pub docker_memory_limit: String,
+    /// When `true`, `shell_exec` does not actually execute commands.
+    /// Returns a synthetic `ToolResult` describing the would-be
+    /// invocation (the resolved program + args + cwd) and leaves the
+    /// workspace untouched. Used for safety drills and CI smoke tests.
+    #[serde(default)]
+    pub shell_dry_run: bool,
     /// Whether dependency installation commands require explicit approval.
     #[serde(default = "default_ask_before_install")]
     pub ask_before_install: bool,
@@ -768,6 +796,10 @@ impl Default for SecurityConfig {
             sandbox: SandboxMode::None,
             docker_image: default_docker_image(),
             docker_network: false,
+            docker_read_only_rootfs: false,
+            shell_command_timeout_seconds: default_shell_command_timeout_seconds(),
+            docker_memory_limit: String::new(),
+            shell_dry_run: false,
             ask_before_install: default_ask_before_install(),
             ask_before_delete: default_ask_before_delete(),
             approved_shell_commands: Vec::new(),
@@ -778,6 +810,10 @@ impl Default for SecurityConfig {
 
 fn default_docker_image() -> String {
     "rust:1-bookworm".to_string()
+}
+
+fn default_shell_command_timeout_seconds() -> u64 {
+    0
 }
 
 fn default_ask_before_install() -> bool {
@@ -1127,10 +1163,38 @@ pub struct McpServerConfig {
     /// Per-request timeout for initialize, list, and tool calls.
     #[serde(default = "default_mcp_timeout_seconds")]
     pub timeout_seconds: u64,
+    /// Default permission level applied to every tool exposed by this
+    /// server. The legacy behaviour ("everything is System") corresponds
+    /// to `system`; servers that only expose read-only operations
+    /// (e.g. a read-only Postgres MCP) can drop their gate to `read` or
+    /// `write` so the harness does not gratuitously ask for approval.
+    #[serde(default = "default_mcp_permission_level")]
+    pub default_permission: String,
+    /// Per-tool permission overrides keyed by the raw tool name as
+    /// reported by the MCP server (NOT the `mcp_<server>_<tool>` adapter
+    /// name). Lets the operator promote one dangerous tool to
+    /// `destructive` while keeping the rest of the server at the
+    /// server-wide default.
+    #[serde(default)]
+    pub tool_permission_overrides: BTreeMap<String, String>,
+    /// Cache TTL in seconds for `tools/list` responses. Default is 300
+    /// (5 min) so a server that exposes a stable catalogue is not
+    /// re-listed on every session start within the same process. `0`
+    /// disables caching.
+    #[serde(default = "default_mcp_schema_cache_seconds")]
+    pub schema_cache_seconds: u64,
 }
 
 fn default_mcp_timeout_seconds() -> u64 {
     30
+}
+
+fn default_mcp_permission_level() -> String {
+    "system".to_string()
+}
+
+fn default_mcp_schema_cache_seconds() -> u64 {
+    300
 }
 
 /// Hook configuration grouped by hook class.

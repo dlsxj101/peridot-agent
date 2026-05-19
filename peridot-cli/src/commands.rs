@@ -28,12 +28,14 @@ use sha2::{Digest, Sha256};
 mod agents;
 mod auth;
 mod config;
+mod doctor;
 mod mcp;
 mod output;
 mod project;
 mod session;
 mod settings;
 mod setup;
+mod ship;
 mod skills;
 #[cfg(test)]
 mod tests;
@@ -50,12 +52,14 @@ pub(crate) use auth::{
 };
 use config::init_project_config_value;
 pub(crate) use config::{load_effective_config, maybe_run_first_launch_wizard, run_config_command};
+pub(crate) use doctor::run_doctor_command;
 pub(crate) use mcp::run_mcp_command;
 use output::print_json_or_text_result;
 pub(crate) use project::print_scan;
 pub(crate) use session::run_session_command;
 pub(crate) use settings::run_setting_command;
 pub(crate) use setup::run_setup_command;
+pub(crate) use ship::{ShipOptions, run_ship_command};
 pub(crate) use skills::{move_auto_skill_to_archive, run_skill_command};
 pub(crate) use update::{maybe_print_update_notice, run_update_command};
 pub(crate) use verify::run_verify_command;
@@ -354,6 +358,9 @@ pub(crate) enum McpCommand {
         /// MCP server name.
         name: String,
     },
+    /// Run an end-to-end health probe against every configured MCP server
+    /// and report latency, tool count, and resolved permission level.
+    Doctor,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

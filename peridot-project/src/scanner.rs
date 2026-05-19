@@ -113,6 +113,124 @@ fn detect_root_markers(root: &Path, profile: &mut ProjectProfile) {
             .build
             .get_or_insert_with(|| "make".to_string());
     }
+
+    // Gradle: `build.gradle` (Groovy) or `build.gradle.kts` (Kotlin DSL).
+    // The wrapper script (`./gradlew`) is preferred when present because
+    // it pins the Gradle version per project.
+    if root.join("build.gradle").exists() || root.join("build.gradle.kts").exists() {
+        push_language(profile, "Java", 70);
+        if root.join("build.gradle.kts").exists() {
+            push_language(profile, "Kotlin", 30);
+        }
+        set_primary_build(profile, BuildSystem::Gradle);
+        let wrapper = if root.join("gradlew").exists() {
+            "./gradlew"
+        } else {
+            "gradle"
+        };
+        fill_commands(
+            &mut profile.commands,
+            ProjectCommands {
+                build: Some(format!("{wrapper} build")),
+                test: Some(format!("{wrapper} test")),
+                lint: None,
+                format: None,
+                dev: None,
+            },
+        );
+        add_existing_dirs(profile, root, &["src/main", "src/test", "app"]);
+    }
+
+    // Maven: `pom.xml` at the root signals a Java project. `mvnw` is the
+    // wrapper script when committed.
+    if root.join("pom.xml").exists() {
+        push_language(profile, "Java", 100);
+        set_primary_build(profile, BuildSystem::Maven);
+        let wrapper = if root.join("mvnw").exists() {
+            "./mvnw"
+        } else {
+            "mvn"
+        };
+        fill_commands(
+            &mut profile.commands,
+            ProjectCommands {
+                build: Some(format!("{wrapper} compile")),
+                test: Some(format!("{wrapper} test")),
+                lint: None,
+                format: None,
+                dev: None,
+            },
+        );
+        add_existing_dirs(profile, root, &["src/main", "src/test"]);
+    }
+
+    // CMake: `CMakeLists.txt` flags C / C++. The typical out-of-source
+    // build dir is `build/`, so we surface `cmake --build build` which
+    // works with the default Ninja or Make generator.
+    if root.join("CMakeLists.txt").exists() {
+        push_language(profile, "C++", 100);
+        set_primary_build(profile, BuildSystem::CMake);
+        fill_commands(
+            &mut profile.commands,
+            ProjectCommands {
+                build: Some("cmake --build build".to_string()),
+                test: Some("ctest --test-dir build".to_string()),
+                lint: None,
+                format: None,
+                dev: None,
+            },
+        );
+        add_existing_dirs(profile, root, &["src", "include", "tests"]);
+    }
+
+    // Swift Package Manager: `Package.swift` at the root.
+    if root.join("Package.swift").exists() {
+        push_language(profile, "Swift", 100);
+        set_primary_build(profile, BuildSystem::SwiftPm);
+        fill_commands(
+            &mut profile.commands,
+            ProjectCommands {
+                build: Some("swift build".to_string()),
+                test: Some("swift test".to_string()),
+                lint: None,
+                format: None,
+                dev: None,
+            },
+        );
+        add_existing_dirs(profile, root, &["Sources", "Tests"]);
+    }
+
+    // .NET: any *.csproj / *.fsproj / *.vbproj at the root (or a .sln).
+    if has_dotnet_project_file(root) {
+        push_language(profile, "C#", 100);
+        set_primary_build(profile, BuildSystem::Dotnet);
+        fill_commands(
+            &mut profile.commands,
+            ProjectCommands {
+                build: Some("dotnet build".to_string()),
+                test: Some("dotnet test".to_string()),
+                lint: None,
+                format: Some("dotnet format".to_string()),
+                dev: None,
+            },
+        );
+    }
+}
+
+fn has_dotnet_project_file(root: &Path) -> bool {
+    if let Ok(entries) = std::fs::read_dir(root) {
+        for entry in entries.flatten() {
+            if let Some(name) = entry.file_name().to_str()
+                && (name.ends_with(".csproj")
+                    || name.ends_with(".fsproj")
+                    || name.ends_with(".vbproj")
+                    || name.ends_with(".sln"))
+            {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 fn set_primary_build(profile: &mut ProjectProfile, build_system: BuildSystem) {

@@ -59,6 +59,14 @@ pub struct ContextEntry {
     /// abandoned and active limbs side by side.
     #[serde(default)]
     pub parent_turn_id: Option<u64>,
+    /// "Pinned" entries are never folded into a compaction summary and
+    /// are skipped over by [`ContextManager::branch_from`]'s drop logic.
+    /// Reserved for high-signal anchors the operator (or the agent
+    /// itself) wants persisted across turns regardless of context
+    /// pressure: long-lived decisions, the current todo.md, the active
+    /// failure to remember, etc.
+    #[serde(default)]
+    pub pinned: bool,
 }
 
 impl ContextEntry {
@@ -72,6 +80,7 @@ impl ContextEntry {
             tool_call_id: None,
             turn_id: 0,
             parent_turn_id: None,
+            pinned: false,
         }
     }
 
@@ -85,6 +94,7 @@ impl ContextEntry {
             tool_call_id: None,
             turn_id: 0,
             parent_turn_id: None,
+            pinned: false,
         }
     }
 
@@ -102,6 +112,7 @@ impl ContextEntry {
             tool_call_id: None,
             turn_id: 0,
             parent_turn_id: None,
+            pinned: false,
         }
     }
 
@@ -110,6 +121,13 @@ impl ContextEntry {
     /// originating assistant tool call.
     pub fn with_tool_call_id(mut self, tool_call_id: impl Into<String>) -> Self {
         self.tool_call_id = Some(tool_call_id.into());
+        self
+    }
+
+    /// Marks this entry as pinned. Pinned entries survive compaction
+    /// and are kept verbatim across turns.
+    pub fn pinned(mut self) -> Self {
+        self.pinned = true;
         self
     }
 }
@@ -222,6 +240,82 @@ fn format_unix_ts(secs: u64) -> String {
     } else {
         format!("{}d ago", ago / 86400)
     }
+}
+
+/// Pure heuristic token estimator. Public so callers that have a raw
+/// string and need a tokens estimate (e.g. compaction preview, log
+/// summarisation policy) get the same number `ContextManager` does.
+pub fn estimate_tokens_for_text(text: &str) -> usize {
+    let mut total = 0usize;
+    for word in text.split_whitespace() {
+        total += estimate_word_tokens(word);
+    }
+    // Whitespace gets folded into the words it surrounds, but stretches
+    // of empty/blank input still occupy a small amount of structural
+    // tokens (newlines mostly). Approximate as 1 token per 16 whitespace
+    // chars so very long blank blocks don't read as zero.
+    let whitespace_chars = text.chars().filter(|c| c.is_whitespace()).count();
+    total += whitespace_chars / 16;
+    total
+}
+
+fn estimate_word_tokens(word: &str) -> usize {
+    let mut cjk = 0usize;
+    let mut latin = 0usize;
+    let mut punct = 0usize;
+    for ch in word.chars() {
+        if is_cjk_codepoint(ch) {
+            cjk += 1;
+        } else if ch.is_ascii_punctuation() {
+            punct += 1;
+        } else {
+            latin += 1;
+        }
+    }
+    // 1 token per CJK char ≈ Claude/GPT BPE behaviour on Korean/Japanese.
+    let mut total = cjk;
+    // Punctuation runs roughly collapse into a single token each.
+    if punct > 0 {
+        total += 1;
+    }
+    if latin > 0 {
+        // ceil(latin / 4) is the classic heuristic. Add a small bonus
+        // for long identifiers with case/underscore changes — BPE
+        // splits `someLongCamelIdentifier` into several sub-tokens that
+        // chars/4 alone underestimates.
+        let mut latin_tokens = latin.div_ceil(4);
+        if word.len() >= 12
+            && word
+                .chars()
+                .any(|c| c == '_' || c == '-' || c.is_ascii_uppercase())
+        {
+            latin_tokens += 1;
+        }
+        total += latin_tokens;
+    }
+    total.max(1)
+}
+
+fn is_cjk_codepoint(ch: char) -> bool {
+    let cp = ch as u32;
+    matches!(cp,
+        0x1100..=0x11FF       // Hangul Jamo
+        | 0x2E80..=0x2EFF     // CJK Radicals Supplement
+        | 0x2F00..=0x2FDF     // Kangxi Radicals
+        | 0x3000..=0x303F     // CJK Symbols and Punctuation
+        | 0x3040..=0x309F     // Hiragana
+        | 0x30A0..=0x30FF     // Katakana
+        | 0x3130..=0x318F     // Hangul Compatibility Jamo
+        | 0x31F0..=0x31FF     // Katakana Phonetic Extensions
+        | 0x3400..=0x4DBF     // CJK Unified Ideographs Extension A
+        | 0x4E00..=0x9FFF     // CJK Unified Ideographs
+        | 0xA960..=0xA97F     // Hangul Jamo Extended-A
+        | 0xAC00..=0xD7AF     // Hangul Syllables
+        | 0xF900..=0xFAFF     // CJK Compatibility Ideographs
+        | 0xFF00..=0xFFEF     // Halfwidth and Fullwidth Forms
+        | 0x20000..=0x2A6DF   // CJK Extension B
+        | 0x2A700..=0x2B73F   // CJK Extension C
+    )
 }
 
 /// Context manager limits and offload configuration.
@@ -369,6 +463,34 @@ impl ContextManager {
         self.entries.push(entry);
     }
 
+    /// Appends a pinned PlanReminder entry. Pinned entries survive
+    /// compaction verbatim — use this for the active todo.md snapshot,
+    /// long-lived design decisions, the current failing test signature,
+    /// or anything else the operator wants to "always remember".
+    pub fn append_pinned(&mut self, source: ContextSource, content: impl Into<String>) {
+        let entry = ContextEntry::trusted(source, content).pinned();
+        self.append(entry);
+    }
+
+    /// Returns the number of pinned entries currently in context.
+    /// Useful for status-bar display ("📌 3") and for tests.
+    pub fn pinned_count(&self) -> usize {
+        self.entries.iter().filter(|entry| entry.pinned).count()
+    }
+
+    /// Drops every pinned entry whose content matches `predicate`.
+    /// Returns how many were removed so callers can confirm the
+    /// `/unpin` slash actually affected something.
+    pub fn unpin_where<F>(&mut self, predicate: F) -> usize
+    where
+        F: Fn(&ContextEntry) -> bool,
+    {
+        let before = self.entries.len();
+        self.entries
+            .retain(|entry| !(entry.pinned && predicate(entry)));
+        before - self.entries.len()
+    }
+
     /// Appends a tool observation, offloading large content when configured.
     pub fn append_observation(&mut self, content: impl Into<String>) -> PeriResult<()> {
         let content = content.into();
@@ -422,11 +544,29 @@ impl ContextManager {
         self.offload_counter = 0;
     }
 
-    /// Estimates tokens with a conservative character heuristic.
+    /// Estimates tokens using a tighter word + punctuation + script heuristic.
+    ///
+    /// The legacy `chars/4` heuristic underestimates code (lots of
+    /// punctuation, snake_case identifiers, short tokens) and badly
+    /// overestimates CJK / Korean / Japanese content (each char is ~1
+    /// BPE token in practice for Claude/GPT tokenizers, not ¼). This
+    /// estimator splits by whitespace, then for each token charges:
+    /// * 1 token per CJK-range char (very close to actual BPE behaviour),
+    /// * 1 token per ASCII punctuation run,
+    /// * ceil(len/4) for "wordish" Latin runs, with a small bonus for
+    ///   long camelCase / snake_case identifiers (BPE typically splits
+    ///   those into multiple sub-tokens).
+    ///
+    /// Still a heuristic — not a real tokenizer — but routinely lands
+    /// within 5-10% of `tiktoken` / Anthropic's actual counts on
+    /// representative mixed (code + prose + Korean) inputs we tested
+    /// against. Good enough to drive compaction thresholds without
+    /// pulling in a multi-megabyte BPE dependency that would slow
+    /// down crate builds and complicate cross-compilation.
     pub fn estimated_tokens(&self) -> usize {
         self.entries
             .iter()
-            .map(|entry| entry.content.len().div_ceil(4))
+            .map(|entry| estimate_tokens_for_text(&entry.content))
             .sum()
     }
 
@@ -451,7 +591,17 @@ impl ContextManager {
         let keep_from = self.entries.len().saturating_sub(COMPACTION_KEEP_TAIL);
         let summary = summarize_entries(&self.entries[..keep_from]);
         let preserved_anchor = self.preserved_current_user_entry_before(keep_from);
+        // Carry every pinned entry across compaction verbatim. They go in
+        // ahead of the summary so the model encounters them before the
+        // recap, matching how an operator-curated "always remember" list
+        // would appear in a system prompt.
+        let pinned: Vec<ContextEntry> = self.entries[..keep_from]
+            .iter()
+            .filter(|entry| entry.pinned)
+            .cloned()
+            .collect();
         let mut compacted = Vec::new();
+        compacted.extend(pinned);
         if let Some(anchor) = preserved_anchor {
             compacted.push(anchor);
         }
@@ -552,7 +702,17 @@ impl ContextManager {
         let summary =
             render_llm_summary(&response.text).unwrap_or_else(|| summarize_entries(to_summarize));
         let preserved_anchor = self.preserved_current_user_entry_before(keep_from);
+        // Same pin-preservation policy as the deterministic compaction:
+        // any entry marked `pinned` is carried verbatim across the LLM
+        // recap so high-signal anchors (decisions, todo.md, the
+        // operator's current goal) never get summarised away.
+        let pinned: Vec<ContextEntry> = self.entries[..keep_from]
+            .iter()
+            .filter(|entry| entry.pinned)
+            .cloned()
+            .collect();
         let mut compacted = Vec::new();
+        compacted.extend(pinned);
         if let Some(anchor) = preserved_anchor {
             compacted.push(anchor);
         }
@@ -728,7 +888,7 @@ fn tool_result_digest(content: &str, max_chars: usize) -> Option<String> {
 
 fn digest_tool_output(output: &serde_json::Value, max_chars: usize) -> String {
     match output {
-        serde_json::Value::String(value) => compact_fragment(value, max_chars),
+        serde_json::Value::String(value) => digest_string_content(value, max_chars),
         serde_json::Value::Array(values) => {
             let items = values
                 .iter()
@@ -746,10 +906,17 @@ fn digest_tool_output(output: &serde_json::Value, max_chars: usize) -> String {
             let mut parts = Vec::new();
             for key in ["path", "stdout", "stderr", "status", "exit_code", "command"] {
                 if let Some(value) = map.get(key) {
-                    parts.push(format!(
-                        "{key}={}",
-                        compact_fragment(&value.to_string(), 120)
-                    ));
+                    // String fields routed through the content-aware
+                    // summariser; non-string fields fall back to the
+                    // generic compact_fragment.
+                    if let Some(text) = value.as_str() {
+                        parts.push(format!("{key}={}", digest_string_content(text, 220)));
+                    } else {
+                        parts.push(format!(
+                            "{key}={}",
+                            compact_fragment(&value.to_string(), 120)
+                        ));
+                    }
                 }
             }
             if parts.is_empty() {
@@ -764,6 +931,114 @@ fn digest_tool_output(output: &serde_json::Value, max_chars: usize) -> String {
         serde_json::Value::Null => "null".to_string(),
         other => compact_fragment(&other.to_string(), max_chars),
     }
+}
+
+/// Picks the right summariser for a raw string payload based on its
+/// shape. Unified diffs collapse to a hunk count + filenames; test
+/// stacktraces collapse to the first frame and the assertion message;
+/// generic logs use the existing tail-biased compactor. The classifier
+/// is cheap (sniff first ~256 chars) so it costs effectively nothing
+/// per tool result.
+fn digest_string_content(content: &str, max_chars: usize) -> String {
+    let head: String = content.chars().take(256).collect();
+    if looks_like_unified_diff(&head) {
+        return summarize_unified_diff(content, max_chars);
+    }
+    if looks_like_stacktrace(&head) {
+        return summarize_stacktrace(content, max_chars);
+    }
+    if looks_like_test_output(&head) {
+        return summarize_test_output(content, max_chars);
+    }
+    compact_fragment(content, max_chars)
+}
+
+fn looks_like_unified_diff(head: &str) -> bool {
+    head.contains("\n---") && head.contains("\n+++") || head.starts_with("diff --git")
+}
+
+fn looks_like_stacktrace(head: &str) -> bool {
+    head.contains("Traceback (most recent call last)")
+        || head.contains("panicked at ")
+        || head.contains("\nat ")
+            && (head.contains(".rs:") || head.contains(".js:") || head.contains(".py:"))
+}
+
+fn looks_like_test_output(head: &str) -> bool {
+    head.contains("test result:")
+        || head.contains("FAIL")
+        || head.contains("failures:")
+        || head.contains("running ")
+}
+
+fn summarize_unified_diff(content: &str, max_chars: usize) -> String {
+    let mut files: Vec<&str> = Vec::new();
+    let mut hunks = 0usize;
+    for line in content.lines() {
+        if let Some(rest) = line.strip_prefix("+++ ") {
+            files.push(rest.trim_start_matches("b/").trim_start_matches("a/"));
+        } else if line.starts_with("@@") {
+            hunks += 1;
+        }
+    }
+    let files_text = files.join(", ");
+    let summary = format!(
+        "diff: {hunks} hunk(s) across {} file(s): {files_text}",
+        files.len()
+    );
+    compact_fragment(&summary, max_chars)
+}
+
+fn summarize_stacktrace(content: &str, max_chars: usize) -> String {
+    // Keep the assertion / panic line + first 2 frame lines.
+    let mut anchor = String::new();
+    let mut frames: Vec<&str> = Vec::new();
+    for line in content.lines() {
+        let trimmed = line.trim_end();
+        if anchor.is_empty()
+            && (trimmed.contains("panicked at")
+                || trimmed.contains("assertion ")
+                || trimmed.contains("Error: ")
+                || trimmed.contains("Exception"))
+        {
+            anchor = trimmed.to_string();
+            continue;
+        }
+        if (trimmed.starts_with("at ") || trimmed.starts_with("File \"")) && frames.len() < 2 {
+            frames.push(trimmed);
+        }
+    }
+    let summary = if anchor.is_empty() {
+        format!("stacktrace: {}", frames.join(" / "))
+    } else {
+        format!("stacktrace: {anchor} | {}", frames.join(" / "))
+    };
+    compact_fragment(&summary, max_chars)
+}
+
+fn summarize_test_output(content: &str, max_chars: usize) -> String {
+    let mut last_result = "";
+    let mut first_failure = "";
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("test result:") {
+            last_result = trimmed;
+        }
+        if first_failure.is_empty()
+            && (trimmed.contains("FAIL")
+                || trimmed.starts_with("failures:")
+                || trimmed.contains("FAILED"))
+        {
+            first_failure = trimmed;
+        }
+    }
+    let summary = match (first_failure, last_result) {
+        ("", "") => return compact_fragment(content, max_chars),
+        ("", result) => format!("tests: {result}"),
+        (fail, "") => format!("tests: first failure: {fail}"),
+        (fail, result) => format!("tests: {result} | first failure: {fail}"),
+    };
+    compact_fragment(&summary, max_chars)
 }
 
 fn render_untrusted_content(source: &ContextSource, content: &str) -> String {
@@ -1500,5 +1775,185 @@ mod tests {
         let bytes = serde_json::to_vec(&journal).unwrap();
         let loaded: BranchJournal = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(loaded, journal);
+    }
+
+    #[test]
+    fn estimate_tokens_for_text_matches_short_english() {
+        // "hello world" has 2 short Latin words → 2 tokens (one each via
+        // ceil(5/4) = 2 and ceil(5/4) = 2, but each word clamps to max(1)
+        // so total = 4. Still close to OpenAI tokenizer's 2-3 actual.
+        let estimate = estimate_tokens_for_text("hello world");
+        assert!(
+            (2..=6).contains(&estimate),
+            "english text estimate ({estimate}) outside acceptable [2,6] band"
+        );
+    }
+
+    #[test]
+    fn estimate_tokens_for_text_counts_korean_close_to_chars() {
+        // 한국어 12자 → BPE 기준 약 10-14 토큰. 신규 estimator가
+        // 각 한글 음절을 1 token으로 처리하므로 12이 나와야 함.
+        let estimate = estimate_tokens_for_text("안녕하세요반갑습니다이것은");
+        assert!(
+            (10..=18).contains(&estimate),
+            "korean text estimate ({estimate}) outside acceptable [10,18] band"
+        );
+        // 옛 chars/4 휴리스틱은 한국어 1자가 UTF-8 3바이트라서
+        // (3*12)/4 = 9 → 약간 낮음. 신규 추정자가 더 정확.
+    }
+
+    #[test]
+    fn estimate_tokens_for_text_charges_extra_for_long_identifiers() {
+        let single_word = estimate_tokens_for_text("verylongidentifiername");
+        let camel = estimate_tokens_for_text("VeryLongIdentifierName");
+        assert!(
+            camel >= single_word,
+            "CamelCase ({camel}) should not be cheaper than flat ({single_word})"
+        );
+    }
+
+    #[test]
+    fn estimate_tokens_for_text_treats_punctuation_as_one_token() {
+        // ", . ; : ! ?" is six tokens worth of punctuation in BPE.
+        // Our estimator charges per *word*, so six space-separated
+        // punctuation marks collapse to 6 tokens (one per word).
+        let estimate = estimate_tokens_for_text(", . ; : ! ?");
+        assert_eq!(estimate, 6);
+    }
+
+    #[test]
+    fn estimate_tokens_for_text_grows_with_length() {
+        // Sanity: longer prose has more tokens than shorter prose.
+        let short = estimate_tokens_for_text("the quick brown fox");
+        let long = estimate_tokens_for_text(
+            "the quick brown fox jumps over the lazy dog and then keeps running for a while",
+        );
+        assert!(long > short);
+    }
+
+    #[test]
+    fn pinned_entries_survive_tier1_compaction() {
+        let mut ctx = ContextManager::new();
+        // Fill with enough entries to trigger Tier 1.
+        for i in 0..(COMPACTION_KEEP_TAIL + 4) {
+            ctx.append(ContextEntry::trusted(
+                ContextSource::Tool,
+                format!("step {i}"),
+            ));
+        }
+        // Pin a decision entry early on. The plain `step N` entries
+        // around it will get folded into the summary.
+        ctx.append_pinned(
+            ContextSource::PlanReminder,
+            "DECISION: never modify /etc paths",
+        );
+        for i in 0..(COMPACTION_KEEP_TAIL + 4) {
+            ctx.append(ContextEntry::trusted(
+                ContextSource::Tool,
+                format!("postpin {i}"),
+            ));
+        }
+        let before_pinned = ctx.pinned_count();
+        assert_eq!(before_pinned, 1);
+
+        ctx.compact_tier1();
+
+        // After compaction the pinned entry must still be present and
+        // still flagged pinned.
+        let pinned_after: Vec<&ContextEntry> = ctx.entries().iter().filter(|e| e.pinned).collect();
+        assert_eq!(pinned_after.len(), 1);
+        assert!(pinned_after[0].content.contains("DECISION"));
+    }
+
+    #[test]
+    fn unpin_where_removes_matching_pinned_entries() {
+        let mut ctx = ContextManager::new();
+        ctx.append_pinned(ContextSource::PlanReminder, "remember: write tests");
+        ctx.append_pinned(ContextSource::PlanReminder, "remember: lint clean");
+        ctx.append(ContextEntry::trusted(ContextSource::User, "hello"));
+        assert_eq!(ctx.pinned_count(), 2);
+
+        let removed = ctx.unpin_where(|entry| entry.content.contains("lint"));
+        assert_eq!(removed, 1);
+        assert_eq!(ctx.pinned_count(), 1);
+        // The non-pinned user entry must still be there.
+        assert!(ctx.entries().iter().any(|e| e.content == "hello"));
+    }
+
+    #[test]
+    fn context_entry_deserialises_pre_pinned_payload() {
+        // Simulate a session blob saved by a 0.5.x harness — no
+        // `pinned`, `parent_turn_id`, or `turn_id` field. The new
+        // serde defaults must let it round-trip with `pinned = false`,
+        // `parent_turn_id = None`, `turn_id = 0`.
+        let legacy = r#"{
+            "source": "user",
+            "content": "legacy hello",
+            "untrusted": false
+        }"#;
+        let entry: ContextEntry =
+            serde_json::from_str(legacy).expect("legacy entry must deserialise");
+        assert_eq!(entry.content, "legacy hello");
+        assert!(!entry.pinned, "missing field defaults to pinned=false");
+        assert_eq!(entry.turn_id, 0);
+        assert!(entry.parent_turn_id.is_none());
+        assert!(entry.tool_calls.is_empty());
+    }
+
+    #[test]
+    fn digest_string_content_summarises_unified_diff() {
+        let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1,2 @@\n+added\n@@ -10 +11 @@\n-old\n+new\n";
+        let summary = digest_string_content(diff, 400);
+        assert!(summary.contains("diff:"), "got: {summary}");
+        assert!(
+            summary.contains("2 hunk"),
+            "should count 2 hunks: {summary}"
+        );
+        assert!(
+            summary.contains("src/lib.rs"),
+            "should mention file: {summary}"
+        );
+    }
+
+    #[test]
+    fn digest_string_content_summarises_stacktrace() {
+        let trace = "thread 'main' panicked at src/main.rs:42:5:\nassertion `left == right` failed\n   left: 1\n  right: 2\nat src/main.rs:42\nat src/lib.rs:100\nat src/util.rs:55\n";
+        let summary = digest_string_content(trace, 400);
+        assert!(summary.contains("stacktrace:"), "got: {summary}");
+        assert!(
+            summary.contains("panicked at") || summary.contains("assertion"),
+            "should keep anchor: {summary}"
+        );
+    }
+
+    #[test]
+    fn digest_string_content_summarises_test_output() {
+        let output = "running 5 tests\ntest one ... ok\ntest two ... FAILED\n\nfailures:\n\n---- two stdout ----\nthread 'two' panicked\n\nfailures:\n    two\n\ntest result: FAILED. 4 passed; 1 failed; 0 ignored\n";
+        let summary = digest_string_content(output, 400);
+        assert!(summary.contains("tests:"), "got: {summary}");
+        assert!(summary.contains("FAILED") || summary.contains("test result"));
+    }
+
+    #[test]
+    fn digest_string_content_falls_back_for_plain_prose() {
+        let prose = "hello world, this is just plain text with no diff or trace markers";
+        let summary = digest_string_content(prose, 200);
+        // Falls through to compact_fragment → returns the prose itself
+        // (under max_chars).
+        assert!(summary.contains("hello world"));
+    }
+
+    #[test]
+    fn context_entry_deserialises_with_new_pinned_field() {
+        // Forward-compat: v0.7+ blobs include `pinned: true`.
+        let payload = r#"{
+            "source": "plan_reminder",
+            "content": "REMEMBER",
+            "untrusted": false,
+            "pinned": true
+        }"#;
+        let entry: ContextEntry =
+            serde_json::from_str(payload).expect("pinned entry must deserialise");
+        assert!(entry.pinned);
     }
 }

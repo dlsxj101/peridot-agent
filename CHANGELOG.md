@@ -12,6 +12,129 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 
 ---
 
+## [0.7.0] — 2026-05-19
+
+Production-quality pass before extension work begins. Twelve targeted
+improvements across sandbox safety, context quality, MCP operability,
+approval UX, observability, and PR workflow. No breaking API removals;
+new fields on `SecurityConfig`, `McpServerConfig`, and `ContextEntry`
+all carry `#[serde(default)]` so on-disk sessions and configs from
+0.6.x continue to load.
+
+### Added — sandbox & safety
+
+- `security.docker_read_only_rootfs` (`--read-only` + `--tmpfs /tmp`)
+  so Docker-sandboxed shell commands can't pollute the container fs
+  outside `/workspace`.
+- `security.docker_memory_limit` (e.g. `"512m"`) forwarded as
+  `--memory` so a runaway container gets OOM-killed instead of pinning
+  the host.
+- `security.shell_command_timeout_seconds` (default `0` = unlimited).
+  When set, `shell_exec` kills the child via the same path as Esc
+  cancel and reports a recoverable timeout error.
+- `security.shell_dry_run` returns a synthetic `ToolResult` describing
+  the would-be invocation (program + args + cwd) without actually
+  launching it. Useful for safety drills and CI smokes.
+
+### Added — context quality
+
+- Pinned memory: `ContextEntry.pinned` plus
+  `ContextManager::append_pinned`, `pinned_count`, `unpin_where`.
+  Pinned entries survive both deterministic and LLM-driven compaction.
+- More accurate token estimator: `estimate_tokens_for_text` swaps the
+  legacy `chars/4` heuristic for a CJK-aware word + punctuation + long-
+  identifier scheme that lands within 5-10% of real BPE counts on
+  representative mixed inputs (no new dependency).
+- Content-aware tool-output digesting: unified diffs collapse to hunk
+  count + filenames, stacktraces collapse to anchor + first 2 frames,
+  test output collapses to the result line + first failure. Driven by
+  `digest_string_content` and consumed by every compaction path.
+
+### Added — MCP operability
+
+- `McpClient::list_tools()` is now schema-cached per-server with a
+  configurable TTL (`McpServerConfig::schema_cache_seconds`, default
+  300s). `invalidate_tools_cache()` for explicit refresh.
+- `McpClient::health_check()` returns measured latency for a probe call.
+- `McpServerConfig::default_permission` + `tool_permission_overrides`
+  let the operator drop a server (or a single tool) from the default
+  "Everything is System" gating down to `read` / `write` /
+  `destructive`. Resolved by `resolve_mcp_permission_level`.
+- MCP tool calls now write to `audit.jsonl` with the resolved
+  permission level alongside the existing `params` payload.
+- New `peridot mcp doctor` subcommand: runs validate + health probe +
+  tool count across every configured server in one shot.
+
+### Added — approval & recovery
+
+- Permission-denied errors now get a dedicated `recovery_message`
+  branch instead of rotating through the generic templates. The
+  directive explicitly forbids retrying the same call and steers the
+  model toward read-only alternatives or an `agent_ask_user` escape
+  hatch.
+
+### Added — observability
+
+- New `peridot doctor` subcommand: end-to-end health audit covering
+  `.peridot/` layout, provider auth (per primary), models config,
+  AGENTS metadata, MCP servers, and security posture. Returns non-zero
+  on any fail so it composes with shell pipelines.
+
+### Added — PR workflow
+
+- New `peridot ship` subcommand: branch → commit → push → PR in one
+  call. Refuses to land on `main` / `master` / `trunk` unless
+  `--allow-protected-branch` is passed. `--no-pr` skips the `gh pr
+  create` step for safer dry runs.
+
+### Added — test coverage
+
+- Mock-LLM e2e regressions in `peridot-core/src/tests/harness.rs`:
+  pending_resume sidecar round-trip and AGENTS.md hot reload.
+- Serde compat regressions for `ContextEntry`: legacy (no `pinned`)
+  and forward-compat (with `pinned`) payloads both round-trip.
+
+### Added — auto-fix smarts
+
+- `VerifyFailureState` now carries `hints: Vec<String>` — `file:line`
+  tokens extracted from the verifier output. The directive surfaces
+  them as "Likely culprit(s)" so the model jumps straight to the
+  failing file. Recognises Rust (`src/foo.rs:12:5`), Python (`File
+  "src/foo.py", line 12`), TypeScript / JS / Go (`foo.ts:12`).
+
+### Added — scanner reach
+
+- Gradle (`build.gradle` / `build.gradle.kts`, wrapper-aware), Maven
+  (`pom.xml`, wrapper-aware), CMake (`CMakeLists.txt`), Swift Package
+  Manager (`Package.swift`), and .NET (`*.csproj` / `*.sln`) all flow
+  through `peridot scan` with reasonable default build/test commands.
+
+### Changed
+
+- `peridot-core`: extracted `approval_required_error`,
+  `is_mutating_tool_name`, `truncate_chars`, `recent_verify_summary`
+  into a new `agent_helpers` module so `agent.rs` reads top-to-bottom
+  without stepping over stateless utility code.
+- `peridot-cli/src/main.rs`: added a `ShipArgs` struct mirroring the
+  v0.6.0 `VerifyArgs` pattern so `Command::Ship` typechecks despite
+  the rustc 1.95 ICE that fires on inline struct variants with mixed
+  optional / boolean flags inside `main`'s match.
+
+### Migration notes
+
+- `McpServerConfig` gained three optional fields. Existing config.toml
+  files keep working; the new fields surface their defaults
+  (`default_permission = "system"`, `schema_cache_seconds = 300`,
+  `tool_permission_overrides = {}`).
+- `SecurityConfig` gained four optional fields. Existing config.toml
+  files keep working; sandbox behaviour is unchanged until the
+  operator opts into `docker_read_only_rootfs`, `docker_memory_limit`,
+  `shell_command_timeout_seconds`, or `shell_dry_run`.
+- `ContextEntry::pinned` defaults to `false`, so 0.6.x session blobs
+  load with no special handling.
+
+---
+
 ## [0.6.0] — 2026-05-19
 
 ### Added

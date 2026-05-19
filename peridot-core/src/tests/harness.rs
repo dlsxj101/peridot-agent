@@ -781,3 +781,169 @@ async fn auto_grade_failure_keeps_loop_running() {
     );
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[tokio::test]
+async fn pending_resume_sidecar_replays_pending_tool_call_on_next_run() {
+    // Approval-required → sidecar write → next session loads + replays
+    // the pending tool call without asking the model.
+    let root = std::env::temp_dir().join(format!(
+        "peridot-core-pending-resume-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let sidecar = root.join("pending_resume.bin");
+    // Write a fake pending resume payload manually (skipping the
+    // approval-denied path). The harness should consume it on
+    // run_until_done().
+    let pending = ToolCall {
+        name: "file_write".to_string(),
+        parameters: json!({
+            "path": "resumed.txt",
+            "content": "from sidecar\n"
+        }),
+    };
+    std::fs::write(&sidecar, serde_json::to_vec(&pending).unwrap()).unwrap();
+
+    let mut registry = ToolRegistry::new();
+    register_builtin_tools(&mut registry).unwrap();
+    let mut agent = HarnessAgent::new(
+        AgentState::new(ExecutionMode::Execute, PermissionMode::Auto),
+        ContextManager::new(),
+        registry,
+    );
+    agent.set_pending_resume_path(sidecar.clone());
+    // Provider only needs to drive the loop to agent_done after the
+    // pending-resume runs first.
+    let provider = StaticProvider::new(vec![
+        json!({"action": "agent_done", "parameters": {"summary": "resumed"}}).to_string(),
+    ]);
+
+    let summary = agent
+        .run_until_done(
+            &provider,
+            AgentRunRequest {
+                task: "resume sidecar".to_string(),
+                model: "mock".to_string(),
+                goal_checker_model: None,
+                max_turns: 2,
+                max_tokens: 256,
+                reasoning_effort: peridot_common::ReasoningEffort::Off,
+                service_tier: None,
+                budget_usd: 1.0,
+                budget_warning_pct: 50,
+                project_root: root.clone(),
+                denied_paths: Vec::new(),
+                hooks: HooksConfig::default(),
+                security: SecurityConfig::default(),
+            },
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(summary.stopped_reason, StopReason::Done);
+    // The sidecar must have been replayed: file exists with the
+    // expected content.
+    let written = std::fs::read_to_string(root.join("resumed.txt")).expect("resumed.txt created");
+    assert_eq!(written, "from sidecar\n");
+    // The sidecar itself should be consumed (deleted).
+    assert!(
+        !sidecar.exists(),
+        "pending_resume.bin must be removed after consumption"
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn agents_md_hot_reload_injects_updated_content_into_context() {
+    // Edit AGENTS.md mid-run and verify the next refresh_agents_md tick
+    // injects the new content as a PlanReminder.
+    let root = std::env::temp_dir().join(format!(
+        "peridot-core-agents-hot-reload-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let agents_path = root.join("AGENTS.md");
+    std::fs::write(&agents_path, "## rule1\nbe terse\n").unwrap();
+
+    let mut registry = ToolRegistry::new();
+    register_builtin_tools(&mut registry).unwrap();
+    let mut agent = HarnessAgent::new(
+        AgentState::new(ExecutionMode::Execute, PermissionMode::Auto),
+        ContextManager::new(),
+        registry,
+    );
+    agent.set_agents_md_path(agents_path.clone());
+
+    let provider = StaticProvider::new(vec![
+        json!({"action": "agent_done", "parameters": {"summary": "first"}}).to_string(),
+    ]);
+    let _summary1 = agent
+        .run_until_done(
+            &provider,
+            AgentRunRequest {
+                task: "first turn".to_string(),
+                model: "mock".to_string(),
+                goal_checker_model: None,
+                max_turns: 1,
+                max_tokens: 64,
+                reasoning_effort: peridot_common::ReasoningEffort::Off,
+                service_tier: None,
+                budget_usd: 1.0,
+                budget_warning_pct: 50,
+                project_root: root.clone(),
+                denied_paths: Vec::new(),
+                hooks: HooksConfig::default(),
+                security: SecurityConfig::default(),
+            },
+        )
+        .await
+        .unwrap();
+    // Confirm the initial AGENTS.md content reached context.
+    assert!(
+        agent
+            .context()
+            .entries()
+            .iter()
+            .any(|e| e.content.contains("be terse")),
+        "expected initial AGENTS.md content in context"
+    );
+
+    // Now edit the file (newer mtime, different len).
+    std::thread::sleep(std::time::Duration::from_millis(1_100));
+    std::fs::write(&agents_path, "## rule1\nbe terse AND polite\nALWAYS\n").unwrap();
+
+    let provider2 = StaticProvider::new(vec![
+        json!({"action": "agent_done", "parameters": {"summary": "second"}}).to_string(),
+    ]);
+    let _summary2 = agent
+        .run_until_done(
+            &provider2,
+            AgentRunRequest {
+                task: "second turn".to_string(),
+                model: "mock".to_string(),
+                goal_checker_model: None,
+                max_turns: 1,
+                max_tokens: 64,
+                reasoning_effort: peridot_common::ReasoningEffort::Off,
+                service_tier: None,
+                budget_usd: 1.0,
+                budget_warning_pct: 50,
+                project_root: root.clone(),
+                denied_paths: Vec::new(),
+                hooks: HooksConfig::default(),
+                security: SecurityConfig::default(),
+            },
+        )
+        .await
+        .unwrap();
+
+    assert!(
+        agent
+            .context()
+            .entries()
+            .iter()
+            .any(|e| e.content.contains("ALWAYS")),
+        "expected reloaded AGENTS.md (containing ALWAYS) to land in context"
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}

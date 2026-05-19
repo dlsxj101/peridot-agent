@@ -44,7 +44,22 @@ impl Tool for ShellExecTool {
         let command = required_str(&params, "command")?;
         reject_hard_blocked_command(command)?;
         enforce_shell_approval_policy(command, ctx)?;
-        let output = spawn_and_wait_interruptible(shell_command(command, ctx)?, ctx, command)?;
+        let prepared = shell_command(command, ctx)?;
+        // Dry-run: surface the resolved invocation without spawning.
+        // Useful for safety drills and CI smokes — the operator can
+        // confirm the docker/firejail wrapping is applied as expected.
+        if ctx.security.shell_dry_run {
+            let description = describe_shell_command(&prepared);
+            return Ok(ToolResult::success(
+                format!("dry-run: {command}"),
+                serde_json::json!({
+                    "dry_run": true,
+                    "would_execute": description,
+                    "command": command,
+                }),
+            ));
+        }
+        let output = spawn_and_wait_interruptible(prepared, ctx, command)?;
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
         let summary = if output.status.success() {
@@ -86,16 +101,27 @@ pub(crate) fn spawn_and_wait_interruptible(
     ctx: &ToolContext,
     label: &str,
 ) -> PeriResult<std::process::Output> {
-    let Some(cancel) = ctx.cancel.clone() else {
+    let cancel = ctx.cancel.clone();
+    let timeout_seconds = ctx.security.shell_command_timeout_seconds;
+    // Fast path: no cancel token attached and no timeout configured →
+    // keep the legacy blocking output() behaviour so non-TUI callers
+    // (tests, headless smokes) see the same shape as before.
+    if cancel.is_none() && timeout_seconds == 0 {
         return command
             .output()
             .map_err(|err| PeriError::Tool(format!("failed to run command: {err}")));
-    };
+    }
     let mut child = command
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
         .map_err(|err| PeriError::Tool(format!("failed to spawn command: {err}")))?;
+    let started = std::time::Instant::now();
+    let deadline = if timeout_seconds == 0 {
+        None
+    } else {
+        Some(started + std::time::Duration::from_secs(timeout_seconds))
+    };
     loop {
         match child
             .try_wait()
@@ -107,7 +133,9 @@ pub(crate) fn spawn_and_wait_interruptible(
                 });
             }
             None => {
-                if cancel.is_cancelled() {
+                if let Some(token) = cancel.as_ref()
+                    && token.is_cancelled()
+                {
                     // Best-effort kill; ignore the error so we never
                     // double-report a failure that the cancellation
                     // already explains.
@@ -115,6 +143,19 @@ pub(crate) fn spawn_and_wait_interruptible(
                     let _ = child.wait();
                     return Err(PeriError::Tool(format!(
                         "{label}: interrupted by user before completion"
+                    )));
+                }
+                if let Some(due) = deadline
+                    && std::time::Instant::now() >= due
+                {
+                    // Same kill+wait dance, but report the deadline so the
+                    // model gets a recoverable error instead of a generic
+                    // "interrupted". Goal-mode loops use this to detect
+                    // runaway commands without operator intervention.
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(PeriError::Tool(format!(
+                        "{label}: timed out after {timeout_seconds}s (security.shell_command_timeout_seconds)"
                     )));
                 }
                 std::thread::sleep(std::time::Duration::from_millis(50));
@@ -251,6 +292,8 @@ fn shell_command(command: &str, ctx: &ToolContext) -> PeriResult<Command> {
                 command,
                 &ctx.security.docker_image,
                 ctx.security.docker_network,
+                ctx.security.docker_read_only_rootfs,
+                &ctx.security.docker_memory_limit,
             ));
             Ok(process)
         }
@@ -273,6 +316,8 @@ pub(crate) fn docker_shell_args(
     command: &str,
     image: &str,
     network: bool,
+    read_only_rootfs: bool,
+    memory_limit: &str,
 ) -> Vec<String> {
     let mut args = vec![
         "run".to_string(),
@@ -284,6 +329,18 @@ pub(crate) fn docker_shell_args(
     ];
     if !network {
         args.extend(["--network".to_string(), "none".to_string()]);
+    }
+    if read_only_rootfs {
+        // Lock the container fs read-only and provide a small tmpfs at
+        // /tmp so tooling that writes scratch files (cargo, npm, pip,
+        // gcc, etc.) keeps working. The workspace mount stays
+        // read-write because it was added above.
+        args.push("--read-only".to_string());
+        args.extend(["--tmpfs".to_string(), "/tmp:rw,size=64m".to_string()]);
+    }
+    let trimmed_memory = memory_limit.trim();
+    if !trimmed_memory.is_empty() {
+        args.extend(["--memory".to_string(), trimmed_memory.to_string()]);
     }
     args.extend([
         image.to_string(),
@@ -312,4 +369,21 @@ pub(crate) fn firejail_shell_args(
     }
     args.extend(["sh".to_string(), "-lc".to_string(), command.to_string()]);
     args
+}
+
+/// Renders a human-readable description of a prepared shell `Command`.
+/// Used by `shell_dry_run` so the model and the operator can see
+/// exactly which program + args + cwd would have run, without
+/// actually launching the process.
+pub(crate) fn describe_shell_command(command: &std::process::Command) -> String {
+    let program = command.get_program().to_string_lossy().to_string();
+    let args: Vec<String> = command
+        .get_args()
+        .map(|arg| arg.to_string_lossy().to_string())
+        .collect();
+    let cwd = command
+        .get_current_dir()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| "<inherited>".to_string());
+    format!("[dry-run] cwd={cwd} cmd={program} args={args:?}")
 }

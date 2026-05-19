@@ -52,6 +52,9 @@ done
             url: None,
             auth: None,
             timeout_seconds: 30,
+            default_permission: "system".to_string(),
+            tool_permission_overrides: Default::default(),
+            schema_cache_seconds: 300,
         },
         Duration::from_secs(2),
     );
@@ -95,6 +98,9 @@ done
             url: None,
             auth: None,
             timeout_seconds: 30,
+            default_permission: "system".to_string(),
+            tool_permission_overrides: Default::default(),
+            schema_cache_seconds: 300,
         },
         Duration::from_secs(2),
     );
@@ -119,6 +125,9 @@ async fn lists_tools_from_http_server() {
             url: Some(url),
             auth: Some("bearer:test-token".to_string()),
             timeout_seconds: 30,
+            default_permission: "system".to_string(),
+            tool_permission_overrides: Default::default(),
+            schema_cache_seconds: 300,
         },
         Duration::from_secs(2),
     );

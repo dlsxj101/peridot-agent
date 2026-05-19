@@ -14,6 +14,9 @@ use peridot_tools::audit::{AuditEvent, append_audit_event};
 use peridot_tools::hooks::{HookRunner, tool_hook_variables};
 use peridot_tools::{AgentMessageBus, AskUserPort, ToolContext, ToolRegistry};
 
+use crate::agent_helpers::{
+    approval_required_error, is_mutating_tool_name, recent_verify_summary, truncate_chars,
+};
 use crate::goal::check_goal_satisfied;
 use crate::permissions::ensure_tool_allowed;
 use crate::prompt::{read_plan_reminder, system_prompt_for_role};
@@ -1252,20 +1255,6 @@ impl HarnessAgent {
     }
 }
 
-fn approval_required_error(err: &PeriError) -> bool {
-    match err {
-        PeriError::PermissionDenied(reason) => reason.contains("requires explicit user approval"),
-        _ => false,
-    }
-}
-
-/// Returns true when the named tool mutates the workspace. Matches the
-/// hardcoded list the committee loop uses (`run_committee_loop_with_events`)
-/// so auto-verify and reviewer triggering stay aligned.
-fn is_mutating_tool_name(name: &str) -> bool {
-    matches!(name, "file_write" | "file_patch" | "shell_exec")
-}
-
 /// Reads + deletes the pending-resume sidecar. Returns `Some` only
 /// when the file exists, parses as a `ToolCall`, and was successfully
 /// removed afterward. Any I/O or parse failure returns `None` so the
@@ -1393,27 +1382,16 @@ fn collect_git_diff(project_root: &std::path::Path) -> String {
         .unwrap_or_default()
 }
 
-/// Scans the most recent context entries for a `verify_*` tool result
-/// or `[auto-verify]` PlanReminder note. Used as the third grader
-/// input so the LLM gates on actual check output, not just the diff.
-fn recent_verify_summary(context: &ContextManager) -> Option<String> {
-    for entry in context.entries().iter().rev().take(20) {
-        let content = entry.content.trim();
-        if content.starts_with("[auto-verify]") {
-            return Some(content.to_string());
-        }
-        if entry.source == ContextSource::Tool && content.contains("verify_") {
-            return Some(content.to_string());
-        }
-    }
-    None
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct VerifyFailureState {
     tool_name: String,
     signature: String,
     attempts: u32,
+    /// Parsed `path[:line]` hints extracted from the verifier output.
+    /// Helps the model jump straight to the culprit instead of grepping
+    /// the failing log line by line. Empty when no recognisable
+    /// `path:line` token is present.
+    hints: Vec<String>,
 }
 
 fn update_verify_failure_state<'a>(
@@ -1421,6 +1399,7 @@ fn update_verify_failure_state<'a>(
     outcome: &AgentTurnOutcome,
 ) -> &'a VerifyFailureState {
     let signature = verify_failure_signature(&outcome.tool_result);
+    let hints = extract_verify_failure_hints(&outcome.tool_result);
     let attempts = match state.as_ref() {
         Some(previous)
             if previous.tool_name == outcome.tool_name && previous.signature == signature =>
@@ -1433,8 +1412,88 @@ fn update_verify_failure_state<'a>(
         tool_name: outcome.tool_name.clone(),
         signature,
         attempts,
+        hints,
     });
     state.as_ref().expect("verify failure state just written")
+}
+
+/// Scans the verifier output for `file.ext:line[:col]` tokens and
+/// returns up to 5 unique hits in order of appearance. Recognises
+/// Rust (`src/foo.rs:12:5`), TypeScript / JS (`src/foo.ts:12:5`),
+/// Python (`File "src/foo.py", line 12`), and bare line markers
+/// (`foo.go:12`). The list is deduplicated so a single failing file
+/// only appears once even when its name is repeated all over the
+/// traceback.
+fn extract_verify_failure_hints(result: &ToolResult) -> Vec<String> {
+    let mut buffer = String::new();
+    buffer.push_str(&result.summary);
+    if !result.output.is_null()
+        && let Ok(rendered) = serde_json::to_string(&result.output)
+    {
+        buffer.push('\n');
+        buffer.push_str(&rendered);
+    }
+    let mut hints: Vec<String> = Vec::new();
+    // Python frame: File "...", line N.
+    for chunk in buffer.split("File \"").skip(1) {
+        if let Some(end) = chunk.find('"')
+            && let Some(rest) = chunk.get(end..)
+            && let Some(line_idx) = rest.find("line ")
+        {
+            let path = &chunk[..end];
+            let after = &rest[line_idx + 5..];
+            let line: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
+            if !line.is_empty() {
+                let hint = format!("{path}:{line}");
+                if !hints.iter().any(|h| h == &hint) {
+                    hints.push(hint);
+                }
+            }
+        }
+        if hints.len() >= 5 {
+            break;
+        }
+    }
+    // Generic `path/with.ext:NN[:MM]` — capture the longest contiguous
+    // non-whitespace run that ends in a digit after a `:`. Cheap
+    // scanner; avoids pulling in a regex crate for the harness.
+    for token in buffer.split(|c: char| c.is_whitespace() || c == '(' || c == ')') {
+        if hints.len() >= 5 {
+            break;
+        }
+        let trimmed = token.trim_matches(|c: char| matches!(c, ',' | '.' | ':' | '\'' | '"' | '`'));
+        if !looks_like_path_with_line(trimmed) {
+            continue;
+        }
+        if !hints.iter().any(|h| h == trimmed) {
+            hints.push(trimmed.to_string());
+        }
+    }
+    hints
+}
+
+fn looks_like_path_with_line(token: &str) -> bool {
+    // Require at least one '/' or '.' so plain words don't match, plus
+    // a `:digit` suffix. Reject obvious noise (urls, time stamps).
+    if token.starts_with("http://") || token.starts_with("https://") {
+        return false;
+    }
+    let Some(colon) = token.find(':') else {
+        return false;
+    };
+    let (path_part, rest) = token.split_at(colon);
+    if !(path_part.contains('.') || path_part.contains('/')) {
+        return false;
+    }
+    if path_part.contains(' ') {
+        return false;
+    }
+    let after_colon = &rest[1..];
+    let line_str: String = after_colon
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
+    !line_str.is_empty()
 }
 
 fn verify_failure_signature(result: &ToolResult) -> String {
@@ -1462,20 +1521,28 @@ fn verify_failure_directive(failure: &VerifyFailureState, cap: u32) -> String {
     } else {
         ""
     };
-    format!(
-        "Auto-fix directive ({}/{}): {} failed with signature `{}`. STOP all new work. Diagnose that verifier output, make the smallest targeted change, and re-run `{}`.{} If it fails again with the same signature, do not repeat the same patch pattern; explain the blocker or ask the operator.",
-        failure.attempts, cap, failure.tool_name, failure.signature, failure.tool_name, repeat_note,
-    )
-}
-
-fn truncate_chars(value: &str, max_chars: usize) -> String {
-    let mut chars = value.chars();
-    let truncated = chars.by_ref().take(max_chars).collect::<String>();
-    if chars.next().is_some() {
-        format!("{truncated}...")
+    // Surface the parsed file:line hints so the model knows where to
+    // open. Empty when the verifier output didn't include any
+    // recognisable location markers — in that case the directive
+    // simply omits the hint sentence.
+    let hint_note = if failure.hints.is_empty() {
+        String::new()
     } else {
-        truncated
-    }
+        format!(
+            " Likely culprit(s) from the failing output: {}. Read those files first before editing anything else.",
+            failure.hints.join(", ")
+        )
+    };
+    format!(
+        "Auto-fix directive ({}/{}): {} failed with signature `{}`.{} STOP all new work. Diagnose that verifier output, make the smallest targeted change, and re-run `{}`.{} If it fails again with the same signature, do not repeat the same patch pattern; explain the blocker or ask the operator.",
+        failure.attempts,
+        cap,
+        failure.tool_name,
+        failure.signature,
+        hint_note,
+        failure.tool_name,
+        repeat_note,
+    )
 }
 
 fn snapshot_context_to_disk<F>(path: &std::path::Path, context: &ContextManager, events: &mut F)
@@ -1553,16 +1620,6 @@ fn tool_invocation_parameters(invocation: &ToolInvocation) -> serde_json::Value 
 #[cfg(test)]
 mod helpers_tests {
     use super::*;
-
-    #[test]
-    fn is_mutating_tool_name_covers_the_canonical_list() {
-        assert!(is_mutating_tool_name("file_write"));
-        assert!(is_mutating_tool_name("file_patch"));
-        assert!(is_mutating_tool_name("shell_exec"));
-        assert!(!is_mutating_tool_name("verify_build"));
-        assert!(!is_mutating_tool_name("file_read"));
-        assert!(!is_mutating_tool_name("agent_done"));
-    }
 
     #[test]
     fn build_subagent_review_with_diff_carries_workspace_and_diff() {
@@ -1692,11 +1749,61 @@ mod helpers_tests {
             tool_name: "verify_test".to_string(),
             signature: "test foo failed".to_string(),
             attempts: 2,
+            hints: Vec::new(),
         };
         let directive = verify_failure_directive(&failure, 3);
         assert!(directive.contains("2/3"));
         assert!(directive.contains("same verifier failure signature"));
         assert!(directive.contains("re-run `verify_test`"));
+    }
+
+    #[test]
+    fn verify_failure_directive_includes_path_line_hints_when_present() {
+        let failure = VerifyFailureState {
+            tool_name: "verify_test".to_string(),
+            signature: "assertion failed".to_string(),
+            attempts: 1,
+            hints: vec!["src/lib.rs:42".to_string(), "src/util.rs:7".to_string()],
+        };
+        let directive = verify_failure_directive(&failure, 3);
+        assert!(
+            directive.contains("Likely culprit"),
+            "directive must announce hint section: {directive}"
+        );
+        assert!(directive.contains("src/lib.rs:42"));
+        assert!(directive.contains("src/util.rs:7"));
+    }
+
+    #[test]
+    fn extract_verify_failure_hints_parses_rust_and_python_locations() {
+        let result = ToolResult::failure(
+            "error[E0425]: cannot find value `x` in this scope\n  --> src/lib.rs:42:5\n   |\n   File \"tests/test_one.py\", line 7\n",
+        );
+        let hints = extract_verify_failure_hints(&result);
+        assert!(
+            hints.iter().any(|h| h.starts_with("src/lib.rs:42")),
+            "expected a src/lib.rs:42[:col] hint in {hints:?}"
+        );
+        assert!(
+            hints.iter().any(|h| h == "tests/test_one.py:7"),
+            "expected tests/test_one.py:7 in {hints:?}"
+        );
+    }
+
+    #[test]
+    fn extract_verify_failure_hints_skips_urls() {
+        let result = ToolResult::failure(
+            "see https://docs.rs/foo:5 for details and src/main.rs:12 for the actual problem",
+        );
+        let hints = extract_verify_failure_hints(&result);
+        assert!(
+            hints.iter().any(|h| h == "src/main.rs:12"),
+            "expected src/main.rs:12 in {hints:?}"
+        );
+        assert!(
+            !hints.iter().any(|h| h.contains("https")),
+            "must not return URLs as hints: {hints:?}"
+        );
     }
 
     #[test]

@@ -170,6 +170,9 @@ fn mcp_json_exposes_timeout_for_operator_status() {
         url: Some("http://127.0.0.1:3333".to_string()),
         auth: None,
         timeout_seconds: 7,
+        default_permission: "system".to_string(),
+        tool_permission_overrides: Default::default(),
+        schema_cache_seconds: 300,
     };
 
     let value = mcp::mcp_json(&server);
@@ -190,6 +193,9 @@ fn mcp_validation_rejects_missing_http_url() {
         url: None,
         auth: None,
         timeout_seconds: 30,
+        default_permission: "system".to_string(),
+        tool_permission_overrides: Default::default(),
+        schema_cache_seconds: 300,
     };
 
     assert!(mcp::validate_mcp_server(&server).is_err());

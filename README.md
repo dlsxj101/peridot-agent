@@ -4,7 +4,23 @@ Peridot Agent is a Rust CLI/TUI autonomous coding agent with multi-session orche
 
 ## Status
 
-Current version: **0.6.0**
+Current version: **0.7.0**
+
+### What's new in v0.7.0
+
+Production-quality pass before extension work begins:
+
+- **Sandbox hardening**: Docker `--read-only` rootfs + tmpfs, memory limits, per-command timeouts, and a `shell_dry_run` mode for safety drills.
+- **Better token estimator**: CJK-aware word/punctuation heuristic in `peridot-context` replaces the legacy `chars/4` (no new BPE dependency).
+- **MCP operations**: `tools/list` schema cache with TTL, `health_check()` latency probe, per-server `default_permission`, per-tool `tool_permission_overrides`, MCP calls in `audit.jsonl`, and a new `peridot mcp doctor` subcommand.
+- **Approval recovery**: permission-denied errors now get a dedicated "read-only alternative or ask the user" directive instead of rotating through generic templates.
+- **`peridot doctor`**: end-to-end health audit (config, provider auth, MCP servers, AGENTS metadata, security posture) with non-zero exit on fail.
+- **`peridot ship`**: one-shot branch → commit → push → PR with a protected-branch guard.
+- **Pinned memory**: `ContextEntry.pinned` survives compaction; expose `append_pinned` / `unpin_where`.
+- **Content-aware compaction**: diff / stacktrace / test-output specialised summarisers.
+- **Auto-fix culprit hints**: verifier output parsed for `path:line` tokens (Rust / Python / JS / Go), surfaced in the auto-fix directive.
+- **Scanner reach**: Gradle, Maven, CMake, Swift Package Manager, and .NET now flow through `peridot scan`.
+- **Mock-LLM e2e regressions**: pending_resume round-trip + AGENTS hot reload + serde compat tests.
 
 ### What's new in v0.6.0
 

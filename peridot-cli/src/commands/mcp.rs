@@ -58,6 +58,72 @@ pub(crate) async fn run_mcp_command(
                 output,
             )?;
         }
+        McpCommand::Doctor => {
+            let mut reports = Vec::with_capacity(config.mcp.len());
+            for server in &config.mcp {
+                let validation = validate_mcp_server(server);
+                let (configured, validation_error) = match &validation {
+                    Ok(()) => (true, None),
+                    Err(err) => (false, Some(err.to_string())),
+                };
+                let (health, latency_ms, tools_count): (&'static str, Option<u128>, Option<usize>) =
+                    if configured {
+                        let client = McpClient::with_timeout(
+                            server.clone(),
+                            Duration::from_secs(server.timeout_seconds.max(1)),
+                        );
+                        // health probe first; then a tools/list to capture catalogue size.
+                        match client.health_check().await {
+                            Ok(duration) => match client.list_tools().await {
+                                Ok(tools) => ("ok", Some(duration.as_millis()), Some(tools.len())),
+                                Err(_) => ("degraded", Some(duration.as_millis()), None),
+                            },
+                            Err(_) => ("unreachable", None, None),
+                        }
+                    } else {
+                        ("invalid_config", None, None)
+                    };
+                reports.push(serde_json::json!({
+                    "name": server.name,
+                    "transport": server.transport.to_string(),
+                    "target": mcp_target(server),
+                    "configured": configured,
+                    "validation_error": validation_error,
+                    "health": health,
+                    "latency_ms": latency_ms,
+                    "tools_count": tools_count,
+                    "default_permission": server.default_permission,
+                    "schema_cache_seconds": server.schema_cache_seconds,
+                }));
+            }
+            let text_summary = reports
+                .iter()
+                .map(|r| {
+                    let name = r["name"].as_str().unwrap_or("");
+                    let health = r["health"].as_str().unwrap_or("?");
+                    let latency = r["latency_ms"]
+                        .as_u64()
+                        .map(|ms| format!("{ms}ms"))
+                        .unwrap_or_else(|| "—".to_string());
+                    let tools = r["tools_count"]
+                        .as_u64()
+                        .map(|n| n.to_string())
+                        .unwrap_or_else(|| "—".to_string());
+                    let perm = r["default_permission"].as_str().unwrap_or("system");
+                    format!("{name}\t{health}\tlatency={latency}\ttools={tools}\tperm={perm}")
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            print_json_or_text_result(
+                serde_json::json!({ "servers": reports }),
+                if text_summary.is_empty() {
+                    "no MCP servers configured".to_string()
+                } else {
+                    text_summary
+                },
+                output,
+            )?;
+        }
     }
     Ok(())
 }

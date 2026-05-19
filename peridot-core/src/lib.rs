@@ -1,6 +1,7 @@
 //! Core harness state and high-level agent orchestration.
 
 mod agent;
+mod agent_helpers;
 mod complexity;
 mod goal;
 mod grader;
