@@ -1,11 +1,8 @@
 // JSON-RPC client for the `peridot daemon` subprocess.
 //
-// v0.0.1 surface: spawn the daemon, send `peridot.version` /
-// `peridot.echo` / `shutdown`, await one response per request.
-//
-// v0.1.0 will add session.start + event notification dispatch
-// (incoming messages without `id` are dispatched to a registered
-// listener instead of a pending request).
+// v0.1.0 bridge surface: spawn the daemon, send requests such as
+// `peridot.version` / `session.start` / `session.cancel`, and dispatch
+// server-pushed notifications (`method: "event"`) to listeners.
 
 import * as childProcess from 'child_process';
 import * as readline from 'readline';
@@ -27,9 +24,29 @@ interface RpcResponse {
   error?: { code: number; message: string };
 }
 
+/** One JSON-RPC 2.0 server notification envelope. */
+export interface RpcNotification {
+  jsonrpc: '2.0';
+  method: string;
+  params?: unknown;
+}
+
+/** Listener invoked for daemon notifications. */
+type NotificationListener = (notification: RpcNotification) => void;
+
+/** Daemon process exit payload. */
+export interface DaemonExit {
+  code: number | null;
+  signal: string | null;
+}
+
+/** Listener invoked when the daemon process exits. */
+type ExitListener = (exit: DaemonExit) => void;
+
 /**
  * Spawned `peridot daemon` process plus the bookkeeping needed to
- * correlate stdout lines with outstanding requests.
+ * correlate stdout lines with outstanding requests and dispatch
+ * server-pushed event notifications.
  *
  * Each `send` call:
  *   1. assigns a monotonically increasing id,
@@ -45,12 +62,25 @@ export class PeridotDaemon {
     number,
     { resolve: (value: unknown) => void; reject: (err: Error) => void }
   >();
+  private notificationListeners = new Set<NotificationListener>();
+  private exitListeners = new Set<ExitListener>();
+  private exited = false;
 
   private constructor(child: childProcess.ChildProcessWithoutNullStreams) {
     this.child = child;
     this.rl = readline.createInterface({ input: child.stdout });
     this.rl.on('line', (line) => this.handleLine(line));
-    this.child.on('exit', () => this.rejectAll(new Error('peridot daemon exited')));
+    this.child.on('exit', (code, signal) => {
+      this.exited = true;
+      this.rejectAll(new Error('peridot daemon exited'));
+      for (const listener of this.exitListeners) {
+        try {
+          listener({ code, signal });
+        } catch (err) {
+          console.error('[peridot] exit listener failed:', err);
+        }
+      }
+    });
     this.child.on('error', (err) => this.rejectAll(err));
   }
 
@@ -92,11 +122,33 @@ export class PeridotDaemon {
   }
 
   /**
+   * Registers a listener for server-pushed JSON-RPC notifications. Returns a
+   * function that removes the listener.
+   */
+  public onNotification(listener: NotificationListener): () => void {
+    this.notificationListeners.add(listener);
+    return () => {
+      this.notificationListeners.delete(listener);
+    };
+  }
+
+  /** Registers a listener for daemon process exit. */
+  public onExit(listener: ExitListener): () => void {
+    this.exitListeners.add(listener);
+    return () => {
+      this.exitListeners.delete(listener);
+    };
+  }
+
+  /**
    * Asks the daemon to drain and exit. Best-effort: we send the
    * notification, close stdin, and wait briefly for the child to
    * leave gracefully before forcing a kill.
    */
   public async shutdown(): Promise<void> {
+    if (this.exited) {
+      return;
+    }
     try {
       const request: RpcRequest = { jsonrpc: '2.0', id: this.nextId++, method: 'shutdown' };
       this.child.stdin.write(JSON.stringify(request) + '\n');
@@ -120,29 +172,47 @@ export class PeridotDaemon {
     if (!line.trim()) {
       return;
     }
-    let parsed: RpcResponse;
+    let parsed: unknown;
     try {
       parsed = JSON.parse(line);
     } catch (err) {
       console.error('[peridot] daemon emitted unparseable line:', line);
       return;
     }
+    if (!isRecord(parsed)) {
+      console.warn('[peridot] daemon emitted non-object JSON:', parsed);
+      return;
+    }
+    if (!('id' in parsed)) {
+      if (typeof parsed.method === 'string') {
+        const notification = parsed as RpcNotification;
+        for (const listener of this.notificationListeners) {
+          try {
+            listener(notification);
+          } catch (err) {
+            console.error('[peridot] notification listener failed:', err);
+          }
+        }
+      } else {
+        console.warn('[peridot] unexpected daemon message:', parsed);
+      }
+      return;
+    }
     if (typeof parsed.id !== 'number') {
-      // Notification surface lands here once v0.1.0 ships. v0.0.1
-      // daemon never emits these, so log + drop.
-      console.warn('[peridot] unexpected notification:', parsed);
+      console.warn('[peridot] response with unsupported id:', parsed);
       return;
     }
-    const slot = this.pending.get(parsed.id);
+    const response = parsed as RpcResponse;
+    const slot = this.pending.get(response.id);
     if (!slot) {
-      console.warn('[peridot] response for unknown id', parsed.id);
+      console.warn('[peridot] response for unknown id', response.id);
       return;
     }
-    this.pending.delete(parsed.id);
-    if (parsed.error) {
-      slot.reject(new Error(`daemon error ${parsed.error.code}: ${parsed.error.message}`));
+    this.pending.delete(response.id);
+    if (response.error) {
+      slot.reject(new Error(`daemon error ${response.error.code}: ${response.error.message}`));
     } else {
-      slot.resolve(parsed.result);
+      slot.resolve(response.result);
     }
   }
 
@@ -152,4 +222,8 @@ export class PeridotDaemon {
     }
     this.pending.clear();
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
 }

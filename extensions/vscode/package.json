@@ -48,6 +48,16 @@
         "command": "peridot.checkVersion",
         "title": "Peridot: Check Daemon Version",
         "category": "Peridot"
+      },
+      {
+        "command": "peridot.runTask",
+        "title": "Peridot: Run Task",
+        "category": "Peridot"
+      },
+      {
+        "command": "peridot.cancelTask",
+        "title": "Peridot: Cancel Current Task",
+        "category": "Peridot"
       }
     ],
     "configuration": {

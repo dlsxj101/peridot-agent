@@ -1,15 +1,35 @@
 // Peridot Agent — VS Code extension entry point.
 //
-// v0.0.1 surface: two commands ("Peridot: Hello", "Peridot: Check
-// Daemon Version") that prove the publish + spawn + JSON-RPC pipeline
-// end-to-end. Real chat / diff / approval UI lands in v0.1.0 once this
-// foundation is verified in the Marketplace.
+// Bridge surface: sanity commands plus a first "Run Task" command that
+// drives `session.start` and streams daemon notifications into an Output
+// Channel. The WebView chat panel lands after this transport slice is stable.
 
 import * as vscode from 'vscode';
-import { PeridotDaemon } from './daemon';
+import { PeridotDaemon, RpcNotification } from './daemon';
+
+interface SessionStartResult {
+  session_id: string;
+}
+
+interface DaemonEventParams {
+  session_id?: string;
+  event?: unknown;
+}
+
+interface ActiveRun {
+  daemon: PeridotDaemon;
+  sessionId?: string;
+  disposeNotification: () => void;
+  disposeExit: () => void;
+}
+
+let activeRun: ActiveRun | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
-  // v0.0.1 sanity command — exists purely so a user can verify the
+  const output = vscode.window.createOutputChannel('Peridot');
+  context.subscriptions.push(output);
+
+  // Sanity command — exists purely so a user can verify the
   // extension installed correctly without spawning the daemon.
   context.subscriptions.push(
     vscode.commands.registerCommand('peridot.hello', async () => {
@@ -51,10 +71,205 @@ export function activate(context: vscode.ExtensionContext) {
       }
     }),
   );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('peridot.runTask', async () => {
+      if (activeRun) {
+        await vscode.window.showWarningMessage(
+          'Peridot is already running a task. Cancel or wait for it to finish first.',
+        );
+        output.show(true);
+        return;
+      }
+
+      const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      if (!folder) {
+        vscode.window.showWarningMessage('Open a workspace folder before running Peridot.');
+        return;
+      }
+
+      const task = await vscode.window.showInputBox({
+        title: 'Peridot: Run Task',
+        prompt: 'Describe the coding task for Peridot to run in this workspace.',
+        ignoreFocusOut: true,
+      });
+      if (!task || task.trim().length === 0) {
+        return;
+      }
+
+      output.clear();
+      output.show(true);
+      output.appendLine(`[peridot] starting daemon for ${folder}`);
+
+      let daemon: PeridotDaemon | undefined;
+      let disposeNotification: (() => void) | undefined;
+      let disposeExit: (() => void) | undefined;
+      try {
+        daemon = await PeridotDaemon.spawn(folder);
+        disposeNotification = daemon.onNotification((notification) => {
+          void handleDaemonNotification(notification, output);
+        });
+        disposeExit = daemon.onExit((exit) => {
+          output.appendLine(
+            `[peridot] daemon exited: code=${exit.code ?? 'null'} signal=${
+              exit.signal ?? 'null'
+            }`,
+          );
+          clearActiveRun(daemon);
+        });
+        const run: ActiveRun = { daemon, disposeNotification, disposeExit };
+        activeRun = run;
+
+        const result = (await daemon.send('session.start', {
+          task: task.trim(),
+        })) as SessionStartResult;
+        run.sessionId = result.session_id;
+        output.appendLine(`[peridot] session started: ${result.session_id}`);
+      } catch (err) {
+        disposeNotification?.();
+        disposeExit?.();
+        if (daemon) {
+          await daemon.shutdown();
+        }
+        activeRun = undefined;
+        const message = err instanceof Error ? err.message : String(err);
+        output.appendLine(`[peridot] failed: ${message}`);
+        await vscode.window.showErrorMessage(`Peridot run failed: ${message}`);
+      }
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('peridot.cancelTask', async () => {
+      if (!activeRun) {
+        await vscode.window.showInformationMessage('Peridot is not running a task.');
+        return;
+      }
+      output.show(true);
+      const run = activeRun;
+      const sessionId = run.sessionId;
+      if (!sessionId) {
+        output.appendLine('[peridot] cancelling daemon before session id was assigned');
+        await finishActiveRun(output);
+        return;
+      }
+      try {
+        const result = (await run.daemon.send('session.cancel', {
+          session_id: sessionId,
+        })) as { cancelled: boolean; session_id: string };
+        output.appendLine(
+          `[peridot] cancel requested for ${result.session_id}: ${result.cancelled}`,
+        );
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        output.appendLine(`[peridot] cancel failed: ${message}`);
+        await vscode.window.showErrorMessage(`Peridot cancel failed: ${message}`);
+      }
+    }),
+  );
 }
 
-export function deactivate() {
-  // No long-lived daemon to tear down in v0.0.1 — each command
-  // spawns + shuts down a fresh process. v0.1.0 introduces a
-  // persistent daemon and registers it on this lifecycle hook.
+export async function deactivate() {
+  if (activeRun) {
+    await finishActiveRun();
+  }
+}
+
+async function handleDaemonNotification(
+  notification: RpcNotification,
+  output: vscode.OutputChannel,
+): Promise<void> {
+  if (notification.method !== 'event') {
+    output.appendLine(
+      `[peridot] notification ${notification.method}: ${json(notification.params)}`,
+    );
+    return;
+  }
+
+  const params: DaemonEventParams = isRecord(notification.params)
+    ? (notification.params as DaemonEventParams)
+    : {};
+  const sessionId = params.session_id ?? 'unknown-session';
+  const event = params.event;
+  output.appendLine(formatEvent(sessionId, event));
+
+  if (isTerminalEvent(event)) {
+    await finishActiveRun(output);
+  }
+}
+
+async function finishActiveRun(output?: vscode.OutputChannel): Promise<void> {
+  const run = activeRun;
+  if (!run) {
+    return;
+  }
+  activeRun = undefined;
+  disposeRun(run);
+  try {
+    await run.daemon.shutdown();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    output?.appendLine(`[peridot] daemon shutdown failed: ${message}`);
+  }
+}
+
+function clearActiveRun(daemon: PeridotDaemon): void {
+  const run = activeRun;
+  if (!run || run.daemon !== daemon) {
+    return;
+  }
+  activeRun = undefined;
+  disposeRun(run);
+}
+
+function disposeRun(run: ActiveRun): void {
+  run.disposeNotification();
+  run.disposeExit();
+}
+
+function formatEvent(sessionId: string, event: unknown): string {
+  if (!isRecord(event)) {
+    return `[${sessionId}] event ${json(event)}`;
+  }
+
+  const kind = typeof event.kind === 'string' ? event.kind : 'unknown';
+  switch (kind) {
+    case 'started':
+    case 'run_started':
+      return `[${sessionId}] ${kind}: ${stringField(event, 'task')}`;
+    case 'assistant_delta':
+      return `[${sessionId}] assistant: ${stringField(event, 'delta')}`;
+    case 'tool_started':
+      return `[${sessionId}] tool started: ${stringField(event, 'name')}`;
+    case 'tool_finished':
+      return `[${sessionId}] tool finished: ${stringField(event, 'name')}`;
+    case 'finished':
+      return `[${sessionId}] finished: ${json(event)}`;
+    case 'error':
+      return `[${sessionId}] error: ${stringField(event, 'message')}`;
+    default:
+      return `[${sessionId}] ${kind}: ${json(event)}`;
+  }
+}
+
+function isTerminalEvent(event: unknown): boolean {
+  return isRecord(event) && (event.kind === 'finished' || event.kind === 'error');
+}
+
+function stringField(record: Record<string, unknown>, key: string): string {
+  const value = record[key];
+  return typeof value === 'string' ? value : json(value);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function json(value: unknown): string {
+  try {
+    const serialized = JSON.stringify(value);
+    return serialized === undefined ? String(value) : serialized;
+  } catch {
+    return String(value);
+  }
 }

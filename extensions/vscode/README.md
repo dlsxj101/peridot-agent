@@ -15,6 +15,8 @@ native tool calling, and 2-Tier context management.
 |---|---|
 | `Peridot: Hello` | Pops a "extension is alive" toast. |
 | `Peridot: Check Daemon Version` | Spawns the bundled daemon, asks `peridot.version`, displays both the daemon and extension versions side-by-side. |
+| `Peridot: Run Task` | Prompts for a task, calls `session.start`, and streams daemon events into the `Peridot` Output Channel. |
+| `Peridot: Cancel Current Task` | Sends `session.cancel` for the active daemon session. |
 
 ## Configuration
 

@@ -1,5 +1,17 @@
 # Peridot Agent — Extension Changelog
 
+## [Unreleased]
+
+### Added — first task-run bridge
+
+- `Peridot: Run Task` command prompts for a task, spawns `peridot daemon`,
+  calls `session.start`, and streams daemon `event` notifications into the
+  `Peridot` Output Channel.
+- `Peridot: Cancel Current Task` sends `session.cancel` for the active
+  daemon session.
+- The extension JSON-RPC client now dispatches server-pushed
+  notifications instead of dropping id-less daemon messages.
+
 ## [0.0.3] — 2026-05-20
 
 ### Changed — release pipeline retry build
