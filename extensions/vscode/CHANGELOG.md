@@ -1,6 +1,6 @@
 # Peridot Agent — Extension Changelog
 
-## [Unreleased]
+## [0.0.4] — 2026-05-20
 
 ### Added — first task-run bridge
 
