@@ -801,15 +801,16 @@ impl HarnessAgent {
                         name: pending_name.clone(),
                         result: result.clone(),
                     });
-                    self.context.append(ContextEntry::trusted(
-                        ContextSource::PlanReminder,
-                        format!(
-                            "[resume] Operator approved {pending_name}. Result: {}",
-                            result.summary
-                        ),
-                    ));
+                    append_pending_resume_observation(&mut self.context, &pending_name, &result)?;
                 }
                 Err(err) => {
+                    let failure_result =
+                        ToolResult::failure(format!("resume failed after approval: {err}"));
+                    append_pending_resume_observation(
+                        &mut self.context,
+                        &pending_name,
+                        &failure_result,
+                    )?;
                     // Resume failed (still blocked, or environment changed).
                     // Surface it but don't abort — the model can pick up
                     // and try a different approach on its next turn.
@@ -1379,6 +1380,47 @@ fn take_pending_resume(path: Option<&PathBuf>) -> Option<ToolCall> {
     Some(call)
 }
 
+fn append_pending_resume_observation(
+    context: &mut ContextManager,
+    tool_name: &str,
+    result: &ToolResult,
+) -> PeriResult<()> {
+    let observation = serde_json::to_string(result)
+        .map_err(|err| PeriError::Parse(format!("failed to serialize tool result: {err}")))?;
+    if let Some(tool_call_id) = latest_unanswered_tool_call_id(context.entries()) {
+        context.append(
+            ContextEntry::trusted(ContextSource::Tool, observation).with_tool_call_id(tool_call_id),
+        );
+        return Ok(());
+    }
+    context.append(ContextEntry::trusted(
+        ContextSource::PlanReminder,
+        format!(
+            "[resume] Operator approved {tool_name}. Result: {}",
+            result.summary
+        ),
+    ));
+    Ok(())
+}
+
+fn latest_unanswered_tool_call_id(entries: &[ContextEntry]) -> Option<String> {
+    let mut answered = std::collections::HashSet::new();
+    for entry in entries.iter().rev() {
+        if let Some(tool_call_id) = entry.tool_call_id.as_ref() {
+            answered.insert(tool_call_id.clone());
+            continue;
+        }
+        if entry.source == ContextSource::Assistant && !entry.tool_calls.is_empty() {
+            return entry
+                .tool_calls
+                .iter()
+                .find(|call| !answered.contains(&call.id))
+                .map(|call| call.id.clone());
+        }
+    }
+    None
+}
+
 /// Snapshot captured immediately before a mutating file tool runs.
 ///
 /// Carries the previous file content (for diff rendering and rollback)
@@ -1817,6 +1859,39 @@ mod helpers_tests {
         assert!(take_pending_resume(Some(&path)).is_none());
         // garbage file is left on disk for the operator to inspect
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn pending_resume_observation_pairs_dangling_tool_call() {
+        let mut context = ContextManager::new();
+        context.append(ContextEntry::assistant_with_tool_calls(
+            "",
+            vec![ToolInvocation {
+                id: "call_pending".to_string(),
+                name: "shell_exec".to_string(),
+                arguments: serde_json::json!({ "command": "rm -rf tmp" }),
+            }],
+        ));
+        let result = ToolResult::success("removed tmp", serde_json::Value::Null);
+
+        append_pending_resume_observation(&mut context, "shell_exec", &result).unwrap();
+
+        let last = context.entries().last().expect("tool result appended");
+        assert_eq!(last.source, ContextSource::Tool);
+        assert_eq!(last.tool_call_id.as_deref(), Some("call_pending"));
+        assert!(last.content.contains("removed tmp"));
+    }
+
+    #[test]
+    fn pending_resume_observation_uses_plan_reminder_without_dangling_call() {
+        let mut context = ContextManager::new();
+        let result = ToolResult::success("done", serde_json::Value::Null);
+
+        append_pending_resume_observation(&mut context, "shell_exec", &result).unwrap();
+
+        let last = context.entries().last().expect("resume note appended");
+        assert_eq!(last.source, ContextSource::PlanReminder);
+        assert!(last.tool_call_id.is_none());
     }
 
     #[test]
