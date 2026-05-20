@@ -141,16 +141,39 @@ textarea {
   cursor: progress;
 }
 
+.option-card-compact {
+  grid-template-columns: 1fr;
+  grid-template-areas:
+    'title'
+    'body';
+  padding: 10px 14px;
+  background: transparent;
+}
+
+.option-card-compact:hover {
+  background: var(--peri-bg-elev-soft);
+  border-color: var(--peri-border-strong);
+}
+
 .option-title {
   grid-area: title;
   font-weight: 600;
   font-size: 13px;
 }
 
+.option-card-compact .option-title {
+  font-weight: 500;
+  font-size: 12.5px;
+}
+
 .option-body {
   grid-area: body;
   color: var(--peri-fg-muted);
   font-size: 12px;
+}
+
+.option-card-compact .option-body {
+  font-size: 11.5px;
 }
 
 .option-cta {
@@ -160,6 +183,29 @@ textarea {
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--peri-accent);
+}
+
+.option-divider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0 4px;
+  color: var(--peri-fg-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.option-divider::before,
+.option-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--peri-border);
+}
+
+.option-divider-text {
+  white-space: nowrap;
 }
 
 .landing-form {

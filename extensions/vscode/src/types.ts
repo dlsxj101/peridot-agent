@@ -119,7 +119,7 @@ export interface QueuedMessage {
 }
 
 export type SidebarView = 'landing' | 'session';
-export type LandingScreen = 'home' | 'openrouter' | 'localLlm';
+export type LandingScreen = 'home' | 'openrouter' | 'localLlm' | 'claude' | 'openai';
 
 export interface SidebarState {
   view: SidebarView;
@@ -137,7 +137,7 @@ export interface SidebarState {
 }
 
 /** Identifier of the provider the user opts into from the landing UI. */
-export type ProviderChoice = 'chatgpt' | 'openrouter' | 'localLlm';
+export type ProviderChoice = 'chatgpt' | 'openrouter' | 'localLlm' | 'claude' | 'openai';
 
 /** Messages the webview sends to the extension host. */
 export type OutboundMessage =

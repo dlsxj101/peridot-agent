@@ -558,6 +558,74 @@ async function registerProvider(
           output,
         );
         break;
+      case 'claude': {
+        const apiKey = (params.apiKey ?? '').trim();
+        if (!apiKey) throw new Error('Anthropic API key is required.');
+        await runProcessWithStdin(
+          binary,
+          ['env', 'set', 'ANTHROPIC_API_KEY'],
+          folder,
+          output,
+          apiKey,
+        );
+        // Reset api.base_url so a previously-configured local-LLM URL
+        // doesn't leak into the Anthropic path. The provider catalog
+        // already falls back to api.anthropic.com when the canonical
+        // default is in place.
+        await runProcess(
+          binary,
+          ['config', 'set', 'api.base_url', 'https://api.anthropic.com'],
+          folder,
+          output,
+        );
+        await runProcess(
+          binary,
+          ['config', 'set', 'auth.primary', 'claude-api'],
+          folder,
+          output,
+        );
+        if (params.model && params.model.trim().length > 0) {
+          await runProcess(
+            binary,
+            ['config', 'set', 'models.main', params.model.trim()],
+            folder,
+            output,
+          );
+        }
+        break;
+      }
+      case 'openai': {
+        const apiKey = (params.apiKey ?? '').trim();
+        if (!apiKey) throw new Error('OpenAI API key is required.');
+        await runProcessWithStdin(
+          binary,
+          ['env', 'set', 'OPENAI_API_KEY'],
+          folder,
+          output,
+          apiKey,
+        );
+        await runProcess(
+          binary,
+          ['config', 'set', 'api.base_url', 'https://api.anthropic.com'],
+          folder,
+          output,
+        );
+        await runProcess(
+          binary,
+          ['config', 'set', 'auth.primary', 'openai-api'],
+          folder,
+          output,
+        );
+        if (params.model && params.model.trim().length > 0) {
+          await runProcess(
+            binary,
+            ['config', 'set', 'models.main', params.model.trim()],
+            folder,
+            output,
+          );
+        }
+        break;
+      }
       case 'openrouter': {
         const apiKey = (params.apiKey ?? '').trim();
         if (!apiKey) throw new Error('OpenRouter API key is required.');
@@ -567,6 +635,12 @@ async function registerProvider(
           folder,
           output,
           apiKey,
+        );
+        await runProcess(
+          binary,
+          ['config', 'set', 'api.base_url', 'https://api.anthropic.com'],
+          folder,
+          output,
         );
         await runProcess(
           binary,

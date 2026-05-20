@@ -82,8 +82,12 @@ function renderLanding(s: SidebarState): HTMLElement {
     wrap.append(renderLandingHome(s));
   } else if (screen === 'openrouter') {
     wrap.append(renderOpenRouterForm(s));
-  } else {
+  } else if (screen === 'localLlm') {
     wrap.append(renderLocalLlmForm(s));
+  } else if (screen === 'claude') {
+    wrap.append(renderClaudeForm(s));
+  } else if (screen === 'openai') {
+    wrap.append(renderOpenAiForm(s));
   }
 
   if (s.authError) {
@@ -95,6 +99,7 @@ function renderLanding(s: SidebarState): HTMLElement {
 function renderLandingHome(s: SidebarState): HTMLElement {
   const list = el('div', 'option-list');
 
+  // Primary providers — the two the team recommends for most users.
   list.append(
     optionCard({
       title: 'Sign in with ChatGPT',
@@ -109,36 +114,48 @@ function renderLandingHome(s: SidebarState): HTMLElement {
   list.append(
     optionCard({
       title: 'OpenRouter API key',
-      body: 'Bring a single key, route across 75+ models. Best for trying providers without committing.',
+      body: 'One key, 75+ models. Easiest way to try providers without committing.',
       cta: 'Set up key',
       disabled: s.authBusy,
       onClick: () => vscode.postMessage({ type: 'showLanding', screen: 'openrouter' }),
     }),
   );
 
+  // Secondary providers — kept for users who already have direct accounts.
+  const divider = el('div', 'option-divider');
+  divider.append(el('span', 'option-divider-text', 'or use another provider'));
+  list.append(divider);
+
   list.append(
-    optionCard({
+    optionCardCompact({
+      title: 'Anthropic API key',
+      body: 'Direct Claude API access.',
+      disabled: s.authBusy,
+      onClick: () => vscode.postMessage({ type: 'showLanding', screen: 'claude' }),
+    }),
+  );
+
+  list.append(
+    optionCardCompact({
+      title: 'OpenAI API key',
+      body: 'Direct GPT API access.',
+      disabled: s.authBusy,
+      onClick: () => vscode.postMessage({ type: 'showLanding', screen: 'openai' }),
+    }),
+  );
+
+  list.append(
+    optionCardCompact({
       title: 'Local LLM endpoint',
-      body: 'Ollama, LM Studio, vLLM — anything that speaks the OpenAI HTTP API.',
-      cta: 'Set up endpoint',
+      body: 'Ollama, LM Studio, vLLM — anything OpenAI-compatible.',
       disabled: s.authBusy,
       onClick: () => vscode.postMessage({ type: 'showLanding', screen: 'localLlm' }),
     }),
   );
 
   if (s.context.authConfigured) {
-    list.append(
-      el(
-        'button',
-        'link-button',
-        'Skip — keep current provider',
-      ).addEventListener('click' as never, (() =>
-        vscode.postMessage({ type: 'showSession' })) as never) as unknown as HTMLElement,
-    );
-    // The above coercion is ugly — addEventListener returns void so we
-    // can't chain. Rebuild it cleanly:
-    list.lastChild?.remove();
     const skip = el('button', 'link-button', 'Skip — keep current provider');
+    skip.type = 'button' as never;
     skip.addEventListener('click', () => vscode.postMessage({ type: 'showSession' }));
     list.append(skip);
   }
@@ -161,6 +178,24 @@ function optionCard(opts: OptionCardArgs): HTMLElement {
   const body = el('div', 'option-body', opts.body);
   const cta = el('div', 'option-cta', opts.cta);
   card.append(title, body, cta);
+  card.addEventListener('click', opts.onClick);
+  return card;
+}
+
+interface OptionCardCompactArgs {
+  title: string;
+  body: string;
+  disabled?: boolean;
+  onClick: () => void;
+}
+
+function optionCardCompact(opts: OptionCardCompactArgs): HTMLElement {
+  const card = el('button', 'option-card option-card-compact');
+  card.type = 'button';
+  card.disabled = !!opts.disabled;
+  const title = el('div', 'option-title', opts.title);
+  const body = el('div', 'option-body', opts.body);
+  card.append(title, body);
   card.addEventListener('click', opts.onClick);
   return card;
 }
@@ -202,6 +237,98 @@ function renderOpenRouterForm(s: SidebarState): HTMLElement {
     vscode.postMessage({
       type: 'registerProvider',
       provider: 'openrouter',
+      params: {
+        apiKey: keyField.input.value,
+        model: modelField.input.value,
+      },
+    });
+  });
+  return form;
+}
+
+function renderClaudeForm(s: SidebarState): HTMLElement {
+  const form = el('form', 'landing-form');
+  form.append(formBack());
+  form.append(el('h2', 'form-title', 'Anthropic API key'));
+  form.append(
+    el(
+      'p',
+      'form-help',
+      'Get a key at console.anthropic.com/settings/keys. We store it in Peridot\'s local env store; the daemon picks it up from ANTHROPIC_API_KEY.',
+    ),
+  );
+
+  const keyField = labelledInput({
+    id: 'an-key',
+    label: 'API key',
+    type: 'password',
+    placeholder: 'sk-ant-…',
+    required: true,
+  });
+  form.append(keyField.wrap);
+
+  const modelField = labelledInput({
+    id: 'an-model',
+    label: 'Default model (optional)',
+    type: 'text',
+    placeholder: 'claude-sonnet-4-6',
+  });
+  form.append(modelField.wrap);
+
+  form.append(submitButton('Save and continue', s.authBusy));
+
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    if (s.authBusy) return;
+    vscode.postMessage({
+      type: 'registerProvider',
+      provider: 'claude',
+      params: {
+        apiKey: keyField.input.value,
+        model: modelField.input.value,
+      },
+    });
+  });
+  return form;
+}
+
+function renderOpenAiForm(s: SidebarState): HTMLElement {
+  const form = el('form', 'landing-form');
+  form.append(formBack());
+  form.append(el('h2', 'form-title', 'OpenAI API key'));
+  form.append(
+    el(
+      'p',
+      'form-help',
+      'Get a key at platform.openai.com/api-keys. Stored locally as OPENAI_API_KEY.',
+    ),
+  );
+
+  const keyField = labelledInput({
+    id: 'oa-key',
+    label: 'API key',
+    type: 'password',
+    placeholder: 'sk-…',
+    required: true,
+  });
+  form.append(keyField.wrap);
+
+  const modelField = labelledInput({
+    id: 'oa-model',
+    label: 'Default model (optional)',
+    type: 'text',
+    placeholder: 'gpt-5',
+  });
+  form.append(modelField.wrap);
+
+  form.append(submitButton('Save and continue', s.authBusy));
+
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    if (s.authBusy) return;
+    vscode.postMessage({
+      type: 'registerProvider',
+      provider: 'openai',
       params: {
         apiKey: keyField.input.value,
         model: modelField.input.value,
