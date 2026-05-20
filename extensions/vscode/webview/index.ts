@@ -10,7 +10,7 @@ import type {
   TranscriptItem,
 } from '../src/types';
 import { diffStats, renderUnifiedDiff } from './diff';
-import { el, formatTokens, formatUsd, isRecord, json } from './util';
+import { el, formatTokens, formatUsd, highlightLite, isRecord, json } from './util';
 
 declare function acquireVsCodeApi(): {
   postMessage(msg: OutboundMessage): void;
@@ -26,6 +26,12 @@ const mascotUri = root.dataset.mascot ?? '';
 // textarea while typing) survive a re-render.
 let state: SidebarState | undefined;
 let composerDraft = '';
+// Pending composer selections — captured pre-render so a state update
+// triggered by a streaming event doesn't reset the user's mid-edit
+// mode / permission / model picks back to whatever was last submitted.
+let composerModeOverride: string | undefined;
+let composerPermissionOverride: string | undefined;
+let composerModelOverride: string | undefined;
 
 window.addEventListener('message', (event: MessageEvent<InboundMessage>) => {
   if (event.data?.type === 'state') {
@@ -35,18 +41,27 @@ window.addEventListener('message', (event: MessageEvent<InboundMessage>) => {
 });
 
 function render(s: SidebarState): void {
-  // Preserve composer draft across renders so streaming events don't
-  // clobber what the user is typing.
+  // Preserve composer draft / selection across renders so streaming
+  // events don't clobber what the user is typing or picking.
   const textarea = document.getElementById('composer-input') as HTMLTextAreaElement | null;
   if (textarea) composerDraft = textarea.value;
+  const modeEl = document.getElementById('composer-mode') as HTMLSelectElement | null;
+  if (modeEl) composerModeOverride = modeEl.value;
+  const permEl = document.getElementById('composer-permission') as HTMLSelectElement | null;
+  if (permEl) composerPermissionOverride = permEl.value;
+  const modelEl = document.getElementById('composer-model') as HTMLInputElement | null;
+  if (modelEl) composerModelOverride = modelEl.value;
+  // Remember which element had focus so we can re-focus after the
+  // destructive replaceChildren below.
+  const focusId = (document.activeElement && (document.activeElement as HTMLElement).id) || '';
 
   root.replaceChildren(s.view === 'landing' ? renderLanding(s) : renderSession(s));
 
-  // Restore focus + draft.
   const newTextarea = document.getElementById('composer-input') as HTMLTextAreaElement | null;
-  if (newTextarea) {
-    newTextarea.value = composerDraft;
-    if (document.activeElement === root) newTextarea.focus();
+  if (newTextarea) newTextarea.value = composerDraft;
+  if (focusId) {
+    const target = document.getElementById(focusId) as HTMLElement | null;
+    target?.focus({ preventScroll: true });
   }
 }
 
@@ -155,7 +170,7 @@ function renderLandingHome(s: SidebarState): HTMLElement {
 
   if (s.context.authConfigured) {
     const skip = el('button', 'link-button', 'Skip — keep current provider');
-    skip.type = 'button' as never;
+    skip.type = 'button';
     skip.addEventListener('click', () => vscode.postMessage({ type: 'showSession' }));
     list.append(skip);
   }
@@ -171,7 +186,7 @@ interface OptionCardArgs {
 }
 
 function optionCard(opts: OptionCardArgs): HTMLElement {
-  const card = el('button', 'option-card');
+  const card = el('button', `option-card${opts.disabled ? ' busy' : ''}`);
   card.type = 'button';
   card.disabled = !!opts.disabled;
   const title = el('div', 'option-title', opts.title);
@@ -190,7 +205,7 @@ interface OptionCardCompactArgs {
 }
 
 function optionCardCompact(opts: OptionCardCompactArgs): HTMLElement {
-  const card = el('button', 'option-card option-card-compact');
+  const card = el('button', `option-card option-card-compact${opts.disabled ? ' busy' : ''}`);
   card.type = 'button';
   card.disabled = !!opts.disabled;
   const title = el('div', 'option-title', opts.title);
@@ -395,7 +410,7 @@ function renderLocalLlmForm(s: SidebarState): HTMLElement {
 
 function formBack(): HTMLElement {
   const back = el('button', 'link-button back-link', '← Back');
-  back.type = 'button' as never;
+  back.type = 'button';
   back.addEventListener('click', () =>
     vscode.postMessage({ type: 'showLanding', screen: 'home' }),
   );
@@ -432,9 +447,17 @@ function labelledInput(args: LabelledInputArgs): LabelledInput {
 }
 
 function submitButton(label: string, busy: boolean): HTMLElement {
-  const button = el('button', 'primary-button', busy ? 'Working…' : label);
-  button.type = 'submit' as never;
-  if (busy) (button as HTMLButtonElement).disabled = true;
+  const button = el('button', `primary-button${busy ? ' busy' : ''}`);
+  button.type = 'submit';
+  if (busy) {
+    (button as HTMLButtonElement).disabled = true;
+    const spinner = el('span', 'spinner');
+    spinner.setAttribute('aria-hidden', 'true');
+    button.append(spinner);
+    button.append(document.createTextNode('Working…'));
+  } else {
+    button.textContent = label;
+  }
   return button;
 }
 
@@ -483,7 +506,7 @@ function renderHeader(s: SidebarState): HTMLElement {
 
 function iconButton(kind: string, label: string, onClick: () => void): HTMLElement {
   const btn = el('button', `icon-button icon-${kind}`);
-  btn.type = 'button' as never;
+  btn.type = 'button';
   btn.title = label;
   btn.setAttribute('aria-label', label);
   btn.innerHTML = iconSvg(kind);
@@ -668,6 +691,15 @@ function renderTranscript(s: SidebarState): HTMLElement {
 
 function renderEmptyState(context: SidebarContext): HTMLElement {
   const wrap = el('div', 'empty-state');
+  if (mascotUri) {
+    const img = document.createElement('img');
+    img.className = 'empty-mascot';
+    img.src = mascotUri;
+    img.alt = '';
+    img.width = 56;
+    img.height = 56;
+    wrap.append(img);
+  }
   if (!context.workspace || context.workspace === 'No workspace') {
     wrap.append(el('div', 'empty-heading', 'No workspace open'));
     wrap.append(
@@ -679,14 +711,29 @@ function renderEmptyState(context: SidebarContext): HTMLElement {
     );
     return wrap;
   }
-  wrap.append(el('div', 'empty-heading', 'Ready'));
+  wrap.append(el('div', 'empty-heading', 'Peridot is ready'));
   wrap.append(
     el(
       'div',
       'empty-body',
-      'Type a task below. Enter sends, Shift+Enter inserts a newline.',
+      'Describe what you want done. Peridot reads your repo, runs tools, asks before touching anything risky.',
     ),
   );
+
+  const tips = el('div', 'empty-tips');
+  const tip1 = el('span', 'empty-tip');
+  tip1.append(el('span', 'kbd', 'Enter'));
+  tip1.append(document.createTextNode(' to send'));
+  tips.append(tip1);
+
+  const tip2 = el('span', 'empty-tip');
+  tip2.append(el('span', 'kbd', 'Shift'));
+  tip2.append(document.createTextNode(' + '));
+  tip2.append(el('span', 'kbd', 'Enter'));
+  tip2.append(document.createTextNode(' for a newline'));
+  tips.append(tip2);
+
+  wrap.append(tips);
   return wrap;
 }
 
@@ -745,11 +792,11 @@ function renderToolBlock(item: TranscriptItem): HTMLElement {
   }
   if (item.toolParameters !== undefined && !item.toolResultSummary) {
     const pre = el('pre', 'tool-code');
-    pre.textContent = json(item.toolParameters);
+    pre.innerHTML = highlightLite(json(item.toolParameters));
     wrap.append(pre);
   } else if (item.toolResultSummary) {
     const pre = el('pre', 'tool-code');
-    pre.textContent = item.toolResultSummary;
+    pre.innerHTML = highlightLite(item.toolResultSummary);
     wrap.append(pre);
   }
   return wrap;
@@ -788,7 +835,7 @@ function renderApprovalBubble(item: TranscriptItem): HTMLElement {
     wrap.append(renderUnifiedDiff(item.before ?? '', item.after ?? '', item.path));
     if (item.path) {
       const openLink = el('button', 'link-button file-link', `Open ${item.path}`);
-      openLink.type = 'button' as never;
+      openLink.type = 'button';
       openLink.addEventListener('click', () =>
         vscode.postMessage({ type: 'openFile', path: item.path as string }),
       );
@@ -796,7 +843,7 @@ function renderApprovalBubble(item: TranscriptItem): HTMLElement {
     }
   } else if (item.parameters !== undefined) {
     const pre = el('pre', 'tool-code');
-    pre.textContent = json(item.parameters);
+    pre.innerHTML = highlightLite(json(item.parameters));
     wrap.append(pre);
   }
 
@@ -817,7 +864,7 @@ function renderApprovalBubble(item: TranscriptItem): HTMLElement {
 
   const actions = el('div', 'msg-actions');
   const approve = el('button', 'primary-button compact-button', 'Approve');
-  approve.type = 'button' as never;
+  approve.type = 'button';
   approve.addEventListener('click', () => {
     vscode.postMessage({
       type: 'approvalRespond',
@@ -829,7 +876,7 @@ function renderApprovalBubble(item: TranscriptItem): HTMLElement {
     });
   });
   const deny = el('button', 'secondary-button compact-button', 'Deny');
-  deny.type = 'button' as never;
+  deny.type = 'button';
   deny.addEventListener('click', () => {
     vscode.postMessage({
       type: 'approvalRespond',
@@ -899,10 +946,10 @@ function renderAskUserForm(item: TranscriptItem): HTMLElement {
 
   const actions = el('div', 'msg-actions');
   const send = el('button', 'primary-button compact-button', 'Send');
-  send.type = 'button' as never;
+  send.type = 'button';
   send.addEventListener('click', sendAnswer);
   const cancel = el('button', 'secondary-button compact-button', 'Cancel');
-  cancel.type = 'button' as never;
+  cancel.type = 'button';
   cancel.addEventListener('click', () => {
     if (!item.requestId) return;
     vscode.postMessage({
@@ -953,7 +1000,7 @@ function renderDiffBlock(item: TranscriptItem): HTMLElement {
   const header = el('div', 'diff-header');
   if (item.path) {
     const openLink = el('button', 'link-button file-link', item.path);
-    openLink.type = 'button' as never;
+    openLink.type = 'button';
     openLink.addEventListener('click', () =>
       vscode.postMessage({ type: 'openFile', path: item.path as string }),
     );
@@ -989,7 +1036,7 @@ function renderQueue(s: SidebarState): HTMLElement {
     ),
   );
   const clear = el('button', 'link-button', 'Clear');
-  clear.type = 'button' as never;
+  clear.type = 'button';
   clear.addEventListener('click', () => vscode.postMessage({ type: 'queueClear' }));
   header.append(clear);
   wrap.append(header);
@@ -1004,6 +1051,7 @@ function renderQueueItem(item: QueuedMessage): HTMLElement {
   const text = el('div', 'queue-text', item.text);
   text.contentEditable = 'true';
   text.spellcheck = false;
+  text.dataset.placeholder = 'Empty prompt — remove or fill it in';
   // Save on blur so users can refine queued prompts without a Save button.
   text.addEventListener('blur', () => {
     const next = text.textContent ?? '';
@@ -1011,9 +1059,22 @@ function renderQueueItem(item: QueuedMessage): HTMLElement {
       vscode.postMessage({ type: 'queueEdit', id: item.id, text: next });
     }
   });
+  // Strip pasted formatting — only the text content is meaningful here.
+  text.addEventListener('paste', (event) => {
+    event.preventDefault();
+    const plain = event.clipboardData?.getData('text/plain') ?? '';
+    document.execCommand('insertText', false, plain);
+  });
   text.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter' && !event.shiftKey) {
+    // Enter commits the edit (blur fires save). IME composition bypasses.
+    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
       event.preventDefault();
+      (event.target as HTMLElement).blur();
+    }
+    if (event.key === 'Escape') {
+      // Cancel — restore original and blur without saving.
+      event.preventDefault();
+      text.textContent = item.text;
       (event.target as HTMLElement).blur();
     }
   });
@@ -1021,7 +1082,7 @@ function renderQueueItem(item: QueuedMessage): HTMLElement {
 
   const actions = el('div', 'queue-actions');
   const remove = el('button', 'icon-button mini', '');
-  remove.type = 'button' as never;
+  remove.type = 'button';
   remove.title = 'Remove';
   remove.innerHTML = iconSvg('remove');
   remove.addEventListener('click', () =>
@@ -1067,9 +1128,16 @@ function renderComposer(s: SidebarState): HTMLElement {
   inputRow.append(textarea);
 
   const button = el('button', `composer-button ${s.running ? 'stop' : 'send'}`);
-  button.type = 'button' as never;
+  button.type = 'button';
   button.title = s.running ? 'Stop current task' : 'Send';
   button.innerHTML = iconSvg(s.running ? 'stop' : 'send');
+  // Animate the icon swap when the running state flips. The class is
+  // applied once, then auto-cleared after the keyframes finish.
+  const innerSvg = button.querySelector('svg');
+  if (innerSvg) {
+    innerSvg.classList.add('icon-swap');
+    setTimeout(() => innerSvg.classList.remove('icon-swap'), 240);
+  }
   button.addEventListener('click', (event) => {
     event.preventDefault();
     if (s.running) {
@@ -1105,6 +1173,7 @@ function renderComposer(s: SidebarState): HTMLElement {
 }
 
 function modeSelect(opts: RunOptions): HTMLSelectElement {
+  const current = composerModeOverride ?? opts.mode;
   const select = document.createElement('select');
   select.className = 'composer-select';
   select.id = 'composer-mode';
@@ -1117,13 +1186,14 @@ function modeSelect(opts: RunOptions): HTMLSelectElement {
     const option = document.createElement('option');
     option.value = value;
     option.textContent = label;
-    if (opts.mode === value) option.selected = true;
+    if (current === value) option.selected = true;
     select.append(option);
   }
   return select;
 }
 
 function permissionSelect(opts: RunOptions): HTMLSelectElement {
+  const current = composerPermissionOverride ?? opts.permission;
   const select = document.createElement('select');
   select.className = 'composer-select';
   select.id = 'composer-permission';
@@ -1136,7 +1206,7 @@ function permissionSelect(opts: RunOptions): HTMLSelectElement {
     const option = document.createElement('option');
     option.value = value;
     option.textContent = label;
-    if (opts.permission === value) option.selected = true;
+    if (current === value) option.selected = true;
     select.append(option);
   }
   return select;
@@ -1147,7 +1217,7 @@ function modelInput(opts: RunOptions): HTMLInputElement {
   input.className = 'composer-model';
   input.id = 'composer-model';
   input.placeholder = 'model override';
-  input.value = opts.model ?? '';
+  input.value = composerModelOverride ?? opts.model ?? '';
   input.spellcheck = false;
   input.autocomplete = 'off';
   return input;

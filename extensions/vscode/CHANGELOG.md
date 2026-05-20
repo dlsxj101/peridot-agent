@@ -2,6 +2,31 @@
 
 ## [0.5.2] — 2026-05-20
 
+### Added — UI polish pass
+
+- Composer mode / permission / scope selects are normalized across
+  platforms with `appearance: none` and a CSS-drawn chevron so the
+  native OS chrome stops bleeding into the design.
+- `<details>` plan panel uses a custom triangle that rotates 90° when
+  open, replacing the missing native arrow.
+- Tool / approval / diff code blocks use a lightweight JSON-ish
+  tokenizer for subtle key / string / number / boolean coloring.
+- Empty state shows the mascot plus an inline `kbd`-styled keyboard
+  hint (Enter sends, Shift+Enter newline) so new users see the
+  composer convention at a glance.
+- Auth flow has a spinner indicator — primary-button gains a busy
+  state, and onboarding option cards render a top-right spinner
+  while a provider is being configured.
+- Send → Stop button now animates the icon swap with a scale-pop
+  keyframe and the button presses with a subtle scale-down.
+- Queue items display a placeholder when emptied, strip paste
+  formatting via `document.execCommand('insertText', …)`, treat
+  Escape as cancel-and-restore, and bypass the Enter-saves shortcut
+  during IME composition.
+- Composer textarea draft, mode / permission / model select picks,
+  and focus position now survive a re-render so streaming events
+  never reset the operator's pending choice or steal focus.
+
 ### Added — onboarding landing + message queue + tool cards
 
 - New onboarding landing screen with three entry points: **Sign in with
