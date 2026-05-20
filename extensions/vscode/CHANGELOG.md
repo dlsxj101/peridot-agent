@@ -1,5 +1,19 @@
 # Peridot Agent — Extension Changelog
 
+## [0.5.1] — 2026-05-20
+
+### Fixed — release pipeline retry build
+
+No runtime behaviour changes from v0.5.0. This release exists to recover
+from a CI bug in the `vsce/v0.5.0` workflow where `chmod +x` resolved
+its target relative to the publish job's `working-directory` and
+double-prefixed the path (`extensions/vscode/extensions/vscode/...`),
+aborting every non-Windows publish before `npm ci`. The Windows runs
+skipped the step entirely (the executable-bit guard was false) and
+published v0.5.0 to win32-x64 / win32-arm64 alone. v0.5.1 publishes the
+same .vsix payload to all six platforms in one pass; v0.5.0 stays on
+the Marketplace as a Windows-only artefact.
+
 ## [0.5.0] — 2026-05-20
 
 ### Added — platform-specific binary bundling
