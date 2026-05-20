@@ -2,7 +2,7 @@
   "name": "peridot-vscode",
   "displayName": "Peridot Agent",
   "description": "Rust CLI/TUI autonomous coding agent with multi-LLM committee mode, native tool calling, and 2-Tier context management. VS Code panel layered on top of the `peridot` daemon.",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "publisher": "dlsxj101",
   "license": "MIT",
   "extensionKind": [
@@ -79,6 +79,16 @@
       {
         "command": "peridot.cancelTask",
         "title": "Peridot: Cancel Current Task",
+        "category": "Peridot"
+      },
+      {
+        "command": "peridot.loginOpenAi",
+        "title": "Peridot: Login with ChatGPT",
+        "category": "Peridot"
+      },
+      {
+        "command": "peridot.refreshStatus",
+        "title": "Peridot: Refresh Status",
         "category": "Peridot"
       }
     ],

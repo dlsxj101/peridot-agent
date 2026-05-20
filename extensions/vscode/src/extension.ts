@@ -1,11 +1,12 @@
 // Peridot Agent — VS Code extension entry point.
 //
-// Bridge surface: sanity commands plus a first "Run Task" command that
-// drives `session.start` and streams daemon notifications into an Output
-// Channel. The WebView chat panel lands after this transport slice is stable.
+// Bridge surface: sidebar chat, daemon status checks, login handoff, and
+// task execution over JSON-RPC.
 
+import * as childProcess from 'child_process';
 import * as vscode from 'vscode';
 import { PeridotDaemon, RpcNotification } from './daemon';
+import { resolvePeridotBinary } from './peridotBin';
 import { PeridotSidebarProvider } from './sidebar';
 
 interface SessionStartResult {
@@ -15,6 +16,22 @@ interface SessionStartResult {
 interface DaemonEventParams {
   session_id?: string;
   event?: unknown;
+}
+
+interface DaemonStatusResult {
+  version: string;
+  project_root: string;
+  provider: string;
+  model: string;
+  reasoning_effort?: string;
+  mode?: string;
+  permission?: string;
+  auth?: {
+    configured?: boolean;
+    account_configured?: boolean;
+    method?: string;
+    source?: string;
+  };
 }
 
 interface ActiveRun {
@@ -33,10 +50,18 @@ export function activate(context: vscode.ExtensionContext) {
   sidebar = new PeridotSidebarProvider(context.extensionUri, {
     runTask: async (task: string): Promise<void> => runTask(task, output, sidebar),
     cancelTask: async (): Promise<void> => cancelTask(output),
+    loginOpenAi: async (): Promise<void> => loginOpenAi(output, sidebar),
+    refreshStatus: async (): Promise<void> => refreshStatus(output, sidebar),
   });
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(PeridotSidebarProvider.viewType, sidebar),
   );
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeWorkspaceFolders(() => {
+      void refreshStatus(output, sidebar);
+    }),
+  );
+  void refreshStatus(output, sidebar);
 
   // Sanity command — exists purely so a user can verify the
   // extension installed correctly without spawning the daemon.
@@ -68,6 +93,7 @@ export function activate(context: vscode.ExtensionContext) {
           const extensionVersion =
             vscode.extensions.getExtension('dlsxj101.peridot-vscode')?.packageJSON?.version ??
             'unknown';
+          await refreshStatus(output, sidebar);
           await vscode.window.showInformationMessage(
             `Peridot daemon ${result.version} (extension ${extensionVersion}).`,
           );
@@ -90,6 +116,18 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand('peridot.cancelTask', async () => {
       await cancelTask(output);
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('peridot.loginOpenAi', async () => {
+      await loginOpenAi(output, sidebar);
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('peridot.refreshStatus', async () => {
+      await refreshStatus(output, sidebar);
     }),
   );
 }
@@ -116,6 +154,7 @@ async function runTask(
   const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   if (!folder) {
     vscode.window.showWarningMessage('Open a workspace folder before running Peridot.');
+    sidebar.setWorkspaceProblem('Open a workspace folder before running Peridot.');
     return;
   }
 
@@ -165,6 +204,7 @@ async function runTask(
     run.sessionId = result.session_id;
     output.appendLine(`[peridot] session started: ${result.session_id}`);
     sidebar.setSession(result.session_id);
+    void refreshStatus(output, sidebar);
   } catch (err) {
     disposeNotification?.();
     disposeExit?.();
@@ -177,6 +217,121 @@ async function runTask(
     sidebar.appendError(message);
     await vscode.window.showErrorMessage(`Peridot run failed: ${message}`);
   }
+}
+
+async function refreshStatus(
+  output: vscode.OutputChannel,
+  sidebar: PeridotSidebarProvider,
+): Promise<void> {
+  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!folder) {
+    sidebar.setContext({
+      status: 'No workspace',
+      problem: 'Open a workspace folder to run Peridot.',
+      running: Boolean(activeRun),
+    });
+    return;
+  }
+
+  let daemon: PeridotDaemon | undefined;
+  try {
+    daemon = await PeridotDaemon.spawn(folder);
+    const result = (await daemon.send('peridot.status')) as DaemonStatusResult;
+    const extensionVersion =
+      vscode.extensions.getExtension('dlsxj101.peridot-vscode')?.packageJSON?.version ??
+      'unknown';
+    sidebar.setContext({
+      workspace: result.project_root,
+      provider: result.provider,
+      model: result.model,
+      mode: result.mode,
+      permission: result.permission,
+      daemonVersion: result.version,
+      extensionVersion,
+      authConfigured: Boolean(result.auth?.configured),
+      authMethod: result.auth?.method,
+      authSource: result.auth?.source,
+      status: activeRun ? 'Running' : 'Idle',
+      running: Boolean(activeRun),
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    output.appendLine(`[peridot] status failed: ${message}`);
+    sidebar.setContext({
+      workspace: folder,
+      status: activeRun ? 'Running' : 'Needs attention',
+      problem: message,
+      running: Boolean(activeRun),
+    });
+  } finally {
+    if (daemon) {
+      await daemon.shutdown();
+    }
+  }
+}
+
+async function loginOpenAi(
+  output: vscode.OutputChannel,
+  sidebar: PeridotSidebarProvider,
+): Promise<void> {
+  if (activeRun) {
+    await vscode.window.showWarningMessage(
+      'Cancel or wait for the current Peridot task before logging in.',
+    );
+    return;
+  }
+
+  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  output.show(true);
+  sidebar.appendSystem('Starting ChatGPT login');
+  sidebar.setContext({ status: 'Logging in', running: false });
+
+  try {
+    const binary = await resolvePeridotBinary();
+    output.appendLine(`[peridot] login openai-oauth via ${binary}`);
+    await runProcess(
+      binary,
+      ['login', 'openai-oauth'],
+      folder,
+      output,
+    );
+    sidebar.appendSystem('ChatGPT login completed');
+    await refreshStatus(output, sidebar);
+    await vscode.window.showInformationMessage('Peridot ChatGPT login completed.');
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    output.appendLine(`[peridot] login failed: ${message}`);
+    sidebar.appendError(`ChatGPT login failed: ${message}`);
+    await vscode.window.showErrorMessage(`Peridot login failed: ${message}`);
+  }
+}
+
+function runProcess(
+  command: string,
+  args: string[],
+  cwd: string | undefined,
+  output: vscode.OutputChannel,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = childProcess.spawn(command, args, {
+      cwd,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    child.stdout.on('data', (chunk: Buffer) => {
+      output.append(chunk.toString());
+    });
+    child.stderr.on('data', (chunk: Buffer) => {
+      output.append(chunk.toString());
+    });
+    child.on('error', reject);
+    child.on('exit', (code, signal) => {
+      if (code === 0) {
+        resolve();
+      } else {
+        reject(new Error(`process exited with code=${code ?? 'null'} signal=${signal ?? 'null'}`));
+      }
+    });
+  });
 }
 
 async function cancelTask(output: vscode.OutputChannel): Promise<void> {
@@ -229,6 +384,7 @@ async function handleDaemonNotification(
 
   if (isTerminalEvent(event)) {
     await finishActiveRun(output);
+    void refreshStatus(output, sidebar);
   }
 }
 

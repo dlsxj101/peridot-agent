@@ -18,6 +18,9 @@ use serde_json::Value;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::{Mutex, mpsc, oneshot};
 
+use crate::commands::{
+    AuthProvider, read_managed_env_var, read_stored_api_key, read_stored_openai_oauth_credentials,
+};
 use crate::run_loop::{AgentTaskOptions, MessageBusHookup, run_task_with_events};
 
 /// Shared daemon state cloned into per-session tasks.
@@ -204,6 +207,9 @@ async fn dispatch_request(state: &DaemonState, request: RpcRequest) -> Result<bo
                 serde_json::json!({ "version": env!("CARGO_PKG_VERSION") }),
             )?;
         }
+        "peridot.status" => {
+            handle_status(state, request.id.unwrap_or(Value::Null)).await?;
+        }
         "peridot.echo" => match request.params {
             Some(Value::Object(map)) => {
                 let echo = map.get("text").cloned().unwrap_or(Value::Null);
@@ -244,6 +250,79 @@ async fn dispatch_request(state: &DaemonState, request: RpcRequest) -> Result<bo
         }
     }
     Ok(false)
+}
+
+async fn handle_status(state: &DaemonState, id: Value) -> Result<()> {
+    let config = state.run_config.as_ref();
+    let auth = auth_status(config).await;
+    emit_response(
+        state,
+        id,
+        serde_json::json!({
+            "version": env!("CARGO_PKG_VERSION"),
+            "project_root": state.project_root.as_ref(),
+            "provider": config.auth.primary,
+            "model": config.models.main,
+            "reasoning_effort": format!("{:?}", config.models.reasoning_effort),
+            "mode": format!("{:?}", config.defaults.mode),
+            "permission": format!("{:?}", state.run_template.permission),
+            "auth": auth,
+        }),
+    )
+}
+
+async fn auth_status(config: &PeridotConfig) -> Value {
+    let provider = config.auth.primary.as_str();
+    match provider {
+        "claude-api" => api_key_status("ANTHROPIC_API_KEY", AuthProvider::ClaudeApi),
+        "openai-api" => api_key_status("OPENAI_API_KEY", AuthProvider::OpenaiApi),
+        "openrouter-api" => {
+            let configured = std::env::var("OPENROUTER_API_KEY").ok().is_some()
+                || read_managed_env_var("OPENROUTER_API_KEY")
+                    .ok()
+                    .flatten()
+                    .is_some();
+            serde_json::json!({
+                "provider": provider,
+                "configured": configured,
+                "method": "api_key",
+                "source": if configured { "env_or_peridot_env" } else { "missing" },
+            })
+        }
+        "openai-oauth" => {
+            let env_configured = std::env::var("OPENAI_ACCESS_TOKEN").ok().is_some();
+            let stored = read_stored_openai_oauth_credentials().await.ok().flatten();
+            let account_configured = std::env::var("OPENAI_CODEX_ACCOUNT_ID").ok().is_some()
+                || stored
+                    .as_ref()
+                    .and_then(|credentials| credentials.account_id.as_deref())
+                    .is_some();
+            serde_json::json!({
+                "provider": provider,
+                "configured": env_configured || stored.is_some(),
+                "account_configured": account_configured,
+                "method": "oauth",
+                "source": if env_configured { "env" } else if stored.is_some() { "stored" } else { "missing" },
+            })
+        }
+        _ => serde_json::json!({
+            "provider": provider,
+            "configured": false,
+            "method": "unknown",
+            "source": "unknown_provider",
+        }),
+    }
+}
+
+fn api_key_status(env_var: &str, provider: AuthProvider) -> Value {
+    let env_configured = std::env::var(env_var).ok().is_some();
+    let stored_configured = read_stored_api_key(provider).ok().flatten().is_some();
+    serde_json::json!({
+        "provider": provider.id(),
+        "configured": env_configured || stored_configured,
+        "method": "api_key",
+        "source": if env_configured { "env" } else if stored_configured { "stored" } else { "missing" },
+    })
 }
 
 async fn handle_session_start(state: &DaemonState, id: Value, params: Option<Value>) -> Result<()> {
@@ -564,6 +643,20 @@ mod tests {
         assert_eq!(out[0]["jsonrpc"], "2.0");
         assert_eq!(out[0]["id"], 1);
         assert_eq!(out[0]["result"]["version"], env!("CARGO_PKG_VERSION"));
+    }
+
+    #[tokio::test]
+    async fn status_method_returns_project_context() {
+        let out =
+            dispatch_and_collect(r#"{"jsonrpc":"2.0","id":9,"method":"peridot.status"}"#).await;
+        assert_eq!(out[0]["jsonrpc"], "2.0");
+        assert_eq!(out[0]["id"], 9);
+        assert_eq!(out[0]["result"]["version"], env!("CARGO_PKG_VERSION"));
+        assert_eq!(out[0]["result"]["provider"], "claude-api");
+        assert_eq!(out[0]["result"]["model"], "claude-sonnet-4-6");
+        assert!(out[0]["result"]["project_root"].as_str().is_some());
+        assert_eq!(out[0]["result"]["auth"]["provider"], "claude-api");
+        assert_eq!(out[0]["result"]["auth"]["method"], "api_key");
     }
 
     #[tokio::test]

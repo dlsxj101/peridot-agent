@@ -4,10 +4,12 @@ VS Code panel for [Peridot Agent](https://github.com/dlsxj101/peridot-agent) —
 a Rust CLI/TUI autonomous coding agent with multi-LLM committee mode,
 native tool calling, and 2-Tier context management.
 
-> **Status**: v0.1.x adds the first sidebar chat panel. The extension
+> **Status**: v0.2.0 adds the first usable sidebar status layer. The extension
 > installs, registers its commands reliably in VS Code and Cursor, spawns
 > `peridot daemon` over JSON-RPC, round-trips a `version` request, and can
-> run a task while streaming daemon events into the Peridot sidebar.
+> run a task while streaming daemon events into the Peridot sidebar. The
+> sidebar now shows the active workspace, provider, model, auth state, and
+> login/refresh actions.
 
 ## Commands
 
@@ -17,12 +19,14 @@ native tool calling, and 2-Tier context management.
 | `Peridot: Check Daemon Version` | Spawns the bundled daemon, asks `peridot.version`, displays both the daemon and extension versions side-by-side. |
 | `Peridot: Run Task` | Prompts for a task, calls `session.start`, and streams daemon events into the Peridot sidebar. |
 | `Peridot: Cancel Current Task` | Sends `session.cancel` for the active daemon session. |
+| `Peridot: Login with ChatGPT` | Runs `peridot login openai-oauth` from the active workspace. |
+| `Peridot: Refresh Status` | Refreshes daemon workspace/provider/model/auth status. |
 
 ## Sidebar
 
 Open the Peridot Activity Bar item, type a task, and submit it to start a
-daemon-backed agent session. Events from the daemon appear in the transcript
-as the run progresses.
+daemon-backed agent session. The sidebar shows the active workspace/provider
+context and renders common daemon events as compact transcript entries.
 
 ## Configuration
 
@@ -32,8 +36,8 @@ as the run progresses.
 
 ## Roadmap
 
-- **v0.2.0** — FileDiff event → Monaco diff editor; ApprovalRequested → inline approve/deny.
-- **v0.3.0** — ChatGPT OAuth login, skill picker, slash commands, branch picker, multi-session tab bar.
+- **v0.3.0** — FileDiff event → Monaco diff editor; ApprovalRequested → inline approve/deny.
+- **v0.4.0** — Skill picker, slash commands, branch picker, multi-session tab bar.
 
 ## Source
 

@@ -1,5 +1,17 @@
 # Peridot Agent — Extension Changelog
 
+## [0.2.0] — 2026-05-20
+
+### Added — usable sidebar status
+
+- Added `peridot.status` daemon RPC for editor clients to read workspace,
+  provider, model, permission, daemon version, and auth readiness.
+- Added sidebar workspace/provider/model/auth badges.
+- Added ChatGPT login and status refresh actions to the sidebar and Command
+  Palette.
+- Reduced raw JSON event noise in the transcript by rendering common daemon
+  events as compact human-readable status lines.
+
 ## [0.1.1] — 2026-05-20
 
 ### Fixed — sidebar webview registration
