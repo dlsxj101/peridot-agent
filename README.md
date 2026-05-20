@@ -4,7 +4,15 @@ Peridot Agent is a Rust CLI/TUI autonomous coding agent with multi-session orche
 
 ## Status
 
-Current version: **0.8.0**
+Current version: **0.8.1**
+
+### What's new in v0.8.1
+
+- **Approval resume now preserves native tool-call history.** When an editor
+  approval resumes a saved pending tool call, Peridot now records the resumed
+  tool result as the matching native tool output. This fixes OpenAI Codex
+  `400 Bad Request: No tool output found for function call ...` recovery loops
+  after approving a gated command.
 
 ### What's new in v0.8.0
 
