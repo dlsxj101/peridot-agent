@@ -140,6 +140,9 @@ jobs:
           node-version: "20"
 
       - name: Download peridot binary
+        # `path` is GITHUB_WORKSPACE-relative; downstream `run:` steps
+        # execute from `extensions/vscode/` via `defaults.run.working-directory`,
+        # so they reference the binary as `resources/peridot[.exe]`.
         uses: actions/download-artifact@v4
         with:
           name: peridot-${{ matrix.vsce-target }}
@@ -147,7 +150,7 @@ jobs:
 
       - name: Mark binary executable
         if: matrix.exe == ''
-        run: chmod +x extensions/vscode/resources/peridot
+        run: chmod +x resources/peridot
 
       - name: Install
         run: npm ci || npm install
