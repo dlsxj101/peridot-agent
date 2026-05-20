@@ -4,7 +4,18 @@ Peridot Agent is a Rust CLI/TUI autonomous coding agent with multi-session orche
 
 ## Status
 
-Current version: **0.8.2**
+Current version: **0.8.3**
+
+### What's new in v0.8.3
+
+- **Approval tests stop after the approved command completes.** Auto-grade now
+  compares the worktree diff against the run-start baseline, so pre-existing
+  dirty files do not trigger unrelated recovery turns after a no-code approval
+  run.
+- **`rm -rf` hard-blocking is more precise.** True root deletes such as
+  `rm -rf /` and `rm -rf /*` still hard-block, while explicit subpath deletes
+  like `/home/.../tmp-approval-test` fall through to the normal destructive
+  approval flow.
 
 ### What's new in v0.8.2
 

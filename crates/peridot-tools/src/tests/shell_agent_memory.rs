@@ -24,6 +24,40 @@ fn shell_blocks_remote_pipe() {
 }
 
 #[test]
+fn shell_blocks_recursive_force_root_remove() {
+    for command in [
+        "rm -rf /",
+        "rm -fr /",
+        "rm -r -f /",
+        "sudo rm --recursive --force /",
+        "cd /tmp && rm -rf /*",
+    ] {
+        let result = reject_hard_blocked_command(command);
+        assert!(
+            matches!(result, Err(PeriError::PermissionDenied(_))),
+            "{command} should be hard-blocked"
+        );
+    }
+}
+
+#[test]
+fn shell_does_not_hard_block_recursive_force_subpath_remove() {
+    let command = "rm -rf /home/yhchoi/workspace/peridot-agent/tmp-approval-test";
+    reject_hard_blocked_command(command).unwrap();
+
+    let root = std::env::temp_dir().join(format!(
+        "peridot-tools-delete-subpath-{}",
+        std::process::id()
+    ));
+    let ctx = ToolContext::new(&root, PermissionMode::Yolo);
+    let result = enforce_shell_approval_policy(command, &ctx);
+
+    assert!(
+        matches!(result, Err(PeriError::PermissionDenied(reason)) if reason.contains("destructive shell command"))
+    );
+}
+
+#[test]
 fn shell_requires_approval_for_install_commands() {
     let root = std::env::temp_dir().join(format!("peridot-tools-install-{}", std::process::id()));
     let ctx = ToolContext::new(&root, PermissionMode::Auto);

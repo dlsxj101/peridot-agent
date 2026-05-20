@@ -174,15 +174,6 @@ pub(crate) fn spawn_and_wait_interruptible(
 
 pub(crate) fn reject_hard_blocked_command(command: &str) -> PeriResult<()> {
     let normalized = command.split_whitespace().collect::<Vec<_>>().join(" ");
-    let hard_blocked = [
-        "rm -rf /",
-        "mkfs.",
-        "dd if=/dev/zero",
-        ":(){ :|:& };:",
-        "chmod -R 777 /",
-        "curl",
-        "wget",
-    ];
 
     if normalized.contains("curl") && normalized.contains("| sh") {
         return Err(PeriError::PermissionDenied(
@@ -194,16 +185,75 @@ pub(crate) fn reject_hard_blocked_command(command: &str) -> PeriResult<()> {
             "piping remote wget output into a shell is blocked".to_string(),
         ));
     }
-    if hard_blocked
-        .iter()
-        .take(5)
-        .any(|pattern| normalized.contains(pattern))
+    if has_recursive_force_root_remove(&normalized)
+        || normalized.contains("mkfs.")
+        || normalized.contains("dd if=/dev/zero")
+        || normalized.contains(":(){ :|:& };:")
+        || normalized.contains("chmod -R 777 /")
     {
         return Err(PeriError::PermissionDenied(format!(
             "hard-blocked shell command pattern: {command}"
         )));
     }
     Ok(())
+}
+
+fn has_recursive_force_root_remove(command: &str) -> bool {
+    let tokens = command.split_whitespace().collect::<Vec<_>>();
+    for (index, token) in tokens.iter().enumerate() {
+        if !is_rm_command_token(token) {
+            continue;
+        }
+        let mut recursive = false;
+        let mut force = false;
+        for next in tokens.iter().skip(index + 1) {
+            let cleaned = clean_shell_token(next);
+            if is_shell_command_separator(cleaned) {
+                break;
+            }
+            update_rm_flags(cleaned, &mut recursive, &mut force);
+            if recursive && force && is_root_target(cleaned) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn is_rm_command_token(token: &str) -> bool {
+    let cleaned = clean_shell_token(token);
+    cleaned == "rm" || cleaned.ends_with("/rm")
+}
+
+fn is_shell_command_separator(token: &str) -> bool {
+    matches!(token, "&&" | "||" | ";" | "|")
+}
+
+fn clean_shell_token(token: &str) -> &str {
+    token
+        .trim_matches(|ch| matches!(ch, '"' | '\''))
+        .trim_end_matches(';')
+}
+
+fn update_rm_flags(token: &str, recursive: &mut bool, force: &mut bool) {
+    match token {
+        "--recursive" => *recursive = true,
+        "--force" => *force = true,
+        _ if token.starts_with('-') && !token.starts_with("--") => {
+            for flag in token.chars().skip(1) {
+                match flag {
+                    'r' | 'R' => *recursive = true,
+                    'f' => *force = true,
+                    _ => {}
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn is_root_target(token: &str) -> bool {
+    matches!(token, "/" | "/*" | "/." | "/./" | "/..")
 }
 
 pub(crate) fn enforce_shell_approval_policy(command: &str, ctx: &ToolContext) -> PeriResult<()> {

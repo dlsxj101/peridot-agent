@@ -1,4 +1,6 @@
 use std::os::unix::fs::PermissionsExt;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use peridot_common::{
     ExecutionMode, HookConfig, HookFailureMode, HooksConfig, PeriError, PermissionMode,
@@ -802,7 +804,15 @@ async fn auto_grade_failure_keeps_loop_running() {
     // unblock chat / Q&A turns from looping forever) does NOT trigger
     // here. We want the grader path proper to run so we can verify
     // the rejection-then-pass loop.
-    agent.set_grader_diff_provider(|_| "+ pretend change\n".to_string());
+    let diff_call_count = Arc::new(AtomicUsize::new(0));
+    let diff_call_count_for_provider = Arc::clone(&diff_call_count);
+    agent.set_grader_diff_provider(move |_| {
+        if diff_call_count_for_provider.fetch_add(1, Ordering::SeqCst) == 0 {
+            String::new()
+        } else {
+            "+ pretend change\n".to_string()
+        }
+    });
     // Provider responses, in order:
     //   1. agent_done (first attempt — grader rejects)
     //   2. grader verdict: passed=false + recommendations
@@ -852,6 +862,59 @@ async fn auto_grade_failure_keeps_loop_running() {
         has_rejection_note,
         "expected an [auto-grade] rejection PlanReminder"
     );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn auto_grade_skips_dirty_baseline_when_run_makes_no_new_diff() {
+    let root = std::env::temp_dir().join(format!(
+        "peridot-core-auto-grade-dirty-baseline-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let mut registry = ToolRegistry::new();
+    register_builtin_tools(&mut registry).unwrap();
+    let mut agent = HarnessAgent::new(
+        AgentState::new(ExecutionMode::Execute, PermissionMode::Auto),
+        ContextManager::new(),
+        registry,
+    );
+    agent.set_auto_grade_on_done(true);
+    agent.set_grader_diff_provider(|_| "+ pre-existing unrelated change\n".to_string());
+    let provider = super::support::StaticProvider::new(vec![
+        json!({"action": "agent_done", "parameters": {"summary": "done"}}).to_string(),
+    ]);
+
+    let summary = agent
+        .run_until_done_with_events(
+            &provider,
+            AgentRunRequest {
+                task: "run a no-code approval check".to_string(),
+                model: "mock".to_string(),
+                goal_checker_model: None,
+                max_turns: 4,
+                max_tokens: 512,
+                reasoning_effort: peridot_common::ReasoningEffort::Off,
+                service_tier: None,
+                budget_usd: 5.0,
+                budget_warning_pct: 50,
+                project_root: root.clone(),
+                denied_paths: Vec::new(),
+                hooks: HooksConfig::default(),
+                security: SecurityConfig::default(),
+            },
+            |_| {},
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(summary.stopped_reason, StopReason::Done);
+    assert_eq!(summary.turns.len(), 1);
+    assert!(agent.context().entries().iter().any(|entry| {
+        entry
+            .content
+            .contains("[auto-grade] Skipped: worktree diff is unchanged")
+    }));
     std::fs::remove_dir_all(root).unwrap();
 }
 

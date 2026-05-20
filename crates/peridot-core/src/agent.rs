@@ -767,6 +767,9 @@ impl HarnessAgent {
         events(AgentRunEvent::RunStarted {
             task: request.task.clone(),
         });
+        let initial_grade_diff = self
+            .auto_grade_on_done
+            .then(|| self.current_grader_diff(&request.project_root));
         // Stamp the run's wall-clock start so the final `AgentRunSummary` can
         // report how long the task took. Using `Instant` instead of
         // `SystemTime` keeps the measurement monotonic across NTP jumps.
@@ -1185,11 +1188,7 @@ impl HarnessAgent {
                 // instead of finishing. Cheap callers can keep this
                 // off; the gate is `auto_grade_on_done`.
                 if self.auto_grade_on_done {
-                    let diff = self
-                        .grader_diff_provider
-                        .as_ref()
-                        .map(|f| f(&request.project_root))
-                        .unwrap_or_else(|| collect_git_diff(&request.project_root));
+                    let diff = self.current_grader_diff(&request.project_root);
                     // No-diff fast path: chat / explanation / "do you
                     // remember the last conversation?" turns finish
                     // without touching the worktree. The grader's
@@ -1203,6 +1202,23 @@ impl HarnessAgent {
                         self.context.append(ContextEntry::trusted(
                             ContextSource::PlanReminder,
                             "[auto-grade] Skipped: no worktree changes to grade (chat or explanation turn)."
+                                .to_string(),
+                        ));
+                        let summary = AgentRunSummary {
+                            turns: outcomes,
+                            usage: total_usage,
+                            stopped_reason: StopReason::Done,
+                            duration_ms: started_at.elapsed().as_millis() as u64,
+                        };
+                        events(AgentRunEvent::Finished {
+                            summary: summary.clone(),
+                        });
+                        return Ok(summary);
+                    }
+                    if initial_grade_diff.as_deref() == Some(diff.as_str()) {
+                        self.context.append(ContextEntry::trusted(
+                            ContextSource::PlanReminder,
+                            "[auto-grade] Skipped: worktree diff is unchanged since run start."
                                 .to_string(),
                         ));
                         let summary = AgentRunSummary {
@@ -1316,6 +1332,13 @@ impl HarnessAgent {
 }
 
 impl HarnessAgent {
+    fn current_grader_diff(&self, project_root: &std::path::Path) -> String {
+        self.grader_diff_provider
+            .as_ref()
+            .map(|f| f(project_root))
+            .unwrap_or_else(|| collect_git_diff(project_root))
+    }
+
     /// Compares the configured AGENTS.md path's `(modified_unix, len)`
     /// fingerprint against the last seen one and, when it changed, re-reads
     /// the file, injects its contents into context as a `PlanReminder`
