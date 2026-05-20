@@ -11,6 +11,8 @@
   `session.cancel`.
 - Command Palette `Peridot: Run Task` and `Peridot: Cancel Current Task`
   now use the same sidebar-aware execution path.
+- The extension runs in the workspace extension host so WSL/Cursor remote
+  sessions resolve the daemon inside the active workspace environment.
 
 ## [0.0.4] — 2026-05-20
 

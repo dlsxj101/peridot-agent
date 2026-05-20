@@ -5,6 +5,9 @@
   "version": "0.1.0",
   "publisher": "dlsxj101",
   "license": "MIT",
+  "extensionKind": [
+    "workspace"
+  ],
   "engines": {
     "vscode": "^1.85.0"
   },
