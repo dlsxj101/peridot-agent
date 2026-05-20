@@ -1,5 +1,17 @@
 # Peridot Agent — Extension Changelog
 
+## [0.1.0] — 2026-05-20
+
+### Added — sidebar chat panel
+
+- Added a Peridot Activity Bar container with a `Chat` WebView view.
+- The sidebar can submit a task directly to `session.start` and stream
+  daemon events into a transcript.
+- The sidebar can cancel the current daemon session through
+  `session.cancel`.
+- Command Palette `Peridot: Run Task` and `Peridot: Cancel Current Task`
+  now use the same sidebar-aware execution path.
+
 ## [0.0.4] — 2026-05-20
 
 ### Added — first task-run bridge
