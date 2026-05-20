@@ -1,11 +1,13 @@
-"""Generate the Peridot deer mascot SVG + PNG from a hand-drawn pixel grid.
+"""Generate the Peridot deer mascot PNG from a hand-drawn pixel grid.
 
-Each character of `GRID` represents one pixel; palette entries map character
-codes to RGB hex colors. The script writes both:
-  - resources/peridot.svg  (vector, used by the activity bar)
-  - resources/peridot-icon.png  (256x256 raster, used by the marketplace)
+The activity bar SVG (`resources/peridot.svg`) is kept as the simple
+peridot-gem logo — the deer mascot lives in `resources/peridot-icon.png`
+which is what the Marketplace / Open VSX galleries show. Re-render
+whenever GRID changes:
 
-Rerun whenever the grid below changes; the resulting files are checked in.
+    python3 scripts/render-mascot.py
+
+The resulting PNG is checked in.
 """
 from pathlib import Path
 import cairosvg
@@ -118,16 +120,14 @@ def main() -> None:
     resources = extension_dir / "resources"
     rows = parse_grid(GRID)
     svg = render_svg(rows)
-    svg_path = resources / "peridot.svg"
-    svg_path.write_text(svg)
+    png_path = resources / "peridot-icon.png"
     cairosvg.svg2png(
         bytestring=svg.encode("utf-8"),
-        write_to=str(resources / "peridot-icon.png"),
+        write_to=str(png_path),
         output_width=256,
         output_height=256,
     )
-    print(f"wrote {svg_path} ({svg_path.stat().st_size} bytes)")
-    print(f"wrote {resources / 'peridot-icon.png'}")
+    print(f"wrote {png_path}")
 
 
 if __name__ == "__main__":
