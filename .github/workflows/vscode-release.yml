@@ -28,12 +28,105 @@ jobs:
           fi
           echo "Both VSCE_PAT and OVSX_PAT are configured."
 
-  publish:
-    name: Publish to Marketplace + Open VSX
+  build-binary:
+    name: Build peridot (${{ matrix.vsce-target }})
     needs: verify-secrets
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # Every advertised platform must succeed before any publish runs —
+      # a partial release leaves users on the missing target seeing
+      # "no compatible version" in the Marketplace.
+      fail-fast: true
+      matrix:
+        include:
+          - vsce-target: linux-x64
+            cargo-target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            exe: ""
+          - vsce-target: linux-arm64
+            cargo-target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            exe: ""
+            use-cross: true
+          - vsce-target: darwin-x64
+            cargo-target: x86_64-apple-darwin
+            os: macos-latest
+            exe: ""
+          - vsce-target: darwin-arm64
+            cargo-target: aarch64-apple-darwin
+            os: macos-latest
+            exe: ""
+          - vsce-target: win32-x64
+            cargo-target: x86_64-pc-windows-msvc
+            os: windows-latest
+            exe: ".exe"
+          - vsce-target: win32-arm64
+            cargo-target: aarch64-pc-windows-msvc
+            os: windows-latest
+            exe: ".exe"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.cargo-target }}
+
+      - name: Install cross
+        if: matrix.use-cross == true
+        run: cargo install cross --locked
+
+      - name: Build peridot-cli
+        shell: bash
+        run: |
+          if [ "${{ matrix.use-cross }}" = "true" ]; then
+            cross build --release --target ${{ matrix.cargo-target }} -p peridot-cli
+          else
+            cargo build --release --target ${{ matrix.cargo-target }} -p peridot-cli
+          fi
+
+      - name: Stage binary for upload
+        shell: bash
+        run: |
+          mkdir -p staging
+          cp "target/${{ matrix.cargo-target }}/release/peridot${{ matrix.exe }}" "staging/peridot${{ matrix.exe }}"
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: peridot-${{ matrix.vsce-target }}
+          path: staging/peridot${{ matrix.exe }}
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Publish ${{ matrix.vsce-target }}
+    needs: build-binary
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    strategy:
+      # One publish job per platform — same .vsix build, different
+      # `resources/peridot[.exe]` swapped in before `vsce package
+      # --target`. `fail-fast: false` so a single platform's Marketplace
+      # error doesn't block the others (we still want partial users to
+      # receive their build).
+      fail-fast: false
+      matrix:
+        include:
+          - vsce-target: linux-x64
+            exe: ""
+          - vsce-target: linux-arm64
+            exe: ""
+          - vsce-target: darwin-x64
+            exe: ""
+          - vsce-target: darwin-arm64
+            exe: ""
+          - vsce-target: win32-x64
+            exe: ".exe"
+          - vsce-target: win32-arm64
+            exe: ".exe"
     defaults:
       run:
         working-directory: extensions/vscode
@@ -46,22 +139,33 @@ jobs:
         with:
           node-version: "20"
 
+      - name: Download peridot binary
+        uses: actions/download-artifact@v4
+        with:
+          name: peridot-${{ matrix.vsce-target }}
+          path: extensions/vscode/resources
+
+      - name: Mark binary executable
+        if: matrix.exe == ''
+        run: chmod +x extensions/vscode/resources/peridot
+
       - name: Install
         run: npm ci || npm install
 
-      - name: Compile
-        run: npm run compile
+      - name: Compile (production)
+        run: npm run build:prod
 
-      - name: Package (.vsix)
-        run: npx vsce package --no-dependencies
+      - name: Package platform .vsix
+        run: npx vsce package --target ${{ matrix.vsce-target }} --no-dependencies
 
       - name: Publish to VS Code Marketplace
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
-        # Pushes whatever version is in package.json. The git tag and
-        # package.json version are expected to match; mismatched
-        # uploads are rejected by the Marketplace.
-        run: npx vsce publish --no-dependencies -p "$VSCE_PAT"
+        # The `.vsix` produced above is already tagged for one platform,
+        # so we pass --packagePath rather than re-packaging. The
+        # git tag and `package.json` version are expected to match;
+        # mismatched uploads are rejected by the Marketplace.
+        run: npx vsce publish --packagePath *.vsix --no-dependencies -p "$VSCE_PAT"
 
       - name: Publish to Open VSX
         env:

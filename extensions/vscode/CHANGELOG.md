@@ -2,6 +2,24 @@
 
 ## [0.5.0] — 2026-05-20
 
+### Added — platform-specific binary bundling
+
+- The `vsce/v*` release pipeline now builds the `peridot` binary in a
+  six-target matrix (`linux-x64`, `linux-arm64`, `darwin-x64`,
+  `darwin-arm64`, `win32-x64`, `win32-arm64`) and produces one
+  platform-tagged `.vsix` per target via `vsce package --target`. The
+  Marketplace and Open VSX serve the matching `.vsix` to each user, and
+  the binary lands at `<extension>/resources/peridot[.exe]` so a
+  freshly-installed extension can run a task with zero extra setup —
+  no manual `cargo build` or `peridot.binaryPath` override.
+- Added `npm run bundle-binary` (debug or `--release`) for the local
+  workflow: drops the workspace cargo build into `resources/peridot[.exe]`
+  so a locally-packaged `.vsix` exercises the same path the release uses.
+- Binary lookup priority in `peridotBin.ts` is unchanged:
+  `peridot.binaryPath` override → `<extension>/resources/peridot[.exe]`
+  → system PATH. Local developers without a bundled binary still fall
+  through to `peridot` on PATH.
+
 ### Added — webview bundle, HUD, and inline diff preview
 
 - Split the sidebar webview out of `sidebar.ts` into a dedicated `webview/`

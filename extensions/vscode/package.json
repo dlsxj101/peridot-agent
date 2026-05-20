@@ -109,6 +109,7 @@
     "build:prod": "node esbuild.config.mjs --production",
     "compile": "npm run typecheck && npm run build",
     "watch": "node esbuild.config.mjs --watch",
+    "bundle-binary": "node scripts/bundle-binary.mjs",
     "package": "vsce package --no-dependencies",
     "vscode:prepublish": "npm run typecheck && npm run build:prod"
   },

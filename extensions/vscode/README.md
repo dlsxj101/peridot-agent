@@ -4,15 +4,15 @@ VS Code panel for [Peridot Agent](https://github.com/dlsxj101/peridot-agent) —
 a Rust CLI/TUI autonomous coding agent with multi-LLM committee mode,
 native tool calling, and 2-Tier context management.
 
-> **Status**: v0.5.0 splits the sidebar webview into its own bundle
-> (esbuild) and adds a HUD panel for usage / budget / 4-Tier context, an
-> inline plan panel for `plan_updated`, inline unified-diff rendering for
-> `file_diff` events, and a pre-approval diff preview for
-> `file_write` / `file_patch`. Daemon status reads are now cached and
-> reuse the active session's RPC channel instead of respawning the
-> daemon. The extension still installs cleanly in VS Code and Cursor,
-> spawns `peridot daemon` over JSON-RPC, runs a task end-to-end, and
-> renders `agent_ask_user` / approval cards inline.
+> **Status**: v0.5.0 ships a bundled `peridot` binary for six targets
+> (linux-x64/arm64, darwin-x64/arm64, win32-x64/arm64) so installing the
+> extension from the Marketplace / Open VSX runs out of the box — no
+> separate `cargo build` required. It also splits the sidebar webview
+> into its own esbuild bundle and adds a HUD panel for usage / budget /
+> 4-Tier context, an inline plan panel for `plan_updated`, inline
+> unified-diff rendering for `file_diff` events, a pre-approval diff
+> preview for `file_write` / `file_patch`, and a cached / reused-daemon
+> status reader.
 
 ## Commands
 
@@ -40,14 +40,33 @@ calls — including an inline unified diff preview for `file_write` /
 
 | Setting | Default | Description |
 |---|---|---|
-| `peridot.binaryPath` | (empty) | Absolute path to a `peridot` binary. Leave empty to use a bundled binary when present or fall back to the system PATH. |
+| `peridot.binaryPath` | (empty) | Absolute path to a `peridot` binary. Leave empty to use the bundled binary in the `.vsix` (default for Marketplace / Open VSX installs) or fall back to the system PATH (for sideloaded dev builds without a bundled binary). |
+
+## Local development
+
+Sideloading a `.vsix` you packaged yourself? `npm run package` produces a
+universal build with **no** bundled binary — Peridot then falls back to
+`peridot` on your PATH. To exercise the bundled-binary path locally:
+
+```bash
+cargo build --release -p peridot-cli
+cd extensions/vscode
+npm run bundle-binary       # copies target/release/peridot into resources/
+npm run package             # .vsix now contains the binary
+```
+
+`resources/peridot` and `resources/peridot.exe` are gitignored so the
+local copy never lands on `main`. The release pipeline drops a
+platform-specific binary into the same location before
+`vsce package --target`.
 
 ## Roadmap
 
-- **v0.5.0** — ✅ Sidebar webview split into its own esbuild bundle, HUD
-  panel for usage / budget / context, inline plan panel, inline
-  unified-diff cards, pre-approval diff preview for `file_write` /
-  `file_patch`, and cached / reused-daemon status reads.
+- **v0.5.0** — ✅ Bundled `peridot` binary for six targets, sidebar
+  webview split into its own esbuild bundle, HUD panel for usage /
+  budget / context, inline plan panel, inline unified-diff cards,
+  pre-approval diff preview for `file_write` / `file_patch`, and
+  cached / reused-daemon status reads.
 - **v0.6.0** — Skill picker, slash commands, branch picker, multi-session
   tab bar. (Requires new daemon RPCs — designed alongside the daemon.)
 
