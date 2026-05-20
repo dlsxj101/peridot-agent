@@ -407,6 +407,74 @@ async fn permission_denied_tool_emits_approval_event() {
 }
 
 #[tokio::test]
+async fn hard_blocked_permission_denied_pairs_tool_output_without_approval_event() {
+    let root = std::env::temp_dir().join(format!(
+        "peridot-core-hard-blocked-tool-output-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let mut registry = ToolRegistry::new();
+    register_builtin_tools(&mut registry).unwrap();
+    let mut agent = HarnessAgent::new(
+        AgentState::new(ExecutionMode::Execute, PermissionMode::Auto),
+        ContextManager::new(),
+        registry,
+    );
+    let provider = StaticProvider::new(vec![
+        json!({
+            "action": "shell_exec",
+            "parameters": {"command": "rm -rf /"}
+        })
+        .to_string(),
+    ]);
+    let mut events = Vec::new();
+
+    let summary = agent
+        .run_until_done_with_events(
+            &provider,
+            AgentRunRequest {
+                task: "delete everything".to_string(),
+                model: "mock".to_string(),
+                goal_checker_model: None,
+                max_turns: 1,
+                max_tokens: 512,
+                reasoning_effort: peridot_common::ReasoningEffort::Off,
+                service_tier: None,
+                budget_usd: 5.0,
+                budget_warning_pct: 50,
+                project_root: root.clone(),
+                denied_paths: Vec::new(),
+                hooks: HooksConfig::default(),
+                security: SecurityConfig::default(),
+            },
+            |event| events.push(event),
+        )
+        .await
+        .unwrap();
+
+    assert_ne!(summary.stopped_reason, StopReason::ApprovalRequired);
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, AgentRunEvent::ApprovalRequested { .. })),
+        "hard-blocked shell commands must not enter the approval-resume path"
+    );
+    let tool_entry = agent
+        .context()
+        .entries()
+        .iter()
+        .find(|entry| entry.source == ContextSource::Tool)
+        .expect("hard-blocked tool failure should still be paired with a tool output");
+    assert_eq!(tool_entry.tool_call_id.as_deref(), Some("call_0"));
+    assert!(
+        tool_entry
+            .content
+            .contains("hard-blocked shell command pattern")
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
 async fn run_turn_injects_plan_reminder() {
     let root = std::env::temp_dir().join(format!(
         "peridot-core-turn-plan-reminder-{}",

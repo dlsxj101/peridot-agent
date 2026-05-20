@@ -4,7 +4,15 @@ Peridot Agent is a Rust CLI/TUI autonomous coding agent with multi-session orche
 
 ## Status
 
-Current version: **0.8.1**
+Current version: **0.8.2**
+
+### What's new in v0.8.2
+
+- **Hard-blocked shell commands no longer masquerade as approval requests.**
+  Commands such as `rm -rf /` now return a paired failed tool output instead
+  of entering the approval-resume path. This prevents fake approval cards,
+  `session is not waiting for approval`, and follow-up OpenAI Codex
+  `No tool output found for function call ...` recovery loops.
 
 ### What's new in v0.8.1
 

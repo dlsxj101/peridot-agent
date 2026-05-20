@@ -656,7 +656,9 @@ impl HarnessAgent {
         {
             Ok(outcome) => outcome,
             Err(err) => {
-                if let PeriError::PermissionDenied(reason) = &err {
+                if let PeriError::PermissionDenied(reason) = &err
+                    && approval_required_error(&err)
+                {
                     // Persist the exact pending tool call so the next
                     // session can resume from this point instead of
                     // restarting the whole task. Best-effort: a write
