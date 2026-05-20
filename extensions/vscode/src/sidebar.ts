@@ -241,7 +241,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
     .app {
       min-height: 100vh;
       display: grid;
-      grid-template-rows: auto 1fr auto;
+      grid-template-rows: auto auto 1fr auto;
     }
     .toolbar {
       display: flex;
@@ -296,6 +296,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
     }
     .context {
       display: grid;
+      align-content: start;
       gap: 7px;
       padding: 8px 10px;
       border-bottom: 1px solid var(--peri-border);
