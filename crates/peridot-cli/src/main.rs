@@ -400,7 +400,8 @@ async fn main() -> Result<()> {
             return Ok(());
         }
         Some(Command::Daemon) => {
-            commands::run_daemon_command(&project_root)?;
+            let template = agent_task_options(&cli, &config);
+            commands::run_daemon_command(&project_root, &config, template).await?;
             return Ok(());
         }
         Some(Command::Doctor) => {

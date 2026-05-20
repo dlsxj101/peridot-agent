@@ -12,6 +12,47 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 
 ---
 
+## [0.8.0] — 2026-05-20
+
+### Added — async daemon runtime plus real session control
+
+`peridot daemon` now runs on tokio instead of the original synchronous
+stdin loop. The daemon keeps Windows-friendly blocking stdin reads in a
+dedicated bridge task, drains all outgoing JSON-RPC lines through one
+async stdout writer, and shares daemon state across spawned session tasks
+with `Arc<Mutex<...>>`. That keeps response and notification frames as
+single, newline-delimited JSON values even when multiple sessions emit
+events concurrently.
+
+New JSON-RPC methods:
+
+| Method | Result |
+|---|---|
+| `session.start` | Starts the real harness loop and returns `{ "session_id": "session-<pid>-<n>" }`. |
+| `session.cancel` | Cancels an active session by id and returns `{ "cancelled": bool, "session_id": string }`. |
+
+`session.start` accepts `task` plus optional `mode`, `permission`, and
+`model` overrides. The daemon builds its static `PeridotConfig` and
+`AgentTaskOptions` template once at startup, then clones and adjusts that
+template for each new session. Each session emits a lightweight
+`started` notification, forwards serialized `AgentRunEvent` values as
+JSON-RPC `event` notifications, and ends with a `finished` or `error`
+notification.
+
+The existing v0.0.x extension checks (`peridot.version`, `peridot.echo`,
+`shutdown`) remain unchanged, so Phase 0 clients keep working while Phase
+1 clients can begin driving real agent runs over the same stdio channel.
+
+### Migration notes
+
+- Workspace 0.7.10 → 0.8.0.
+- `tokio` workspace features now include `io-std` and `sync` for the
+  daemon's async stdio and channel runtime.
+- `approval.respond` and daemon-backed `ask_user` remain deferred to the
+  next extension phase.
+
+---
+
 ## [0.7.10] — 2026-05-19
 
 ### Changed — Peridot deer mascot redrawn at 16×16, eight mood-specific frames

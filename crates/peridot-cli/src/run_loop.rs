@@ -116,19 +116,19 @@ pub(super) async fn run_task(
 }
 
 #[derive(Clone, Debug)]
-pub(super) struct AgentTaskOptions {
-    pub(super) permission: PermissionMode,
-    pub(super) model: String,
-    pub(super) reasoning_effort: peridot_common::ReasoningEffort,
-    pub(super) service_tier: Option<String>,
-    pub(super) max_turns: u32,
-    pub(super) budget_usd: f64,
-    pub(super) resume: Option<String>,
-    pub(super) mock_response_file: Option<PathBuf>,
-    pub(super) live: bool,
+pub(crate) struct AgentTaskOptions {
+    pub(crate) permission: PermissionMode,
+    pub(crate) model: String,
+    pub(crate) reasoning_effort: peridot_common::ReasoningEffort,
+    pub(crate) service_tier: Option<String>,
+    pub(crate) max_turns: u32,
+    pub(crate) budget_usd: f64,
+    pub(crate) resume: Option<String>,
+    pub(crate) mock_response_file: Option<PathBuf>,
+    pub(crate) live: bool,
 }
 
-pub(super) fn agent_task_options(cli: &Cli, config: &PeridotConfig) -> AgentTaskOptions {
+pub(crate) fn agent_task_options(cli: &Cli, config: &PeridotConfig) -> AgentTaskOptions {
     let model = cli
         .model
         .clone()
@@ -215,11 +215,11 @@ pub(super) async fn resolve_model_window(model: &str, auth_primary: &str) -> usi
 /// installed on the harness so it drains its inbox every turn and
 /// `agent_message` calls route through `bus`. Pass `None` for headless
 /// or single-session runs.
-pub(super) type MessageBusHookup =
+pub(crate) type MessageBusHookup =
     Option<(std::sync::Arc<dyn peridot_tools::AgentMessageBus>, String)>;
 
 #[allow(clippy::too_many_arguments)]
-pub(super) async fn run_task_with_events<F>(
+pub(crate) async fn run_task_with_events<F>(
     task: String,
     mode: ExecutionMode,
     options: AgentTaskOptions,

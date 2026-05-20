@@ -4,7 +4,13 @@ Peridot Agent is a Rust CLI/TUI autonomous coding agent with multi-session orche
 
 ## Status
 
-Current version: **0.7.10**
+Current version: **0.8.0**
+
+### What's new in v0.8.0
+
+- **`peridot daemon` now runs on tokio.** stdin is read through a blocking-compatible bridge, stdout is drained by a single async writer, and concurrent sessions can emit JSON-RPC frames without interleaving.
+- **Editor clients can start and cancel real agent sessions.** New `session.start` and `session.cancel` methods let VS Code / Cursor spawn the existing harness loop, receive serialized `AgentRunEvent` notifications, and cooperatively interrupt active runs by session id.
+- **Daemon session notifications are now live.** Every started session emits a `started` notification, forwards the core agent event stream as JSON-RPC `event` notifications, and ends with `finished` or `error`.
 
 ### What's new in v0.7.10
 
