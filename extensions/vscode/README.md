@@ -4,11 +4,10 @@ VS Code panel for [Peridot Agent](https://github.com/dlsxj101/peridot-agent) —
 a Rust CLI/TUI autonomous coding agent with multi-LLM committee mode,
 native tool calling, and 2-Tier context management.
 
-> **Status**: v0.0.1 is a scaffolding release. The extension installs,
-> spawns the bundled `peridot` daemon over JSON-RPC, and round-trips a
-> `version` request. The real chat panel, diff viewer, and approval
-> UI ship in v0.1.0 once this foundation is verified end-to-end on
-> the Marketplace.
+> **Status**: v0.0.3 is a Phase 0 verification release. The extension
+> installs, registers its commands reliably in VS Code and Cursor, spawns
+> `peridot daemon` over JSON-RPC, and round-trips a `version` request. The
+> real chat panel, diff viewer, and approval UI ship in v0.1.0.
 
 ## Commands
 
@@ -21,7 +20,7 @@ native tool calling, and 2-Tier context management.
 
 | Setting | Default | Description |
 |---|---|---|
-| `peridot.binaryPath` | (empty) | Absolute path to a `peridot` binary. Leave empty to use the bundled one (preferred) or fall back to the system PATH. |
+| `peridot.binaryPath` | (empty) | Absolute path to a `peridot` binary. Leave empty to use a bundled binary when present or fall back to the system PATH. |
 
 ## Roadmap
 

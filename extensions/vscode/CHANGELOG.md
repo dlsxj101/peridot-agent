@@ -1,5 +1,21 @@
 # Peridot Agent — Extension Changelog
 
+## [0.0.3] — 2026-05-20
+
+### Changed — release pipeline retry build
+
+No runtime behaviour changes from v0.0.2. This release exists to
+exercise the fixed GitHub Release asset-upload permission after the
+first `vsce/v0.0.2` publish run successfully reached the registries
+but failed while attaching the packaged `.vsix` to the GitHub Release.
+
+### Documentation
+
+- Clarified that `peridot.binaryPath` falls back to a bundled binary
+  only when one is present, then to `peridot` on the system PATH.
+- Updated the extension README status from the original v0.0.1
+  scaffold wording to the current Phase 0 verification surface.
+
 ## [0.0.2] — 2026-05-19
 
 ### Fixed — commands invisible in Cursor's Command Palette

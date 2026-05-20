@@ -2,7 +2,7 @@
   "name": "peridot-vscode",
   "displayName": "Peridot Agent",
   "description": "Rust CLI/TUI autonomous coding agent with multi-LLM committee mode, native tool calling, and 2-Tier context management. VS Code panel layered on top of the `peridot` daemon.",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "publisher": "dlsxj101",
   "license": "MIT",
   "engines": {
@@ -56,7 +56,7 @@
         "peridot.binaryPath": {
           "type": "string",
           "default": "",
-          "description": "Absolute path to the `peridot` binary. Leave empty to use the binary bundled inside the extension (preferred) or fall back to the system PATH."
+          "description": "Absolute path to the `peridot` binary. Leave empty to use a bundled binary when present or fall back to the system PATH."
         }
       }
     }
