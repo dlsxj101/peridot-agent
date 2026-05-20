@@ -15,7 +15,7 @@ use async_trait::async_trait;
 use peridot_common::{
     AskUserAnswer, AskUserRequest, CancelToken, ExecutionMode, PeridotConfig, PermissionMode,
 };
-use peridot_core::AgentRunEvent;
+use peridot_core::{AgentRunEvent, StopReason};
 use peridot_tools::AskUserPort;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -69,7 +69,42 @@ impl DaemonState {
 
 struct SessionEntry {
     cancel: CancelToken,
-    task: tokio::task::JoinHandle<()>,
+    task: Option<tokio::task::JoinHandle<()>>,
+    spec: SessionRunSpec,
+    approval_grants: Vec<ApprovalGrant>,
+    waiting_approval: Option<ApprovalRequestSnapshot>,
+}
+
+#[derive(Clone)]
+struct SessionRunSpec {
+    task: String,
+    mode: ExecutionMode,
+    permission: PermissionMode,
+    model: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct ApprovalRequestSnapshot {
+    tool_name: String,
+    reason: String,
+    #[serde(default)]
+    parameters: Value,
+}
+
+#[derive(Clone, Debug)]
+struct ApprovalGrant {
+    reason: String,
+    scope: ApprovalScope,
+    command: Option<String>,
+    path: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ApprovalScope {
+    Once,
+    Session,
+    Command,
+    Path,
 }
 
 /// JSON-RPC 2.0 request envelope.
@@ -177,7 +212,9 @@ async fn shutdown_sessions(state: &DaemonState) {
     let mut sessions = state.sessions.lock().await;
     for (_, entry) in sessions.drain() {
         entry.cancel.cancel();
-        entry.task.abort();
+        if let Some(task) = entry.task {
+            task.abort();
+        }
     }
 }
 
@@ -244,6 +281,10 @@ async fn dispatch_request(state: &DaemonState, request: RpcRequest) -> Result<bo
         }
         "interaction.respond" => {
             handle_interaction_respond(state, request.id.unwrap_or(Value::Null), request.params)
+                .await?;
+        }
+        "approval.respond" => {
+            handle_approval_respond(state, request.id.unwrap_or(Value::Null), request.params)
                 .await?;
         }
         "shutdown" => {
@@ -400,6 +441,13 @@ async fn handle_session_start(state: &DaemonState, id: Value, params: Option<Val
     let cancel_for_task = cancel.clone();
     let state_for_task = state.clone();
     let session_id_for_task = session_id.clone();
+    let spec = SessionRunSpec {
+        task,
+        mode,
+        permission,
+        model,
+    };
+    let spec_for_task = spec.clone();
     let (start_tx, start_rx) = oneshot::channel::<()>();
 
     let handle = tokio::spawn(async move {
@@ -407,10 +455,7 @@ async fn handle_session_start(state: &DaemonState, id: Value, params: Option<Val
         run_session_task(
             state_for_task,
             session_id_for_task,
-            task,
-            mode,
-            permission,
-            model,
+            spec_for_task,
             cancel_for_task,
         )
         .await;
@@ -420,7 +465,10 @@ async fn handle_session_start(state: &DaemonState, id: Value, params: Option<Val
         session_id.clone(),
         SessionEntry {
             cancel,
-            task: handle,
+            task: Some(handle),
+            spec,
+            approval_grants: Vec::new(),
+            waiting_approval: None,
         },
     );
     emit_response(state, id, serde_json::json!({ "session_id": session_id }))?;
@@ -431,46 +479,59 @@ async fn handle_session_start(state: &DaemonState, id: Value, params: Option<Val
 async fn run_session_task(
     state: DaemonState,
     session_id: String,
-    task: String,
-    mode: ExecutionMode,
-    permission: PermissionMode,
-    model: Option<String>,
+    spec: SessionRunSpec,
     cancel: CancelToken,
 ) {
-    emit_event(
-        &state,
-        &session_id,
-        serde_json::json!({
-            "kind": "started",
-            "task": task,
-        }),
-    );
-
     let mut options = (*state.run_template).clone();
-    options.permission = permission;
-    if let Some(model) = model {
+    options.permission = spec.permission;
+    if let Some(model) = spec.model.clone() {
         options.model = model;
     }
+    let mut config = (*state.run_config).clone();
+    apply_session_approval_grants(&state, &session_id, &mut config).await;
 
     let ask_user_port = Arc::new(DaemonAskUserPort {
         state: state.clone(),
         session_id: session_id.clone(),
     });
 
+    let context_snapshot_path = Some(context_snapshot_path(&state, &session_id));
+    let approval_snapshot: Arc<std::sync::Mutex<Option<ApprovalRequestSnapshot>>> =
+        Arc::new(std::sync::Mutex::new(None));
+    let approval_snapshot_for_events = approval_snapshot.clone();
     let session_id_inner = session_id.clone();
     let state_inner = state.clone();
     let result = run_task_with_events(
-        task,
-        mode,
+        spec.task.clone(),
+        spec.mode,
         options,
-        (*state.run_config).clone(),
+        config,
         state.project_root.as_ref().clone(),
         Some(cancel),
         None,
-        None,
+        context_snapshot_path,
         Some(ask_user_port),
         MessageBusHookup::None,
         move |event: AgentRunEvent| {
+            if matches!(
+                &event,
+                AgentRunEvent::Finished { summary }
+                    if summary.stopped_reason == StopReason::ApprovalRequired
+            ) {
+                return;
+            }
+            if let AgentRunEvent::ApprovalRequested {
+                tool_name,
+                reason,
+                parameters,
+            } = &event
+            {
+                *approval_snapshot_for_events.lock().unwrap() = Some(ApprovalRequestSnapshot {
+                    tool_name: tool_name.clone(),
+                    reason: reason.clone(),
+                    parameters: parameters.clone(),
+                });
+            }
             let value = serde_json::to_value(&event).unwrap_or(Value::Null);
             emit_event(&state_inner, &session_id_inner, value);
         },
@@ -478,24 +539,54 @@ async fn run_session_task(
     .await;
 
     match result {
-        Ok(summary) => emit_event(
-            &state,
-            &session_id,
-            serde_json::json!({
-                "kind": "finished",
-                "stopped_reason": format!("{:?}", summary.stopped_reason),
-                "turns": summary.turns.len(),
-                "duration_ms": summary.duration_ms,
-            }),
-        ),
-        Err(err) => emit_event(
-            &state,
-            &session_id,
-            serde_json::json!({
-                "kind": "error",
-                "message": err.to_string(),
-            }),
-        ),
+        Ok(summary) => {
+            if summary.stopped_reason == StopReason::ApprovalRequired {
+                let approval = approval_snapshot.lock().unwrap().clone();
+                mark_session_waiting_approval(&state, &session_id, approval.clone()).await;
+                emit_event(
+                    &state,
+                    &session_id,
+                    serde_json::json!({
+                        "kind": "approval_waiting",
+                        "request": approval,
+                    }),
+                );
+                return;
+            }
+            emit_event(
+                &state,
+                &session_id,
+                serde_json::json!({
+                    "kind": "finished",
+                    "stopped_reason": format!("{:?}", summary.stopped_reason),
+                    "turns": summary.turns.len(),
+                    "duration_ms": summary.duration_ms,
+                }),
+            );
+        }
+        Err(err) => {
+            let approval = approval_snapshot.lock().unwrap().clone();
+            if approval.is_some() && is_approval_required_error(&err) {
+                mark_session_waiting_approval(&state, &session_id, approval.clone()).await;
+                emit_event(
+                    &state,
+                    &session_id,
+                    serde_json::json!({
+                        "kind": "approval_waiting",
+                        "request": approval,
+                    }),
+                );
+                return;
+            }
+            emit_event(
+                &state,
+                &session_id,
+                serde_json::json!({
+                    "kind": "error",
+                    "message": err.to_string(),
+                }),
+            );
+        }
     }
 
     state.sessions.lock().await.remove(&session_id);
@@ -557,8 +648,12 @@ async fn handle_session_cancel(
         return Ok(());
     };
 
-    let cancelled = if let Some(entry) = state.sessions.lock().await.get(session_id) {
+    let cancelled = if let Some(entry) = state.sessions.lock().await.remove(session_id) {
         entry.cancel.cancel();
+        if let Some(task) = entry.task {
+            task.abort();
+        }
+        clear_pending_ask_user_for_session(state, session_id);
         true
     } else {
         false
@@ -629,10 +724,279 @@ async fn handle_interaction_respond(
     )
 }
 
+async fn handle_approval_respond(
+    state: &DaemonState,
+    id: Value,
+    params: Option<Value>,
+) -> Result<()> {
+    let Some(Value::Object(params)) = params else {
+        emit_error(
+            state,
+            id,
+            -32602,
+            "params must be an object with `session_id` and `approved` fields".to_string(),
+        )?;
+        return Ok(());
+    };
+    let Some(session_id) = params.get("session_id").and_then(Value::as_str) else {
+        emit_error(
+            state,
+            id,
+            -32602,
+            "params.session_id must be a string".to_string(),
+        )?;
+        return Ok(());
+    };
+    let Some(approved) = params.get("approved").and_then(Value::as_bool) else {
+        emit_error(
+            state,
+            id,
+            -32602,
+            "params.approved must be a boolean".to_string(),
+        )?;
+        return Ok(());
+    };
+    let scope = match params
+        .get("scope")
+        .and_then(Value::as_str)
+        .map(parse_approval_scope)
+        .transpose()
+    {
+        Ok(scope) => scope.unwrap_or(ApprovalScope::Once),
+        Err(message) => {
+            emit_error(state, id, -32602, message)?;
+            return Ok(());
+        }
+    };
+
+    if !approved {
+        let removed = state.sessions.lock().await.remove(session_id).is_some();
+        clear_pending_ask_user_for_session(state, session_id);
+        emit_event(
+            state,
+            session_id,
+            serde_json::json!({
+                "kind": "approval_denied",
+                "session_id": session_id,
+            }),
+        );
+        emit_response(
+            state,
+            id,
+            serde_json::json!({
+                "accepted": removed,
+                "resumed": false,
+                "session_id": session_id,
+            }),
+        )?;
+        return Ok(());
+    }
+
+    let (spec, cancel_for_task) = {
+        let mut sessions = state.sessions.lock().await;
+        let Some(entry) = sessions.get_mut(session_id) else {
+            emit_response(
+                state,
+                id,
+                serde_json::json!({
+                    "accepted": false,
+                    "resumed": false,
+                    "session_id": session_id,
+                    "message": "session not found",
+                }),
+            )?;
+            return Ok(());
+        };
+        let Some(snapshot) = entry.waiting_approval.clone() else {
+            emit_response(
+                state,
+                id,
+                serde_json::json!({
+                    "accepted": false,
+                    "resumed": false,
+                    "session_id": session_id,
+                    "message": "session is not waiting for approval",
+                }),
+            )?;
+            return Ok(());
+        };
+        let grant = approval_grant_from_snapshot(&snapshot, scope);
+        entry.approval_grants.push(grant);
+        entry.waiting_approval = None;
+        let cancel = CancelToken::new();
+        entry.cancel = cancel.clone();
+        let spec = entry.spec.clone();
+        (spec, cancel)
+    };
+
+    let state_for_task = state.clone();
+    let session_id_for_task = session_id.to_string();
+    let spec_for_task = spec.clone();
+    let handle = tokio::spawn(async move {
+        run_session_task(
+            state_for_task,
+            session_id_for_task,
+            spec_for_task,
+            cancel_for_task,
+        )
+        .await;
+    });
+    if let Some(entry) = state.sessions.lock().await.get_mut(session_id) {
+        entry.task = Some(handle);
+    }
+    emit_event(
+        state,
+        session_id,
+        serde_json::json!({
+            "kind": "approval_resumed",
+            "scope": approval_scope_label(scope),
+        }),
+    );
+    emit_response(
+        state,
+        id,
+        serde_json::json!({
+            "accepted": true,
+            "resumed": true,
+            "session_id": session_id,
+        }),
+    )
+}
+
 fn clear_pending_ask_user_for_session(state: &DaemonState, session_id: &str) {
     let prefix = format!("{session_id}:");
     let mut pending = state.ask_user_pending.lock().unwrap();
     pending.retain(|request_id, _| !request_id.starts_with(&prefix));
+}
+
+async fn mark_session_waiting_approval(
+    state: &DaemonState,
+    session_id: &str,
+    approval: Option<ApprovalRequestSnapshot>,
+) {
+    if let Some(entry) = state.sessions.lock().await.get_mut(session_id) {
+        entry.task = None;
+        entry.waiting_approval = approval;
+    }
+}
+
+async fn apply_session_approval_grants(
+    state: &DaemonState,
+    session_id: &str,
+    config: &mut PeridotConfig,
+) {
+    let grants = state
+        .sessions
+        .lock()
+        .await
+        .get(session_id)
+        .map(|entry| entry.approval_grants.clone())
+        .unwrap_or_default();
+    for grant in grants {
+        apply_approval_grant_to_config(config, &grant);
+    }
+}
+
+fn approval_grant_from_snapshot(
+    snapshot: &ApprovalRequestSnapshot,
+    scope: ApprovalScope,
+) -> ApprovalGrant {
+    ApprovalGrant {
+        reason: snapshot.reason.clone(),
+        scope,
+        command: snapshot
+            .parameters
+            .get("command")
+            .and_then(Value::as_str)
+            .map(normalize_shell_command_for_grant),
+        path: snapshot
+            .parameters
+            .get("path")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+    }
+}
+
+fn apply_approval_grant_to_config(config: &mut PeridotConfig, grant: &ApprovalGrant) {
+    match grant.scope {
+        ApprovalScope::Once | ApprovalScope::Command => {
+            if let Some(command) = grant.command.as_ref() {
+                push_unique_string(
+                    &mut config.security.approved_shell_commands,
+                    command.clone(),
+                );
+            } else {
+                relax_security_for_approval(config, &grant.reason);
+            }
+        }
+        ApprovalScope::Session => relax_security_for_approval(config, &grant.reason),
+        ApprovalScope::Path => {
+            if let Some(path) = grant.path.as_ref() {
+                push_unique_string(
+                    &mut config.security.approved_shell_path_scopes,
+                    path.clone(),
+                );
+            } else if let Some(command) = grant.command.as_ref() {
+                push_unique_string(
+                    &mut config.security.approved_shell_commands,
+                    command.clone(),
+                );
+            } else {
+                relax_security_for_approval(config, &grant.reason);
+            }
+        }
+    }
+}
+
+fn relax_security_for_approval(config: &mut PeridotConfig, reason: &str) {
+    if reason.contains("dependency installation") {
+        config.security.ask_before_install = false;
+    }
+    if reason.contains("destructive shell command") {
+        config.security.ask_before_delete = false;
+    }
+}
+
+fn push_unique_string(values: &mut Vec<String>, value: String) {
+    if !values.iter().any(|existing| existing == &value) {
+        values.push(value);
+    }
+}
+
+fn normalize_shell_command_for_grant(command: &str) -> String {
+    command.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn parse_approval_scope(value: &str) -> Result<ApprovalScope, String> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "once" => Ok(ApprovalScope::Once),
+        "session" => Ok(ApprovalScope::Session),
+        "command" | "always" => Ok(ApprovalScope::Command),
+        "path" => Ok(ApprovalScope::Path),
+        _ => Err("params.scope must be one of once, session, command, or path".to_string()),
+    }
+}
+
+fn approval_scope_label(scope: ApprovalScope) -> &'static str {
+    match scope {
+        ApprovalScope::Once => "once",
+        ApprovalScope::Session => "session",
+        ApprovalScope::Command => "command",
+        ApprovalScope::Path => "path",
+    }
+}
+
+fn is_approval_required_error(err: &anyhow::Error) -> bool {
+    err.to_string().contains("requires explicit user approval")
+}
+
+fn context_snapshot_path(state: &DaemonState, session_id: &str) -> PathBuf {
+    state
+        .project_root
+        .join(".peridot")
+        .join("sessions")
+        .join(session_id)
+        .join("context.bin")
 }
 
 fn parse_ask_user_answer(value: &Value) -> Result<AskUserAnswer, String> {
@@ -770,8 +1134,14 @@ mod tests {
     }
 
     fn test_project(name: &str) -> PathBuf {
-        let root =
-            std::env::temp_dir().join(format!("peridot-daemon-test-{name}-{}", std::process::id()));
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "peridot-daemon-test-{name}-{}-{unique}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         root
@@ -877,7 +1247,7 @@ mod tests {
         assert!(out.iter().any(|value| {
             value["method"] == "event"
                 && value["params"]["session_id"] == session_id
-                && value["params"]["event"]["kind"] == "started"
+                && value["params"]["event"]["kind"] == "run_started"
         }));
         let _ = std::fs::remove_dir_all(root);
     }

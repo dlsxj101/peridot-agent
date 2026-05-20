@@ -6,6 +6,7 @@ export interface SidebarHandlers {
   loginOpenAi: () => Promise<void>;
   refreshStatus: () => Promise<void>;
   respondAskUser: (requestId: string, answer: AskUserAnswer) => Promise<void>;
+  respondApproval: (decision: ApprovalResponse) => Promise<void>;
 }
 
 export interface RunOptions {
@@ -20,6 +21,14 @@ export type AskUserAnswer =
   | { kind: 'text'; text: string }
   | { kind: 'cancelled' };
 
+export interface ApprovalResponse {
+  approved: boolean;
+  scope: 'once' | 'session' | 'command' | 'path';
+  toolName?: string;
+  reason?: string;
+  parameters?: unknown;
+}
+
 type TranscriptRole = 'user' | 'assistant' | 'tool' | 'status' | 'error' | 'interaction' | 'diff' | 'approval';
 
 interface TranscriptItem {
@@ -31,6 +40,9 @@ interface TranscriptItem {
   path?: string;
   before?: string | null;
   after?: string;
+  toolName?: string;
+  reason?: string;
+  parameters?: unknown;
 }
 
 export interface SidebarContext {
@@ -69,6 +81,11 @@ interface WebviewMessage {
   options?: unknown;
   requestId?: unknown;
   answer?: unknown;
+  approved?: unknown;
+  scope?: unknown;
+  toolName?: unknown;
+  reason?: unknown;
+  parameters?: unknown;
 }
 
 export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
@@ -137,6 +154,16 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
     const item = transcriptItemForEvent(sessionId, event);
     if (item) {
       this.append(item);
+    }
+    if (isApprovalWaitingEvent(event)) {
+      this.state.running = true;
+      this.state.status = 'Waiting for approval';
+      this.state.context = {
+        ...this.state.context,
+        status: this.state.status,
+        running: true,
+      };
+      this.publish();
     }
     if (isTerminalEvent(event)) {
       this.state.running = false;
@@ -216,6 +243,11 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       }
       return;
     }
+    if (message.type === 'approvalRespond') {
+      await this.handlers.respondApproval(normalizeApprovalResponse(message));
+      this.resolveApproval(Boolean(message.approved));
+      return;
+    }
     if (message.type === 'cancel') {
       await this.handlers.cancelTask();
       return;
@@ -246,6 +278,16 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       item.text = 'User response sent';
       item.detail = detail;
       item.request = undefined;
+    }
+    this.publish();
+  }
+
+  private resolveApproval(approved: boolean): void {
+    const item = [...this.state.transcript].reverse().find((entry) => entry.role === 'approval');
+    if (item) {
+      item.role = 'status';
+      item.text = approved ? 'Approval sent' : 'Approval denied';
+      item.detail = item.toolName;
     }
     this.publish();
   }
@@ -700,6 +742,10 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         root.append(renderAskUser(item));
         return root;
       }
+      if (item.role === 'approval') {
+        root.append(renderApproval(item));
+        return root;
+      }
       if (item.role === 'diff') {
         root.append(renderDiff(item));
       }
@@ -710,6 +756,62 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         root.append(detail);
       }
       return root;
+    }
+
+    function renderApproval(item) {
+      const wrap = document.createElement('div');
+      if (item.detail) {
+        const detail = document.createElement('div');
+        detail.className = 'detail';
+        detail.textContent = item.detail;
+        wrap.append(detail);
+      }
+      const scope = document.createElement('select');
+      scope.title = 'Approval scope';
+      [
+        ['once', 'Once'],
+        ['command', 'Command'],
+        ['path', 'Path'],
+        ['session', 'Session'],
+      ].forEach(([value, label]) => {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = label;
+        scope.append(option);
+      });
+      const actions = document.createElement('div');
+      actions.className = 'inline-actions';
+      const approve = document.createElement('button');
+      approve.type = 'button';
+      approve.className = 'small-button';
+      approve.textContent = 'Approve';
+      approve.addEventListener('click', () => {
+        vscode.postMessage({
+          type: 'approvalRespond',
+          approved: true,
+          scope: scope.value,
+          toolName: item.toolName,
+          reason: item.reason,
+          parameters: item.parameters,
+        });
+      });
+      const deny = document.createElement('button');
+      deny.type = 'button';
+      deny.className = 'small-button secondary';
+      deny.textContent = 'Deny';
+      deny.addEventListener('click', () => {
+        vscode.postMessage({
+          type: 'approvalRespond',
+          approved: false,
+          scope: scope.value,
+          toolName: item.toolName,
+          reason: item.reason,
+          parameters: item.parameters,
+        });
+      });
+      actions.append(approve, deny);
+      wrap.append(scope, actions);
+      return wrap;
     }
 
     function renderAskUser(item) {
@@ -824,6 +926,7 @@ function transcriptItemForEvent(sessionId: string, event: unknown): TranscriptIt
   const kind = typeof event.kind === 'string' ? event.kind : 'unknown';
   switch (kind) {
     case 'started':
+      return { role: 'status', text: 'Daemon started', detail: sessionId };
     case 'run_started':
       return { role: 'status', text: 'Run started', detail: sessionId };
     case 'agents_md_loaded':
@@ -847,6 +950,13 @@ function transcriptItemForEvent(sessionId: string, event: unknown): TranscriptIt
     case 'context_utilization_changed':
       return undefined;
     case 'tool_started':
+      if (stringField(event, 'name') === 'agent_ask_user') {
+        return {
+          role: 'tool',
+          text: 'Started agent_ask_user',
+          detail: compactAskUserToolDetail(event.parameters),
+        };
+      }
       return {
         role: 'tool',
         text: `Started ${stringField(event, 'name')}`,
@@ -871,7 +981,20 @@ function transcriptItemForEvent(sessionId: string, event: unknown): TranscriptIt
         role: 'approval',
         text: `Approval requested: ${stringField(event, 'tool_name')}`,
         detail: [stringField(event, 'reason'), json(event.parameters)].filter(Boolean).join('\n'),
+        toolName: stringField(event, 'tool_name'),
+        reason: stringField(event, 'reason'),
+        parameters: event.parameters,
       };
+    case 'approval_waiting':
+      return { role: 'status', text: 'Waiting for approval' };
+    case 'approval_resumed':
+      return {
+        role: 'status',
+        text: 'Approval accepted',
+        detail: `scope ${stringField(event, 'scope')}`,
+      };
+    case 'approval_denied':
+      return { role: 'error', text: 'Approval denied' };
     case 'file_diff': {
       const payload = isRecord(event) ? event : {};
       const path = stringField(payload, 'path');
@@ -911,6 +1034,23 @@ function questionForAskUser(request: unknown): string {
     return request.question;
   }
   return 'Peridot needs your input';
+}
+
+function compactAskUserToolDetail(value: unknown): string {
+  if (!isRecord(value)) {
+    return '';
+  }
+  const request = value.request;
+  if (!isRecord(request)) {
+    return '';
+  }
+  const question = typeof request.question === 'string' ? request.question : '';
+  const kind = typeof request.kind === 'string' ? request.kind : 'ask_user';
+  const options = Array.isArray(request.options)
+    ? request.options.filter((item): item is string => typeof item === 'string')
+    : [];
+  const optionLabel = options.length > 0 ? ` · ${options.join(' / ')}` : '';
+  return [kind, question].filter(Boolean).join(': ') + optionLabel;
 }
 
 function summarizeToolResult(event: Record<string, unknown>): string {
@@ -953,11 +1093,18 @@ function compactFinishedDetail(event: Record<string, unknown>): string {
 }
 
 function isTerminalEvent(event: unknown): boolean {
-  return isRecord(event) && (event.kind === 'finished' || event.kind === 'error');
+  return (
+    isRecord(event) &&
+    (event.kind === 'finished' || event.kind === 'error' || event.kind === 'approval_denied')
+  );
 }
 
 function isErrorEvent(event: unknown): boolean {
-  return isRecord(event) && event.kind === 'error';
+  return isRecord(event) && (event.kind === 'error' || event.kind === 'approval_denied');
+}
+
+function isApprovalWaitingEvent(event: unknown): boolean {
+  return isRecord(event) && (event.kind === 'approval_requested' || event.kind === 'approval_waiting');
 }
 
 function stringField(record: Record<string, unknown>, key: string): string {
@@ -1023,6 +1170,20 @@ function normalizeAskUserAnswer(value: unknown): AskUserAnswer | undefined {
     return { kind: 'text', text };
   }
   return undefined;
+}
+
+function normalizeApprovalResponse(value: WebviewMessage): ApprovalResponse {
+  const scope =
+    value.scope === 'session' || value.scope === 'command' || value.scope === 'path'
+      ? value.scope
+      : 'once';
+  return {
+    approved: value.approved === true,
+    scope,
+    toolName: typeof value.toolName === 'string' ? value.toolName : undefined,
+    reason: typeof value.reason === 'string' ? value.reason : undefined,
+    parameters: value.parameters,
+  };
 }
 
 function answerLabel(answer: AskUserAnswer): string {

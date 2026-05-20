@@ -1,5 +1,22 @@
 # Peridot Agent — Extension Changelog
 
+## [0.4.0] — 2026-05-20
+
+### Added — approval resume flow
+
+- Added sidebar approve/deny controls for `approval_requested` events.
+- Added daemon `approval.respond` JSON-RPC to resume paused sessions from the
+  saved pending tool call after approval.
+- Added approval scopes (`once`, `command`, `path`, `session`) for the editor
+  approval path.
+
+### Changed — transcript cleanup
+
+- Removed the duplicate run-start transcript line by relying on the core
+  `run_started` event.
+- Rendered `agent_ask_user` tool-start details as a compact prompt summary
+  instead of raw JSON.
+
 ## [0.3.0] — 2026-05-20
 
 ### Added — interactive control plane

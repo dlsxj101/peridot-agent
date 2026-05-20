@@ -4,13 +4,13 @@ VS Code panel for [Peridot Agent](https://github.com/dlsxj101/peridot-agent) —
 a Rust CLI/TUI autonomous coding agent with multi-LLM committee mode,
 native tool calling, and 2-Tier context management.
 
-> **Status**: v0.3.0 adds the first interactive control layer. The extension
+> **Status**: v0.4.0 adds the first approval-resume control layer. The extension
 > installs, registers its commands reliably in VS Code and Cursor, spawns
 > `peridot daemon` over JSON-RPC, round-trips a `version` request, and can
 > run a task while streaming daemon events into the Peridot sidebar. The
 > sidebar now shows the active workspace, provider, model, auth state, and
-> login/refresh actions, plus run options and inline `agent_ask_user`
-> response cards.
+> login/refresh actions, plus run options, inline `agent_ask_user` response
+> cards, and approve/deny controls for approval-gated tool calls.
 
 ## Commands
 
@@ -28,7 +28,8 @@ native tool calling, and 2-Tier context management.
 Open the Peridot Activity Bar item, choose mode/permission/model options, type
 a task, and submit it to start a daemon-backed agent session. The sidebar shows
 the active workspace/provider context, renders common daemon events as compact
-transcript entries, and can answer live `agent_ask_user` prompts from the run.
+transcript entries, can answer live `agent_ask_user` prompts, and can resume
+approval-paused tool calls from the sidebar.
 
 ## Configuration
 
@@ -38,8 +39,8 @@ transcript entries, and can answer live `agent_ask_user` prompts from the run.
 
 ## Roadmap
 
-- **v0.4.0** — FileDiff event → Monaco diff editor; ApprovalRequested → inline approve/deny resume.
-- **v0.5.0** — Skill picker, slash commands, branch picker, multi-session tab bar.
+- **v0.5.0** — FileDiff event → Monaco diff editor; richer approval diff preview.
+- **v0.6.0** — Skill picker, slash commands, branch picker, multi-session tab bar.
 
 ## Source
 

@@ -7,7 +7,12 @@ import * as childProcess from 'child_process';
 import * as vscode from 'vscode';
 import { PeridotDaemon, RpcNotification } from './daemon';
 import { resolvePeridotBinary } from './peridotBin';
-import { AskUserAnswer, PeridotSidebarProvider, RunOptions } from './sidebar';
+import {
+  ApprovalResponse,
+  AskUserAnswer,
+  PeridotSidebarProvider,
+  RunOptions,
+} from './sidebar';
 
 interface SessionStartResult {
   session_id: string;
@@ -55,6 +60,8 @@ export function activate(context: vscode.ExtensionContext) {
     refreshStatus: async (): Promise<void> => refreshStatus(output, sidebar),
     respondAskUser: async (requestId: string, answer: AskUserAnswer): Promise<void> =>
       respondAskUser(requestId, answer, output, sidebar),
+    respondApproval: async (decision: ApprovalResponse): Promise<void> =>
+      respondApproval(decision, output, sidebar),
   });
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(PeridotSidebarProvider.viewType, sidebar),
@@ -400,6 +407,46 @@ async function respondAskUser(
   }
 }
 
+async function respondApproval(
+  decision: ApprovalResponse,
+  output: vscode.OutputChannel,
+  sidebar: PeridotSidebarProvider,
+): Promise<void> {
+  if (!activeRun?.sessionId) {
+    const message = 'No active Peridot run can receive this approval decision.';
+    sidebar.appendError(message);
+    await vscode.window.showWarningMessage(message);
+    return;
+  }
+  try {
+    const result = (await activeRun.daemon.send('approval.respond', {
+      session_id: activeRun.sessionId,
+      approved: decision.approved,
+      scope: decision.scope,
+      tool_name: decision.toolName,
+      reason: decision.reason,
+      parameters: decision.parameters,
+    })) as { accepted?: boolean; resumed?: boolean; session_id?: string; message?: string };
+    output.appendLine(
+      `[peridot] approval ${result.session_id ?? activeRun.sessionId}: ${
+        result.accepted ? 'accepted' : 'not accepted'
+      }${result.resumed ? ' resumed' : ''}`,
+    );
+    if (!result.accepted) {
+      sidebar.appendError(result.message ?? 'Peridot did not accept that approval decision.');
+      return;
+    }
+    if (!decision.approved) {
+      await finishActiveRun(output);
+      void refreshStatus(output, sidebar);
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    output.appendLine(`[peridot] approval response failed: ${message}`);
+    sidebar.appendError(`Approval response failed: ${message}`);
+  }
+}
+
 async function handleDaemonNotification(
   notification: RpcNotification,
   output: vscode.OutputChannel,
@@ -482,7 +529,10 @@ function formatEvent(sessionId: string, event: unknown): string {
 }
 
 function isTerminalEvent(event: unknown): boolean {
-  return isRecord(event) && (event.kind === 'finished' || event.kind === 'error');
+  return (
+    isRecord(event) &&
+    (event.kind === 'finished' || event.kind === 'error' || event.kind === 'approval_denied')
+  );
 }
 
 function stringField(record: Record<string, unknown>, key: string): string {
