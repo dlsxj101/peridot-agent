@@ -1,4 +1,23 @@
 import * as vscode from 'vscode';
+import {
+  ApprovalResponse,
+  AskUserAnswer,
+  BudgetSlice,
+  CommitteeRoleSlice,
+  ContextSlice,
+  HudState,
+  InboundMessage,
+  OutboundMessage,
+  PlanSlice,
+  PlanStepView,
+  RunOptions,
+  SidebarContext,
+  SidebarState,
+  TranscriptItem,
+  UsageSlice,
+} from './types';
+
+export type { ApprovalResponse, ApprovalScope, AskUserAnswer, RunOptions } from './types';
 
 export interface SidebarHandlers {
   runTask: (task: string, options: RunOptions) => Promise<void>;
@@ -7,67 +26,7 @@ export interface SidebarHandlers {
   refreshStatus: () => Promise<void>;
   respondAskUser: (requestId: string, answer: AskUserAnswer) => Promise<void>;
   respondApproval: (decision: ApprovalResponse) => Promise<void>;
-}
-
-export interface RunOptions {
-  mode: 'execute' | 'plan' | 'goal';
-  permission: 'auto' | 'safe' | 'yolo';
-  model?: string;
-}
-
-export type AskUserAnswer =
-  | { kind: 'selected'; index: number; text: string }
-  | { kind: 'multi_selected'; indices: number[] }
-  | { kind: 'text'; text: string }
-  | { kind: 'cancelled' };
-
-export interface ApprovalResponse {
-  approved: boolean;
-  scope: 'once' | 'session' | 'command' | 'path';
-  toolName?: string;
-  reason?: string;
-  parameters?: unknown;
-}
-
-type TranscriptRole = 'user' | 'assistant' | 'tool' | 'status' | 'error' | 'interaction' | 'diff' | 'approval';
-
-interface TranscriptItem {
-  role: TranscriptRole;
-  text: string;
-  detail?: string;
-  requestId?: string;
-  request?: unknown;
-  path?: string;
-  before?: string | null;
-  after?: string;
-  toolName?: string;
-  reason?: string;
-  parameters?: unknown;
-}
-
-export interface SidebarContext {
-  workspace?: string;
-  provider?: string;
-  model?: string;
-  mode?: string;
-  permission?: string;
-  daemonVersion?: string;
-  extensionVersion?: string;
-  authConfigured?: boolean;
-  authMethod?: string;
-  authSource?: string;
-  status?: string;
-  problem?: string;
-  running?: boolean;
-}
-
-interface SidebarState {
-  running: boolean;
-  sessionId?: string;
-  status: string;
-  context: SidebarContext;
-  transcript: TranscriptItem[];
-  runOptions: RunOptions;
+  openFile: (relativePath: string) => Promise<void>;
 }
 
 interface DaemonEventParams {
@@ -75,33 +34,23 @@ interface DaemonEventParams {
   event?: unknown;
 }
 
-interface WebviewMessage {
-  type?: string;
-  task?: unknown;
-  options?: unknown;
-  requestId?: unknown;
-  answer?: unknown;
-  approved?: unknown;
-  scope?: unknown;
-  toolName?: unknown;
-  reason?: unknown;
-  parameters?: unknown;
-}
+const SUPPRESSED_KINDS = new Set<string>([
+  'agents_md_loaded',
+  'turn_started',
+  'turn_ended',
+  'assistant_started',
+  'assistant_finished',
+  'context_utilization_changed',
+  'usage_updated',
+  'budget_updated',
+  'committee_role_usage',
+]);
 
 export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'peridot.chatView';
 
   private view: vscode.WebviewView | undefined;
-  private state: SidebarState = {
-    running: false,
-    status: 'Idle',
-    context: {},
-    transcript: [],
-    runOptions: {
-      mode: 'execute',
-      permission: 'auto',
-    },
-  };
+  private state: SidebarState = freshState();
 
   public constructor(
     private readonly extensionUri: vscode.Uri,
@@ -112,10 +61,10 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
     this.view = webviewView;
     webviewView.webview.options = {
       enableScripts: true,
-      localResourceRoots: [this.extensionUri],
+      localResourceRoots: [vscode.Uri.joinPath(this.extensionUri, 'dist')],
     };
     webviewView.webview.html = this.html(webviewView.webview);
-    webviewView.webview.onDidReceiveMessage((message: WebviewMessage) => {
+    webviewView.webview.onDidReceiveMessage((message: OutboundMessage) => {
       void this.receive(message);
     });
     this.publish();
@@ -123,6 +72,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
 
   public resetForTask(task: string, workspace: string): void {
     this.state = {
+      ...freshState(),
       running: true,
       status: 'Starting daemon',
       context: {
@@ -149,12 +99,26 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
   }
 
   public appendNotification(params: DaemonEventParams): void {
-    const sessionId = params.session_id ?? 'unknown-session';
     const event = params.event;
-    const item = transcriptItemForEvent(sessionId, event);
-    if (item) {
-      this.append(item);
+    if (!isRecord(event)) {
+      this.append({ role: 'status', text: 'Event' });
+      return;
     }
+    const kind = typeof event.kind === 'string' ? event.kind : '';
+
+    this.applyHudSideEffects(kind, event);
+
+    if (kind === 'tool_started') {
+      this.appendToolStarted(event);
+    } else if (kind === 'tool_finished') {
+      this.appendToolFinished(event);
+    } else if (kind === 'approval_requested') {
+      this.appendApproval(event);
+    } else {
+      const item = transcriptItemForEvent(kind, event);
+      if (item) this.append(item);
+    }
+
     if (isApprovalWaitingEvent(event)) {
       this.state.running = true;
       this.state.status = 'Waiting for approval';
@@ -224,28 +188,203 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
     this.publish();
   }
 
-  private async receive(message: WebviewMessage): Promise<void> {
-    if (message.type === 'run') {
-      const task = typeof message.task === 'string' ? message.task.trim() : '';
-      if (task.length > 0) {
-        const options = normalizeRunOptions(message.options);
-        this.state.runOptions = options;
-        await this.handlers.runTask(task, options);
+  private appendToolStarted(event: Record<string, unknown>): void {
+    const name = stringField(event, 'name');
+    if (name === 'agent_ask_user') {
+      this.append({
+        role: 'tool',
+        text: 'Started agent_ask_user',
+        detail: compactAskUserToolDetail(event.parameters),
+        toolName: name,
+        pending: true,
+      });
+      return;
+    }
+    this.append({
+      role: 'tool',
+      text: `Started ${name}`,
+      detail: undefined,
+      toolName: name,
+      toolParameters: event.parameters,
+      pending: true,
+    });
+  }
+
+  private appendToolFinished(event: Record<string, unknown>): void {
+    const name = stringField(event, 'name');
+    const summary = summarizeToolResult(event);
+    for (let i = this.state.transcript.length - 1; i >= 0; i -= 1) {
+      const item = this.state.transcript[i];
+      if (item.role === 'tool' && item.pending && (item.toolName === name || !item.toolName)) {
+        item.pending = false;
+        item.text = `Finished ${name}`;
+        item.toolResultSummary = summary;
+        item.detail = undefined;
+        this.publish();
+        return;
       }
+    }
+    this.append({
+      role: 'tool',
+      text: `Finished ${name}`,
+      detail: summary,
+      toolName: name,
+      pending: false,
+      toolResultSummary: summary,
+    });
+  }
+
+  private appendApproval(event: Record<string, unknown>): void {
+    const toolName = stringField(event, 'tool_name');
+    const reason = stringField(event, 'reason');
+    const parameters = event.parameters;
+    const item: TranscriptItem = {
+      role: 'approval',
+      text: `Approval requested: ${toolName}`,
+      detail: [reason, json(parameters)].filter(Boolean).join('\n'),
+      toolName,
+      reason,
+      parameters,
+    };
+    const path = pickString(parameters, 'path');
+    if (path) {
+      item.path = path;
+    }
+    this.append(item);
+
+    if ((toolName === 'file_write' || toolName === 'file_patch') && path) {
+      void this.enrichApprovalDiff(item, toolName, parameters);
+    }
+  }
+
+  private async enrichApprovalDiff(
+    item: TranscriptItem,
+    toolName: string,
+    parameters: unknown,
+  ): Promise<void> {
+    const path = item.path;
+    if (!path) return;
+    const before = await readWorkspaceFile(path);
+    if (toolName === 'file_write') {
+      const after = pickString(parameters, 'content') ?? '';
+      item.before = before;
+      item.after = after;
+    } else if (toolName === 'file_patch') {
+      const oldText = pickString(parameters, 'old_text') ?? '';
+      const newText = pickString(parameters, 'new_text') ?? '';
+      item.before = before;
+      item.after =
+        typeof before === 'string'
+          ? before.includes(oldText)
+            ? before.replace(oldText, newText)
+            : `${before}\n${newText}`
+          : newText;
+    }
+    this.publish();
+  }
+
+  private applyHudSideEffects(kind: string, event: Record<string, unknown>): void {
+    switch (kind) {
+      case 'usage_updated': {
+        const usage = isRecord(event.usage) ? event.usage : undefined;
+        if (usage) {
+          const next: UsageSlice = {
+            inputTokens: numberField(usage, 'input_tokens'),
+            outputTokens: numberField(usage, 'output_tokens'),
+            cacheReadTokens: optionalNumber(usage, 'cache_read_input_tokens'),
+            cacheCreationTokens: optionalNumber(usage, 'cache_creation_input_tokens'),
+            costUsd: optionalNumber(usage, 'estimated_cost_usd'),
+          };
+          this.state.hud.usage = next;
+          this.publish();
+        }
+        return;
+      }
+      case 'budget_updated': {
+        const next: BudgetSlice = {
+          costUsed: numberField(event, 'cost_used'),
+          turnsUsed: numberField(event, 'turns_used'),
+        };
+        const costLimit = optionalNumber(event, 'cost_limit');
+        const turnsLimit = optionalNumber(event, 'turns_limit');
+        if (typeof costLimit === 'number') next.costLimit = costLimit;
+        if (typeof turnsLimit === 'number') next.turnsLimit = turnsLimit;
+        this.state.hud.budget = next;
+        this.publish();
+        return;
+      }
+      case 'context_utilization_changed': {
+        const next: ContextSlice = {
+          tokensUsed: numberField(event, 'tokens_used'),
+          threshold: numberField(event, 'threshold'),
+        };
+        this.state.hud.context = next;
+        this.publish();
+        return;
+      }
+      case 'plan_updated': {
+        const stepsRaw = Array.isArray(event.steps) ? event.steps : [];
+        const steps: PlanStepView[] = stepsRaw.map((entry) => {
+          if (!isRecord(entry)) return { text: stringField({ value: entry }, 'value') };
+          return {
+            text: stringField(entry, 'text'),
+            status: typeof entry.status === 'string' ? entry.status : undefined,
+          };
+        });
+        const next: PlanSlice = { steps };
+        const current = optionalNumber(event, 'current');
+        if (typeof current === 'number') next.current = current;
+        this.state.hud.plan = next;
+        this.publish();
+        return;
+      }
+      case 'committee_role_usage': {
+        const role = stringField(event, 'role');
+        if (!role) return;
+        const slice: CommitteeRoleSlice = {
+          tokens: numberField(event, 'tokens'),
+          costUsd: numberField(event, 'cost_usd'),
+        };
+        const prev = this.state.hud.committee?.[role];
+        this.state.hud.committee = {
+          ...(this.state.hud.committee ?? {}),
+          [role]: {
+            tokens: (prev?.tokens ?? 0) + slice.tokens,
+            costUsd: (prev?.costUsd ?? 0) + slice.costUsd,
+          },
+        };
+        this.publish();
+        return;
+      }
+      default:
+        return;
+    }
+  }
+
+  private async receive(message: OutboundMessage): Promise<void> {
+    if (message.type === 'run') {
+      const task = message.task.trim();
+      if (task.length === 0) return;
+      this.state.runOptions = message.options;
+      await this.handlers.runTask(task, message.options);
       return;
     }
     if (message.type === 'askUserRespond') {
-      const requestId = typeof message.requestId === 'string' ? message.requestId : '';
-      const answer = normalizeAskUserAnswer(message.answer);
-      if (requestId && answer) {
-        await this.handlers.respondAskUser(requestId, answer);
-        this.resolveInteraction(requestId, answerLabel(answer));
+      if (message.requestId) {
+        await this.handlers.respondAskUser(message.requestId, message.answer);
+        this.resolveInteraction(message.requestId, answerLabel(message.answer));
       }
       return;
     }
     if (message.type === 'approvalRespond') {
-      await this.handlers.respondApproval(normalizeApprovalResponse(message));
-      this.resolveApproval(Boolean(message.approved));
+      await this.handlers.respondApproval({
+        approved: message.approved,
+        scope: message.scope,
+        toolName: message.toolName,
+        reason: message.reason,
+        parameters: message.parameters,
+      });
+      this.resolveApproval(message.approved);
       return;
     }
     if (message.type === 'cancel') {
@@ -258,10 +397,17 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
     }
     if (message.type === 'refreshStatus') {
       await this.handlers.refreshStatus();
+      return;
+    }
+    if (message.type === 'openFile') {
+      await this.handlers.openFile(message.path);
     }
   }
 
   private append(item: TranscriptItem): void {
+    if (shouldSuppress(item)) {
+      return;
+    }
     const last = this.state.transcript[this.state.transcript.length - 1];
     if (item.role === 'assistant' && last?.role === 'assistant') {
       last.text += item.text;
@@ -293,290 +439,29 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
   }
 
   private publish(): void {
-    this.view?.webview.postMessage({
-      type: 'state',
-      state: this.state,
-    });
+    const message: InboundMessage = { type: 'state', state: this.state };
+    this.view?.webview.postMessage(message);
   }
 
   private html(webview: vscode.Webview): string {
     const nonce = nonceValue();
+    const scriptUri = webview.asWebviewUri(
+      vscode.Uri.joinPath(this.extensionUri, 'dist', 'webview.js'),
+    );
+    const styleUri = webview.asWebviewUri(
+      vscode.Uri.joinPath(this.extensionUri, 'dist', 'webview.css'),
+    );
     return /* html */ `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta
     http-equiv="Content-Security-Policy"
-    content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';"
+    content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';"
   >
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Peridot</title>
-  <style>
-    :root {
-      color-scheme: light dark;
-      --peri-accent: #7fbf6a;
-      --peri-border: var(--vscode-panel-border);
-      --peri-muted: var(--vscode-descriptionForeground);
-      --peri-bg-subtle: var(--vscode-sideBarSectionHeader-background);
-      --peri-pill-bg: var(--vscode-badge-background);
-      --peri-pill-fg: var(--vscode-badge-foreground);
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      padding: 0;
-      color: var(--vscode-foreground);
-      background: var(--vscode-sideBar-background);
-      font: var(--vscode-font-size) var(--vscode-font-family);
-    }
-    .app {
-      min-height: 100vh;
-      display: grid;
-      grid-template-rows: auto auto 1fr auto;
-    }
-    .toolbar {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 8px;
-      padding: 8px 10px;
-      border-bottom: 1px solid var(--peri-border);
-      background: var(--peri-bg-subtle);
-    }
-    .toolbar-main {
-      min-width: 0;
-      flex: 1 1 auto;
-    }
-    .title {
-      min-width: 0;
-      font-weight: 600;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    .status {
-      min-width: 0;
-      color: var(--peri-muted);
-      font-size: 11px;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    .actions {
-      display: flex;
-      gap: 4px;
-      flex: 0 0 auto;
-    }
-    .icon {
-      width: 28px;
-      height: 28px;
-      flex: 0 0 auto;
-      border: 1px solid var(--vscode-button-border, transparent);
-      color: var(--vscode-button-foreground);
-      background: var(--vscode-button-background);
-      border-radius: 4px;
-      cursor: pointer;
-    }
-    .icon.secondary {
-      color: var(--vscode-button-secondaryForeground);
-      background: var(--vscode-button-secondaryBackground);
-    }
-    .icon:disabled {
-      opacity: 0.45;
-      cursor: default;
-    }
-    .context {
-      display: grid;
-      align-content: start;
-      gap: 7px;
-      padding: 8px 10px;
-      border-bottom: 1px solid var(--peri-border);
-      background: var(--vscode-sideBar-background);
-    }
-    .context-row {
-      display: flex;
-      gap: 6px;
-      align-items: center;
-      min-width: 0;
-    }
-    .workspace {
-      color: var(--peri-muted);
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    .pill {
-      max-width: 100%;
-      border-radius: 4px;
-      color: var(--peri-pill-fg);
-      background: var(--peri-pill-bg);
-      padding: 2px 5px;
-      font-size: 11px;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    .pill.muted {
-      color: var(--peri-muted);
-      background: var(--vscode-editorWidget-background);
-    }
-    .pill.problem {
-      color: var(--vscode-errorForeground);
-      background: var(--vscode-inputValidation-errorBackground);
-    }
-    .transcript {
-      min-height: 0;
-      overflow-y: auto;
-      padding: 8px 10px 12px;
-    }
-    .empty {
-      color: var(--peri-muted);
-      line-height: 1.45;
-      padding: 10px 0;
-    }
-    .message {
-      border-left: 2px solid var(--peri-border);
-      margin: 0 0 10px;
-      padding: 0 0 0 8px;
-      line-height: 1.45;
-      overflow-wrap: anywhere;
-      white-space: pre-wrap;
-    }
-    .message.user { border-left-color: var(--vscode-textLink-foreground); }
-    .message.assistant { border-left-color: var(--peri-accent); }
-    .message.tool { border-left-color: var(--vscode-charts-blue); }
-    .message.error { border-left-color: var(--vscode-errorForeground); }
-    .message.status {
-      color: var(--peri-muted);
-    }
-    .role {
-      color: var(--peri-muted);
-      font-size: 11px;
-      margin-bottom: 2px;
-      text-transform: uppercase;
-    }
-    .detail {
-      color: var(--peri-muted);
-      font-size: 11px;
-      margin-top: 3px;
-    }
-    .message.interaction {
-      border-left-color: var(--vscode-notificationsInfoIcon-foreground);
-    }
-    .message.diff {
-      border-left-color: var(--vscode-gitDecoration-modifiedResourceForeground);
-    }
-    .message.approval {
-      border-left-color: var(--vscode-notificationsWarningIcon-foreground);
-    }
-    .choice-row {
-      display: grid;
-      grid-template-columns: auto 1fr;
-      gap: 6px;
-      align-items: start;
-      margin: 4px 0;
-    }
-    .inline-input {
-      width: 100%;
-      min-height: 28px;
-      color: var(--vscode-input-foreground);
-      background: var(--vscode-input-background);
-      border: 1px solid var(--vscode-input-border, var(--peri-border));
-      border-radius: 4px;
-      padding: 5px 6px;
-      font: inherit;
-    }
-    .inline-actions {
-      display: flex;
-      gap: 6px;
-      margin-top: 7px;
-    }
-    .small-button {
-      min-height: 26px;
-      color: var(--vscode-button-foreground);
-      background: var(--vscode-button-background);
-      border: 1px solid var(--vscode-button-border, transparent);
-      border-radius: 4px;
-      cursor: pointer;
-      font: inherit;
-      padding: 3px 8px;
-    }
-    .small-button.secondary {
-      color: var(--vscode-button-secondaryForeground);
-      background: var(--vscode-button-secondaryBackground);
-    }
-    .diff-box {
-      display: grid;
-      gap: 3px;
-      color: var(--peri-muted);
-      font-size: 11px;
-      margin-top: 4px;
-    }
-    .options {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 6px;
-      grid-column: 1 / -1;
-    }
-    select,
-    .model-input {
-      min-width: 0;
-      height: 28px;
-      color: var(--vscode-dropdown-foreground);
-      background: var(--vscode-dropdown-background);
-      border: 1px solid var(--vscode-dropdown-border, var(--peri-border));
-      border-radius: 4px;
-      font: inherit;
-      padding: 3px 5px;
-    }
-    .model-input {
-      grid-column: 1 / -1;
-      color: var(--vscode-input-foreground);
-      background: var(--vscode-input-background);
-      border-color: var(--vscode-input-border, var(--peri-border));
-    }
-    .composer {
-      display: grid;
-      grid-template-columns: 1fr auto;
-      gap: 6px;
-      padding: 8px 10px 10px;
-      border-top: 1px solid var(--peri-border);
-      background: var(--vscode-sideBar-background);
-    }
-    textarea {
-      min-height: 34px;
-      max-height: 120px;
-      resize: vertical;
-      color: var(--vscode-input-foreground);
-      background: var(--vscode-input-background);
-      border: 1px solid var(--vscode-input-border, var(--peri-border));
-      border-radius: 4px;
-      padding: 7px 8px;
-      font: inherit;
-    }
-    textarea:focus {
-      outline: 1px solid var(--vscode-focusBorder);
-      outline-offset: -1px;
-    }
-    .run {
-      min-width: 38px;
-      height: 34px;
-      align-self: end;
-      color: var(--vscode-button-foreground);
-      background: var(--vscode-button-background);
-      border: 1px solid var(--vscode-button-border, transparent);
-      border-radius: 4px;
-      cursor: pointer;
-    }
-    .run:hover,
-    .icon:hover {
-      background: var(--vscode-button-hoverBackground);
-    }
-    .run:disabled {
-      opacity: 0.45;
-      cursor: default;
-    }
-  </style>
+  <link href="${styleUri}" rel="stylesheet" />
 </head>
 <body>
   <div class="app">
@@ -592,6 +477,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       </div>
     </header>
     <section class="context" id="context"></section>
+    <section class="hud" id="hud"></section>
     <main class="transcript" id="transcript">
       <div class="empty">Ready.</div>
     </main>
@@ -613,361 +499,58 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       <button class="run" id="run" title="Run task">▶</button>
     </form>
   </div>
-  <script nonce="${nonce}">
-    const vscode = acquireVsCodeApi();
-    const statusEl = document.getElementById('status');
-    const contextEl = document.getElementById('context');
-    const transcriptEl = document.getElementById('transcript');
-    const composer = document.getElementById('composer');
-    const taskEl = document.getElementById('task');
-    const modeEl = document.getElementById('mode');
-    const permissionEl = document.getElementById('permission');
-    const modelEl = document.getElementById('model');
-    const runEl = document.getElementById('run');
-    const cancelEl = document.getElementById('cancel');
-    const loginEl = document.getElementById('login');
-    const refreshEl = document.getElementById('refresh');
-
-    composer.addEventListener('submit', (event) => {
-      event.preventDefault();
-      const task = taskEl.value.trim();
-      if (!task) return;
-      vscode.postMessage({ type: 'run', task, options: currentRunOptions() });
-      taskEl.value = '';
-    });
-
-    taskEl.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
-        composer.requestSubmit();
-      }
-    });
-
-    cancelEl.addEventListener('click', () => {
-      vscode.postMessage({ type: 'cancel' });
-    });
-    loginEl.addEventListener('click', () => {
-      vscode.postMessage({ type: 'loginOpenAi' });
-    });
-    refreshEl.addEventListener('click', () => {
-      vscode.postMessage({ type: 'refreshStatus' });
-    });
-
-    window.addEventListener('message', (event) => {
-      if (event.data?.type === 'state') {
-        render(event.data.state);
-      }
-    });
-
-    function render(state) {
-      statusEl.textContent = state.status || 'Idle';
-      runEl.disabled = Boolean(state.running);
-      cancelEl.disabled = !state.running;
-      loginEl.disabled = Boolean(state.running);
-      const options = state.runOptions || {};
-      modeEl.value = options.mode || 'execute';
-      permissionEl.value = options.permission || 'auto';
-      modelEl.value = options.model || '';
-      modeEl.disabled = Boolean(state.running);
-      permissionEl.disabled = Boolean(state.running);
-      modelEl.disabled = Boolean(state.running);
-      renderContext(state.context || {});
-      if (!state.transcript || state.transcript.length === 0) {
-        transcriptEl.innerHTML = '<div class="empty">Ready.</div>';
-        return;
-      }
-      transcriptEl.replaceChildren(...state.transcript.map(renderItem));
-      transcriptEl.scrollTop = transcriptEl.scrollHeight;
-    }
-
-    function renderContext(context) {
-      const rows = [];
-      const workspace = context.workspace || 'No workspace';
-      rows.push(row([span('workspace', workspace, workspace)]));
-
-      const provider = context.provider || 'provider unknown';
-      const model = context.model || 'model unknown';
-      const authLabel = context.authConfigured
-        ? 'auth ' + (context.authSource || 'configured')
-        : 'auth missing';
-      rows.push(row([
-        span('pill', provider, provider),
-        span('pill muted', model, model),
-        span(context.authConfigured ? 'pill' : 'pill problem', authLabel, authLabel),
-      ]));
-
-      if (context.mode || context.permission || context.daemonVersion) {
-        rows.push(row([
-          span('pill muted', context.mode || 'mode', context.mode || ''),
-          span('pill muted', context.permission || 'permission', context.permission || ''),
-          span('pill muted', versionLabel(context), versionLabel(context)),
-        ]));
-      }
-
-      if (context.problem) {
-        rows.push(row([span('pill problem', context.problem, context.problem)]));
-      }
-      contextEl.replaceChildren(...rows);
-    }
-
-    function versionLabel(context) {
-      if (!context.daemonVersion && !context.extensionVersion) return 'version';
-      return 'daemon ' + (context.daemonVersion || '?') + ' · ext ' + (context.extensionVersion || '?');
-    }
-
-    function row(children) {
-      const el = document.createElement('div');
-      el.className = 'context-row';
-      el.append(...children);
-      return el;
-    }
-
-    function span(className, text, title) {
-      const el = document.createElement('span');
-      el.className = className;
-      el.textContent = text || '';
-      if (title) el.title = title;
-      return el;
-    }
-
-    function renderItem(item) {
-      const root = document.createElement('section');
-      root.className = 'message ' + item.role;
-      const role = document.createElement('div');
-      role.className = 'role';
-      role.textContent = item.role;
-      const text = document.createElement('div');
-      text.textContent = item.text || '';
-      root.append(role, text);
-      if (item.role === 'interaction') {
-        root.append(renderAskUser(item));
-        return root;
-      }
-      if (item.role === 'approval') {
-        root.append(renderApproval(item));
-        return root;
-      }
-      if (item.role === 'diff') {
-        root.append(renderDiff(item));
-      }
-      if (item.detail) {
-        const detail = document.createElement('div');
-        detail.className = 'detail';
-        detail.textContent = item.detail;
-        root.append(detail);
-      }
-      return root;
-    }
-
-    function renderApproval(item) {
-      const wrap = document.createElement('div');
-      if (item.detail) {
-        const detail = document.createElement('div');
-        detail.className = 'detail';
-        detail.textContent = item.detail;
-        wrap.append(detail);
-      }
-      const scope = document.createElement('select');
-      scope.title = 'Approval scope';
-      [
-        ['once', 'Once'],
-        ['command', 'Command'],
-        ['path', 'Path'],
-        ['session', 'Session'],
-      ].forEach(([value, label]) => {
-        const option = document.createElement('option');
-        option.value = value;
-        option.textContent = label;
-        scope.append(option);
-      });
-      const actions = document.createElement('div');
-      actions.className = 'inline-actions';
-      const approve = document.createElement('button');
-      approve.type = 'button';
-      approve.className = 'small-button';
-      approve.textContent = 'Approve';
-      approve.addEventListener('click', () => {
-        vscode.postMessage({
-          type: 'approvalRespond',
-          approved: true,
-          scope: scope.value,
-          toolName: item.toolName,
-          reason: item.reason,
-          parameters: item.parameters,
-        });
-      });
-      const deny = document.createElement('button');
-      deny.type = 'button';
-      deny.className = 'small-button secondary';
-      deny.textContent = 'Deny';
-      deny.addEventListener('click', () => {
-        vscode.postMessage({
-          type: 'approvalRespond',
-          approved: false,
-          scope: scope.value,
-          toolName: item.toolName,
-          reason: item.reason,
-          parameters: item.parameters,
-        });
-      });
-      actions.append(approve, deny);
-      wrap.append(scope, actions);
-      return wrap;
-    }
-
-    function renderAskUser(item) {
-      const wrap = document.createElement('div');
-      const request = item.request || {};
-      const kind = request.kind || '';
-      if (kind === 'single_select') {
-        (request.options || []).forEach((option, index) => {
-          const label = document.createElement('label');
-          label.className = 'choice-row';
-          const input = document.createElement('input');
-          input.type = 'radio';
-          input.name = item.requestId;
-          input.value = String(index);
-          input.checked = index === request.default_index;
-          label.append(input, document.createTextNode(option));
-          wrap.append(label);
-        });
-      } else if (kind === 'multi_select') {
-        (request.options || []).forEach((option, index) => {
-          const label = document.createElement('label');
-          label.className = 'choice-row';
-          const input = document.createElement('input');
-          input.type = 'checkbox';
-          input.value = String(index);
-          label.append(input, document.createTextNode(option));
-          wrap.append(label);
-        });
-      } else {
-        const input = document.createElement('input');
-        input.className = 'inline-input';
-        input.value = request.default || '';
-        input.placeholder = request.hint || '';
-        input.dataset.freeform = 'true';
-        wrap.append(input);
-      }
-
-      const actions = document.createElement('div');
-      actions.className = 'inline-actions';
-      const send = document.createElement('button');
-      send.type = 'button';
-      send.className = 'small-button';
-      send.textContent = 'Send';
-      send.addEventListener('click', () => {
-        vscode.postMessage({
-          type: 'askUserRespond',
-          requestId: item.requestId,
-          answer: answerForRequest(item, wrap),
-        });
-      });
-      const cancel = document.createElement('button');
-      cancel.type = 'button';
-      cancel.className = 'small-button secondary';
-      cancel.textContent = 'Cancel';
-      cancel.addEventListener('click', () => {
-        vscode.postMessage({
-          type: 'askUserRespond',
-          requestId: item.requestId,
-          answer: { kind: 'cancelled' },
-        });
-      });
-      actions.append(send, cancel);
-      wrap.append(actions);
-      return wrap;
-    }
-
-    function answerForRequest(item, wrap) {
-      const request = item.request || {};
-      if (request.kind === 'single_select') {
-        const selected = wrap.querySelector('input[type="radio"]:checked');
-        const index = selected ? Number(selected.value) : Number(request.default_index || 0);
-        const options = request.options || [];
-        return { kind: 'selected', index, text: String(options[index] || '') };
-      }
-      if (request.kind === 'multi_select') {
-        const indices = Array.from(wrap.querySelectorAll('input[type="checkbox"]:checked'))
-          .map((input) => Number(input.value))
-          .filter((value) => Number.isFinite(value));
-        return { kind: 'multi_selected', indices };
-      }
-      const input = wrap.querySelector('[data-freeform="true"]');
-      return { kind: 'text', text: input ? input.value : '' };
-    }
-
-    function renderDiff(item) {
-      const box = document.createElement('div');
-      box.className = 'diff-box';
-      const before = typeof item.before === 'string' ? item.before.split('\\n').length : 0;
-      const after = typeof item.after === 'string' ? item.after.split('\\n').length : 0;
-      box.textContent = 'before ' + before + ' lines · after ' + after + ' lines';
-      return box;
-    }
-
-    function currentRunOptions() {
-      const model = modelEl.value.trim();
-      return {
-        mode: modeEl.value,
-        permission: permissionEl.value,
-        model: model || undefined,
-      };
-    }
-  </script>
+  <script nonce="${nonce}" src="${scriptUri}"></script>
 </body>
 </html>`;
   }
 }
 
-function transcriptItemForEvent(sessionId: string, event: unknown): TranscriptItem | undefined {
-  if (!isRecord(event)) {
-    return { role: 'status', text: `Event from ${sessionId}` };
+function freshState(): SidebarState {
+  return {
+    running: false,
+    status: 'Idle',
+    context: {},
+    transcript: [],
+    runOptions: {
+      mode: 'execute',
+      permission: 'auto',
+    },
+    hud: {} as HudState,
+  };
+}
+
+function shouldSuppress(item: TranscriptItem): boolean {
+  if (item.role !== 'status') return false;
+  const lowered = item.text.toLowerCase();
+  for (const kind of SUPPRESSED_KINDS) {
+    if (lowered.includes(kind.replace(/_/g, ' '))) return true;
   }
-  const kind = typeof event.kind === 'string' ? event.kind : 'unknown';
+  return false;
+}
+
+function transcriptItemForEvent(
+  kind: string,
+  event: Record<string, unknown>,
+): TranscriptItem | undefined {
   switch (kind) {
     case 'started':
-      return { role: 'status', text: 'Daemon started', detail: sessionId };
+      return { role: 'status', text: 'Daemon started' };
     case 'run_started':
-      return { role: 'status', text: 'Run started', detail: sessionId };
+      return { role: 'status', text: 'Run started' };
     case 'agents_md_loaded':
-      return {
-        role: 'status',
-        text: 'AGENTS.md loaded',
-        detail: compactAgentsDetail(event),
-      };
     case 'turn_started':
-      return {
-        role: 'status',
-        text: `Turn ${numberField(event, 'turn_index') + 1} started`,
-      };
+    case 'turn_ended':
     case 'assistant_started':
-      return { role: 'status', text: 'Assistant started' };
+    case 'assistant_finished':
+    case 'context_utilization_changed':
+    case 'usage_updated':
+    case 'budget_updated':
+    case 'committee_role_usage':
+      return undefined;
     case 'assistant_delta':
       return { role: 'assistant', text: stringField(event, 'delta') };
     case 'thinking':
       return { role: 'assistant', text: stringField(event, 'text') };
-    case 'assistant_finished':
-    case 'context_utilization_changed':
-      return undefined;
-    case 'tool_started':
-      if (stringField(event, 'name') === 'agent_ask_user') {
-        return {
-          role: 'tool',
-          text: 'Started agent_ask_user',
-          detail: compactAskUserToolDetail(event.parameters),
-        };
-      }
-      return {
-        role: 'tool',
-        text: `Started ${stringField(event, 'name')}`,
-        detail: json(event.parameters),
-      };
-    case 'tool_finished':
-      return {
-        role: 'tool',
-        text: `Finished ${stringField(event, 'name')}`,
-        detail: summarizeToolResult(event),
-      };
     case 'ask_user_requested':
       return {
         role: 'interaction',
@@ -975,15 +558,6 @@ function transcriptItemForEvent(sessionId: string, event: unknown): TranscriptIt
         detail: stringField(event, 'request_id'),
         requestId: stringField(event, 'request_id'),
         request: event.request,
-      };
-    case 'approval_requested':
-      return {
-        role: 'approval',
-        text: `Approval requested: ${stringField(event, 'tool_name')}`,
-        detail: [stringField(event, 'reason'), json(event.parameters)].filter(Boolean).join('\n'),
-        toolName: stringField(event, 'tool_name'),
-        reason: stringField(event, 'reason'),
-        parameters: event.parameters,
       };
     case 'approval_waiting':
       return { role: 'status', text: 'Waiting for approval' };
@@ -995,29 +569,19 @@ function transcriptItemForEvent(sessionId: string, event: unknown): TranscriptIt
       };
     case 'approval_denied':
       return { role: 'error', text: 'Approval denied' };
+    case 'plan_updated':
+      return { role: 'status', text: 'Plan updated' };
     case 'file_diff': {
-      const payload = isRecord(event) ? event : {};
-      const path = stringField(payload, 'path');
+      const path = stringField(event, 'path');
       return {
         role: 'diff',
         text: `Changed ${path || 'file'}`,
-        detail: stringField(payload, 'tool_name'),
+        detail: stringField(event, 'tool_name'),
         path,
-        before: typeof payload.before === 'string' ? payload.before : null,
-        after: typeof payload.after === 'string' ? payload.after : '',
+        before: typeof event.before === 'string' ? event.before : null,
+        after: typeof event.after === 'string' ? event.after : '',
       };
     }
-    case 'usage_updated':
-      return {
-        role: 'status',
-        text: 'Usage updated',
-        detail: compactUsageDetail(event.usage),
-      };
-    case 'turn_ended':
-      return {
-        role: 'status',
-        text: booleanField(event, 'success') ? 'Turn completed' : 'Turn failed',
-      };
     case 'finished':
       return { role: 'status', text: 'Finished', detail: compactFinishedDetail(event) };
     case 'error':
@@ -1061,27 +625,7 @@ function summarizeToolResult(event: Record<string, unknown>): string {
       return summary;
     }
   }
-  return json(event);
-}
-
-function compactAgentsDetail(event: Record<string, unknown>): string {
-  const ruleCount = event.rule_count;
-  const paths = Array.isArray(event.paths)
-    ? event.paths.filter((value): value is string => typeof value === 'string')
-    : [];
-  const pathLabel = paths.length > 0 ? paths.join(', ') : 'no paths';
-  return typeof ruleCount === 'number' ? `${ruleCount} rules · ${pathLabel}` : pathLabel;
-}
-
-function compactUsageDetail(value: unknown): string {
-  if (!isRecord(value)) {
-    return '';
-  }
-  const input = numberField(value, 'input_tokens');
-  const output = numberField(value, 'output_tokens');
-  const cost = value.estimated_cost_usd;
-  const costLabel = typeof cost === 'number' ? ` · $${cost.toFixed(4)}` : '';
-  return `${input} in · ${output} out${costLabel}`;
+  return json(event.result ?? event);
 }
 
 function compactFinishedDetail(event: Record<string, unknown>): string {
@@ -1117,8 +661,15 @@ function numberField(record: Record<string, unknown>, key: string): number {
   return typeof value === 'number' ? value : 0;
 }
 
-function booleanField(record: Record<string, unknown>, key: string): boolean {
-  return record[key] === true;
+function optionalNumber(record: Record<string, unknown>, key: string): number | undefined {
+  const value = record[key];
+  return typeof value === 'number' ? value : undefined;
+}
+
+function pickString(value: unknown, key: string): string | undefined {
+  if (!isRecord(value)) return undefined;
+  const inner = value[key];
+  return typeof inner === 'string' ? inner : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1132,58 +683,6 @@ function json(value: unknown): string {
   } catch {
     return String(value);
   }
-}
-
-function normalizeRunOptions(value: unknown): RunOptions {
-  const record = isRecord(value) ? value : {};
-  const mode = record.mode === 'plan' || record.mode === 'goal' ? record.mode : 'execute';
-  const permission =
-    record.permission === 'safe' || record.permission === 'yolo' ? record.permission : 'auto';
-  const model = typeof record.model === 'string' ? record.model.trim() : '';
-  return {
-    mode,
-    permission,
-    ...(model ? { model } : {}),
-  };
-}
-
-function normalizeAskUserAnswer(value: unknown): AskUserAnswer | undefined {
-  if (!isRecord(value) || typeof value.kind !== 'string') {
-    return undefined;
-  }
-  if (value.kind === 'cancelled') {
-    return { kind: 'cancelled' };
-  }
-  if (value.kind === 'selected') {
-    const index = typeof value.index === 'number' ? value.index : 0;
-    const text = typeof value.text === 'string' ? value.text : '';
-    return { kind: 'selected', index, text };
-  }
-  if (value.kind === 'multi_selected') {
-    const indices = Array.isArray(value.indices)
-      ? value.indices.filter((index): index is number => typeof index === 'number')
-      : [];
-    return { kind: 'multi_selected', indices };
-  }
-  if (value.kind === 'text') {
-    const text = typeof value.text === 'string' ? value.text : '';
-    return { kind: 'text', text };
-  }
-  return undefined;
-}
-
-function normalizeApprovalResponse(value: WebviewMessage): ApprovalResponse {
-  const scope =
-    value.scope === 'session' || value.scope === 'command' || value.scope === 'path'
-      ? value.scope
-      : 'once';
-  return {
-    approved: value.approved === true,
-    scope,
-    toolName: typeof value.toolName === 'string' ? value.toolName : undefined,
-    reason: typeof value.reason === 'string' ? value.reason : undefined,
-    parameters: value.parameters,
-  };
 }
 
 function answerLabel(answer: AskUserAnswer): string {
@@ -1207,3 +706,16 @@ function nonceValue(): string {
   }
   return value;
 }
+
+async function readWorkspaceFile(relativePath: string): Promise<string | null> {
+  const folder = vscode.workspace.workspaceFolders?.[0];
+  if (!folder) return null;
+  try {
+    const uri = vscode.Uri.joinPath(folder.uri, relativePath);
+    const bytes = await vscode.workspace.fs.readFile(uri);
+    return new TextDecoder('utf-8').decode(bytes);
+  } catch {
+    return null;
+  }
+}
+

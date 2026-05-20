@@ -2,10 +2,13 @@
 .vscode-test/**
 node_modules/**
 src/**
+webview/**
 .gitignore
 .eslintrc.json
-**/tsconfig.json
+**/tsconfig*.json
+esbuild.config.mjs
 **/*.map
 **/*.ts
 !dist/**/*.js
+!dist/**/*.css
 !dist/**/*.js.map

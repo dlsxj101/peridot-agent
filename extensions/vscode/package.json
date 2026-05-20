@@ -2,7 +2,7 @@
   "name": "peridot-vscode",
   "displayName": "Peridot Agent",
   "description": "Rust CLI/TUI autonomous coding agent with multi-LLM committee mode, native tool calling, and 2-Tier context management. VS Code panel layered on top of the `peridot` daemon.",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "publisher": "dlsxj101",
   "license": "MIT",
   "extensionKind": [
@@ -104,15 +104,23 @@
     }
   },
   "scripts": {
-    "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./",
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.webview.json",
+    "build": "node esbuild.config.mjs",
+    "build:prod": "node esbuild.config.mjs --production",
+    "compile": "npm run typecheck && npm run build",
+    "watch": "node esbuild.config.mjs --watch",
     "package": "vsce package --no-dependencies",
-    "vscode:prepublish": "npm run compile"
+    "vscode:prepublish": "npm run typecheck && npm run build:prod"
+  },
+  "dependencies": {
+    "diff": "^5.2.0"
   },
   "devDependencies": {
+    "@types/diff": "^5.2.3",
     "@types/node": "^20.11.0",
     "@types/vscode": "^1.85.0",
     "@vscode/vsce": "^3.2.0",
+    "esbuild": "^0.24.0",
     "typescript": "^5.4.0"
   }
 }

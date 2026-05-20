@@ -7,11 +7,12 @@ import * as childProcess from 'child_process';
 import * as vscode from 'vscode';
 import { PeridotDaemon, RpcNotification } from './daemon';
 import { resolvePeridotBinary } from './peridotBin';
+import { StatusCache } from './statusCache';
 import {
-  ApprovalResponse,
-  AskUserAnswer,
   PeridotSidebarProvider,
-  RunOptions,
+  type ApprovalResponse,
+  type AskUserAnswer,
+  type RunOptions,
 } from './sidebar';
 
 interface SessionStartResult {
@@ -47,34 +48,35 @@ interface ActiveRun {
 }
 
 let activeRun: ActiveRun | undefined;
+let statusCache: StatusCache<DaemonStatusResult> | undefined;
+let cachedFolder: string | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
   const output = vscode.window.createOutputChannel('Peridot');
   context.subscriptions.push(output);
-  let sidebar: PeridotSidebarProvider;
-  sidebar = new PeridotSidebarProvider(context.extensionUri, {
+  const sidebar: PeridotSidebarProvider = new PeridotSidebarProvider(context.extensionUri, {
     runTask: async (task: string, options: RunOptions): Promise<void> =>
       runTask(task, output, sidebar, options),
     cancelTask: async (): Promise<void> => cancelTask(output),
     loginOpenAi: async (): Promise<void> => loginOpenAi(output, sidebar),
-    refreshStatus: async (): Promise<void> => refreshStatus(output, sidebar),
+    refreshStatus: async (): Promise<void> => refreshStatus(output, sidebar, { force: true }),
     respondAskUser: async (requestId: string, answer: AskUserAnswer): Promise<void> =>
       respondAskUser(requestId, answer, output, sidebar),
     respondApproval: async (decision: ApprovalResponse): Promise<void> =>
       respondApproval(decision, output, sidebar),
+    openFile: async (relativePath: string): Promise<void> => openWorkspaceFile(relativePath, output),
   });
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(PeridotSidebarProvider.viewType, sidebar),
   );
   context.subscriptions.push(
     vscode.workspace.onDidChangeWorkspaceFolders(() => {
-      void refreshStatus(output, sidebar);
+      invalidateStatusCache();
+      void refreshStatus(output, sidebar, { force: true });
     }),
   );
   void refreshStatus(output, sidebar);
 
-  // Sanity command — exists purely so a user can verify the
-  // extension installed correctly without spawning the daemon.
   context.subscriptions.push(
     vscode.commands.registerCommand('peridot.hello', async () => {
       await vscode.window.showInformationMessage(
@@ -83,10 +85,6 @@ export function activate(context: vscode.ExtensionContext) {
     }),
   );
 
-  // Round-trips the daemon to confirm the JSON-RPC pipeline works.
-  // Surfaces both the extension and daemon versions to the operator
-  // so version mismatches between the .vsix and the bundled binary
-  // are visible immediately.
   context.subscriptions.push(
     vscode.commands.registerCommand('peridot.checkVersion', async () => {
       const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
@@ -103,7 +101,7 @@ export function activate(context: vscode.ExtensionContext) {
           const extensionVersion =
             vscode.extensions.getExtension('dlsxj101.peridot-vscode')?.packageJSON?.version ??
             'unknown';
-          await refreshStatus(output, sidebar);
+          await refreshStatus(output, sidebar, { force: true });
           await vscode.window.showInformationMessage(
             `Peridot daemon ${result.version} (extension ${extensionVersion}).`,
           );
@@ -137,7 +135,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(
     vscode.commands.registerCommand('peridot.refreshStatus', async () => {
-      await refreshStatus(output, sidebar);
+      await refreshStatus(output, sidebar, { force: true });
     }),
   );
 }
@@ -218,7 +216,7 @@ async function runTask(
     run.sessionId = result.session_id;
     output.appendLine(`[peridot] session started: ${result.session_id}`);
     sidebar.setSession(result.session_id);
-    void refreshStatus(output, sidebar);
+    void refreshStatus(output, sidebar, { force: true });
   } catch (err) {
     disposeNotification?.();
     disposeExit?.();
@@ -233,9 +231,14 @@ async function runTask(
   }
 }
 
+interface RefreshOptions {
+  force?: boolean;
+}
+
 async function refreshStatus(
   output: vscode.OutputChannel,
   sidebar: PeridotSidebarProvider,
+  options: RefreshOptions = {},
 ): Promise<void> {
   const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   if (!folder) {
@@ -247,10 +250,16 @@ async function refreshStatus(
     return;
   }
 
-  let daemon: PeridotDaemon | undefined;
+  if (folder !== cachedFolder) {
+    invalidateStatusCache();
+    cachedFolder = folder;
+  }
+  if (!statusCache) {
+    statusCache = new StatusCache<DaemonStatusResult>(() => fetchStatus(folder, output));
+  }
+
   try {
-    daemon = await PeridotDaemon.spawn(folder);
-    const result = (await daemon.send('peridot.status')) as DaemonStatusResult;
+    const result = await statusCache.get(options.force ?? false);
     const extensionVersion =
       vscode.extensions.getExtension('dlsxj101.peridot-vscode')?.packageJSON?.version ??
       'unknown';
@@ -277,11 +286,29 @@ async function refreshStatus(
       problem: message,
       running: Boolean(activeRun),
     });
-  } finally {
-    if (daemon) {
-      await daemon.shutdown();
-    }
   }
+}
+
+async function fetchStatus(
+  folder: string,
+  output: vscode.OutputChannel,
+): Promise<DaemonStatusResult> {
+  // Reuse the long-lived daemon when a session is active so we don't
+  // double-spawn just to read context.
+  if (activeRun?.daemon) {
+    return (await activeRun.daemon.send('peridot.status')) as DaemonStatusResult;
+  }
+  output.appendLine(`[peridot] status fetch (spawn) for ${folder}`);
+  const daemon = await PeridotDaemon.spawn(folder);
+  try {
+    return (await daemon.send('peridot.status')) as DaemonStatusResult;
+  } finally {
+    await daemon.shutdown();
+  }
+}
+
+function invalidateStatusCache(): void {
+  statusCache?.invalidate();
 }
 
 async function loginOpenAi(
@@ -310,7 +337,8 @@ async function loginOpenAi(
       output,
     );
     sidebar.appendSystem('ChatGPT login completed');
-    await refreshStatus(output, sidebar);
+    invalidateStatusCache();
+    await refreshStatus(output, sidebar, { force: true });
     await vscode.window.showInformationMessage('Peridot ChatGPT login completed.');
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -438,12 +466,30 @@ async function respondApproval(
     }
     if (!decision.approved) {
       await finishActiveRun(output);
-      void refreshStatus(output, sidebar);
+      void refreshStatus(output, sidebar, { force: true });
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     output.appendLine(`[peridot] approval response failed: ${message}`);
     sidebar.appendError(`Approval response failed: ${message}`);
+  }
+}
+
+async function openWorkspaceFile(
+  relativePath: string,
+  output: vscode.OutputChannel,
+): Promise<void> {
+  const folder = vscode.workspace.workspaceFolders?.[0];
+  if (!folder) {
+    output.appendLine(`[peridot] openFile ignored — no workspace open: ${relativePath}`);
+    return;
+  }
+  try {
+    const uri = vscode.Uri.joinPath(folder.uri, relativePath);
+    await vscode.commands.executeCommand('vscode.open', uri);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    output.appendLine(`[peridot] openFile failed: ${message}`);
   }
 }
 
@@ -470,7 +516,7 @@ async function handleDaemonNotification(
 
   if (isTerminalEvent(event)) {
     await finishActiveRun(output);
-    void refreshStatus(output, sidebar);
+    void refreshStatus(output, sidebar, { force: true });
   }
 }
 

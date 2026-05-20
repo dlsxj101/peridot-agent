@@ -4,13 +4,15 @@ VS Code panel for [Peridot Agent](https://github.com/dlsxj101/peridot-agent) —
 a Rust CLI/TUI autonomous coding agent with multi-LLM committee mode,
 native tool calling, and 2-Tier context management.
 
-> **Status**: v0.4.0 adds the first approval-resume control layer. The extension
-> installs, registers its commands reliably in VS Code and Cursor, spawns
-> `peridot daemon` over JSON-RPC, round-trips a `version` request, and can
-> run a task while streaming daemon events into the Peridot sidebar. The
-> sidebar now shows the active workspace, provider, model, auth state, and
-> login/refresh actions, plus run options, inline `agent_ask_user` response
-> cards, and approve/deny controls for approval-gated tool calls.
+> **Status**: v0.5.0 splits the sidebar webview into its own bundle
+> (esbuild) and adds a HUD panel for usage / budget / 4-Tier context, an
+> inline plan panel for `plan_updated`, inline unified-diff rendering for
+> `file_diff` events, and a pre-approval diff preview for
+> `file_write` / `file_patch`. Daemon status reads are now cached and
+> reuse the active session's RPC channel instead of respawning the
+> daemon. The extension still installs cleanly in VS Code and Cursor,
+> spawns `peridot daemon` over JSON-RPC, runs a task end-to-end, and
+> renders `agent_ask_user` / approval cards inline.
 
 ## Commands
 
@@ -27,9 +29,12 @@ native tool calling, and 2-Tier context management.
 
 Open the Peridot Activity Bar item, choose mode/permission/model options, type
 a task, and submit it to start a daemon-backed agent session. The sidebar shows
-the active workspace/provider context, renders common daemon events as compact
-transcript entries, can answer live `agent_ask_user` prompts, and can resume
-approval-paused tool calls from the sidebar.
+the active workspace/provider context, a live HUD with token usage, cost /
+turn budget, and 4-Tier context utilization, an inline plan panel that follows
+`plan_updated`, a compact transcript with collapsed tool cards, answerable
+`agent_ask_user` cards, and approve/deny controls for approval-gated tool
+calls — including an inline unified diff preview for `file_write` /
+`file_patch` so you can see the change before deciding.
 
 ## Configuration
 
@@ -39,8 +44,12 @@ approval-paused tool calls from the sidebar.
 
 ## Roadmap
 
-- **v0.5.0** — FileDiff event → Monaco diff editor; richer approval diff preview.
-- **v0.6.0** — Skill picker, slash commands, branch picker, multi-session tab bar.
+- **v0.5.0** — ✅ Sidebar webview split into its own esbuild bundle, HUD
+  panel for usage / budget / context, inline plan panel, inline
+  unified-diff cards, pre-approval diff preview for `file_write` /
+  `file_patch`, and cached / reused-daemon status reads.
+- **v0.6.0** — Skill picker, slash commands, branch picker, multi-session
+  tab bar. (Requires new daemon RPCs — designed alongside the daemon.)
 
 ## Source
 
