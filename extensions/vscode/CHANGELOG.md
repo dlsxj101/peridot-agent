@@ -1,5 +1,12 @@
 # Peridot Agent — Extension Changelog
 
+## [0.1.1] — 2026-05-20
+
+### Fixed — sidebar webview registration
+
+- Marked the Chat view contribution as a WebView so VS Code/Cursor binds it
+  to `registerWebviewViewProvider` instead of looking for a tree data provider.
+
 ## [0.1.0] — 2026-05-20
 
 ### Added — sidebar chat panel
