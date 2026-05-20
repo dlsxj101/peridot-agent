@@ -1,18 +1,36 @@
 import * as vscode from 'vscode';
 
 export interface SidebarHandlers {
-  runTask: (task: string) => Promise<void>;
+  runTask: (task: string, options: RunOptions) => Promise<void>;
   cancelTask: () => Promise<void>;
   loginOpenAi: () => Promise<void>;
   refreshStatus: () => Promise<void>;
+  respondAskUser: (requestId: string, answer: AskUserAnswer) => Promise<void>;
 }
 
-type TranscriptRole = 'user' | 'assistant' | 'tool' | 'status' | 'error';
+export interface RunOptions {
+  mode: 'execute' | 'plan' | 'goal';
+  permission: 'auto' | 'safe' | 'yolo';
+  model?: string;
+}
+
+export type AskUserAnswer =
+  | { kind: 'selected'; index: number; text: string }
+  | { kind: 'multi_selected'; indices: number[] }
+  | { kind: 'text'; text: string }
+  | { kind: 'cancelled' };
+
+type TranscriptRole = 'user' | 'assistant' | 'tool' | 'status' | 'error' | 'interaction' | 'diff' | 'approval';
 
 interface TranscriptItem {
   role: TranscriptRole;
   text: string;
   detail?: string;
+  requestId?: string;
+  request?: unknown;
+  path?: string;
+  before?: string | null;
+  after?: string;
 }
 
 export interface SidebarContext {
@@ -37,6 +55,7 @@ interface SidebarState {
   status: string;
   context: SidebarContext;
   transcript: TranscriptItem[];
+  runOptions: RunOptions;
 }
 
 interface DaemonEventParams {
@@ -47,6 +66,9 @@ interface DaemonEventParams {
 interface WebviewMessage {
   type?: string;
   task?: unknown;
+  options?: unknown;
+  requestId?: unknown;
+  answer?: unknown;
 }
 
 export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
@@ -58,6 +80,10 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
     status: 'Idle',
     context: {},
     transcript: [],
+    runOptions: {
+      mode: 'execute',
+      permission: 'auto',
+    },
   };
 
   public constructor(
@@ -93,6 +119,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         { role: 'user', text: task },
         { role: 'status', text: 'Starting daemon', detail: workspace },
       ],
+      runOptions: this.state.runOptions,
     };
     this.publish();
   }
@@ -174,7 +201,18 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
     if (message.type === 'run') {
       const task = typeof message.task === 'string' ? message.task.trim() : '';
       if (task.length > 0) {
-        await this.handlers.runTask(task);
+        const options = normalizeRunOptions(message.options);
+        this.state.runOptions = options;
+        await this.handlers.runTask(task, options);
+      }
+      return;
+    }
+    if (message.type === 'askUserRespond') {
+      const requestId = typeof message.requestId === 'string' ? message.requestId : '';
+      const answer = normalizeAskUserAnswer(message.answer);
+      if (requestId && answer) {
+        await this.handlers.respondAskUser(requestId, answer);
+        this.resolveInteraction(requestId, answerLabel(answer));
       }
       return;
     }
@@ -197,6 +235,17 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       last.text += item.text;
     } else {
       this.state.transcript.push(item);
+    }
+    this.publish();
+  }
+
+  private resolveInteraction(requestId: string, detail: string): void {
+    const item = this.state.transcript.find((entry) => entry.requestId === requestId);
+    if (item) {
+      item.role = 'status';
+      item.text = 'User response sent';
+      item.detail = detail;
+      item.request = undefined;
     }
     this.publish();
   }
@@ -369,6 +418,81 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       font-size: 11px;
       margin-top: 3px;
     }
+    .message.interaction {
+      border-left-color: var(--vscode-notificationsInfoIcon-foreground);
+    }
+    .message.diff {
+      border-left-color: var(--vscode-gitDecoration-modifiedResourceForeground);
+    }
+    .message.approval {
+      border-left-color: var(--vscode-notificationsWarningIcon-foreground);
+    }
+    .choice-row {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 6px;
+      align-items: start;
+      margin: 4px 0;
+    }
+    .inline-input {
+      width: 100%;
+      min-height: 28px;
+      color: var(--vscode-input-foreground);
+      background: var(--vscode-input-background);
+      border: 1px solid var(--vscode-input-border, var(--peri-border));
+      border-radius: 4px;
+      padding: 5px 6px;
+      font: inherit;
+    }
+    .inline-actions {
+      display: flex;
+      gap: 6px;
+      margin-top: 7px;
+    }
+    .small-button {
+      min-height: 26px;
+      color: var(--vscode-button-foreground);
+      background: var(--vscode-button-background);
+      border: 1px solid var(--vscode-button-border, transparent);
+      border-radius: 4px;
+      cursor: pointer;
+      font: inherit;
+      padding: 3px 8px;
+    }
+    .small-button.secondary {
+      color: var(--vscode-button-secondaryForeground);
+      background: var(--vscode-button-secondaryBackground);
+    }
+    .diff-box {
+      display: grid;
+      gap: 3px;
+      color: var(--peri-muted);
+      font-size: 11px;
+      margin-top: 4px;
+    }
+    .options {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+      grid-column: 1 / -1;
+    }
+    select,
+    .model-input {
+      min-width: 0;
+      height: 28px;
+      color: var(--vscode-dropdown-foreground);
+      background: var(--vscode-dropdown-background);
+      border: 1px solid var(--vscode-dropdown-border, var(--peri-border));
+      border-radius: 4px;
+      font: inherit;
+      padding: 3px 5px;
+    }
+    .model-input {
+      grid-column: 1 / -1;
+      color: var(--vscode-input-foreground);
+      background: var(--vscode-input-background);
+      border-color: var(--vscode-input-border, var(--peri-border));
+    }
     .composer {
       display: grid;
       grid-template-columns: 1fr auto;
@@ -430,6 +554,19 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       <div class="empty">Ready.</div>
     </main>
     <form class="composer" id="composer">
+      <div class="options">
+        <select id="mode" title="Execution mode">
+          <option value="execute">Execute</option>
+          <option value="plan">Plan</option>
+          <option value="goal">Goal</option>
+        </select>
+        <select id="permission" title="Permission mode">
+          <option value="auto">Auto</option>
+          <option value="safe">Safe</option>
+          <option value="yolo">Yolo</option>
+        </select>
+        <input class="model-input" id="model" placeholder="model override (optional)" />
+      </div>
       <textarea id="task" rows="2" placeholder="Ask Peridot to work in this repo"></textarea>
       <button class="run" id="run" title="Run task">▶</button>
     </form>
@@ -441,6 +578,9 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
     const transcriptEl = document.getElementById('transcript');
     const composer = document.getElementById('composer');
     const taskEl = document.getElementById('task');
+    const modeEl = document.getElementById('mode');
+    const permissionEl = document.getElementById('permission');
+    const modelEl = document.getElementById('model');
     const runEl = document.getElementById('run');
     const cancelEl = document.getElementById('cancel');
     const loginEl = document.getElementById('login');
@@ -450,7 +590,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       event.preventDefault();
       const task = taskEl.value.trim();
       if (!task) return;
-      vscode.postMessage({ type: 'run', task });
+      vscode.postMessage({ type: 'run', task, options: currentRunOptions() });
       taskEl.value = '';
     });
 
@@ -481,6 +621,13 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       runEl.disabled = Boolean(state.running);
       cancelEl.disabled = !state.running;
       loginEl.disabled = Boolean(state.running);
+      const options = state.runOptions || {};
+      modeEl.value = options.mode || 'execute';
+      permissionEl.value = options.permission || 'auto';
+      modelEl.value = options.model || '';
+      modeEl.disabled = Boolean(state.running);
+      permissionEl.disabled = Boolean(state.running);
+      modelEl.disabled = Boolean(state.running);
       renderContext(state.context || {});
       if (!state.transcript || state.transcript.length === 0) {
         transcriptEl.innerHTML = '<div class="empty">Ready.</div>';
@@ -549,6 +696,13 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       const text = document.createElement('div');
       text.textContent = item.text || '';
       root.append(role, text);
+      if (item.role === 'interaction') {
+        root.append(renderAskUser(item));
+        return root;
+      }
+      if (item.role === 'diff') {
+        root.append(renderDiff(item));
+      }
       if (item.detail) {
         const detail = document.createElement('div');
         detail.className = 'detail';
@@ -556,6 +710,106 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         root.append(detail);
       }
       return root;
+    }
+
+    function renderAskUser(item) {
+      const wrap = document.createElement('div');
+      const request = item.request || {};
+      const kind = request.kind || '';
+      if (kind === 'single_select') {
+        (request.options || []).forEach((option, index) => {
+          const label = document.createElement('label');
+          label.className = 'choice-row';
+          const input = document.createElement('input');
+          input.type = 'radio';
+          input.name = item.requestId;
+          input.value = String(index);
+          input.checked = index === request.default_index;
+          label.append(input, document.createTextNode(option));
+          wrap.append(label);
+        });
+      } else if (kind === 'multi_select') {
+        (request.options || []).forEach((option, index) => {
+          const label = document.createElement('label');
+          label.className = 'choice-row';
+          const input = document.createElement('input');
+          input.type = 'checkbox';
+          input.value = String(index);
+          label.append(input, document.createTextNode(option));
+          wrap.append(label);
+        });
+      } else {
+        const input = document.createElement('input');
+        input.className = 'inline-input';
+        input.value = request.default || '';
+        input.placeholder = request.hint || '';
+        input.dataset.freeform = 'true';
+        wrap.append(input);
+      }
+
+      const actions = document.createElement('div');
+      actions.className = 'inline-actions';
+      const send = document.createElement('button');
+      send.type = 'button';
+      send.className = 'small-button';
+      send.textContent = 'Send';
+      send.addEventListener('click', () => {
+        vscode.postMessage({
+          type: 'askUserRespond',
+          requestId: item.requestId,
+          answer: answerForRequest(item, wrap),
+        });
+      });
+      const cancel = document.createElement('button');
+      cancel.type = 'button';
+      cancel.className = 'small-button secondary';
+      cancel.textContent = 'Cancel';
+      cancel.addEventListener('click', () => {
+        vscode.postMessage({
+          type: 'askUserRespond',
+          requestId: item.requestId,
+          answer: { kind: 'cancelled' },
+        });
+      });
+      actions.append(send, cancel);
+      wrap.append(actions);
+      return wrap;
+    }
+
+    function answerForRequest(item, wrap) {
+      const request = item.request || {};
+      if (request.kind === 'single_select') {
+        const selected = wrap.querySelector('input[type="radio"]:checked');
+        const index = selected ? Number(selected.value) : Number(request.default_index || 0);
+        const options = request.options || [];
+        return { kind: 'selected', index, text: String(options[index] || '') };
+      }
+      if (request.kind === 'multi_select') {
+        const indices = Array.from(wrap.querySelectorAll('input[type="checkbox"]:checked'))
+          .map((input) => Number(input.value))
+          .filter((value) => Number.isFinite(value));
+        return { kind: 'multi_selected', indices };
+      }
+      const input = wrap.querySelector('[data-freeform="true"]');
+      return { kind: 'text', text: input ? input.value : '' };
+    }
+
+    function renderDiff(item) {
+      const box = document.createElement('div');
+      box.className = 'diff-box';
+      const before = typeof item.before === 'string' ? item.before.split('\\n').length : 0;
+      const after = typeof item.after === 'string' ? item.after.split('\\n').length : 0;
+      box.textContent = 'before ' + before + ' lines · after ' + after + ' lines';
+      return box;
+    }
+
+    function currentRunOptions() {
+      const model = modelEl.value.trim();
+      return {
+        mode: modeEl.value,
+        permission: permissionEl.value,
+        model: model || undefined,
+      };
     }
   </script>
 </body>
@@ -604,6 +858,32 @@ function transcriptItemForEvent(sessionId: string, event: unknown): TranscriptIt
         text: `Finished ${stringField(event, 'name')}`,
         detail: summarizeToolResult(event),
       };
+    case 'ask_user_requested':
+      return {
+        role: 'interaction',
+        text: questionForAskUser(event.request),
+        detail: stringField(event, 'request_id'),
+        requestId: stringField(event, 'request_id'),
+        request: event.request,
+      };
+    case 'approval_requested':
+      return {
+        role: 'approval',
+        text: `Approval requested: ${stringField(event, 'tool_name')}`,
+        detail: [stringField(event, 'reason'), json(event.parameters)].filter(Boolean).join('\n'),
+      };
+    case 'file_diff': {
+      const payload = isRecord(event) ? event : {};
+      const path = stringField(payload, 'path');
+      return {
+        role: 'diff',
+        text: `Changed ${path || 'file'}`,
+        detail: stringField(payload, 'tool_name'),
+        path,
+        before: typeof payload.before === 'string' ? payload.before : null,
+        after: typeof payload.after === 'string' ? payload.after : '',
+      };
+    }
     case 'usage_updated':
       return {
         role: 'status',
@@ -624,6 +904,13 @@ function transcriptItemForEvent(sessionId: string, event: unknown): TranscriptIt
     default:
       return { role: 'status', text: kind };
   }
+}
+
+function questionForAskUser(request: unknown): string {
+  if (isRecord(request) && typeof request.question === 'string') {
+    return request.question;
+  }
+  return 'Peridot needs your input';
 }
 
 function summarizeToolResult(event: Record<string, unknown>): string {
@@ -697,6 +984,57 @@ function json(value: unknown): string {
     return serialized === undefined ? String(value) : serialized;
   } catch {
     return String(value);
+  }
+}
+
+function normalizeRunOptions(value: unknown): RunOptions {
+  const record = isRecord(value) ? value : {};
+  const mode = record.mode === 'plan' || record.mode === 'goal' ? record.mode : 'execute';
+  const permission =
+    record.permission === 'safe' || record.permission === 'yolo' ? record.permission : 'auto';
+  const model = typeof record.model === 'string' ? record.model.trim() : '';
+  return {
+    mode,
+    permission,
+    ...(model ? { model } : {}),
+  };
+}
+
+function normalizeAskUserAnswer(value: unknown): AskUserAnswer | undefined {
+  if (!isRecord(value) || typeof value.kind !== 'string') {
+    return undefined;
+  }
+  if (value.kind === 'cancelled') {
+    return { kind: 'cancelled' };
+  }
+  if (value.kind === 'selected') {
+    const index = typeof value.index === 'number' ? value.index : 0;
+    const text = typeof value.text === 'string' ? value.text : '';
+    return { kind: 'selected', index, text };
+  }
+  if (value.kind === 'multi_selected') {
+    const indices = Array.isArray(value.indices)
+      ? value.indices.filter((index): index is number => typeof index === 'number')
+      : [];
+    return { kind: 'multi_selected', indices };
+  }
+  if (value.kind === 'text') {
+    const text = typeof value.text === 'string' ? value.text : '';
+    return { kind: 'text', text };
+  }
+  return undefined;
+}
+
+function answerLabel(answer: AskUserAnswer): string {
+  switch (answer.kind) {
+    case 'selected':
+      return answer.text;
+    case 'multi_selected':
+      return answer.indices.join(', ');
+    case 'text':
+      return answer.text;
+    case 'cancelled':
+      return 'cancelled';
   }
 }
 

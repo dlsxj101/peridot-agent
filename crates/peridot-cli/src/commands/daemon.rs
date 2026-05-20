@@ -11,8 +11,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::Result;
-use peridot_common::{CancelToken, ExecutionMode, PeridotConfig, PermissionMode};
+use async_trait::async_trait;
+use peridot_common::{
+    AskUserAnswer, AskUserRequest, CancelToken, ExecutionMode, PeridotConfig, PermissionMode,
+};
 use peridot_core::AgentRunEvent;
+use peridot_tools::AskUserPort;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::io::AsyncWriteExt;
@@ -28,6 +32,8 @@ use crate::run_loop::{AgentTaskOptions, MessageBusHookup, run_task_with_events};
 struct DaemonState {
     sessions: Arc<Mutex<HashMap<String, SessionEntry>>>,
     next_session_id: Arc<Mutex<u64>>,
+    next_interaction_id: Arc<std::sync::atomic::AtomicU64>,
+    ask_user_pending: Arc<std::sync::Mutex<HashMap<String, oneshot::Sender<AskUserAnswer>>>>,
     project_root: Arc<PathBuf>,
     out: mpsc::UnboundedSender<String>,
     run_config: Arc<PeridotConfig>,
@@ -44,6 +50,8 @@ impl DaemonState {
         Self {
             sessions: Arc::new(Mutex::new(HashMap::new())),
             next_session_id: Arc::new(Mutex::new(1)),
+            next_interaction_id: Arc::new(std::sync::atomic::AtomicU64::new(1)),
+            ask_user_pending: Arc::new(std::sync::Mutex::new(HashMap::new())),
             project_root: Arc::new(project_root),
             out,
             run_config: Arc::new(run_config),
@@ -233,6 +241,10 @@ async fn dispatch_request(state: &DaemonState, request: RpcRequest) -> Result<bo
         }
         "session.cancel" => {
             handle_session_cancel(state, request.id.unwrap_or(Value::Null), request.params).await?;
+        }
+        "interaction.respond" => {
+            handle_interaction_respond(state, request.id.unwrap_or(Value::Null), request.params)
+                .await?;
         }
         "shutdown" => {
             if let Some(id) = request.id {
@@ -440,6 +452,11 @@ async fn run_session_task(
         options.model = model;
     }
 
+    let ask_user_port = Arc::new(DaemonAskUserPort {
+        state: state.clone(),
+        session_id: session_id.clone(),
+    });
+
     let session_id_inner = session_id.clone();
     let state_inner = state.clone();
     let result = run_task_with_events(
@@ -451,7 +468,7 @@ async fn run_session_task(
         Some(cancel),
         None,
         None,
-        None,
+        Some(ask_user_port),
         MessageBusHookup::None,
         move |event: AgentRunEvent| {
             let value = serde_json::to_value(&event).unwrap_or(Value::Null);
@@ -482,6 +499,38 @@ async fn run_session_task(
     }
 
     state.sessions.lock().await.remove(&session_id);
+    clear_pending_ask_user_for_session(&state, &session_id);
+}
+
+struct DaemonAskUserPort {
+    state: DaemonState,
+    session_id: String,
+}
+
+#[async_trait]
+impl AskUserPort for DaemonAskUserPort {
+    async fn ask(&self, request: AskUserRequest) -> AskUserAnswer {
+        let next = self
+            .state
+            .next_interaction_id
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let request_id = format!("{}:ask-user:{next}", self.session_id);
+        let (tx, rx) = oneshot::channel();
+        {
+            let mut pending = self.state.ask_user_pending.lock().unwrap();
+            pending.insert(request_id.clone(), tx);
+        }
+        emit_event(
+            &self.state,
+            &self.session_id,
+            serde_json::json!({
+                "kind": "ask_user_requested",
+                "request_id": request_id,
+                "request": request,
+            }),
+        );
+        rx.await.unwrap_or(AskUserAnswer::Cancelled)
+    }
 }
 
 async fn handle_session_cancel(
@@ -522,6 +571,120 @@ async fn handle_session_cancel(
             "session_id": session_id,
         }),
     )
+}
+
+async fn handle_interaction_respond(
+    state: &DaemonState,
+    id: Value,
+    params: Option<Value>,
+) -> Result<()> {
+    let Some(Value::Object(params)) = params else {
+        emit_error(
+            state,
+            id,
+            -32602,
+            "params must be an object with `request_id` and `answer` fields".to_string(),
+        )?;
+        return Ok(());
+    };
+    let Some(request_id) = params.get("request_id").and_then(Value::as_str) else {
+        emit_error(
+            state,
+            id,
+            -32602,
+            "params.request_id must be a string".to_string(),
+        )?;
+        return Ok(());
+    };
+    let Some(answer_value) = params.get("answer") else {
+        emit_error(state, id, -32602, "params.answer is required".to_string())?;
+        return Ok(());
+    };
+    let answer = match parse_ask_user_answer(answer_value) {
+        Ok(answer) => answer,
+        Err(err) => {
+            emit_error(
+                state,
+                id,
+                -32602,
+                format!("params.answer is not a valid AskUserAnswer: {err}"),
+            )?;
+            return Ok(());
+        }
+    };
+
+    let accepted = {
+        let sender = state.ask_user_pending.lock().unwrap().remove(request_id);
+        sender
+            .map(|sender| sender.send(answer).is_ok())
+            .unwrap_or(false)
+    };
+    emit_response(
+        state,
+        id,
+        serde_json::json!({
+            "accepted": accepted,
+            "request_id": request_id,
+        }),
+    )
+}
+
+fn clear_pending_ask_user_for_session(state: &DaemonState, session_id: &str) {
+    let prefix = format!("{session_id}:");
+    let mut pending = state.ask_user_pending.lock().unwrap();
+    pending.retain(|request_id, _| !request_id.starts_with(&prefix));
+}
+
+fn parse_ask_user_answer(value: &Value) -> Result<AskUserAnswer, String> {
+    let Value::Object(map) = value else {
+        return Err("answer must be an object".to_string());
+    };
+    let kind = map
+        .get("kind")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "answer.kind must be a string".to_string())?;
+    match kind {
+        "cancelled" => Ok(AskUserAnswer::Cancelled),
+        "selected" => {
+            let index = map
+                .get("index")
+                .and_then(Value::as_u64)
+                .ok_or_else(|| "selected answer requires numeric index".to_string())?
+                as usize;
+            let text = map
+                .get("text")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "selected answer requires text".to_string())?
+                .to_string();
+            Ok(AskUserAnswer::Selected { index, text })
+        }
+        "multi_selected" => {
+            let indices = map
+                .get("indices")
+                .and_then(Value::as_array)
+                .ok_or_else(|| "multi_selected answer requires indices".to_string())?
+                .iter()
+                .map(|value| {
+                    value
+                        .as_u64()
+                        .map(|index| index as usize)
+                        .ok_or_else(|| "multi_selected indices must be numbers".to_string())
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(AskUserAnswer::MultiSelected { indices })
+        }
+        "text" => {
+            let text = map
+                .get("text")
+                .or_else(|| map.get("value"))
+                .or_else(|| map.get("0"))
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            Ok(AskUserAnswer::Text(text))
+        }
+        other => Err(format!("unknown answer.kind: {other}")),
+    }
 }
 
 fn optional_str<'a>(params: &'a serde_json::Map<String, Value>, key: &str) -> Option<&'a str> {
@@ -728,6 +891,65 @@ mod tests {
         assert_eq!(out[0]["id"], 7);
         assert_eq!(out[0]["result"]["cancelled"], false);
         assert_eq!(out[0]["result"]["session_id"], "missing");
+    }
+
+    #[tokio::test]
+    async fn interaction_respond_unknown_request_returns_not_accepted() {
+        let out = dispatch_and_collect(
+            r#"{"jsonrpc":"2.0","id":10,"method":"interaction.respond","params":{"request_id":"missing","answer":{"kind":"cancelled"}}}"#,
+        )
+        .await;
+        assert_eq!(out[0]["id"], 10);
+        assert_eq!(out[0]["result"]["accepted"], false);
+        assert_eq!(out[0]["result"]["request_id"], "missing");
+    }
+
+    #[tokio::test]
+    async fn daemon_ask_user_port_roundtrips_response() {
+        let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+        let root = test_project("ask-user");
+        let state = DaemonState::new(
+            root.clone(),
+            PeridotConfig::default(),
+            test_options(None),
+            tx,
+        );
+        let port = DaemonAskUserPort {
+            state: state.clone(),
+            session_id: "session-test".to_string(),
+        };
+
+        let ask_task = tokio::spawn(async move {
+            port.ask(AskUserRequest::FreeForm {
+                question: "Continue?".to_string(),
+                hint: None,
+                default: None,
+            })
+            .await
+        });
+
+        let line = tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let value: Value = serde_json::from_str(&line).unwrap();
+        let request_id = value["params"]["event"]["request_id"].as_str().unwrap();
+        let response = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 11,
+            "method": "interaction.respond",
+            "params": {
+                "request_id": request_id,
+                "answer": { "kind": "text", "text": "yes" }
+            }
+        });
+        dispatch_line(&state, &response.to_string()).await.unwrap();
+
+        assert_eq!(
+            ask_task.await.unwrap(),
+            AskUserAnswer::Text("yes".to_string())
+        );
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[tokio::test]

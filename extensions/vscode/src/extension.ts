@@ -7,7 +7,7 @@ import * as childProcess from 'child_process';
 import * as vscode from 'vscode';
 import { PeridotDaemon, RpcNotification } from './daemon';
 import { resolvePeridotBinary } from './peridotBin';
-import { PeridotSidebarProvider } from './sidebar';
+import { AskUserAnswer, PeridotSidebarProvider, RunOptions } from './sidebar';
 
 interface SessionStartResult {
   session_id: string;
@@ -48,10 +48,13 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(output);
   let sidebar: PeridotSidebarProvider;
   sidebar = new PeridotSidebarProvider(context.extensionUri, {
-    runTask: async (task: string): Promise<void> => runTask(task, output, sidebar),
+    runTask: async (task: string, options: RunOptions): Promise<void> =>
+      runTask(task, output, sidebar, options),
     cancelTask: async (): Promise<void> => cancelTask(output),
     loginOpenAi: async (): Promise<void> => loginOpenAi(output, sidebar),
     refreshStatus: async (): Promise<void> => refreshStatus(output, sidebar),
+    respondAskUser: async (requestId: string, answer: AskUserAnswer): Promise<void> =>
+      respondAskUser(requestId, answer, output, sidebar),
   });
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(PeridotSidebarProvider.viewType, sidebar),
@@ -142,6 +145,7 @@ async function runTask(
   providedTask: string | undefined,
   output: vscode.OutputChannel,
   sidebar: PeridotSidebarProvider,
+  options: RunOptions = { mode: 'execute', permission: 'auto' },
 ): Promise<void> {
   if (activeRun) {
     await vscode.window.showWarningMessage(
@@ -200,6 +204,9 @@ async function runTask(
 
     const result = (await daemon.send('session.start', {
       task: trimmedTask,
+      mode: options.mode,
+      permission: options.permission,
+      ...(options.model ? { model: options.model } : {}),
     })) as SessionStartResult;
     run.sessionId = result.session_id;
     output.appendLine(`[peridot] session started: ${result.session_id}`);
@@ -358,6 +365,38 @@ async function cancelTask(output: vscode.OutputChannel): Promise<void> {
     const message = err instanceof Error ? err.message : String(err);
     output.appendLine(`[peridot] cancel failed: ${message}`);
     await vscode.window.showErrorMessage(`Peridot cancel failed: ${message}`);
+  }
+}
+
+async function respondAskUser(
+  requestId: string,
+  answer: AskUserAnswer,
+  output: vscode.OutputChannel,
+  sidebar: PeridotSidebarProvider,
+): Promise<void> {
+  if (!activeRun) {
+    const message = 'No active Peridot run can receive this response.';
+    sidebar.appendError(message);
+    await vscode.window.showWarningMessage(message);
+    return;
+  }
+  try {
+    const result = (await activeRun.daemon.send('interaction.respond', {
+      request_id: requestId,
+      answer,
+    })) as { accepted?: boolean; request_id?: string };
+    output.appendLine(
+      `[peridot] interaction response ${result.request_id ?? requestId}: ${
+        result.accepted ? 'accepted' : 'not accepted'
+      }`,
+    );
+    if (!result.accepted) {
+      sidebar.appendError('Peridot did not accept that response. The run may have already moved on.');
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    output.appendLine(`[peridot] interaction response failed: ${message}`);
+    sidebar.appendError(`Interaction response failed: ${message}`);
   }
 }
 

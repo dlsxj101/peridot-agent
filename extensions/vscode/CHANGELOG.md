@@ -1,5 +1,19 @@
 # Peridot Agent — Extension Changelog
 
+## [0.3.0] — 2026-05-20
+
+### Added — interactive control plane
+
+- Wired daemon-backed `agent_ask_user` requests through the sidebar with
+  inline answer cards for free-form, single-select, and multi-select prompts.
+- Added `interaction.respond` JSON-RPC so editor clients can resolve pending
+  agent questions without restarting the run.
+- Added sidebar run controls for execution mode, permission mode, and optional
+  model override.
+- Added compact transcript cards for `approval_requested` and `file_diff`
+  events so operator-blocked tool calls and file mutations are visible in the
+  editor panel.
+
 ## [0.2.0] — 2026-05-20
 
 ### Added — usable sidebar status
