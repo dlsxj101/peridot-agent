@@ -105,7 +105,8 @@ export function activate(context: vscode.ExtensionContext) {
       let disposeNotification: (() => void) | undefined;
       let disposeExit: (() => void) | undefined;
       try {
-        daemon = await PeridotDaemon.spawn(folder);
+        const spawned = await PeridotDaemon.spawn(folder);
+        daemon = spawned;
         disposeNotification = daemon.onNotification((notification) => {
           void handleDaemonNotification(notification, output);
         });
@@ -115,7 +116,7 @@ export function activate(context: vscode.ExtensionContext) {
               exit.signal ?? 'null'
             }`,
           );
-          clearActiveRun(daemon);
+          clearActiveRun(spawned);
         });
         const run: ActiveRun = { daemon, disposeNotification, disposeExit };
         activeRun = run;

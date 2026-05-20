@@ -179,40 +179,30 @@ export class PeridotDaemon {
       console.error('[peridot] daemon emitted unparseable line:', line);
       return;
     }
-    if (!isRecord(parsed)) {
-      console.warn('[peridot] daemon emitted non-object JSON:', parsed);
-      return;
-    }
-    if (!('id' in parsed)) {
-      if (typeof parsed.method === 'string') {
-        const notification = parsed as RpcNotification;
-        for (const listener of this.notificationListeners) {
-          try {
-            listener(notification);
-          } catch (err) {
-            console.error('[peridot] notification listener failed:', err);
-          }
+    if (isRpcNotification(parsed)) {
+      for (const listener of this.notificationListeners) {
+        try {
+          listener(parsed);
+        } catch (err) {
+          console.error('[peridot] notification listener failed:', err);
         }
-      } else {
-        console.warn('[peridot] unexpected daemon message:', parsed);
       }
       return;
     }
-    if (typeof parsed.id !== 'number') {
-      console.warn('[peridot] response with unsupported id:', parsed);
+    if (!isRpcResponse(parsed)) {
+      console.warn('[peridot] unexpected daemon message:', parsed);
       return;
     }
-    const response = parsed as RpcResponse;
-    const slot = this.pending.get(response.id);
+    const slot = this.pending.get(parsed.id);
     if (!slot) {
-      console.warn('[peridot] response for unknown id', response.id);
+      console.warn('[peridot] response for unknown id', parsed.id);
       return;
     }
-    this.pending.delete(response.id);
-    if (response.error) {
-      slot.reject(new Error(`daemon error ${response.error.code}: ${response.error.message}`));
+    this.pending.delete(parsed.id);
+    if (parsed.error) {
+      slot.reject(new Error(`daemon error ${parsed.error.code}: ${parsed.error.message}`));
     } else {
-      slot.resolve(response.result);
+      slot.resolve(parsed.result);
     }
   }
 
@@ -226,4 +216,31 @@ export class PeridotDaemon {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
+}
+
+function isRpcNotification(value: unknown): value is RpcNotification {
+  return (
+    isRecord(value) &&
+    value.jsonrpc === '2.0' &&
+    typeof value.method === 'string' &&
+    !('id' in value)
+  );
+}
+
+function isRpcResponse(value: unknown): value is RpcResponse {
+  if (
+    !isRecord(value) ||
+    value.jsonrpc !== '2.0' ||
+    typeof value.id !== 'number'
+  ) {
+    return false;
+  }
+  if (value.error === undefined) {
+    return true;
+  }
+  return (
+    isRecord(value.error) &&
+    typeof value.error.code === 'number' &&
+    typeof value.error.message === 'string'
+  );
 }
