@@ -4,15 +4,14 @@ VS Code panel for [Peridot Agent](https://github.com/dlsxj101/peridot-agent) —
 a Rust CLI/TUI autonomous coding agent with multi-LLM committee mode,
 native tool calling, and 2-Tier context management.
 
-> **Status**: v0.5.0 ships a bundled `peridot` binary for six targets
-> (linux-x64/arm64, darwin-x64/arm64, win32-x64/arm64) so installing the
-> extension from the Marketplace / Open VSX runs out of the box — no
-> separate `cargo build` required. It also splits the sidebar webview
-> into its own esbuild bundle and adds a HUD panel for usage / budget /
-> 4-Tier context, an inline plan panel for `plan_updated`, inline
-> unified-diff rendering for `file_diff` events, a pre-approval diff
-> preview for `file_write` / `file_patch`, and a cached / reused-daemon
-> status reader.
+> **Status**: v0.5.2 lands a three-button onboarding screen
+> (ChatGPT OAuth · OpenRouter API key · Local LLM endpoint), a queue
+> for prompts typed while the agent is busy, redesigned tool cards
+> with a pulsing live indicator, and a pixel-art deer mascot. The
+> sidebar still ships a bundled `peridot` binary per platform, an
+> esbuild-bundled webview, a HUD for usage / budget / 4-Tier context,
+> an inline plan panel, and unified-diff rendering for `file_diff` /
+> pre-approval previews.
 
 ## Commands
 
@@ -25,16 +24,33 @@ native tool calling, and 2-Tier context management.
 | `Peridot: Login with ChatGPT` | Runs `peridot login openai-oauth` from the active workspace. |
 | `Peridot: Refresh Status` | Refreshes daemon workspace/provider/model/auth status. |
 
+## First run
+
+When you open the Peridot Activity Bar with no provider configured, you
+land on a three-button onboarding screen:
+
+- **Sign in with ChatGPT** — OAuth via your ChatGPT account
+  (`peridot login openai-oauth` under the hood).
+- **OpenRouter API key** — one key, 75+ models. Stored in Peridot's
+  local env store, never your shell rc.
+- **Local LLM endpoint** — point at any OpenAI-compatible HTTP API
+  (Ollama, LM Studio, vLLM, …).
+
+Already configured? The session view opens directly. Use the "Switch
+provider" button in the session header to come back.
+
 ## Sidebar
 
-Open the Peridot Activity Bar item, choose mode/permission/model options, type
-a task, and submit it to start a daemon-backed agent session. The sidebar shows
-the active workspace/provider context, a live HUD with token usage, cost /
-turn budget, and 4-Tier context utilization, an inline plan panel that follows
-`plan_updated`, a compact transcript with collapsed tool cards, answerable
-`agent_ask_user` cards, and approve/deny controls for approval-gated tool
-calls — including an inline unified diff preview for `file_write` /
-`file_patch` so you can see the change before deciding.
+Once a provider is live, the sidebar shows workspace / provider /
+model / auth context, a HUD for token usage, cost / turn budget, and
+4-Tier context utilization, an inline plan panel that follows
+`plan_updated`, a chat-style transcript with collapsed tool cards
+(pulsing dot while a tool is running) and inline unified diffs, plus
+approve/deny controls with a diff preview for `file_write` /
+`file_patch`. Type at the composer — Enter sends, Shift+Enter inserts
+a newline. Sending while a task is in flight queues the message; the
+queue UI lets you edit, remove, or clear individual entries before
+they auto-run.
 
 ## Configuration
 

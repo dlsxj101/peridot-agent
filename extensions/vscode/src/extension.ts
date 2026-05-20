@@ -12,6 +12,7 @@ import {
   PeridotSidebarProvider,
   type ApprovalResponse,
   type AskUserAnswer,
+  type ProviderChoice,
   type RunOptions,
 } from './sidebar';
 
@@ -65,6 +66,10 @@ export function activate(context: vscode.ExtensionContext) {
     respondApproval: async (decision: ApprovalResponse): Promise<void> =>
       respondApproval(decision, output, sidebar),
     openFile: async (relativePath: string): Promise<void> => openWorkspaceFile(relativePath, output),
+    registerProvider: async (
+      provider: ProviderChoice,
+      params: Record<string, string>,
+    ): Promise<void> => registerProvider(provider, params, output, sidebar),
   });
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(PeridotSidebarProvider.viewType, sidebar),
@@ -156,7 +161,6 @@ async function runTask(
     await vscode.window.showWarningMessage(
       'Peridot is already running a task. Cancel or wait for it to finish first.',
     );
-    output.show(true);
     return;
   }
 
@@ -180,7 +184,6 @@ async function runTask(
 
   const trimmedTask = task.trim();
   output.clear();
-  output.show(true);
   output.appendLine(`[peridot] starting daemon for ${folder}`);
   sidebar.resetForTask(trimmedTask, folder);
 
@@ -323,7 +326,6 @@ async function loginOpenAi(
   }
 
   const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  output.show(true);
   sidebar.appendSystem('Starting ChatGPT login');
   sidebar.setContext({ status: 'Logging in', running: false });
 
@@ -359,6 +361,53 @@ function runProcess(
       cwd,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
+    // Capture stderr separately so we can surface the last few lines on
+    // failure — the Output channel doesn't auto-show anymore and most
+    // users won't think to open it.
+    let stderrBuf = '';
+    child.stdout.on('data', (chunk: Buffer) => {
+      output.append(chunk.toString());
+    });
+    child.stderr.on('data', (chunk: Buffer) => {
+      const text = chunk.toString();
+      stderrBuf += text;
+      output.append(text);
+    });
+    child.on('error', reject);
+    child.on('exit', (code, signal) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      // Tail the last ~6 non-blank stderr lines into the error so the
+      // sidebar surface explains *what* failed, not just *that* it did.
+      const tail = stderrBuf
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0)
+        .slice(-6)
+        .join('\n');
+      const exitLabel = `process exited with code=${code ?? 'null'} signal=${signal ?? 'null'}`;
+      reject(new Error(tail ? `${exitLabel}\n${tail}` : exitLabel));
+    });
+  });
+}
+
+// `peridot env set <KEY>` reads the value from stdin when no positional
+// value is provided — preferred for API keys so they never appear in argv
+// or the Output channel.
+function runProcessWithStdin(
+  command: string,
+  args: string[],
+  cwd: string | undefined,
+  output: vscode.OutputChannel,
+  stdinValue: string,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = childProcess.spawn(command, args, {
+      cwd,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
     child.stdout.on('data', (chunk: Buffer) => {
       output.append(chunk.toString());
     });
@@ -373,6 +422,8 @@ function runProcess(
         reject(new Error(`process exited with code=${code ?? 'null'} signal=${signal ?? 'null'}`));
       }
     });
+    child.stdin.write(stdinValue);
+    child.stdin.end();
   });
 }
 
@@ -381,7 +432,6 @@ async function cancelTask(output: vscode.OutputChannel): Promise<void> {
     await vscode.window.showInformationMessage('Peridot is not running a task.');
     return;
   }
-  output.show(true);
   const run = activeRun;
   const sessionId = run.sessionId;
   if (!sessionId) {
@@ -475,6 +525,104 @@ async function respondApproval(
   }
 }
 
+async function registerProvider(
+  provider: ProviderChoice,
+  params: Record<string, string>,
+  output: vscode.OutputChannel,
+  sidebar: PeridotSidebarProvider,
+): Promise<void> {
+  if (activeRun) {
+    await vscode.window.showWarningMessage(
+      'Cancel or wait for the current Peridot task before switching providers.',
+    );
+    return;
+  }
+  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!folder) {
+    sidebar.setWorkspaceProblem('Open a workspace folder before configuring a provider.');
+    return;
+  }
+  sidebar.setAuthBusy(true, undefined);
+  try {
+    const binary = await resolvePeridotBinary();
+    switch (provider) {
+      case 'chatgpt':
+        // ChatGPT login goes through the dedicated OAuth flow which writes
+        // its own auth file. Still flip auth.primary so the daemon picks
+        // openai-oauth on the next status read.
+        await runProcess(binary, ['login', 'openai-oauth'], folder, output);
+        await runProcess(
+          binary,
+          ['config', 'set', 'auth.primary', 'openai-oauth'],
+          folder,
+          output,
+        );
+        break;
+      case 'openrouter': {
+        const apiKey = (params.apiKey ?? '').trim();
+        if (!apiKey) throw new Error('OpenRouter API key is required.');
+        await runProcessWithStdin(
+          binary,
+          ['env', 'set', 'OPENROUTER_API_KEY'],
+          folder,
+          output,
+          apiKey,
+        );
+        await runProcess(
+          binary,
+          ['config', 'set', 'auth.primary', 'openrouter-api'],
+          folder,
+          output,
+        );
+        if (params.model && params.model.trim().length > 0) {
+          await runProcess(
+            binary,
+            ['config', 'set', 'models.main', params.model.trim()],
+            folder,
+            output,
+          );
+        }
+        break;
+      }
+      case 'localLlm': {
+        const apiKey = (params.apiKey ?? '').trim() || 'local';
+        const baseUrl = (params.baseUrl ?? '').trim();
+        if (!baseUrl) throw new Error('Local LLM endpoint URL is required.');
+        await runProcessWithStdin(binary, ['env', 'set', 'OPENAI_API_KEY'], folder, output, apiKey);
+        await runProcess(
+          binary,
+          ['config', 'set', 'api.base_url', baseUrl],
+          folder,
+          output,
+        );
+        await runProcess(
+          binary,
+          ['config', 'set', 'auth.primary', 'openai-api'],
+          folder,
+          output,
+        );
+        if (params.model && params.model.trim().length > 0) {
+          await runProcess(
+            binary,
+            ['config', 'set', 'models.main', params.model.trim()],
+            folder,
+            output,
+          );
+        }
+        break;
+      }
+    }
+    invalidateStatusCache();
+    await refreshStatus(output, sidebar, { force: true });
+    sidebar.setAuthBusy(false, '');
+    sidebar.appendSystem(`Configured ${provider}.`);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    output.appendLine(`[peridot] registerProvider ${provider} failed: ${message}`);
+    sidebar.setAuthBusy(false, message);
+  }
+}
+
 async function openWorkspaceFile(
   relativePath: string,
   output: vscode.OutputChannel,
@@ -517,7 +665,21 @@ async function handleDaemonNotification(
   if (isTerminalEvent(event)) {
     await finishActiveRun(output);
     void refreshStatus(output, sidebar, { force: true });
+    drainQueue(output, sidebar);
   }
+}
+
+function drainQueue(output: vscode.OutputChannel, sidebar: PeridotSidebarProvider): void {
+  if (!sidebar.hasQueue()) return;
+  const next = sidebar.takeNextQueued();
+  if (!next) return;
+  output.appendLine(`[peridot] auto-dispatching next queued task (${next.id})`);
+  // Run the next queued task on a microtask boundary so the current
+  // terminal event finishes propagating to the webview first. Reuses the
+  // same RunOptions the operator picked for the previous turn.
+  setTimeout(() => {
+    void runTask(next.text, output, sidebar, sidebar.currentRunOptions());
+  }, 50);
 }
 
 async function finishActiveRun(output?: vscode.OutputChannel): Promise<void> {

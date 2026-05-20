@@ -1,5 +1,61 @@
 # Peridot Agent — Extension Changelog
 
+## [0.5.2] — 2026-05-20
+
+### Added — onboarding landing + message queue + tool cards
+
+- New onboarding landing screen with three entry points: **Sign in with
+  ChatGPT** (OAuth), **OpenRouter API key** (single-key, 75+ models),
+  and **Local LLM endpoint** (Ollama / LM Studio / vLLM via the OpenAI
+  HTTP API). Each form drives the underlying `peridot env set` /
+  `peridot config set` commands so the daemon picks up the new
+  provider without a restart. The landing screen appears whenever the
+  workspace has no configured auth; once a provider is configured the
+  sidebar drops straight into the session view. A "Switch provider"
+  button in the session header brings the landing back on demand.
+- Composer queues messages typed while the agent is busy. Each queued
+  prompt is inline-editable, can be removed, and runs automatically
+  with the operator's last-used run options as soon as the current
+  turn finishes. A "Clear" link drops the entire queue.
+- Tool calls now render as a single collapsing card with a pulsing
+  status dot during execution; the matching `tool_finished` event
+  fills in the summary in place rather than appending a second card.
+- File diffs and approval cards share a unified-diff renderer; the
+  file path doubles as an "open in editor" link.
+- Pixel-art deer mascot lands as the marketplace icon
+  (`resources/peridot-icon.png`, 256×256) and as the activity bar SVG
+  (`resources/peridot.svg`, 32×32 vector). Palette mirrors the TUI
+  mascot in `crates/peridot-tui/src/mascot/frames.rs`.
+
+### Changed — composer keybindings, layout, errors
+
+- Composer keys swap to the standard chat convention: **Enter sends**,
+  **Shift+Enter inserts a newline**. IME composition events bypass the
+  send guard so Korean / Japanese candidate selection still works.
+- Send button morphs into a stop button while the agent is running; the
+  user can keep typing in the textarea (queued messages stack above).
+- Sidebar layout caps the content column at 720px and centers it so
+  wide sidebars no longer stretch elements awkwardly. Header / context
+  / HUD / transcript / queue / composer stack with consistent padding.
+- Visual refresh — quieter pills, restrained color accents (peridot
+  green for live state, warning yellow for missing auth, error red for
+  failures), tighter typography. Tool cards, status lines, error lines
+  and chat bubbles each get distinct treatment without resorting to
+  emoji icons.
+- The Output channel no longer auto-shows when a task starts or fails;
+  it's still written to for full diagnostics but stays hidden by
+  default. Failure surfaces ship the last few stderr lines into the
+  sidebar error block so the operator gets the cause without opening
+  the Output panel.
+
+### Fixed — CI chmod path duplication
+
+- The vsce/v0.5.1 release pipeline ran every non-Windows publish job
+  inside `extensions/vscode/`, so the previous
+  `chmod +x extensions/vscode/resources/peridot` resolved to
+  `extensions/vscode/extensions/vscode/...` and aborted. v0.5.2's
+  workflow already targets `resources/peridot` (relative).
+
 ## [0.5.1] — 2026-05-20
 
 ### Fixed — release pipeline retry build

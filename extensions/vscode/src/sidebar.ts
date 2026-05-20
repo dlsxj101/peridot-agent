@@ -10,6 +10,8 @@ import {
   OutboundMessage,
   PlanSlice,
   PlanStepView,
+  ProviderChoice,
+  QueuedMessage,
   RunOptions,
   SidebarContext,
   SidebarState,
@@ -17,7 +19,13 @@ import {
   UsageSlice,
 } from './types';
 
-export type { ApprovalResponse, ApprovalScope, AskUserAnswer, RunOptions } from './types';
+export type {
+  ApprovalResponse,
+  ApprovalScope,
+  AskUserAnswer,
+  ProviderChoice,
+  RunOptions,
+} from './types';
 
 export interface SidebarHandlers {
   runTask: (task: string, options: RunOptions) => Promise<void>;
@@ -27,24 +35,13 @@ export interface SidebarHandlers {
   respondAskUser: (requestId: string, answer: AskUserAnswer) => Promise<void>;
   respondApproval: (decision: ApprovalResponse) => Promise<void>;
   openFile: (relativePath: string) => Promise<void>;
+  registerProvider: (provider: ProviderChoice, params: Record<string, string>) => Promise<void>;
 }
 
 interface DaemonEventParams {
   session_id?: string;
   event?: unknown;
 }
-
-const SUPPRESSED_KINDS = new Set<string>([
-  'agents_md_loaded',
-  'turn_started',
-  'turn_ended',
-  'assistant_started',
-  'assistant_finished',
-  'context_utilization_changed',
-  'usage_updated',
-  'budget_updated',
-  'committee_role_usage',
-]);
 
 export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'peridot.chatView';
@@ -71,22 +68,27 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
   }
 
   public resetForTask(task: string, workspace: string): void {
+    const previous = this.state;
     this.state = {
       ...freshState(),
-      running: true,
-      status: 'Starting daemon',
+      view: 'session',
+      landing: previous.landing,
+      runOptions: previous.runOptions,
+      queue: previous.queue,
+      hud: {},
       context: {
-        ...this.state.context,
+        ...previous.context,
         workspace,
         status: 'Starting daemon',
         problem: undefined,
         running: true,
       },
+      running: true,
+      status: 'Starting daemon',
       transcript: [
         { role: 'user', text: task },
         { role: 'status', text: 'Starting daemon', detail: workspace },
       ],
-      runOptions: this.state.runOptions,
     };
     this.publish();
   }
@@ -173,6 +175,19 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
     if (context.status) {
       this.state.status = context.status;
     }
+    // The landing screen flips to session as soon as we know auth is
+    // configured; if it's not configured (or we don't know yet), keep the
+    // user on landing so they can pick an auth method.
+    if (context.authConfigured === true && this.state.view === 'landing') {
+      this.state.view = 'session';
+      this.state.landing = 'home';
+    } else if (
+      context.authConfigured === false &&
+      !this.state.running &&
+      this.state.transcript.length === 0
+    ) {
+      this.state.view = 'landing';
+    }
     this.publish();
   }
 
@@ -188,12 +203,33 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
     this.publish();
   }
 
+  public setAuthBusy(busy: boolean, error?: string): void {
+    this.state.authBusy = busy;
+    if (error !== undefined) this.state.authError = error;
+    this.publish();
+  }
+
+  /** Pulls the head of the queue and signals the host to run it. */
+  public takeNextQueued(): QueuedMessage | undefined {
+    const next = this.state.queue.shift();
+    if (next) this.publish();
+    return next;
+  }
+
+  public hasQueue(): boolean {
+    return this.state.queue.length > 0;
+  }
+
+  public currentRunOptions(): RunOptions {
+    return { ...this.state.runOptions };
+  }
+
   private appendToolStarted(event: Record<string, unknown>): void {
     const name = stringField(event, 'name');
     if (name === 'agent_ask_user') {
       this.append({
         role: 'tool',
-        text: 'Started agent_ask_user',
+        text: name,
         detail: compactAskUserToolDetail(event.parameters),
         toolName: name,
         pending: true,
@@ -202,7 +238,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
     }
     this.append({
       role: 'tool',
-      text: `Started ${name}`,
+      text: name,
       detail: undefined,
       toolName: name,
       toolParameters: event.parameters,
@@ -217,7 +253,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       const item = this.state.transcript[i];
       if (item.role === 'tool' && item.pending && (item.toolName === name || !item.toolName)) {
         item.pending = false;
-        item.text = `Finished ${name}`;
+        item.text = name;
         item.toolResultSummary = summary;
         item.detail = undefined;
         this.publish();
@@ -226,7 +262,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
     }
     this.append({
       role: 'tool',
-      text: `Finished ${name}`,
+      text: name,
       detail: summary,
       toolName: name,
       pending: false,
@@ -240,8 +276,8 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
     const parameters = event.parameters;
     const item: TranscriptItem = {
       role: 'approval',
-      text: `Approval requested: ${toolName}`,
-      detail: [reason, json(parameters)].filter(Boolean).join('\n'),
+      text: toolName,
+      detail: reason,
       toolName,
       reason,
       parameters,
@@ -362,45 +398,74 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
   }
 
   private async receive(message: OutboundMessage): Promise<void> {
-    if (message.type === 'run') {
-      const task = message.task.trim();
-      if (task.length === 0) return;
-      this.state.runOptions = message.options;
-      await this.handlers.runTask(task, message.options);
-      return;
-    }
-    if (message.type === 'askUserRespond') {
-      if (message.requestId) {
-        await this.handlers.respondAskUser(message.requestId, message.answer);
-        this.resolveInteraction(message.requestId, answerLabel(message.answer));
+    switch (message.type) {
+      case 'run': {
+        const task = message.task.trim();
+        if (task.length === 0) return;
+        this.state.runOptions = message.options;
+        await this.handlers.runTask(task, message.options);
+        return;
       }
-      return;
-    }
-    if (message.type === 'approvalRespond') {
-      await this.handlers.respondApproval({
-        approved: message.approved,
-        scope: message.scope,
-        toolName: message.toolName,
-        reason: message.reason,
-        parameters: message.parameters,
-      });
-      this.resolveApproval(message.approved);
-      return;
-    }
-    if (message.type === 'cancel') {
-      await this.handlers.cancelTask();
-      return;
-    }
-    if (message.type === 'loginOpenAi') {
-      await this.handlers.loginOpenAi();
-      return;
-    }
-    if (message.type === 'refreshStatus') {
-      await this.handlers.refreshStatus();
-      return;
-    }
-    if (message.type === 'openFile') {
-      await this.handlers.openFile(message.path);
+      case 'cancel':
+        await this.handlers.cancelTask();
+        return;
+      case 'loginOpenAi':
+        await this.handlers.loginOpenAi();
+        return;
+      case 'refreshStatus':
+        await this.handlers.refreshStatus();
+        return;
+      case 'askUserRespond':
+        if (message.requestId) {
+          await this.handlers.respondAskUser(message.requestId, message.answer);
+          this.resolveInteraction(message.requestId, answerLabel(message.answer));
+        }
+        return;
+      case 'approvalRespond':
+        await this.handlers.respondApproval({
+          approved: message.approved,
+          scope: message.scope,
+          toolName: message.toolName,
+          reason: message.reason,
+          parameters: message.parameters,
+        });
+        this.resolveApproval(message.approved);
+        return;
+      case 'openFile':
+        await this.handlers.openFile(message.path);
+        return;
+      case 'registerProvider':
+        await this.handlers.registerProvider(message.provider, message.params);
+        return;
+      case 'showLanding':
+        this.state.view = 'landing';
+        this.state.landing = message.screen ?? 'home';
+        this.publish();
+        return;
+      case 'showSession':
+        this.state.view = 'session';
+        this.publish();
+        return;
+      case 'queueAdd':
+        if (message.task.trim().length > 0) {
+          this.state.queue = [...this.state.queue, { id: queueId(), text: message.task.trim() }];
+          this.publish();
+        }
+        return;
+      case 'queueRemove':
+        this.state.queue = this.state.queue.filter((item) => item.id !== message.id);
+        this.publish();
+        return;
+      case 'queueEdit':
+        this.state.queue = this.state.queue.map((item) =>
+          item.id === message.id ? { ...item, text: message.text } : item,
+        );
+        this.publish();
+        return;
+      case 'queueClear':
+        this.state.queue = [];
+        this.publish();
+        return;
     }
   }
 
@@ -451,53 +516,25 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
     const styleUri = webview.asWebviewUri(
       vscode.Uri.joinPath(this.extensionUri, 'dist', 'webview.css'),
     );
+    const iconUri = webview.asWebviewUri(
+      vscode.Uri.joinPath(this.extensionUri, 'resources', 'peridot-icon.png'),
+    );
     return /* html */ `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta
     http-equiv="Content-Security-Policy"
-    content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';"
+    content="default-src 'none'; img-src ${webview.cspSource} data:; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';"
   >
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Peridot</title>
   <link href="${styleUri}" rel="stylesheet" />
 </head>
 <body>
-  <div class="app">
-    <header class="toolbar">
-      <div class="toolbar-main">
-        <div class="title">Peridot</div>
-        <div class="status" id="status">Idle</div>
-      </div>
-      <div class="actions">
-        <button class="icon secondary" id="refresh" title="Refresh status">↻</button>
-        <button class="icon secondary" id="login" title="Login with ChatGPT">↗</button>
-        <button class="icon" id="cancel" title="Cancel current task" disabled>■</button>
-      </div>
-    </header>
-    <section class="context" id="context"></section>
-    <section class="hud" id="hud"></section>
-    <main class="transcript" id="transcript">
-      <div class="empty">Ready.</div>
-    </main>
-    <form class="composer" id="composer">
-      <div class="options">
-        <select id="mode" title="Execution mode">
-          <option value="execute">Execute</option>
-          <option value="plan">Plan</option>
-          <option value="goal">Goal</option>
-        </select>
-        <select id="permission" title="Permission mode">
-          <option value="auto">Auto</option>
-          <option value="safe">Safe</option>
-          <option value="yolo">Yolo</option>
-        </select>
-        <input class="model-input" id="model" placeholder="model override (optional)" />
-      </div>
-      <textarea id="task" rows="2" placeholder="Ask Peridot to work in this repo"></textarea>
-      <button class="run" id="run" title="Run task">▶</button>
-    </form>
+  <div class="app" id="app" data-mascot="${iconUri}">
+    <!-- Webview bundle owns layout; index.ts populates #app based on
+         the SidebarState received over postMessage. -->
   </div>
   <script nonce="${nonce}" src="${scriptUri}"></script>
 </body>
@@ -507,25 +544,27 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
 
 function freshState(): SidebarState {
   return {
+    view: 'landing',
+    landing: 'home',
     running: false,
     status: 'Idle',
     context: {},
     transcript: [],
+    queue: [],
     runOptions: {
       mode: 'execute',
       permission: 'auto',
     },
     hud: {} as HudState,
+    authBusy: false,
   };
 }
 
 function shouldSuppress(item: TranscriptItem): boolean {
   if (item.role !== 'status') return false;
+  const noisy = ['agents md loaded', 'turn started', 'turn ended', 'assistant started'];
   const lowered = item.text.toLowerCase();
-  for (const kind of SUPPRESSED_KINDS) {
-    if (lowered.includes(kind.replace(/_/g, ' '))) return true;
-  }
-  return false;
+  return noisy.some((needle) => lowered.includes(needle));
 }
 
 function transcriptItemForEvent(
@@ -575,7 +614,7 @@ function transcriptItemForEvent(
       const path = stringField(event, 'path');
       return {
         role: 'diff',
-        text: `Changed ${path || 'file'}`,
+        text: path || 'file',
         detail: stringField(event, 'tool_name'),
         path,
         before: typeof event.before === 'string' ? event.before : null,
@@ -648,7 +687,10 @@ function isErrorEvent(event: unknown): boolean {
 }
 
 function isApprovalWaitingEvent(event: unknown): boolean {
-  return isRecord(event) && (event.kind === 'approval_requested' || event.kind === 'approval_waiting');
+  return (
+    isRecord(event) &&
+    (event.kind === 'approval_requested' || event.kind === 'approval_waiting')
+  );
 }
 
 function stringField(record: Record<string, unknown>, key: string): string {
@@ -707,6 +749,10 @@ function nonceValue(): string {
   return value;
 }
 
+function queueId(): string {
+  return `q-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+}
+
 async function readWorkspaceFile(relativePath: string): Promise<string | null> {
   const folder = vscode.workspace.workspaceFolders?.[0];
   if (!folder) return null;
@@ -718,4 +764,3 @@ async function readWorkspaceFile(relativePath: string): Promise<string | null> {
     return null;
   }
 }
-

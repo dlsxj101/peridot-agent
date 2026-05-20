@@ -8,6 +8,7 @@ scripts/**
 .eslintrc.json
 **/tsconfig*.json
 esbuild.config.mjs
+.todo-*.md
 **/*.map
 **/*.ts
 !dist/**/*.js

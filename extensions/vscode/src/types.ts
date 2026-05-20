@@ -49,8 +49,6 @@ export interface TranscriptItem {
   toolName?: string;
   reason?: string;
   parameters?: unknown;
-  // Tool grouping: tool_started/finished are folded into a single transcript
-  // entry. `pending` is true between started and finished.
   pending?: boolean;
   toolParameters?: unknown;
   toolResultSummary?: string;
@@ -115,15 +113,31 @@ export interface HudState {
   committee?: Record<string, CommitteeRoleSlice>;
 }
 
+export interface QueuedMessage {
+  id: string;
+  text: string;
+}
+
+export type SidebarView = 'landing' | 'session';
+export type LandingScreen = 'home' | 'openrouter' | 'localLlm';
+
 export interface SidebarState {
+  view: SidebarView;
+  landing: LandingScreen;
   running: boolean;
   sessionId?: string;
   status: string;
   context: SidebarContext;
   transcript: TranscriptItem[];
+  queue: QueuedMessage[];
   runOptions: RunOptions;
   hud: HudState;
+  authBusy: boolean;
+  authError?: string;
 }
+
+/** Identifier of the provider the user opts into from the landing UI. */
+export type ProviderChoice = 'chatgpt' | 'openrouter' | 'localLlm';
 
 /** Messages the webview sends to the extension host. */
 export type OutboundMessage =
@@ -140,7 +154,14 @@ export type OutboundMessage =
       reason?: string;
       parameters?: unknown;
     }
-  | { type: 'openFile'; path: string };
+  | { type: 'openFile'; path: string }
+  | { type: 'registerProvider'; provider: ProviderChoice; params: Record<string, string> }
+  | { type: 'showLanding'; screen?: LandingScreen }
+  | { type: 'showSession' }
+  | { type: 'queueAdd'; task: string }
+  | { type: 'queueRemove'; id: string }
+  | { type: 'queueEdit'; id: string; text: string }
+  | { type: 'queueClear' };
 
 /** Messages the extension host posts back to the webview. */
 export type InboundMessage = { type: 'state'; state: SidebarState };
