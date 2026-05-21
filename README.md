@@ -4,7 +4,13 @@ Peridot Agent is a Rust CLI/TUI autonomous coding agent with multi-session orche
 
 ## Status
 
-Current version: **0.8.3**
+Current version: **0.8.4**
+
+### What's new in v0.8.4
+
+- **Windows home directory detection now accepts `USERPROFILE`.** Native
+  Windows runs no longer fail auth/config/cache setup with `HOME is required`
+  when launched from Cursor or other Windows extension hosts.
 
 ### What's new in v0.8.3
 
