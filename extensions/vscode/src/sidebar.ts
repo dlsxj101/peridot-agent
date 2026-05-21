@@ -628,6 +628,8 @@ function transcriptItemForEvent(
       return { role: 'status', text: 'Finished', detail: compactFinishedDetail(event) };
     case 'error':
       return { role: 'error', text: stringField(event, 'message') };
+    case 'recovery':
+      return { role: 'error', text: stringField(event, 'message') || 'Recovery failed' };
     case 'interrupted':
       return { role: 'status', text: 'Interrupted', detail: stringField(event, 'stage') };
     default:

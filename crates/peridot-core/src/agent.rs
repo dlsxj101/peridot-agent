@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 use peridot_agents::SubAgent;
 use peridot_common::{
@@ -38,6 +39,9 @@ use peridot_common::CancelToken;
 /// when the production `collect_git_diff` is unsuitable (e.g. in
 /// unit tests that don't bootstrap a real git repo).
 pub type GraderDiffProvider = Box<dyn Fn(&std::path::Path) -> String + Send + Sync>;
+
+const MAX_ERROR_RECOVERY_ATTEMPTS: usize = 3;
+const ERROR_RECOVERY_RETRY_DELAY: Duration = Duration::from_secs(3);
 
 /// Peridot harness agent shell.
 pub struct HarnessAgent {
@@ -833,6 +837,7 @@ impl HarnessAgent {
         let mut stuck_detector = StuckDetector::new(3);
         let mut budget_warning_sent = false;
         let mut consecutive_parse_failures = 0usize;
+        let mut error_recovery_attempts = 0usize;
         // Auto-fix loop state. Tracks the current failing verifier by
         // a compact signature so the model can tell "same failure,
         // same attempted fix" apart from a new failure uncovered by
@@ -944,9 +949,37 @@ impl HarnessAgent {
                         ContextSource::PlanReminder,
                         recovery_message(&err),
                     ));
+                    let recovery_signature = err.to_string();
+                    error_recovery_attempts += 1;
                     events(AgentRunEvent::Recovery {
-                        message: err.to_string(),
+                        message: recovery_signature.clone(),
                     });
+                    if error_recovery_attempts >= MAX_ERROR_RECOVERY_ATTEMPTS {
+                        let message = format!(
+                            "Recovery failed after {error_recovery_attempts} attempts. Peridot stopped instead of retrying indefinitely. Reason: {recovery_signature}. Check the provider/model setting, credentials, network/API error, or task direction, then run again."
+                        );
+                        self.state.phase = AgentPhase::Recovering;
+                        run_recovery_event_hook(
+                            &request.project_root,
+                            &request.hooks,
+                            "recovery_abort",
+                            &message,
+                        )?;
+                        events(AgentRunEvent::Recovery {
+                            message: message.clone(),
+                        });
+                        let summary = AgentRunSummary {
+                            turns: outcomes,
+                            usage: total_usage,
+                            stopped_reason: StopReason::Interrupted,
+                            duration_ms: started_at.elapsed().as_millis() as u64,
+                        };
+                        events(AgentRunEvent::Finished {
+                            summary: summary.clone(),
+                        });
+                        return Ok(summary);
+                    }
+                    sleep_before_error_recovery_retry().await;
                     if consecutive_parse_failures == 3 {
                         self.context.append(ContextEntry::trusted(
                             ContextSource::PlanReminder,
@@ -1329,6 +1362,16 @@ impl HarnessAgent {
         });
         Ok(summary)
     }
+}
+
+#[cfg(not(test))]
+async fn sleep_before_error_recovery_retry() {
+    tokio::time::sleep(ERROR_RECOVERY_RETRY_DELAY).await;
+}
+
+#[cfg(test)]
+async fn sleep_before_error_recovery_retry() {
+    let _ = ERROR_RECOVERY_RETRY_DELAY;
 }
 
 impl HarnessAgent {

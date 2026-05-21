@@ -4,14 +4,11 @@ VS Code panel for [Peridot Agent](https://github.com/dlsxj101/peridot-agent) —
 a Rust CLI/TUI autonomous coding agent with multi-LLM committee mode,
 native tool calling, and 2-Tier context management.
 
-> **Status**: v0.5.2 lands a three-button onboarding screen
-> (ChatGPT OAuth · OpenRouter API key · Local LLM endpoint), a queue
-> for prompts typed while the agent is busy, redesigned tool cards
-> with a pulsing live indicator, and a pixel-art deer mascot. The
-> sidebar still ships a bundled `peridot` binary per platform, an
-> esbuild-bundled webview, a HUD for usage / budget / 4-Tier context,
-> an inline plan panel, and unified-diff rendering for `file_diff` /
-> pre-approval previews.
+> **Status**: v0.5.6 ships platform-specific `.vsix` packages plus a
+> universal fallback package for Cursor, ChatGPT OAuth defaults to a
+> Codex-compatible GPT model, and the sidebar includes onboarding,
+> queued prompts, approval/diff cards, usage/budget HUD, an inline plan
+> panel, and a compact context donut above the bottom composer.
 
 ## Commands
 
@@ -42,9 +39,9 @@ provider" button in the session header to come back.
 ## Sidebar
 
 Once a provider is live, the sidebar shows workspace / provider /
-model / auth context, a HUD for token usage, cost / turn budget, and
-4-Tier context utilization, an inline plan panel that follows
-`plan_updated`, a chat-style transcript with collapsed tool cards
+model / auth context, a HUD for token usage and cost / turn budget,
+an inline plan panel that follows `plan_updated`, a compact context
+donut above the composer, a chat-style transcript with collapsed tool cards
 (pulsing dot while a tool is running) and inline unified diffs, plus
 approve/deny controls with a diff preview for `file_write` /
 `file_patch`. Type at the composer — Enter sends, Shift+Enter inserts
@@ -61,8 +58,9 @@ they auto-run.
 ## Local development
 
 Sideloading a `.vsix` you packaged yourself? `npm run package` produces a
-universal build with **no** bundled binary — Peridot then falls back to
-`peridot` on your PATH. To exercise the bundled-binary path locally:
+universal build. Unless you stage binaries under `resources/bin/<target>/`
+first, Peridot falls back to `peridot` on your PATH. To exercise a
+single-platform bundled-binary path locally:
 
 ```bash
 cargo build --release -p peridot-cli
@@ -71,10 +69,11 @@ npm run bundle-binary       # copies target/release/peridot into resources/
 npm run package             # .vsix now contains the binary
 ```
 
-`resources/peridot` and `resources/peridot.exe` are gitignored so the
-local copy never lands on `main`. The release pipeline drops a
-platform-specific binary into the same location before
-`vsce package --target`.
+`resources/peridot`, `resources/peridot.exe`, and `resources/bin/` are
+gitignored so local binary copies never land on `main`. The release
+pipeline drops platform-specific binaries into `resources/peridot[.exe]`
+for target packages and into `resources/bin/<target>/` for the universal
+fallback package.
 
 ## Roadmap
 

@@ -369,10 +369,12 @@ textarea {
 .session {
   flex: 1 1 auto;
   display: grid;
-  grid-template-rows: auto auto auto 1fr auto auto;
+  grid-template-rows: auto auto auto 1fr auto auto auto;
   /* Cap usable width so wide sidebars don't stretch the UI weirdly. */
   max-width: 720px;
   width: 100%;
+  height: 100vh;
+  min-height: 0;
   margin: 0 auto;
 }
 
@@ -567,33 +569,6 @@ textarea {
 .meter-secondary {
   color: var(--peri-fg-muted);
   font-variant-numeric: tabular-nums;
-}
-
-.meter-bar {
-  flex: 1 1 200px;
-  min-width: 140px;
-}
-
-.bar-wrap {
-  flex: 1 1 auto;
-  height: 4px;
-  border-radius: 2px;
-  background: var(--peri-bg-elev);
-  overflow: hidden;
-}
-
-.bar {
-  height: 100%;
-  background: var(--peri-accent);
-  transition: width 120ms linear;
-}
-
-.bar-warn {
-  background: var(--peri-warn);
-}
-
-.bar-critical {
-  background: var(--peri-error);
 }
 
 /* Plan panel */
@@ -1099,6 +1074,76 @@ textarea {
   gap: 2px;
 }
 
+/* Context dock */
+.context-dock {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 16px 6px;
+  border-top: 1px solid var(--peri-border);
+  color: var(--peri-fg-muted);
+}
+
+.context-dock:empty {
+  display: none;
+}
+
+.context-donut {
+  --context-pct: 0%;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background:
+    radial-gradient(circle at center, var(--peri-bg-panel) 53%, transparent 55%),
+    conic-gradient(var(--peri-accent) var(--context-pct), var(--peri-bg-elev) 0);
+  border: 1px solid var(--peri-border);
+  flex: 0 0 auto;
+}
+
+.context-donut.warn {
+  background:
+    radial-gradient(circle at center, var(--peri-bg-panel) 53%, transparent 55%),
+    conic-gradient(var(--peri-warn) var(--context-pct), var(--peri-bg-elev) 0);
+}
+
+.context-donut.critical {
+  background:
+    radial-gradient(circle at center, var(--peri-bg-panel) 53%, transparent 55%),
+    conic-gradient(var(--peri-error) var(--context-pct), var(--peri-bg-elev) 0);
+}
+
+.context-donut-label {
+  font-size: 8.5px;
+  line-height: 1;
+  color: var(--peri-fg);
+  font-variant-numeric: tabular-nums;
+}
+
+.context-dock-label {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 11px;
+}
+
+.context-dock-title {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 10px;
+}
+
+.context-dock-detail {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
 /* Composer */
 .composer {
   display: flex;
@@ -1174,6 +1219,18 @@ textarea {
   border-radius: var(--peri-radius-tight);
   font-size: 12px;
   font-family: var(--vscode-editor-font-family, ui-monospace, monospace);
+}
+
+.composer-model-select {
+  flex: 1 1 120px;
+  font-family: var(--vscode-editor-font-family, ui-monospace, monospace);
+  padding: 0 26px 0 10px;
+  background-color: var(--vscode-dropdown-background);
+  background-image: linear-gradient(45deg, transparent 50%, currentColor 50%),
+    linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position: calc(100% - 12px) 11px, calc(100% - 8px) 11px;
+  background-size: 4px 4px, 4px 4px;
+  background-repeat: no-repeat;
 }
 
 .composer-input-row {

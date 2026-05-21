@@ -1,5 +1,30 @@
 # Peridot Agent — Extension Changelog
 
+## [0.5.6] — 2026-05-21
+
+### Added — universal VSIX fallback and ChatGPT model UX
+
+- Release workflow now publishes a universal `.vsix` in addition to the six
+  platform-specific packages. The universal package carries all bundled
+  `peridot` binaries under `resources/bin/<target>/`, and the extension
+  resolver picks the current host target at runtime. This gives Cursor a
+  stable fallback when its Marketplace updater chooses the universal package.
+- ChatGPT OAuth setup now resets `auth.primary`, `api.base_url`, and
+  `models.main` to a Codex-compatible GPT default (`gpt-5.5`) so an old
+  Claude model selection cannot produce a Codex `400 Bad Request`.
+- Composer model override becomes a ChatGPT model dropdown when the active
+  provider is `openai-oauth`; OpenRouter and other providers keep free-form
+  model input.
+- Context utilization now renders as a compact donut immediately above the
+  composer with exact token counts in the hover tooltip.
+- Session layout pins the composer to the bottom of the sidebar.
+
+### Fixed — recovery loop guard
+
+- Error-driven recovery now waits 10 seconds before retrying and aborts after
+  3 recoverable errors in one run, preventing provider/configuration failures
+  from spinning through the full max-turn budget.
+
 ## [0.5.5] — 2026-05-21
 
 ### Fixed — Windows login environment

@@ -4,10 +4,9 @@
 //   1. `peridot.binaryPath` configuration override — for developers
 //      iterating on a local build. Stale paths are ignored so a Windows
 //      extension host does not try to spawn a WSL-only `/home/...` path.
-//   2. Bundled binary inside the .vsix at
-//      `<extension>/resources/peridot[.exe]`. This is what end users
-//      get because we publish platform-specific .vsix targets via
-//      `vsce publish --target <X>`.
+//   2. Bundled binary inside the .vsix:
+//      a. universal .vsix: `<extension>/resources/bin/<target>/peridot[.exe]`
+//      b. platform .vsix: `<extension>/resources/peridot[.exe]`
 //   3. Plain `peridot` on the system PATH — gives a graceful fallback
 //      when the bundled binary is missing (development install, broken
 //      platform target, etc.).
@@ -40,6 +39,14 @@ export async function resolvePeridotBinary(): Promise<string> {
   const ext = vscode.extensions.getExtension('dlsxj101.peridot-vscode');
   if (ext) {
     const exeName = process.platform === 'win32' ? 'peridot.exe' : 'peridot';
+    const target = currentVsceTarget();
+    if (target) {
+      const universalBundled = path.join(ext.extensionPath, 'resources', 'bin', target, exeName);
+      if (isUsableBinaryPath(universalBundled)) {
+        cached = universalBundled;
+        return cached;
+      }
+    }
     const bundled = path.join(ext.extensionPath, 'resources', exeName);
     if (isUsableBinaryPath(bundled)) {
       cached = bundled;
@@ -64,4 +71,16 @@ function isUsableBinaryPath(candidate: string): boolean {
   } catch {
     return false;
   }
+}
+
+function currentVsceTarget(): string | undefined {
+  const os = process.platform;
+  const arch = process.arch;
+  if (os === 'linux' && arch === 'x64') return 'linux-x64';
+  if (os === 'linux' && arch === 'arm64') return 'linux-arm64';
+  if (os === 'darwin' && arch === 'x64') return 'darwin-x64';
+  if (os === 'darwin' && arch === 'arm64') return 'darwin-arm64';
+  if (os === 'win32' && arch === 'x64') return 'win32-x64';
+  if (os === 'win32' && arch === 'arm64') return 'win32-arm64';
+  return undefined;
 }

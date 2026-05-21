@@ -6,4 +6,5 @@ out/
 # Bundled binary lands here at release time; must never be committed.
 resources/peridot
 resources/peridot.exe
+resources/bin/
 .todo-v0.5.2.md

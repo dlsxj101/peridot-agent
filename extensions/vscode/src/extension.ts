@@ -53,6 +53,9 @@ let activeRun: ActiveRun | undefined;
 let statusCache: StatusCache<DaemonStatusResult> | undefined;
 let cachedFolder: string | undefined;
 
+const OPENAI_OAUTH_DEFAULT_MODEL = 'gpt-5.5';
+const OPENAI_OAUTH_BASE_URL = 'https://chatgpt.com/backend-api/codex';
+
 export function activate(context: vscode.ExtensionContext) {
   const output = vscode.window.createOutputChannel('Peridot');
   context.subscriptions.push(output);
@@ -348,6 +351,7 @@ async function loginOpenAi(
       folder,
       output,
     );
+    await configureChatGptDefaults(binary, folder, output);
     sidebar.appendSystem('ChatGPT login completed');
     invalidateStatusCache();
     await refreshStatus(output, sidebar, { force: true });
@@ -561,14 +565,10 @@ async function registerProvider(
       case 'chatgpt':
         // ChatGPT login goes through the dedicated OAuth flow which writes
         // its own auth file. Still flip auth.primary so the daemon picks
-        // openai-oauth on the next status read.
+        // openai-oauth on the next status read, and reset the model away
+        // from any prior Claude/OpenRouter selection.
         await runProcess(binary, ['login', 'openai-oauth'], folder, output);
-        await runProcess(
-          binary,
-          ['config', 'set', 'auth.primary', 'openai-oauth'],
-          folder,
-          output,
-        );
+        await configureChatGptDefaults(binary, folder, output);
         break;
       case 'claude': {
         const apiKey = (params.apiKey ?? '').trim();
@@ -586,7 +586,7 @@ async function registerProvider(
         // default is in place.
         await runProcess(
           binary,
-          ['config', 'set', 'api.base_url', 'https://api.anthropic.com'],
+          ['config', 'set', 'api.base_url', 'https://api.openai.com'],
           folder,
           output,
         );
@@ -618,7 +618,7 @@ async function registerProvider(
         );
         await runProcess(
           binary,
-          ['config', 'set', 'api.base_url', 'https://api.anthropic.com'],
+          ['config', 'set', 'api.base_url', 'https://openrouter.ai/api'],
           folder,
           output,
         );
@@ -707,6 +707,16 @@ async function registerProvider(
     output.appendLine(`[peridot] registerProvider ${provider} failed: ${message}`);
     sidebar.setAuthBusy(false, message);
   }
+}
+
+async function configureChatGptDefaults(
+  binary: string,
+  folder: string | undefined,
+  output: vscode.OutputChannel,
+): Promise<void> {
+  await runProcess(binary, ['config', 'set', 'auth.primary', 'openai-oauth'], folder, output);
+  await runProcess(binary, ['config', 'set', 'api.base_url', OPENAI_OAUTH_BASE_URL], folder, output);
+  await runProcess(binary, ['config', 'set', 'models.main', OPENAI_OAUTH_DEFAULT_MODEL], folder, output);
 }
 
 async function openWorkspaceFile(

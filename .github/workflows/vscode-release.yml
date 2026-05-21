@@ -188,3 +188,77 @@ jobs:
           # (`code --install-extension peridot-vscode-X.Y.Z.vsix`).
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  publish-universal:
+    name: Publish universal
+    needs: build-binary
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: extensions/vscode
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: "20"
+
+      - name: Download all peridot binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: peridot-*
+          path: extensions/vscode/resources/bin-raw
+
+      - name: Stage universal binary layout
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p \
+            resources/bin/linux-x64 \
+            resources/bin/linux-arm64 \
+            resources/bin/darwin-x64 \
+            resources/bin/darwin-arm64 \
+            resources/bin/win32-x64 \
+            resources/bin/win32-arm64
+          cp resources/bin-raw/peridot-linux-x64/peridot resources/bin/linux-x64/peridot
+          cp resources/bin-raw/peridot-linux-arm64/peridot resources/bin/linux-arm64/peridot
+          cp resources/bin-raw/peridot-darwin-x64/peridot resources/bin/darwin-x64/peridot
+          cp resources/bin-raw/peridot-darwin-arm64/peridot resources/bin/darwin-arm64/peridot
+          cp resources/bin-raw/peridot-win32-x64/peridot.exe resources/bin/win32-x64/peridot.exe
+          cp resources/bin-raw/peridot-win32-arm64/peridot.exe resources/bin/win32-arm64/peridot.exe
+          chmod +x resources/bin/linux-x64/peridot \
+            resources/bin/linux-arm64/peridot \
+            resources/bin/darwin-x64/peridot \
+            resources/bin/darwin-arm64/peridot
+          rm -rf resources/bin-raw
+
+      - name: Install
+        run: npm ci || npm install
+
+      - name: Compile (production)
+        run: npm run build:prod
+
+      - name: Package universal .vsix
+        run: npx vsce package --no-dependencies
+
+      - name: Publish universal to VS Code Marketplace
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: npx vsce publish --packagePath *.vsix --no-dependencies -p "$VSCE_PAT"
+
+      - name: Publish universal to Open VSX
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: npx ovsx publish *.vsix -p "$OVSX_PAT"
+
+      - name: Upload universal .vsix to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: extensions/vscode/*.vsix
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

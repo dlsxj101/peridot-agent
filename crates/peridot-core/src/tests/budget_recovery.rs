@@ -326,7 +326,7 @@ async fn run_until_done_recovers_after_tool_error() {
 }
 
 #[tokio::test]
-async fn repeated_parse_failures_inject_format_reminder() {
+async fn repeated_parse_failures_recover_before_cap() {
     let root = std::env::temp_dir().join(format!(
         "peridot-core-parse-recovery-{}",
         std::process::id()
@@ -339,13 +339,11 @@ async fn repeated_parse_failures_inject_format_reminder() {
         ContextManager::new(),
         registry,
     );
-    // Three consecutive parse errors should inject the format reminder via the
-    // recovery layer; the fourth response then succeeds with a real tool call so the
-    // loop can stop. Mirrors the production trigger where the model emits something
-    // the provider's response parser rejects.
+    // Two consecutive parse errors still get recovery turns; the third
+    // recoverable error is now the hard cap.
     let provider = StaticProvider::with_initial_parse_errors(
         vec![json!({"action":"agent_done","parameters":{"summary":"recovered"}}).to_string()],
-        3,
+        2,
     );
 
     let summary = agent
@@ -371,9 +369,62 @@ async fn repeated_parse_failures_inject_format_reminder() {
         .unwrap();
 
     assert_eq!(summary.stopped_reason, StopReason::Done);
-    assert!(agent.context().entries().iter().any(|entry| {
-        entry.source == ContextSource::PlanReminder && entry.content.contains("Format reminder")
-    }));
+    let recovery_entries = agent
+        .context()
+        .entries()
+        .iter()
+        .filter(|entry| {
+            entry.source == ContextSource::PlanReminder
+                && entry
+                    .content
+                    .contains("static provider injected parse error")
+        })
+        .count();
+    assert_eq!(recovery_entries, 2);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn recovery_errors_abort_after_three_attempts() {
+    let root =
+        std::env::temp_dir().join(format!("peridot-core-recovery-cap-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    let mut registry = ToolRegistry::new();
+    register_builtin_tools(&mut registry).unwrap();
+    let mut agent = HarnessAgent::new(
+        AgentState::new(ExecutionMode::Goal, PermissionMode::Auto),
+        ContextManager::new(),
+        registry,
+    );
+    let provider = StaticProvider::with_initial_parse_errors(
+        vec![json!({"action":"agent_done","parameters":{"summary":"too late"}}).to_string()],
+        20,
+    );
+
+    let summary = agent
+        .run_until_done(
+            &provider,
+            AgentRunRequest {
+                task: "hit identical recovery cap".to_string(),
+                model: "mock".to_string(),
+                goal_checker_model: None,
+                max_turns: 100,
+                max_tokens: 512,
+                reasoning_effort: peridot_common::ReasoningEffort::Off,
+                service_tier: None,
+                budget_usd: 5.0,
+                budget_warning_pct: 50,
+                project_root: root.clone(),
+                denied_paths: Vec::new(),
+                hooks: HooksConfig::default(),
+                security: SecurityConfig::default(),
+            },
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(summary.stopped_reason, StopReason::Interrupted);
+    assert_eq!(summary.turns.len(), 0);
     std::fs::remove_dir_all(root).unwrap();
 }
 

@@ -4,7 +4,14 @@ Peridot Agent is a Rust CLI/TUI autonomous coding agent with multi-session orche
 
 ## Status
 
-Current version: **0.8.4**
+Current version: **0.8.5**
+
+### What's new in v0.8.5
+
+- **Recovery loops now stop quickly on repeated errors.** Provider,
+  parser, network, credential, and configuration errors wait 3 seconds
+  before retrying and stop after 3 recovery attempts with a clear transcript
+  message instead of burning through the full turn budget.
 
 ### What's new in v0.8.4
 

@@ -33,6 +33,8 @@ let composerModeOverride: string | undefined;
 let composerPermissionOverride: string | undefined;
 let composerModelOverride: string | undefined;
 
+const CHATGPT_MODELS = ['gpt-5.5', 'gpt-5.5-fast', 'gpt-5.4', 'gpt-5.4-mini'];
+
 window.addEventListener('message', (event: MessageEvent<InboundMessage>) => {
   if (event.data?.type === 'state') {
     state = event.data.state;
@@ -472,6 +474,7 @@ function renderSession(s: SidebarState): HTMLElement {
   if (hasHudData(s)) wrap.append(renderHud(s));
   wrap.append(renderTranscript(s));
   wrap.append(renderQueue(s));
+  wrap.append(renderContextDock(s));
   wrap.append(renderComposer(s));
   return wrap;
 }
@@ -573,7 +576,7 @@ function pill(text: string, variant: string): HTMLElement {
 }
 
 function hasHudData(s: SidebarState): boolean {
-  return Boolean(s.hud.usage || s.hud.budget || s.hud.context || s.hud.plan || s.hud.committee);
+  return Boolean(s.hud.usage || s.hud.budget || s.hud.plan || s.hud.committee);
 }
 
 function renderHud(s: SidebarState): HTMLElement {
@@ -590,12 +593,6 @@ function renderHud(s: SidebarState): HTMLElement {
         `${formatTokens(u.inputTokens)} in · ${formatTokens(u.outputTokens)} out`,
         formatUsd(u.costUsd),
       ),
-    );
-  }
-  if (hudState.context && hudState.context.threshold > 0) {
-    const pct = Math.min(1, hudState.context.tokensUsed / hudState.context.threshold);
-    meters.append(
-      barMeter('Context', `${Math.round(pct * 100)}%`, pct),
     );
   }
   if (hudState.budget) {
@@ -629,24 +626,32 @@ function renderHud(s: SidebarState): HTMLElement {
   return hud;
 }
 
+function renderContextDock(s: SidebarState): HTMLElement {
+  const context = s.hud.context;
+  const dock = el('div', 'context-dock');
+  if (!context || context.threshold <= 0) return dock;
+  const pct = Math.min(1, context.tokensUsed / context.threshold);
+  const pctText = `${Math.round(pct * 100)}%`;
+  const exact = `${context.tokensUsed.toLocaleString()} / ${context.threshold.toLocaleString()} tokens`;
+  const donut = el('div', 'context-donut');
+  donut.style.setProperty('--context-pct', `${Math.round(pct * 100)}%`);
+  if (pct >= 0.9) donut.classList.add('critical');
+  else if (pct >= 0.75) donut.classList.add('warn');
+  donut.title = `Context ${exact} (${pctText})`;
+  donut.append(el('span', 'context-donut-label', pctText));
+  dock.append(donut);
+  const label = el('div', 'context-dock-label');
+  label.append(el('span', 'context-dock-title', 'Context'));
+  label.append(el('span', 'context-dock-detail', exact));
+  dock.append(label);
+  return dock;
+}
+
 function meter(label: string, primary: string, secondary: string): HTMLElement {
   const wrap = el('div', 'meter');
   wrap.append(el('span', 'meter-label', label));
   wrap.append(el('span', 'meter-primary', primary));
   wrap.append(el('span', 'meter-secondary', secondary));
-  return wrap;
-}
-
-function barMeter(label: string, value: string, pct: number): HTMLElement {
-  const wrap = el('div', 'meter meter-bar');
-  wrap.append(el('span', 'meter-label', label));
-  const barWrap = el('div', 'bar-wrap');
-  const bar = el('div', 'bar');
-  bar.style.width = `${Math.round(pct * 100)}%`;
-  if (pct >= 0.9) bar.classList.add('bar-critical');
-  else if (pct >= 0.75) bar.classList.add('bar-warn');
-  barWrap.append(bar);
-  wrap.append(barWrap, el('span', 'meter-primary', value));
   return wrap;
 }
 
@@ -1103,7 +1108,7 @@ function renderComposer(s: SidebarState): HTMLElement {
   const optionsRow = el('div', 'composer-options');
   optionsRow.append(modeSelect(s.runOptions));
   optionsRow.append(permissionSelect(s.runOptions));
-  optionsRow.append(modelInput(s.runOptions));
+  optionsRow.append(modelControl(s));
   wrap.append(optionsRow);
 
   const inputRow = el('div', 'composer-input-row');
@@ -1212,11 +1217,35 @@ function permissionSelect(opts: RunOptions): HTMLSelectElement {
   return select;
 }
 
-function modelInput(opts: RunOptions): HTMLInputElement {
+function modelControl(s: SidebarState): HTMLInputElement | HTMLSelectElement {
+  if (s.context.provider === 'openai-oauth') {
+    return chatGptModelSelect(s);
+  }
+  return modelInput(s.runOptions, s.context.provider);
+}
+
+function chatGptModelSelect(s: SidebarState): HTMLSelectElement {
+  const configured = composerModelOverride ?? s.runOptions.model ?? s.context.model ?? 'gpt-5.5';
+  const current = CHATGPT_MODELS.includes(configured) ? configured : 'gpt-5.5';
+  const select = document.createElement('select');
+  select.className = 'composer-select composer-model composer-model-select';
+  select.id = 'composer-model';
+  select.title = 'ChatGPT model';
+  for (const model of CHATGPT_MODELS) {
+    const option = document.createElement('option');
+    option.value = model;
+    option.textContent = model;
+    if (current === model) option.selected = true;
+    select.append(option);
+  }
+  return select;
+}
+
+function modelInput(opts: RunOptions, provider?: string): HTMLInputElement {
   const input = document.createElement('input');
   input.className = 'composer-model';
   input.id = 'composer-model';
-  input.placeholder = 'model override';
+  input.placeholder = provider === 'openrouter-api' ? 'openrouter model' : 'model override';
   input.value = composerModelOverride ?? opts.model ?? '';
   input.spellcheck = false;
   input.autocomplete = 'off';
@@ -1242,4 +1271,3 @@ function autoresize(textarea: HTMLTextAreaElement): void {
   textarea.style.height = 'auto';
   textarea.style.height = `${Math.min(textarea.scrollHeight, 180)}px`;
 }
-
