@@ -4,7 +4,7 @@ VS Code panel for [Peridot Agent](https://github.com/dlsxj101/peridot-agent) —
 a Rust CLI/TUI autonomous coding agent with multi-LLM committee mode,
 native tool calling, and 2-Tier context management.
 
-> **Status**: v0.5.6 ships platform-specific `.vsix` packages plus a
+> **Status**: v0.5.7 ships platform-specific `.vsix` packages plus a
 > universal fallback package for Cursor, ChatGPT OAuth defaults to a
 > Codex-compatible GPT model, and the sidebar includes onboarding,
 > queued prompts, approval/diff cards, usage/budget HUD, an inline plan

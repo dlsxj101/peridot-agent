@@ -93,7 +93,7 @@ jobs:
           cp "target/${{ matrix.cargo-target }}/release/peridot${{ matrix.exe }}" "staging/peridot${{ matrix.exe }}"
 
       - name: Upload binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: peridot-${{ matrix.vsce-target }}
           path: staging/peridot${{ matrix.exe }}
@@ -137,13 +137,13 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v5
         with:
-          node-version: "20"
+          node-version: "24"
 
       - name: Download peridot binary
         # `path` is GITHUB_WORKSPACE-relative; downstream `run:` steps
         # execute from `extensions/vscode/` via `defaults.run.working-directory`,
         # so they reference the binary as `resources/peridot[.exe]`.
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: peridot-${{ matrix.vsce-target }}
           path: extensions/vscode/resources
@@ -170,16 +170,8 @@ jobs:
         # mismatched uploads are rejected by the Marketplace.
         run: npx vsce publish --packagePath *.vsix --no-dependencies -p "$VSCE_PAT"
 
-      - name: Publish to Open VSX
-        env:
-          OVSX_PAT: ${{ secrets.OVSX_PAT }}
-        # ovsx reads the same .vsix produced above. Namespace must
-        # already exist (`ovsx create-namespace dlsxj101 -p <pat>`
-        # was a one-time setup step).
-        run: npx ovsx publish *.vsix -p "$OVSX_PAT"
-
       - name: Upload .vsix to GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: extensions/vscode/*.vsix
           fail_on_unmatched_files: true
@@ -188,6 +180,25 @@ jobs:
           # (`code --install-extension peridot-vscode-X.Y.Z.vsix`).
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish to Open VSX
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        # ovsx reads the same .vsix produced above. Namespace must
+        # already exist (`ovsx create-namespace dlsxj101 -p <pat>`
+        # was a one-time setup step). Open VSX occasionally returns
+        # transient 503s, so retry before failing the release.
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if npx ovsx publish *.vsix -p "$OVSX_PAT"; then
+              exit 0
+            fi
+            if [ "$attempt" = "3" ]; then
+              exit 1
+            fi
+            sleep 30
+          done
 
   publish-universal:
     name: Publish universal
@@ -205,10 +216,10 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v5
         with:
-          node-version: "20"
+          node-version: "24"
 
       - name: Download all peridot binaries
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: peridot-*
           path: extensions/vscode/resources/bin-raw
@@ -250,15 +261,25 @@ jobs:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
         run: npx vsce publish --packagePath *.vsix --no-dependencies -p "$VSCE_PAT"
 
-      - name: Publish universal to Open VSX
-        env:
-          OVSX_PAT: ${{ secrets.OVSX_PAT }}
-        run: npx ovsx publish *.vsix -p "$OVSX_PAT"
-
       - name: Upload universal .vsix to GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: extensions/vscode/*.vsix
           fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish universal to Open VSX
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if npx ovsx publish *.vsix -p "$OVSX_PAT"; then
+              exit 0
+            fi
+            if [ "$attempt" = "3" ]; then
+              exit 1
+            fi
+            sleep 30
+          done

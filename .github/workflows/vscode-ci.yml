@@ -26,7 +26,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v5
         with:
-          node-version: "20"
+          node-version: "24"
 
       - name: Install
         run: npm ci || npm install
@@ -38,7 +38,7 @@ jobs:
         run: npx vsce package --no-dependencies
 
       - name: Upload .vsix artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: peridot-vscode-vsix
           path: extensions/vscode/*.vsix

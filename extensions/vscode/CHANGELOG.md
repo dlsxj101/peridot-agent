@@ -1,5 +1,15 @@
 # Peridot Agent — Extension Changelog
 
+## [0.5.7] — 2026-05-21
+
+### Fixed — release workflow resilience
+
+- VS Code extension release jobs now use Node 24-compatible artifact and
+  release actions, removing the GitHub Actions Node 20 deprecation warnings.
+- Open VSX publishing now retries transient registry failures before failing,
+  and GitHub Release asset upload runs before the Open VSX step so `.vsix`
+  files remain attached even if the registry is temporarily unavailable.
+
 ## [0.5.6] — 2026-05-21
 
 ### Added — universal VSIX fallback and ChatGPT model UX
@@ -21,7 +31,7 @@
 
 ### Fixed — recovery loop guard
 
-- Error-driven recovery now waits 10 seconds before retrying and aborts after
+- Error-driven recovery now waits 3 seconds before retrying and aborts after
   3 recoverable errors in one run, preventing provider/configuration failures
   from spinning through the full max-turn budget.
 
