@@ -1580,6 +1580,42 @@ fn tab_autocompletes_slash_command_prefix() {
 }
 
 #[test]
+fn arrow_keys_select_slash_command_completion() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    handle_key_event(
+        &mut state,
+        KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE),
+    );
+    assert_eq!(
+        state.slash_picker.as_ref().map(|picker| picker.selected),
+        Some(0)
+    );
+
+    handle_key_event(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    handle_key_event(
+        &mut state,
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+    );
+
+    assert_eq!(state.input, "/execute");
+
+    let outcome = handle_key_event(
+        &mut state,
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+    );
+
+    assert_eq!(outcome, TuiEventOutcome::Continue);
+    assert_eq!(state.header.mode, ExecutionMode::Execute);
+    assert!(state.input.is_empty());
+}
+
+#[test]
 fn lang_slash_command_changes_locale() {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 

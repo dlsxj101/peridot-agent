@@ -36,8 +36,29 @@ let composerModelOverride: string | undefined;
 let transcriptPinnedToBottom = true;
 let transcriptScrollTop = 0;
 let toolHistoryOpen = false;
+let slashPickerSelected = 0;
 
 const CHATGPT_MODELS = ['gpt-5.5', 'gpt-5.5-fast', 'gpt-5.4', 'gpt-5.4-mini'];
+interface SlashCommandSpec {
+  name: string;
+  description: string;
+  argHint?: string;
+}
+
+const SLASH_COMMANDS: SlashCommandSpec[] = [
+  { name: '/clear', description: 'Clear transcript and start a fresh session' },
+  { name: '/plan', description: 'Switch to plan mode' },
+  { name: '/execute', description: 'Switch to execute mode' },
+  { name: '/safe', description: 'Use safe permission mode' },
+  { name: '/auto', description: 'Use auto permission mode' },
+  { name: '/yolo', description: 'Use yolo permission mode' },
+  { name: '/model', description: 'Switch the active model', argHint: '<name>' },
+  { name: '/session new', description: 'Open a new chat session', argHint: '[task]' },
+  { name: '/session list', description: 'List open chat sessions' },
+  { name: '/session switch', description: 'Switch to another session', argHint: '<id|title>' },
+  { name: '/help', description: 'Show slash command help' },
+];
+
 const markdownRenderer = new MarkdownIt({
   html: false,
   linkify: true,
@@ -905,7 +926,11 @@ function renderToolStack(items: TranscriptItem[]): HTMLElement {
     latest.pending ? 'running' : 'done',
   );
   const toggle = el('span', 'tool-toggle', items.length > 1 ? `${items.length}` : '');
-  summary.append(toggle, name, result, status);
+  summary.append(toggle, name);
+  if (latest.path) {
+    summary.append(renderFilePathButton(latest.path, 'tool-path', latest.line, latest.column));
+  }
+  summary.append(result, status);
   details.append(summary);
 
   const history = el('div', 'tool-history');
@@ -925,6 +950,9 @@ function renderToolDetail(item: TranscriptItem): HTMLElement {
   const wrap = el('div', 'tool-detail-item');
   const header = el('div', 'tool-detail-header');
   header.append(el('span', 'tool-detail-name', item.toolName || item.text));
+  if (item.path) {
+    header.append(renderFilePathButton(item.path, 'tool-detail-path', item.line, item.column));
+  }
   header.append(el('span', 'tool-detail-status', item.pending ? 'running' : 'done'));
   wrap.append(header);
 
@@ -939,6 +967,23 @@ function renderToolDetail(item: TranscriptItem): HTMLElement {
     wrap.append(pre);
   }
   return wrap;
+}
+
+function renderFilePathButton(
+  path: string,
+  className = '',
+  line?: number,
+  column?: number,
+): HTMLElement {
+  const button = el('button', `link-button file-link ${className}`, path);
+  button.type = 'button';
+  button.title = line ? `Open ${path}:${line}` : `Open ${path}`;
+  button.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    vscode.postMessage({ type: 'openFile', path, line, column });
+  });
+  return button;
 }
 
 function renderStatusLine(item: TranscriptItem): HTMLElement {
@@ -1246,6 +1291,9 @@ function renderComposer(s: SidebarState): HTMLElement {
   optionsRow.append(renderContextDock(s));
   wrap.append(optionsRow);
 
+  const slashPicker = el('div', 'slash-picker hidden');
+  wrap.append(slashPicker);
+
   const inputRow = el('div', 'composer-input-row');
   const textarea = document.createElement('textarea');
   textarea.id = 'composer-input';
@@ -1258,10 +1306,42 @@ function renderComposer(s: SidebarState): HTMLElement {
   textarea.addEventListener('input', () => {
     composerDraft = textarea.value;
     autoresize(textarea);
+    updateSlashPicker(textarea, slashPicker);
   });
   textarea.addEventListener('keydown', (event) => {
+    if (isSlashPickerOpen(slashPicker)) {
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault();
+        const matches = filteredSlashCommands(textarea.value);
+        if (matches.length > 0) {
+          slashPickerSelected = Math.max(
+            0,
+            Math.min(
+              matches.length - 1,
+              slashPickerSelected + (event.key === 'ArrowDown' ? 1 : -1),
+            ),
+          );
+          updateSlashPicker(textarea, slashPicker);
+        }
+        return;
+      }
+      if (event.key === 'Tab') {
+        event.preventDefault();
+        acceptSlashSelection(textarea, slashPicker);
+        return;
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        slashPicker.classList.add('hidden');
+        return;
+      }
+    }
     if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
       event.preventDefault();
+      if (isSlashPickerOpen(slashPicker) && !slashExactSelectionIsRunnable(textarea.value)) {
+        acceptSlashSelection(textarea, slashPicker);
+        return;
+      }
       handleSubmit();
     }
   });
@@ -1290,12 +1370,15 @@ function renderComposer(s: SidebarState): HTMLElement {
   wrap.append(inputRow);
 
   // Auto-size on initial render to honor multi-line drafts.
-  setTimeout(() => autoresize(textarea), 0);
+  setTimeout(() => {
+    autoresize(textarea);
+    updateSlashPicker(textarea, slashPicker);
+  }, 0);
 
   function handleSubmit(): void {
     const value = textarea.value.trim();
     if (!value) return;
-    if (s.running) {
+    if (s.running && !value.startsWith('/')) {
       vscode.postMessage({ type: 'queueAdd', task: value });
     } else {
       vscode.postMessage({
@@ -1310,6 +1393,77 @@ function renderComposer(s: SidebarState): HTMLElement {
   }
 
   return wrap;
+}
+
+function filteredSlashCommands(input: string): SlashCommandSpec[] {
+  const query = input.trimEnd();
+  if (!query.startsWith('/') || query.includes('\n')) return [];
+  const needle = query.slice(1).trim().toLowerCase();
+  if (needle.length === 0) return SLASH_COMMANDS;
+  return SLASH_COMMANDS.filter((command) => {
+    const name = command.name.slice(1).toLowerCase();
+    const description = command.description.toLowerCase();
+    return name.startsWith(needle) || name.includes(` ${needle}`) || description.includes(needle);
+  });
+}
+
+function updateSlashPicker(textarea: HTMLTextAreaElement, picker: HTMLElement): void {
+  const matches = filteredSlashCommands(textarea.value);
+  if (matches.length === 0) {
+    slashPickerSelected = 0;
+    picker.classList.add('hidden');
+    picker.replaceChildren();
+    return;
+  }
+
+  slashPickerSelected = Math.min(slashPickerSelected, matches.length - 1);
+  picker.classList.remove('hidden');
+  picker.replaceChildren();
+  const start = Math.min(
+    Math.max(0, slashPickerSelected - 5),
+    Math.max(0, matches.length - 6),
+  );
+  matches.slice(start, start + 6).forEach((command, offset) => {
+    const index = start + offset;
+    const row = el('button', `slash-option${index === slashPickerSelected ? ' selected' : ''}`);
+    row.type = 'button';
+    row.addEventListener('mousedown', (event) => {
+      event.preventDefault();
+      slashPickerSelected = index;
+      acceptSlashSelection(textarea, picker);
+    });
+    const label = command.argHint ? `${command.name} ${command.argHint}` : command.name;
+    row.append(el('span', 'slash-name', label));
+    row.append(el('span', 'slash-description', command.description));
+    picker.append(row);
+  });
+}
+
+function isSlashPickerOpen(picker: HTMLElement): boolean {
+  return !picker.classList.contains('hidden');
+}
+
+function acceptSlashSelection(textarea: HTMLTextAreaElement, picker: HTMLElement): void {
+  const matches = filteredSlashCommands(textarea.value);
+  const command = matches[slashPickerSelected];
+  if (!command) return;
+  textarea.value = command.argHint ? `${command.name} ${command.argHint}` : command.name;
+  textarea.selectionStart = textarea.value.length;
+  textarea.selectionEnd = textarea.value.length;
+  composerDraft = textarea.value;
+  autoresize(textarea);
+  updateSlashPicker(textarea, picker);
+  textarea.focus();
+}
+
+function slashExactSelectionIsRunnable(input: string): boolean {
+  const matches = filteredSlashCommands(input);
+  const command = matches[slashPickerSelected];
+  if (!command) return false;
+  return (
+    input.trim() === command.name &&
+    (!command.argHint || command.argHint.startsWith('['))
+  );
 }
 
 function modeSelect(opts: RunOptions): HTMLSelectElement {

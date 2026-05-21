@@ -64,13 +64,15 @@ export function activate(context: vscode.ExtensionContext) {
     runTask: async (task: string, options: RunOptions): Promise<void> =>
       runTask(task, output, sidebar, options),
     cancelTask: async (): Promise<void> => cancelTask(output),
+    clearSession: async (): Promise<void> => clearExtensionSession(output),
     loginOpenAi: async (): Promise<void> => loginOpenAi(output, sidebar),
     refreshStatus: async (): Promise<void> => refreshStatus(output, sidebar, { force: true }),
     respondAskUser: async (requestId: string, answer: AskUserAnswer): Promise<void> =>
       respondAskUser(requestId, answer, output, sidebar),
     respondApproval: async (decision: ApprovalResponse): Promise<void> =>
       respondApproval(decision, output, sidebar),
-    openFile: async (relativePath: string): Promise<void> => openWorkspaceFile(relativePath, output),
+    openFile: async (relativePath: string, line?: number, column?: number): Promise<void> =>
+      openWorkspaceFile(relativePath, output, line, column),
     registerProvider: async (
       provider: ProviderChoice,
       params: Record<string, string>,
@@ -730,6 +732,8 @@ async function configureChatGptDefaults(
 async function openWorkspaceFile(
   relativePath: string,
   output: vscode.OutputChannel,
+  line?: number,
+  column?: number,
 ): Promise<void> {
   const folder = vscode.workspace.workspaceFolders?.[0];
   if (!folder) {
@@ -737,12 +741,37 @@ async function openWorkspaceFile(
     return;
   }
   try {
-    const uri = vscode.Uri.joinPath(folder.uri, relativePath);
-    await vscode.commands.executeCommand('vscode.open', uri);
+    const uri = relativePath.startsWith('/') || /^[A-Za-z]:[\\/]/.test(relativePath)
+      ? vscode.Uri.file(relativePath)
+      : vscode.Uri.joinPath(folder.uri, relativePath);
+    const options =
+      typeof line === 'number'
+        ? {
+            selection: new vscode.Range(
+              Math.max(0, line - 1),
+              Math.max(0, (column ?? 1) - 1),
+              Math.max(0, line - 1),
+              Math.max(0, (column ?? 1) - 1),
+            ),
+          }
+        : undefined;
+    await vscode.commands.executeCommand('vscode.open', uri, options);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     output.appendLine(`[peridot] openFile failed: ${message}`);
   }
+}
+
+async function clearExtensionSession(output: vscode.OutputChannel): Promise<void> {
+  if (activeRun?.sessionId) {
+    try {
+      await activeRun.daemon.send('session.cancel', { session_id: activeRun.sessionId });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      output.appendLine(`[peridot] clear cancel failed: ${message}`);
+    }
+  }
+  await finishActiveRun(output);
 }
 
 async function handleDaemonNotification(

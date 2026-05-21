@@ -4,7 +4,18 @@ Peridot Agent is a Rust CLI/TUI autonomous coding agent with multi-session orche
 
 ## Status
 
-Current version: **0.8.6**
+Current version: **0.8.7**
+
+### What's new in v0.8.7
+
+- **Slash commands are keyboard-selectable in both the TUI and extension.**
+  Typing `/` opens a command picker, arrow keys move the selection, and Enter
+  accepts or runs the highlighted command.
+- **The VS Code panel now treats slash commands as session controls.** `/clear`
+  clears the transcript and daemon context, mode/permission/model slashes update
+  composer state, and `/session ...` commands manage open sessions.
+- **Tool file paths open in the editor.** Tool rows with a file path can jump to
+  the file, including line/column when the tool provides them.
 
 ### What's new in v0.8.6
 

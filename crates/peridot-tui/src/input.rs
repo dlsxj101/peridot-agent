@@ -341,6 +341,14 @@ pub fn handle_key_event(state: &mut TuiState, key: KeyEvent) -> TuiEventOutcome 
             }
             TuiEventOutcome::Continue
         }
+        KeyCode::Up if state.slash_picker.is_some() => {
+            state.move_slash_picker_selection(-1);
+            TuiEventOutcome::Continue
+        }
+        KeyCode::Down if state.slash_picker.is_some() => {
+            state.move_slash_picker_selection(1);
+            TuiEventOutcome::Continue
+        }
         // For multi-line drafts (input contains `\n`) the arrow keys move
         // the cursor between logical lines first; history navigation only
         // kicks in when the cursor is already at the very top or bottom
@@ -419,16 +427,15 @@ pub fn handle_key_event(state: &mut TuiState, key: KeyEvent) -> TuiEventOutcome 
             state.accept_at_picker();
             TuiEventOutcome::Continue
         }
-        KeyCode::Tab if state.input.starts_with('/') => {
-            if let Some(spec) = crate::first_match(&state.input) {
-                let target = if let Some(arg) = spec.arg_hint {
-                    format!("{} {arg}", spec.name)
-                } else {
-                    spec.name.to_string()
-                };
-                state.input = target;
-                state.input_cursor = state.input.chars().count();
-            }
+        KeyCode::Tab if state.slash_picker.is_some() => {
+            state.accept_slash_picker();
+            TuiEventOutcome::Continue
+        }
+        KeyCode::Enter
+            if state.slash_picker.is_some()
+                && !state.slash_picker_exact_selection_is_runnable() =>
+        {
+            state.accept_slash_picker();
             TuiEventOutcome::Continue
         }
         KeyCode::Enter => submit_input(state),

@@ -31,11 +31,12 @@ export type {
 export interface SidebarHandlers {
   runTask: (task: string, options: RunOptions) => Promise<void>;
   cancelTask: () => Promise<void>;
+  clearSession: () => Promise<void>;
   loginOpenAi: () => Promise<void>;
   refreshStatus: () => Promise<void>;
   respondAskUser: (requestId: string, answer: AskUserAnswer) => Promise<void>;
   respondApproval: (decision: ApprovalResponse) => Promise<void>;
-  openFile: (relativePath: string) => Promise<void>;
+  openFile: (relativePath: string, line?: number, column?: number) => Promise<void>;
   registerProvider: (provider: ProviderChoice, params: Record<string, string>) => Promise<void>;
 }
 
@@ -53,6 +54,20 @@ interface StoredChatSession {
   transcript: TranscriptItem[];
   hud: HudState;
 }
+
+const EXTENSION_SLASH_COMMANDS: Array<[string, string]> = [
+  ['/clear', 'clear transcript and daemon context'],
+  ['/plan', 'switch to plan mode'],
+  ['/execute', 'switch to execute mode'],
+  ['/safe', 'switch to safe permission mode'],
+  ['/auto', 'switch to auto permission mode'],
+  ['/yolo', 'switch to yolo permission mode'],
+  ['/model <name>', 'switch the active model'],
+  ['/session new [task]', 'open a new chat session'],
+  ['/session list', 'list open chat sessions'],
+  ['/session switch <id|title>', 'switch to another session'],
+  ['/help', 'show this help'],
+];
 
 export interface PreparedTask {
   clientSessionId: string;
@@ -311,6 +326,9 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       text: name,
       detail: undefined,
       toolName: name,
+      path: pickString(event.parameters, 'path'),
+      line: pickNumber(event.parameters, 'line') ?? pickNumber(event.parameters, 'start_line'),
+      column: pickNumber(event.parameters, 'column'),
       toolParameters: event.parameters,
       pending: true,
     });
@@ -475,11 +493,11 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       case 'run': {
         const task = message.task.trim();
         if (task.length === 0) return;
-        if (task === '/clear') {
-          this.clearActiveSession();
+        this.state.runOptions = message.options;
+        if (task.startsWith('/')) {
+          await this.handleSlashCommand(task, message.options);
           return;
         }
-        this.state.runOptions = message.options;
         await this.handlers.runTask(task, message.options);
         return;
       }
@@ -509,7 +527,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         this.resolveApproval(message.approved);
         return;
       case 'openFile':
-        await this.handlers.openFile(message.path);
+        await this.handlers.openFile(message.path, message.line, message.column);
         return;
       case 'registerProvider':
         await this.handlers.registerProvider(message.provider, message.params);
@@ -591,6 +609,129 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
     this.refreshSessionSummaries();
     const message: InboundMessage = { type: 'state', state: this.state };
     this.view?.webview.postMessage(message);
+  }
+
+  private async handleSlashCommand(input: string, options: RunOptions): Promise<void> {
+    const [command, ...restParts] = input.slice(1).trim().split(/\s+/);
+    const rest = restParts.join(' ').trim();
+    switch (command) {
+      case 'clear':
+        if (rest.length > 0) {
+          this.appendError('Usage: /clear');
+          return;
+        }
+        await this.handlers.clearSession();
+        this.clearActiveSession();
+        this.append({ role: 'status', text: 'clear: transcript + context wiped, new session' });
+        return;
+      case 'plan':
+        if (rest.length === 0) {
+          this.updateRunOptions({ ...options, mode: 'plan' }, 'mode: plan');
+          return;
+        }
+        break;
+      case 'execute':
+        if (rest.length === 0) {
+          this.updateRunOptions({ ...options, mode: 'execute' }, 'mode: execute');
+          return;
+        }
+        break;
+      case 'safe':
+        if (rest.length === 0) {
+          this.updateRunOptions({ ...options, permission: 'safe' }, 'permission: safe');
+          return;
+        }
+        break;
+      case 'auto':
+        if (rest.length === 0) {
+          this.updateRunOptions({ ...options, permission: 'auto' }, 'permission: auto');
+          return;
+        }
+        break;
+      case 'yolo':
+        if (rest.length === 0) {
+          this.updateRunOptions({ ...options, permission: 'yolo' }, 'permission: yolo');
+          return;
+        }
+        break;
+      case 'model':
+        if (rest.length > 0) {
+          this.updateRunOptions({ ...options, model: rest }, `model: ${rest}`);
+          return;
+        }
+        this.appendError('Usage: /model <name>');
+        return;
+      case 'session':
+        await this.handleSessionSlash(rest, options);
+        return;
+      case 'help':
+        if (rest.length === 0) {
+          this.append({ role: 'assistant', text: slashHelpText() });
+          return;
+        }
+        break;
+      default:
+        break;
+    }
+    this.appendError(`Unknown command: /${command}`);
+    this.append({ role: 'status', text: 'Type /help for available commands' });
+  }
+
+  private async handleSessionSlash(rest: string, options: RunOptions): Promise<void> {
+    const [subcommand, ...tailParts] = rest.split(/\s+/).filter(Boolean);
+    const tail = tailParts.join(' ').trim();
+    switch (subcommand) {
+      case 'new':
+        this.createNewSession(this.state.context.workspace);
+        if (tail.length > 0) {
+          await this.handlers.runTask(tail, options);
+        }
+        return;
+      case 'list': {
+        this.refreshSessionSummaries();
+        const lines = this.state.sessions.map((session) => {
+          const marker = session.active ? '*' : '-';
+          const running = session.running ? ' running' : '';
+          return `${marker} ${session.title} [${session.id}]${running}`;
+        });
+        this.append({ role: 'assistant', text: lines.length > 0 ? lines.join('\n') : 'No sessions' });
+        return;
+      }
+      case 'switch': {
+        const session = this.findSession(tail);
+        if (!session) {
+          this.appendError('Usage: /session switch <id|title>');
+          return;
+        }
+        this.selectSession(session.id);
+        return;
+      }
+      default:
+        this.appendError('Usage: /session new [task] | /session list | /session switch <id|title>');
+        return;
+    }
+  }
+
+  private updateRunOptions(next: RunOptions, notice: string): void {
+    this.state.runOptions = next;
+    this.state.context = {
+      ...this.state.context,
+      mode: next.mode,
+      permission: next.permission,
+      model: next.model ?? this.state.context.model,
+    };
+    this.append({ role: 'status', text: notice });
+  }
+
+  private findSession(query: string): StoredChatSession | undefined {
+    const needle = query.trim().toLowerCase();
+    if (!needle) return undefined;
+    return Array.from(this.sessions.values()).find(
+      (session) =>
+        session.id.toLowerCase() === needle ||
+        session.title.toLowerCase() === needle ||
+        session.title.toLowerCase().includes(needle),
+    );
   }
 
   private ensureActiveSession(): StoredChatSession {
@@ -722,6 +863,13 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
 </body>
 </html>`;
   }
+}
+
+function slashHelpText(): string {
+  return [
+    'Slash commands:',
+    ...EXTENSION_SLASH_COMMANDS.map(([command, description]) => `- \`${command}\` - ${description}`),
+  ].join('\n');
 }
 
 function freshState(): SidebarState {
@@ -889,6 +1037,12 @@ function pickString(value: unknown, key: string): string | undefined {
   if (!isRecord(value)) return undefined;
   const inner = value[key];
   return typeof inner === 'string' ? inner : undefined;
+}
+
+function pickNumber(value: unknown, key: string): number | undefined {
+  if (!isRecord(value)) return undefined;
+  const inner = value[key];
+  return typeof inner === 'number' && Number.isFinite(inner) ? inner : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -1315,6 +1315,7 @@ impl TuiState {
         self.input_history_cursor = Some(index);
         self.input = self.input_history[index].clone();
         self.input_cursor = self.input.chars().count();
+        self.refresh_input_pickers();
     }
 
     /// Replaces input with the next history entry or clears it after the newest entry.
@@ -1332,6 +1333,7 @@ impl TuiState {
             self.input = self.input_history[next].clone();
             self.input_cursor = self.input.chars().count();
         }
+        self.refresh_input_pickers();
     }
 
     /// Clears the input buffer and cursor.
@@ -1339,6 +1341,7 @@ impl TuiState {
         self.input.clear();
         self.input_cursor = 0;
         self.input_history_cursor = None;
+        self.refresh_input_pickers();
     }
 
     /// Wipes everything `/clear` should clear: transcript, side-panel
@@ -1371,7 +1374,13 @@ impl TuiState {
         self.input.insert(byte_index, character);
         self.input_cursor += 1;
         self.input_history_cursor = None;
+        self.refresh_input_pickers();
+    }
+
+    /// Refreshes every picker derived from the current input buffer.
+    fn refresh_input_pickers(&mut self) {
         self.refresh_at_picker();
+        self.refresh_slash_picker();
     }
 
     /// Examines the current input + cursor to decide whether the `@file`
@@ -1401,6 +1410,79 @@ impl TuiState {
         }
     }
 
+    /// Refreshes the slash-command picker from the current input buffer.
+    ///
+    /// Slash commands are line commands: the picker opens only while the
+    /// draft begins with `/` and remains a single logical line. Once the
+    /// operator adds arguments that no catalog entry can match, the picker
+    /// closes naturally and Enter submits the command text.
+    pub fn refresh_slash_picker(&mut self) {
+        let query = self.input.trim_end().to_string();
+        if !query.starts_with('/') || query.contains('\n') {
+            self.slash_picker = None;
+            return;
+        }
+        let matches = crate::filtered_specs(&query);
+        if matches.is_empty() {
+            self.slash_picker = None;
+            return;
+        }
+        match self.slash_picker.as_mut() {
+            Some(picker) => {
+                picker.query = query;
+                picker.selected = picker.selected.min(matches.len().saturating_sub(1));
+            }
+            None => {
+                self.slash_picker = Some(SlashPicker { query, selected: 0 });
+            }
+        }
+    }
+
+    /// Moves the slash picker selection by one row.
+    pub fn move_slash_picker_selection(&mut self, delta: isize) {
+        let Some(picker) = self.slash_picker.as_mut() else {
+            return;
+        };
+        let matches = crate::filtered_specs(&picker.query);
+        if matches.is_empty() {
+            picker.selected = 0;
+            return;
+        }
+        let current = picker.selected.min(matches.len() - 1) as isize;
+        picker.selected = (current + delta).clamp(0, matches.len() as isize - 1) as usize;
+    }
+
+    /// Completes the current input from the highlighted slash command.
+    pub fn accept_slash_picker(&mut self) {
+        let Some(picker) = self.slash_picker.as_ref() else {
+            return;
+        };
+        let matches = crate::filtered_specs(&picker.query);
+        let Some(spec) = matches.get(picker.selected) else {
+            return;
+        };
+        self.input = if let Some(arg) = spec.arg_hint {
+            format!("{} {arg}", spec.name)
+        } else {
+            spec.name.to_string()
+        };
+        self.input_cursor = self.input.chars().count();
+        self.refresh_input_pickers();
+    }
+
+    /// Returns true when Enter should submit rather than complete the picker.
+    pub fn slash_picker_exact_selection_is_runnable(&self) -> bool {
+        let Some(picker) = self.slash_picker.as_ref() else {
+            return false;
+        };
+        let matches = crate::filtered_specs(&picker.query);
+        let Some(spec) = matches.get(picker.selected) else {
+            return false;
+        };
+        let input = self.input.trim();
+        input == spec.name && spec.arg_hint.is_none_or(|hint| hint.starts_with('['))
+    }
+
     /// Refreshes the cached file index that powers the `@file` picker.
     /// Called lazily the first time the picker needs to render so we
     /// don't pay the scan cost on startup for users who never invoke it.
@@ -1427,6 +1509,7 @@ impl TuiState {
         let inserted_chars = chosen.chars().count() + 2; // '@' + path + ' '
         let token_start_chars = self.input[..picker.token_start].chars().count();
         self.input_cursor = token_start_chars + inserted_chars;
+        self.refresh_input_pickers();
     }
 
     /// Removes the character before the current input cursor.
@@ -1440,7 +1523,7 @@ impl TuiState {
         self.input.replace_range(start..end, "");
         self.input_cursor -= 1;
         self.input_history_cursor = None;
-        self.refresh_at_picker();
+        self.refresh_input_pickers();
     }
 
     /// Removes the character at the current input cursor.
@@ -1453,29 +1536,31 @@ impl TuiState {
         let end = input_byte_index(&self.input, self.input_cursor + 1);
         self.input.replace_range(start..end, "");
         self.input_history_cursor = None;
-        self.refresh_at_picker();
+        self.refresh_input_pickers();
     }
 
     /// Moves the input cursor one character left.
     pub fn move_input_cursor_left(&mut self) {
         self.input_cursor = self.input_cursor.saturating_sub(1);
-        self.refresh_at_picker();
+        self.refresh_input_pickers();
     }
 
     /// Moves the input cursor one character right.
     pub fn move_input_cursor_right(&mut self) {
         self.input_cursor = (self.input_cursor + 1).min(self.input.chars().count());
-        self.refresh_at_picker();
+        self.refresh_input_pickers();
     }
 
     /// Moves the input cursor to the start.
     pub fn move_input_cursor_home(&mut self) {
         self.input_cursor = 0;
+        self.refresh_input_pickers();
     }
 
     /// Moves the input cursor to the end.
     pub fn move_input_cursor_end(&mut self) {
         self.input_cursor = self.input.chars().count();
+        self.refresh_input_pickers();
     }
 
     /// Marks an agent task as running. Resets the elapsed counter and stamps

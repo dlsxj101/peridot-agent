@@ -44,6 +44,8 @@ export interface TranscriptItem {
   requestId?: string;
   request?: unknown;
   path?: string;
+  line?: number;
+  column?: number;
   before?: string | null;
   after?: string;
   toolName?: string;
@@ -165,7 +167,7 @@ export type OutboundMessage =
       reason?: string;
       parameters?: unknown;
     }
-  | { type: 'openFile'; path: string }
+  | { type: 'openFile'; path: string; line?: number; column?: number }
   | { type: 'registerProvider'; provider: ProviderChoice; params: Record<string, string> }
   | { type: 'showLanding'; screen?: LandingScreen }
   | { type: 'showSession' }

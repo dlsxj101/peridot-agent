@@ -1642,39 +1642,53 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
 /// Floats a small autocomplete overlay above the input box when the buffer
 /// starts with `/`. Hidden when other modal panels are active.
 fn render_slash_picker(frame: &mut Frame<'_>, state: &TuiState, input_area: Rect) {
-    if !state.input.starts_with('/') {
+    let Some(picker) = state.slash_picker.as_ref() else {
         return;
-    }
+    };
     if state.menu.is_some() || state.approval.is_some() || state.ask_user.is_some() {
         return;
     }
-    let suggestions = filtered_specs(&state.input);
+    let suggestions = filtered_specs(&picker.query);
     if suggestions.is_empty() {
         return;
     }
+    let selected = picker.selected.min(suggestions.len().saturating_sub(1));
+    let visible_limit = 6usize;
+    let start = selected
+        .saturating_sub(visible_limit.saturating_sub(1))
+        .min(suggestions.len().saturating_sub(visible_limit));
     let lines: Vec<Line<'static>> = suggestions
         .iter()
-        .take(6)
-        .map(|spec| {
+        .enumerate()
+        .skip(start)
+        .take(visible_limit)
+        .map(|(idx, spec)| {
+            let is_selected = idx == selected;
+            let marker = if is_selected { "\u{25B8}" } else { " " };
+            let label_style = if is_selected {
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::Cyan)
+            };
+            let desc_style = if is_selected {
+                Style::default().fg(Color::Gray)
+            } else {
+                Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::DIM)
+            };
             let label = if let Some(arg) = spec.arg_hint {
                 format!("{}  {arg}", spec.name)
             } else {
                 spec.name.to_string()
             };
             Line::from(vec![
-                Span::styled(
-                    label,
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
-                ),
+                Span::styled(format!("{marker} "), label_style),
+                Span::styled(label, label_style),
                 Span::raw("  "),
-                Span::styled(
-                    spec.description.to_string(),
-                    Style::default()
-                        .fg(Color::DarkGray)
-                        .add_modifier(Modifier::DIM),
-                ),
+                Span::styled(spec.description.to_string(), desc_style),
             ])
         })
         .collect();
@@ -1689,8 +1703,13 @@ fn render_slash_picker(frame: &mut Frame<'_>, state: &TuiState, input_area: Rect
         width,
         height,
     };
+    let title = if picker.query == "/" {
+        "commands".to_string()
+    } else {
+        format!("commands: {}", picker.query)
+    };
     frame.render_widget(
-        Paragraph::new(lines).block(Block::default().title("commands").borders(Borders::ALL)),
+        Paragraph::new(lines).block(Block::default().title(title).borders(Borders::ALL)),
         area,
     );
 }
