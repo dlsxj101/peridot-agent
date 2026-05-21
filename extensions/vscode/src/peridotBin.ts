@@ -2,7 +2,8 @@
 //
 // Resolution order (first match wins):
 //   1. `peridot.binaryPath` configuration override — for developers
-//      iterating on a local build.
+//      iterating on a local build. Stale paths are ignored so a Windows
+//      extension host does not try to spawn a WSL-only `/home/...` path.
 //   2. Bundled binary inside the .vsix at
 //      `<extension>/resources/peridot[.exe]`. This is what end users
 //      get because we publish platform-specific .vsix targets via
@@ -11,9 +12,9 @@
 //      when the bundled binary is missing (development install, broken
 //      platform target, etc.).
 //
-// The function does NOT verify the binary actually runs; the daemon
-// spawn itself surfaces an exec error if the lookup landed on a bad
-// path.
+// The function verifies absolute file candidates exist on the current
+// extension host before returning them. The daemon spawn itself still
+// surfaces runtime errors if the file exists but cannot execute.
 
 import * as fs from 'fs';
 import * as path from 'path';
@@ -28,8 +29,9 @@ export async function resolvePeridotBinary(): Promise<string> {
 
   // 1. Configuration override.
   const override = vscode.workspace.getConfiguration('peridot').get<string>('binaryPath');
-  if (override && override.trim().length > 0) {
-    cached = override.trim();
+  const overridePath = override?.trim();
+  if (overridePath && isUsableBinaryPath(overridePath)) {
+    cached = overridePath;
     return cached;
   }
 
@@ -39,7 +41,7 @@ export async function resolvePeridotBinary(): Promise<string> {
   if (ext) {
     const exeName = process.platform === 'win32' ? 'peridot.exe' : 'peridot';
     const bundled = path.join(ext.extensionPath, 'resources', exeName);
-    if (fs.existsSync(bundled)) {
+    if (isUsableBinaryPath(bundled)) {
       cached = bundled;
       return cached;
     }
@@ -53,4 +55,13 @@ export async function resolvePeridotBinary(): Promise<string> {
 /** Clears the memoised lookup so a follow-up call re-checks the disk. */
 export function resetBinaryCache(): void {
   cached = undefined;
+}
+
+function isUsableBinaryPath(candidate: string): boolean {
+  try {
+    const stat = fs.statSync(candidate);
+    return stat.isFile();
+  } catch {
+    return false;
+  }
 }

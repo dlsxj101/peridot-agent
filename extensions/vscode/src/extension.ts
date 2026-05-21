@@ -6,7 +6,7 @@
 import * as childProcess from 'child_process';
 import * as vscode from 'vscode';
 import { PeridotDaemon, RpcNotification } from './daemon';
-import { resolvePeridotBinary } from './peridotBin';
+import { resetBinaryCache, resolvePeridotBinary } from './peridotBin';
 import { StatusCache } from './statusCache';
 import {
   PeridotSidebarProvider,
@@ -78,6 +78,15 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.workspace.onDidChangeWorkspaceFolders(() => {
       invalidateStatusCache();
       void refreshStatus(output, sidebar, { force: true });
+    }),
+  );
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((event) => {
+      if (event.affectsConfiguration('peridot.binaryPath')) {
+        resetBinaryCache();
+        invalidateStatusCache();
+        void refreshStatus(output, sidebar, { force: true });
+      }
     }),
   );
   void refreshStatus(output, sidebar);

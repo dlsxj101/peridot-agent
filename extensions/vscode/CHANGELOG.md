@@ -1,5 +1,18 @@
 # Peridot Agent — Extension Changelog
 
+## [0.5.3] — 2026-05-21
+
+### Fixed — bundled binary and mascot resources
+
+- The sidebar webview now allows bundled `resources/` assets, so the
+  onboarding mascot image loads instead of rendering as a broken image.
+- `peridot.binaryPath` overrides are validated before use. Stale paths
+  from another extension host, such as a Windows Cursor window seeing a
+  WSL-only `/home/.../peridot`, are ignored so packaged installs fall
+  back to the bundled `resources/peridot.exe`.
+- Changing `peridot.binaryPath` now clears the cached binary lookup and
+  refreshes status without requiring a Cursor restart.
+
 ## [0.5.2] — 2026-05-20
 
 ### Added — UI polish pass
