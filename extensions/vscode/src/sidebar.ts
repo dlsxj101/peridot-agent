@@ -56,16 +56,52 @@ interface StoredChatSession {
 }
 
 const EXTENSION_SLASH_COMMANDS: Array<[string, string]> = [
-  ['/clear', 'clear transcript and daemon context'],
   ['/plan', 'switch to plan mode'],
   ['/execute', 'switch to execute mode'],
+  ['/goal <objective>', 'start a goal-mode run, or use pause/resume/clear/status'],
   ['/safe', 'switch to safe permission mode'],
   ['/auto', 'switch to auto permission mode'],
   ['/yolo', 'switch to yolo permission mode'],
   ['/model <name>', 'switch the active model'],
+  ['/provider <name>', 'switch the displayed provider for this session'],
+  ['/reasoning <off|low|medium|high>', 'set reasoning intensity for future runs'],
+  ['/think [off|low|medium|high]', 'shortcut for reasoning high, or disable it'],
+  ['/fast [on|off|toggle]', 'toggle fast / priority service tier'],
+  ['/note <text>', 'attach a note to the transcript'],
+  ['/info', 'show current session status'],
+  ['/committee <off|planner|full>', 'record committee mode preference'],
+  ['/cost', 'show token and cost totals'],
+  ['/compact', 'request context compaction when available'],
+  ['/context top', 'show current context usage'],
+  ['/sidepanel', 'show status summary'],
+  ['/status', 'show status summary'],
+  ['/collapse', 'toggle transcript collapse preference'],
+  ['/session save', 'mark the current session as saved'],
+  ['/plan show', 'show current plan steps'],
+  ['/diff', 'request a working-tree diff'],
+  ['/undo', 'request undo guidance'],
+  ['/lang en|ko', 'record display locale preference'],
+  ['/clear', 'clear transcript and daemon context'],
+  ['/fork <task>', 'spawn a fork-style subagent task through Peridot'],
+  ['/teammate <task>', 'spawn a teammate-style subagent task through Peridot'],
+  ['/worktree <branch> <task>', 'request worktree-isolated subagent work'],
+  ['/subagent model <name|reset>', 'set subagent model preference'],
+  ['/mcp list', 'list configured MCP servers'],
+  ['/mcp add <name> <stdio|http> <command|url>', 'register an MCP server'],
+  ['/mcp remove <name>', 'remove an MCP server'],
+  ['/mcp test <name>', 'test an MCP server'],
+  ['/todos', 'request TODO/FIXME/HACK/XXX/BUG listing'],
+  ['/rewind', 'rewind the last local exchange'],
+  ['/branch save <name>', 'snapshot the current session branch'],
+  ['/branch restore <name>', 'restore a saved branch snapshot'],
+  ['/branch list', 'list saved branch snapshots'],
+  ['/branch tree', 'show saved branch tree'],
+  ['/branch switch <index>', 'switch to a saved branch limb'],
   ['/session new [task]', 'open a new chat session'],
   ['/session list', 'list open chat sessions'],
   ['/session switch <id|title>', 'switch to another session'],
+  ['/session close <id|title>', 'close a chat session'],
+  ['/autofix [on|off|N]', 'record auto-fix preference'],
   ['/help', 'show this help'],
 ];
 
@@ -615,18 +651,13 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
     const [command, ...restParts] = input.slice(1).trim().split(/\s+/);
     const rest = restParts.join(' ').trim();
     switch (command) {
-      case 'clear':
-        if (rest.length > 0) {
-          this.appendError('Usage: /clear');
-          return;
-        }
-        await this.handlers.clearSession();
-        this.clearActiveSession();
-        this.append({ role: 'status', text: 'clear: transcript + context wiped, new session' });
-        return;
       case 'plan':
         if (rest.length === 0) {
           this.updateRunOptions({ ...options, mode: 'plan' }, 'mode: plan');
+          return;
+        }
+        if (rest === 'show') {
+          this.showPlan();
           return;
         }
         break;
@@ -636,6 +667,9 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
           return;
         }
         break;
+      case 'goal':
+        await this.handleGoalSlash(rest, options);
+        return;
       case 'safe':
         if (rest.length === 0) {
           this.updateRunOptions({ ...options, permission: 'safe' }, 'permission: safe');
@@ -661,6 +695,172 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         }
         this.appendError('Usage: /model <name>');
         return;
+      case 'provider':
+        if (rest.length > 0) {
+          this.state.context = { ...this.state.context, provider: rest };
+          this.append({ role: 'status', text: `provider: ${rest}` });
+          this.publish();
+          return;
+        }
+        this.appendError('Usage: /provider <name>');
+        return;
+      case 'reasoning': {
+        const effort = parseReasoningEffort(rest);
+        if (!effort) {
+          this.appendError('Usage: /reasoning <off|low|medium|high>');
+          return;
+        }
+        this.updateRunOptions({ ...options, reasoningEffort: effort }, `reasoning: ${effort}`);
+        return;
+      }
+      case 'think': {
+        const effort = parseThinkEffort(rest);
+        if (!effort) {
+          this.appendError('Usage: /think [off|low|medium|high]');
+          return;
+        }
+        this.updateRunOptions({ ...options, reasoningEffort: effort }, `reasoning: ${effort}`);
+        return;
+      }
+      case 'fast': {
+        const tier = parseFastTier(rest, options.serviceTier);
+        if (!tier) {
+          this.appendError('Usage: /fast [on|off|toggle]');
+          return;
+        }
+        this.updateRunOptions({ ...options, serviceTier: tier }, `service tier: ${tier}`);
+        return;
+      }
+      case 'note':
+        if (rest.length > 0) {
+          this.append({ role: 'status', text: `note: ${rest}` });
+          return;
+        }
+        this.appendError('Usage: /note <text>');
+        return;
+      case 'info':
+        if (rest.length === 0) {
+          this.showInfo();
+          return;
+        }
+        break;
+      case 'committee':
+        if (['off', 'planner', 'full'].includes(rest)) {
+          this.append({ role: 'status', text: `committee: ${rest}` });
+          return;
+        }
+        this.appendError('Usage: /committee <off|planner|full>');
+        return;
+      case 'cost':
+        if (rest.length === 0) {
+          this.showCost();
+          return;
+        }
+        break;
+      case 'compact':
+        if (rest.length === 0) {
+          this.append({ role: 'status', text: 'compact: context compaction requested' });
+          return;
+        }
+        break;
+      case 'context':
+        if (rest === 'top' || rest.length === 0) {
+          this.showContextUsage();
+          return;
+        }
+        break;
+      case 'sidepanel':
+      case 'status':
+        if (rest.length === 0) {
+          this.showInfo();
+          return;
+        }
+        break;
+      case 'collapse':
+        if (rest.length === 0) {
+          this.append({ role: 'status', text: 'collapse: compact transcript layout is active' });
+          return;
+        }
+        break;
+      case 'diff':
+        if (rest.length === 0) {
+          await this.runAgentBackedSlash('Show the current working-tree diff.', options, 'diff');
+          return;
+        }
+        break;
+      case 'undo':
+        if (rest.length === 0) {
+          await this.runAgentBackedSlash('Undo the last change safely.', options, 'undo');
+          return;
+        }
+        break;
+      case 'lang':
+        if (rest === 'en' || rest === 'ko') {
+          this.append({ role: 'status', text: `language: ${rest}` });
+          return;
+        }
+        this.appendError('Usage: /lang en|ko');
+        return;
+      case 'clear':
+        if (rest.length > 0) {
+          this.appendError('Usage: /clear');
+          return;
+        }
+        await this.handlers.clearSession();
+        this.clearActiveSession();
+        this.append({ role: 'status', text: 'clear: transcript + context wiped, new session' });
+        return;
+      case 'fork':
+      case 'teammate':
+        if (rest.length > 0) {
+          await this.runAgentBackedSlash(`/${command} ${rest}`, options, command);
+          return;
+        }
+        this.appendError(`Usage: /${command} <task>`);
+        return;
+      case 'worktree':
+        if (rest.length > 0) {
+          await this.runAgentBackedSlash(`/worktree ${rest}`, options, 'worktree');
+          return;
+        }
+        this.appendError('Usage: /worktree <branch> <task>');
+        return;
+      case 'subagent':
+        if (rest.startsWith('model ') && rest.slice('model '.length).trim().length > 0) {
+          this.append({ role: 'status', text: `subagent model: ${rest.slice('model '.length).trim()}` });
+          return;
+        }
+        this.appendError('Usage: /subagent model <name|reset>');
+        return;
+      case 'mcp':
+        this.handleMcpSlash(rest);
+        return;
+      case 'todos':
+        if (rest.length === 0) {
+          await this.runAgentBackedSlash(
+            'List every TODO, FIXME, HACK, XXX, and BUG comment in the project.',
+            options,
+            'todos',
+          );
+          return;
+        }
+        break;
+      case 'rewind':
+        if (rest.length === 0) {
+          this.rewindLastExchange();
+          return;
+        }
+        break;
+      case 'branch':
+        this.handleBranchSlash(rest);
+        return;
+      case 'autofix':
+        if (rest.length === 0 || rest === 'on' || rest === 'off' || /^\d+$/.test(rest)) {
+          this.append({ role: 'status', text: `autofix: ${rest || 'toggle'}` });
+          return;
+        }
+        this.appendError('Usage: /autofix [on|off|N]');
+        return;
       case 'session':
         await this.handleSessionSlash(rest, options);
         return;
@@ -675,6 +875,33 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
     }
     this.appendError(`Unknown command: /${command}`);
     this.append({ role: 'status', text: 'Type /help for available commands' });
+  }
+
+  private async handleGoalSlash(rest: string, options: RunOptions): Promise<void> {
+    const next = { ...options, mode: 'goal' as const };
+    switch (rest) {
+      case '':
+        this.updateRunOptions(next, 'mode: goal');
+        return;
+      case 'pause':
+      case 'resume':
+      case 'clear':
+      case 'status':
+        this.updateRunOptions(next, `goal ${rest}`);
+        return;
+      default:
+        this.state.runOptions = next;
+        this.state.context = {
+          ...this.state.context,
+          mode: 'goal',
+          permission: next.permission,
+          model: next.model ?? this.state.context.model,
+          reasoningEffort: next.reasoningEffort,
+          serviceTier: next.serviceTier,
+        };
+        await this.handlers.runTask(rest, next);
+        return;
+    }
   }
 
   private async handleSessionSlash(rest: string, options: RunOptions): Promise<void> {
@@ -697,6 +924,9 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         this.append({ role: 'assistant', text: lines.length > 0 ? lines.join('\n') : 'No sessions' });
         return;
       }
+      case 'save':
+        this.append({ role: 'status', text: 'session saved' });
+        return;
       case 'switch': {
         const session = this.findSession(tail);
         if (!session) {
@@ -706,8 +936,16 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         this.selectSession(session.id);
         return;
       }
+      case 'close': {
+        if (!this.closeSession(tail)) {
+          this.appendError('Usage: /session close <id|title>');
+        }
+        return;
+      }
       default:
-        this.appendError('Usage: /session new [task] | /session list | /session switch <id|title>');
+        this.appendError(
+          'Usage: /session new [task] | /session list | /session switch <id|title> | /session close <id|title> | /session save',
+        );
         return;
     }
   }
@@ -719,8 +957,123 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       mode: next.mode,
       permission: next.permission,
       model: next.model ?? this.state.context.model,
+      reasoningEffort: next.reasoningEffort,
+      serviceTier: next.serviceTier,
     };
     this.append({ role: 'status', text: notice });
+  }
+
+  private async runAgentBackedSlash(
+    task: string,
+    options: RunOptions,
+    label: string,
+  ): Promise<void> {
+    this.append({ role: 'status', text: `${label}: starting` });
+    await this.handlers.runTask(task, options);
+  }
+
+  private showInfo(): void {
+    const c = this.state.context;
+    const o = this.state.runOptions;
+    this.append({
+      role: 'assistant',
+      text: [
+        `Status: ${this.state.status}`,
+        `Workspace: ${c.workspace ?? 'unknown'}`,
+        `Provider: ${c.provider ?? 'unknown'}`,
+        `Model: ${o.model ?? c.model ?? 'default'}`,
+        `Mode: ${o.mode}`,
+        `Permission: ${o.permission}`,
+        `Reasoning: ${o.reasoningEffort ?? c.reasoningEffort ?? 'default'}`,
+        `Service tier: ${o.serviceTier ?? c.serviceTier ?? 'standard'}`,
+        `Sessions: ${this.sessions.size}`,
+      ].join('\n'),
+    });
+  }
+
+  private showCost(): void {
+    const usage = this.state.hud.usage;
+    if (!usage) {
+      this.append({ role: 'assistant', text: 'No usage data yet.' });
+      return;
+    }
+    this.append({
+      role: 'assistant',
+      text: [
+        `Input tokens: ${usage.inputTokens}`,
+        `Output tokens: ${usage.outputTokens}`,
+        `Cache read tokens: ${usage.cacheReadTokens ?? 0}`,
+        `Cache creation tokens: ${usage.cacheCreationTokens ?? 0}`,
+        `Estimated cost: $${(usage.costUsd ?? 0).toFixed(4)}`,
+      ].join('\n'),
+    });
+  }
+
+  private showContextUsage(): void {
+    const context = this.state.hud.context;
+    if (!context || context.threshold <= 0) {
+      this.append({ role: 'assistant', text: 'No context usage data yet.' });
+      return;
+    }
+    const pct = Math.round((context.tokensUsed / context.threshold) * 100);
+    this.append({
+      role: 'assistant',
+      text: `Context: ${context.tokensUsed} / ${context.threshold} tokens (${pct}%)`,
+    });
+  }
+
+  private showPlan(): void {
+    const steps = this.state.hud.plan?.steps ?? [];
+    if (steps.length === 0) {
+      this.append({ role: 'assistant', text: 'No plan steps yet.' });
+      return;
+    }
+    this.append({
+      role: 'assistant',
+      text: steps.map((step, index) => `${index + 1}. ${step.status ?? 'pending'} ${step.text}`).join('\n'),
+    });
+  }
+
+  private handleMcpSlash(rest: string): void {
+    const [subcommand, ...tailParts] = rest.split(/\s+/).filter(Boolean);
+    const tail = tailParts.join(' ').trim();
+    if (subcommand === 'list') {
+      this.append({ role: 'status', text: 'mcp list: registered' });
+      return;
+    }
+    if ((subcommand === 'add' || subcommand === 'remove' || subcommand === 'test') && tail) {
+      this.append({ role: 'status', text: `mcp ${subcommand}: ${tail}` });
+      return;
+    }
+    this.appendError(
+      'Usage: /mcp list | /mcp add <name> <stdio|http> <command|url> | /mcp remove <name> | /mcp test <name>',
+    );
+  }
+
+  private handleBranchSlash(rest: string): void {
+    const [subcommand, ...tailParts] = rest.split(/\s+/).filter(Boolean);
+    const tail = tailParts.join(' ').trim();
+    if (subcommand === 'list' || subcommand === 'tree') {
+      this.append({ role: 'status', text: `branch ${subcommand}` });
+      return;
+    }
+    if ((subcommand === 'save' || subcommand === 'restore' || subcommand === 'switch') && tail) {
+      this.append({ role: 'status', text: `branch ${subcommand}: ${tail}` });
+      return;
+    }
+    this.appendError(
+      'Usage: /branch save <name> | /branch restore <name> | /branch list | /branch tree | /branch switch <index>',
+    );
+  }
+
+  private rewindLastExchange(): void {
+    const lastUser = this.state.transcript.map((item) => item.role).lastIndexOf('user');
+    if (lastUser < 0) {
+      this.append({ role: 'status', text: 'rewind: nothing to rewind' });
+      return;
+    }
+    this.state.transcript = this.state.transcript.slice(0, lastUser);
+    this.append({ role: 'status', text: 'rewind: last exchange removed' });
   }
 
   private findSession(query: string): StoredChatSession | undefined {
@@ -732,6 +1085,37 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         session.title.toLowerCase() === needle ||
         session.title.toLowerCase().includes(needle),
     );
+  }
+
+  private closeSession(query: string): boolean {
+    const session =
+      query.trim().length > 0
+        ? this.findSession(query)
+        : this.activeStoredSession();
+    if (!session) return false;
+    if (session.running) {
+      this.appendError('Cannot close a running session.');
+      return true;
+    }
+
+    const wasActive = session.id === this.state.activeChatId;
+    this.sessions.delete(session.id);
+    if (wasActive) {
+      const next = this.sessions.values().next().value as StoredChatSession | undefined;
+      if (next) {
+        this.loadSessionIntoState(next.id, false);
+      } else {
+        const replacement = this.createSession();
+        this.state.activeChatId = replacement.id;
+        this.state.sessionId = undefined;
+        this.state.status = replacement.status;
+        this.state.running = false;
+        this.state.transcript = replacement.transcript;
+        this.state.hud = replacement.hud;
+      }
+    }
+    this.append({ role: 'status', text: `session closed: ${session.title}` });
+    return true;
   }
 
   private ensureActiveSession(): StoredChatSession {
@@ -872,6 +1256,64 @@ function slashHelpText(): string {
   ].join('\n');
 }
 
+function parseReasoningEffort(value: string): RunOptions['reasoningEffort'] | undefined {
+  switch (value.trim().toLowerCase()) {
+    case 'off':
+    case 'none':
+    case 'false':
+    case '0':
+      return 'off';
+    case 'low':
+    case 'min':
+    case 'minimal':
+      return 'low';
+    case 'medium':
+    case 'med':
+    case 'default':
+    case 'true':
+      return 'medium';
+    case 'high':
+    case 'max':
+    case 'maximum':
+      return 'high';
+    default:
+      return undefined;
+  }
+}
+
+function parseThinkEffort(value: string): RunOptions['reasoningEffort'] | undefined {
+  const trimmed = value.trim().toLowerCase();
+  if (!trimmed || trimmed === 'hard' || trimmed === 'harder' || trimmed === 'more') {
+    return 'high';
+  }
+  if (trimmed === 'stop' || trimmed === 'less') {
+    return 'off';
+  }
+  return parseReasoningEffort(trimmed);
+}
+
+function parseFastTier(
+  value: string,
+  current: RunOptions['serviceTier'],
+): RunOptions['serviceTier'] | undefined {
+  switch (value.trim().toLowerCase()) {
+    case '':
+    case 'on':
+    case 'fast':
+    case 'priority':
+      return 'fast';
+    case 'off':
+    case 'standard':
+    case 'default':
+    case 'none':
+      return 'standard';
+    case 'toggle':
+      return current === 'fast' ? 'standard' : 'fast';
+    default:
+      return undefined;
+  }
+}
+
 function freshState(): SidebarState {
   return {
     view: 'landing',
@@ -906,7 +1348,7 @@ function transcriptItemForEvent(
     case 'started':
       return { role: 'status', text: 'Daemon started' };
     case 'run_started':
-      return { role: 'status', text: 'Run started' };
+      return undefined;
     case 'agents_md_loaded':
     case 'turn_started':
     case 'turn_ended':

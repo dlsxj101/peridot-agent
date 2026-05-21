@@ -1,0 +1,18 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Peridot: Run Extension with bundled CLI",
+      "type": "extensionHost",
+      "request": "launch",
+      "preLaunchTask": "Peridot: Prepare bundled extension dev",
+      "args": [
+        "--extensionDevelopmentPath=${workspaceFolder}/extensions/vscode",
+        "${workspaceFolder}"
+      ],
+      "outFiles": [
+        "${workspaceFolder}/extensions/vscode/dist/**/*.js"
+      ]
+    }
+  ]
+}

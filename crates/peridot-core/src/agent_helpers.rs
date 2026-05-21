@@ -21,11 +21,11 @@ pub(crate) fn approval_required_error(err: &PeriError) -> bool {
     }
 }
 
-/// Returns true when the named tool mutates the workspace. Matches the
-/// hardcoded list the committee loop uses (`run_committee_loop_with_events`)
-/// so auto-verify and reviewer triggering stay aligned.
+/// Returns true when the named tool directly writes workspace files.
+/// `shell_exec` is intentionally excluded: many read-only inspection commands
+/// run through the shell, and those should not trigger automatic build checks.
 pub(crate) fn is_mutating_tool_name(name: &str) -> bool {
-    matches!(name, "file_write" | "file_patch" | "shell_exec")
+    matches!(name, "file_write" | "file_patch")
 }
 
 /// Truncates a `&str` to at most `max_chars` code points, appending `...`
@@ -77,7 +77,7 @@ mod tests {
     fn is_mutating_tool_name_covers_the_canonical_list() {
         assert!(is_mutating_tool_name("file_write"));
         assert!(is_mutating_tool_name("file_patch"));
-        assert!(is_mutating_tool_name("shell_exec"));
+        assert!(!is_mutating_tool_name("shell_exec"));
         assert!(!is_mutating_tool_name("verify_build"));
         assert!(!is_mutating_tool_name("file_read"));
         assert!(!is_mutating_tool_name("agent_done"));

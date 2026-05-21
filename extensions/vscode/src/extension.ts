@@ -238,6 +238,8 @@ async function runTask(
       permission: options.permission,
       ...(prepared.continueSessionId ? { session_id: prepared.continueSessionId } : {}),
       ...(options.model ? { model: options.model } : {}),
+      ...(options.reasoningEffort ? { reasoning_effort: options.reasoningEffort } : {}),
+      ...(options.serviceTier ? { service_tier: options.serviceTier } : {}),
     })) as SessionStartResult;
     run.sessionId = result.session_id;
     output.appendLine(`[peridot] session started: ${result.session_id}`);
@@ -293,6 +295,8 @@ async function refreshStatus(
       workspace: result.project_root,
       provider: result.provider,
       model: result.model,
+      reasoningEffort: result.reasoning_effort,
+      serviceTier: sidebar.currentRunOptions().serviceTier,
       mode: result.mode,
       permission: result.permission,
       daemonVersion: result.version,
@@ -360,6 +364,7 @@ async function loginOpenAi(
       ['login', 'openai-oauth'],
       folder,
       output,
+      chatGptLoginProcessOptions(output, sidebar),
     );
     await configureChatGptDefaults(binary, folder, output);
     sidebar.appendSystem('ChatGPT login completed');
@@ -374,24 +379,38 @@ async function loginOpenAi(
   }
 }
 
+interface RunProcessOptions {
+  env?: NodeJS.ProcessEnv;
+  onStdoutLine?: (line: string) => void;
+}
+
 function runProcess(
   command: string,
   args: string[],
   cwd: string | undefined,
   output: vscode.OutputChannel,
+  options: RunProcessOptions = {},
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     const child = childProcess.spawn(command, args, {
       cwd,
-      env: peridotChildEnv(),
+      env: { ...peridotChildEnv(), ...options.env },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     // Capture stderr separately so we can surface the last few lines on
     // failure — the Output channel doesn't auto-show anymore and most
     // users won't think to open it.
     let stderrBuf = '';
+    let stdoutLineBuf = '';
     child.stdout.on('data', (chunk: Buffer) => {
-      output.append(chunk.toString());
+      const text = chunk.toString();
+      output.append(text);
+      if (options.onStdoutLine) {
+        stdoutLineBuf += text;
+        const lines = stdoutLineBuf.split(/\r?\n/);
+        stdoutLineBuf = lines.pop() ?? '';
+        for (const line of lines) options.onStdoutLine(line);
+      }
     });
     child.stderr.on('data', (chunk: Buffer) => {
       const text = chunk.toString();
@@ -400,6 +419,10 @@ function runProcess(
     });
     child.on('error', reject);
     child.on('exit', (code, signal) => {
+      if (options.onStdoutLine && stdoutLineBuf.length > 0) {
+        options.onStdoutLine(stdoutLineBuf);
+        stdoutLineBuf = '';
+      }
       if (code === 0) {
         resolve();
         return;
@@ -451,6 +474,34 @@ function runProcessWithStdin(
     child.stdin.write(stdinValue);
     child.stdin.end();
   });
+}
+
+function extractOpenAiAuthUrl(line: string): string | undefined {
+  const match = line.match(/https:\/\/auth\.openai\.com\/oauth\/authorize[^\s]+/);
+  return match?.[0];
+}
+
+function chatGptLoginProcessOptions(
+  output: vscode.OutputChannel,
+  sidebar: PeridotSidebarProvider,
+): RunProcessOptions {
+  return {
+    env: { PERIDOT_DISABLE_BROWSER_OPEN: '1' },
+    onStdoutLine: (line) => {
+      const authUrl = extractOpenAiAuthUrl(line);
+      if (!authUrl) return;
+      sidebar.appendSystem('Opening ChatGPT login in your browser');
+      output.appendLine(`[peridot] opening ChatGPT login URL via Cursor: ${authUrl}`);
+      void vscode.env.openExternal(vscode.Uri.parse(authUrl)).then((opened) => {
+        if (!opened) {
+          output.appendLine(`[peridot] Cursor could not open browser: ${authUrl}`);
+          void vscode.window.showWarningMessage(
+            'Peridot could not open the ChatGPT login page automatically. Check the Peridot output for the URL.',
+          );
+        }
+      });
+    },
+  };
 }
 
 async function cancelTask(output: vscode.OutputChannel): Promise<void> {
@@ -565,7 +616,11 @@ async function registerProvider(
   }
   const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   if (!folder) {
-    sidebar.setWorkspaceProblem('Open a workspace folder before configuring a provider.');
+    const message = 'Open a workspace folder before configuring a provider.';
+    output.appendLine(`[peridot] ${message}`);
+    sidebar.setWorkspaceProblem(message);
+    sidebar.appendError(message);
+    await vscode.window.showWarningMessage(message);
     return;
   }
   sidebar.setAuthBusy(true, undefined);
@@ -577,7 +632,13 @@ async function registerProvider(
         // its own auth file. Still flip auth.primary so the daemon picks
         // openai-oauth on the next status read, and reset the model away
         // from any prior Claude/OpenRouter selection.
-        await runProcess(binary, ['login', 'openai-oauth'], folder, output);
+        await runProcess(
+          binary,
+          ['login', 'openai-oauth'],
+          folder,
+          output,
+          chatGptLoginProcessOptions(output, sidebar),
+        );
         await configureChatGptDefaults(binary, folder, output);
         break;
       case 'claude': {

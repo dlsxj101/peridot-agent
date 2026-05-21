@@ -575,8 +575,10 @@ textarea {
 .hud-meters {
   display: flex;
   flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 8px 16px;
   font-size: 11px;
+  text-align: right;
 }
 
 .meter {
@@ -940,6 +942,13 @@ textarea {
 .copy-button:hover {
   color: var(--peri-fg);
   background: var(--peri-bg-elev-soft);
+}
+
+.copy-button.copied {
+  opacity: 1;
+  transform: translateY(0);
+  color: var(--peri-accent-strong);
+  border-color: var(--peri-accent-dim);
 }
 
 .msg-tool {

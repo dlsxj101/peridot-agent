@@ -46,16 +46,52 @@ interface SlashCommandSpec {
 }
 
 const SLASH_COMMANDS: SlashCommandSpec[] = [
-  { name: '/clear', description: 'Clear transcript and start a fresh session' },
   { name: '/plan', description: 'Switch to plan mode' },
   { name: '/execute', description: 'Switch to execute mode' },
+  { name: '/goal', description: 'Start a durable goal or manage it', argHint: '<objective|pause|resume|clear|status>' },
   { name: '/safe', description: 'Use safe permission mode' },
   { name: '/auto', description: 'Use auto permission mode' },
   { name: '/yolo', description: 'Use yolo permission mode' },
   { name: '/model', description: 'Switch the active model', argHint: '<name>' },
+  { name: '/provider', description: 'Switch the active provider', argHint: '<name>' },
+  { name: '/note', description: 'Attach an operator note', argHint: '<text>' },
+  { name: '/info', description: 'Show current session status' },
+  { name: '/committee', description: 'Toggle committee mode', argHint: '<off|planner|full>' },
+  { name: '/cost', description: 'Show cost and token totals' },
+  { name: '/compact', description: 'Request context compaction' },
+  { name: '/context top', description: 'Show context usage' },
+  { name: '/sidepanel', description: 'Show status summary' },
+  { name: '/status', description: 'Show status summary' },
+  { name: '/collapse', description: 'Toggle compact transcript preference' },
+  { name: '/session save', description: 'Save the current session' },
+  { name: '/plan show', description: 'Show current plan steps' },
+  { name: '/diff', description: 'Show working-tree diff' },
+  { name: '/undo', description: 'Undo the last change safely' },
+  { name: '/lang', description: 'Switch display locale', argHint: 'en|ko' },
+  { name: '/clear', description: 'Clear transcript and start a fresh session' },
+  { name: '/fork', description: 'Spawn a fork subagent task', argHint: '<task>' },
+  { name: '/teammate', description: 'Spawn a teammate subagent task', argHint: '<task>' },
+  { name: '/worktree', description: 'Request worktree-isolated subagent work', argHint: '<branch> <task>' },
+  { name: '/subagent model', description: 'Set subagent model preference', argHint: '<name|reset>' },
+  { name: '/reasoning', description: 'Set reasoning intensity', argHint: '<off|low|medium|high>' },
+  { name: '/fast', description: 'Toggle fast / priority service tier', argHint: '[on|off|toggle]' },
+  { name: '/think', description: 'Shortcut for reasoning high', argHint: '[off]' },
+  { name: '/mcp list', description: 'List configured MCP servers' },
+  { name: '/mcp add', description: 'Register an MCP server', argHint: '<name> <stdio|http> <command|url>' },
+  { name: '/mcp remove', description: 'Remove an MCP server', argHint: '<name>' },
+  { name: '/mcp test', description: 'Test an MCP server', argHint: '<name>' },
+  { name: '/todos', description: 'List TODO/FIXME/HACK/XXX/BUG comments' },
+  { name: '/rewind', description: 'Remove the last local exchange' },
+  { name: '/branch save', description: 'Snapshot current session branch', argHint: '<name>' },
+  { name: '/branch restore', description: 'Restore a saved branch snapshot', argHint: '<name>' },
+  { name: '/branch list', description: 'List saved branch snapshots' },
+  { name: '/branch tree', description: 'Show saved branch tree' },
+  { name: '/branch switch', description: 'Switch to a saved branch limb', argHint: '<index>' },
   { name: '/session new', description: 'Open a new chat session', argHint: '[task]' },
   { name: '/session list', description: 'List open chat sessions' },
   { name: '/session switch', description: 'Switch to another session', argHint: '<id|title>' },
+  { name: '/session close', description: 'Close a chat session', argHint: '<id|title>' },
+  { name: '/autofix', description: 'Toggle or configure auto-fix', argHint: '[on|off|N]' },
   { name: '/help', description: 'Show slash command help' },
 ];
 
@@ -539,7 +575,7 @@ function renderHeader(s: SidebarState): HTMLElement {
     left.append(img);
   }
   const titleWrap = el('div', 'header-title-wrap');
-  titleWrap.append(el('div', 'header-title', 'Peridot'));
+  titleWrap.append(el('div', 'header-title', 'Peridot Agent'));
   titleWrap.append(el('div', 'header-status', s.status));
   left.append(titleWrap);
 
@@ -600,6 +636,8 @@ function iconSvg(kind: string): string {
       return `<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M4 4l8 8M12 4l-8 8"/></svg>`;
     case 'copy':
       return `<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="5" width="8" height="8" rx="1.5"/><path d="M3 10.5H2.8A1.8 1.8 0 0 1 1 8.7V2.8A1.8 1.8 0 0 1 2.8 1h5.9A1.8 1.8 0 0 1 10.5 2.8V3"/></svg>`;
+    case 'check':
+      return `<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l3 3L13 4"/></svg>`;
     case 'edit':
       return `<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 13l1-3 7-7 2 2-7 7-3 1z"/></svg>`;
     default:
@@ -622,6 +660,10 @@ function renderContextStrip(context: SidebarContext): HTMLElement {
   }
   if (context.mode) pills.append(pill(context.mode, 'mode'));
   if (context.permission) pills.append(pill(context.permission, 'mode'));
+  if (context.reasoningEffort) pills.append(pill(`reasoning ${context.reasoningEffort}`, 'mode'));
+  if (context.serviceTier && context.serviceTier !== 'standard') {
+    pills.append(pill(context.serviceTier, 'mode'));
+  }
   if (context.daemonVersion || context.extensionVersion) {
     pills.append(
       pill(
@@ -871,14 +913,30 @@ function renderAssistantBubble(item: TranscriptItem): HTMLElement {
   copy.title = 'Copy response';
   copy.setAttribute('aria-label', 'Copy response');
   copy.innerHTML = iconSvg('copy');
-  copy.addEventListener('click', () => copyText(item.text));
+  copy.addEventListener('click', () => {
+    void markCopied(copy, item.text);
+  });
   wrap.append(copy);
   return wrap;
 }
 
-function copyText(text: string): void {
+async function markCopied(button: HTMLElement, text: string): Promise<void> {
+  await copyText(text);
+  button.classList.add('copied');
+  button.innerHTML = iconSvg('check');
+  button.title = 'Copied';
+  button.setAttribute('aria-label', 'Copied');
+  setTimeout(() => {
+    button.classList.remove('copied');
+    button.innerHTML = iconSvg('copy');
+    button.title = 'Copy response';
+    button.setAttribute('aria-label', 'Copy response');
+  }, 3000);
+}
+
+async function copyText(text: string): Promise<void> {
   if (navigator.clipboard?.writeText) {
-    void navigator.clipboard.writeText(text);
+    await navigator.clipboard.writeText(text);
     return;
   }
   const textarea = document.createElement('textarea');
@@ -1553,6 +1611,12 @@ function currentOptionsFromDom(): RunOptions {
     permission: permission as RunOptions['permission'],
   };
   if (modelValue) options.model = modelValue;
+  if (state?.runOptions.reasoningEffort) {
+    options.reasoningEffort = state.runOptions.reasoningEffort;
+  }
+  if (state?.runOptions.serviceTier) {
+    options.serviceTier = state.runOptions.serviceTier;
+  }
   return options;
 }
 

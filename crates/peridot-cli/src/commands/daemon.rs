@@ -14,6 +14,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use peridot_common::{
     AskUserAnswer, AskUserRequest, CancelToken, ExecutionMode, PeridotConfig, PermissionMode,
+    ReasoningEffort,
 };
 use peridot_core::{AgentRunEvent, StopReason};
 use peridot_tools::AskUserPort;
@@ -81,6 +82,8 @@ struct SessionRunSpec {
     mode: ExecutionMode,
     permission: PermissionMode,
     model: Option<String>,
+    reasoning_effort: Option<ReasoningEffort>,
+    service_tier: Option<Option<String>>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -435,6 +438,37 @@ async fn handle_session_start(state: &DaemonState, id: Value, params: Option<Val
         None => state.run_template.permission,
     };
     let model = optional_str(&params, "model").map(str::to_string);
+    let reasoning_effort = match optional_str(&params, "reasoning_effort") {
+        Some(value) => match ReasoningEffort::parse(value) {
+            Some(effort) => Some(effort),
+            None => {
+                emit_error(
+                    state,
+                    id,
+                    -32602,
+                    "params.reasoning_effort must be one of off, low, medium, or high".to_string(),
+                )?;
+                return Ok(());
+            }
+        },
+        None => None,
+    };
+    let service_tier = match optional_str(&params, "service_tier") {
+        Some(value) => match parse_service_tier(value) {
+            Some(tier) => Some(tier),
+            None => {
+                emit_error(
+                    state,
+                    id,
+                    -32602,
+                    "params.service_tier must be fast, priority, standard, default, or off"
+                        .to_string(),
+                )?;
+                return Ok(());
+            }
+        },
+        None => None,
+    };
 
     let requested_session_id = optional_str(&params, "session_id")
         .map(str::trim)
@@ -465,6 +499,8 @@ async fn handle_session_start(state: &DaemonState, id: Value, params: Option<Val
         mode,
         permission,
         model,
+        reasoning_effort,
+        service_tier,
     };
     let spec_for_task = spec.clone();
     let (start_tx, start_rx) = oneshot::channel::<()>();
@@ -505,6 +541,12 @@ async fn run_session_task(
     options.permission = spec.permission;
     if let Some(model) = spec.model.clone() {
         options.model = model;
+    }
+    if let Some(reasoning_effort) = spec.reasoning_effort {
+        options.reasoning_effort = reasoning_effort;
+    }
+    if let Some(service_tier) = spec.service_tier.clone() {
+        options.service_tier = service_tier;
     }
     let mut config = (*state.run_config).clone();
     apply_session_approval_grants(&state, &session_id, &mut config).await;
@@ -1096,6 +1138,14 @@ fn parse_permission_mode(value: &str) -> Option<PermissionMode> {
     }
 }
 
+fn parse_service_tier(value: &str) -> Option<Option<String>> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "fast" | "priority" => Some(Some("fast".to_string())),
+        "standard" | "default" | "off" | "none" | "false" => Some(None),
+        _ => None,
+    }
+}
+
 fn emit_response(state: &DaemonState, id: Value, result: Value) -> Result<()> {
     let envelope = RpcResponse {
         jsonrpc: "2.0",
@@ -1243,6 +1293,26 @@ mod tests {
         let out =
             dispatch_and_collect(r#"{"jsonrpc":"2.0","id":5,"method":"session.start"}"#).await;
         assert_eq!(out[0]["id"], 5);
+        assert_eq!(out[0]["error"]["code"], -32602);
+    }
+
+    #[tokio::test]
+    async fn session_start_rejects_invalid_reasoning_effort() {
+        let out = dispatch_and_collect(
+            r#"{"jsonrpc":"2.0","id":17,"method":"session.start","params":{"task":"finish","reasoning_effort":"huge"}}"#,
+        )
+        .await;
+        assert_eq!(out[0]["id"], 17);
+        assert_eq!(out[0]["error"]["code"], -32602);
+    }
+
+    #[tokio::test]
+    async fn session_start_rejects_invalid_service_tier() {
+        let out = dispatch_and_collect(
+            r#"{"jsonrpc":"2.0","id":18,"method":"session.start","params":{"task":"finish","service_tier":"expensive"}}"#,
+        )
+        .await;
+        assert_eq!(out[0]["id"], 18);
         assert_eq!(out[0]["error"]["code"], -32602);
     }
 

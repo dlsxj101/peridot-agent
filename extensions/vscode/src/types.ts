@@ -4,11 +4,15 @@
 
 export type Mode = 'execute' | 'plan' | 'goal';
 export type Permission = 'auto' | 'safe' | 'yolo';
+export type ReasoningEffort = 'off' | 'low' | 'medium' | 'high';
+export type ServiceTier = 'standard' | 'fast';
 
 export interface RunOptions {
   mode: Mode;
   permission: Permission;
   model?: string;
+  reasoningEffort?: ReasoningEffort;
+  serviceTier?: ServiceTier;
 }
 
 export type AskUserAnswer =
@@ -62,6 +66,8 @@ export interface SidebarContext {
   model?: string;
   mode?: string;
   permission?: string;
+  reasoningEffort?: string;
+  serviceTier?: string;
   daemonVersion?: string;
   extensionVersion?: string;
   authConfigured?: boolean;

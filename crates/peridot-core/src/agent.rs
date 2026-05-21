@@ -173,7 +173,7 @@ impl HarnessAgent {
 
     /// Enables the "verify after every mutation" auto-loop. When on,
     /// `verify_build` runs automatically after every successful
-    /// `file_write` / `file_patch` / `shell_exec` and its result is
+    /// `file_write` / `file_patch` and its result is
     /// injected into context as a `PlanReminder`, so the next model
     /// turn sees compile errors immediately. Off by default.
     pub fn set_auto_verify_after_mutation(&mut self, enabled: bool) {
@@ -1051,12 +1051,11 @@ impl HarnessAgent {
                 verify_failure_state = None;
             }
             accumulate_usage(&mut total_usage, outcome.usage);
-            // Auto-verify after mutation: if the operator opted into
+            // Auto-verify after file edits: if the operator opted into
             // "verify after every mutation", run `verify_build`
             // immediately so a broken compile surfaces while the
-            // diff is still fresh. The result is appended as a
-            // PlanReminder so the next model turn reads it without
-            // expecting a paired native tool_call_id.
+            // diff is still fresh. Read-only shell inspections must not
+            // trigger this path.
             if self.auto_verify_after_mutation
                 && turn_success
                 && is_mutating_tool_name(&outcome.tool_name)

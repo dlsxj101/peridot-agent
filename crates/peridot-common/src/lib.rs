@@ -953,8 +953,8 @@ pub struct DefaultsConfig {
     /// Budget warning threshold percentage.
     #[serde(default = "default_budget_warning_pct")]
     pub budget_warning_pct: u8,
-    /// Automatically run `verify_build` after every mutating tool call
-    /// (`file_write` / `file_patch` / `shell_exec`). Off by default —
+    /// Automatically run `verify_build` after direct file edits
+    /// (`file_write` / `file_patch`). Off by default —
     /// projects with a slow build can keep the legacy "model calls
     /// verify when it wants" behaviour. When on, compile errors are
     /// surfaced immediately while the change is still fresh in

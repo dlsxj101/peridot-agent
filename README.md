@@ -4,7 +4,19 @@ Peridot Agent is a Rust CLI/TUI autonomous coding agent with multi-session orche
 
 ## Status
 
-Current version: **0.8.7**
+Current version: **0.8.8**
+
+### What's new in v0.8.8
+
+- **VS Code slash commands now cover the TUI catalog.** The extension picker
+  includes goal, reasoning, fast tier, session, branch, MCP, TODO, and helper
+  commands; `/reasoning`, `/think`, `/fast`, and `/goal` update real run state.
+- **Read-only shell inspection no longer triggers auto-build verification.**
+  Auto-verify now follows direct file edits (`file_write` / `file_patch`) so
+  environment questions do not get polluted with cargo build output.
+- **The chat UI is quieter and clearer.** `Run started` is hidden, token stats
+  align to the right, and copied assistant answers show a check mark for 3
+  seconds.
 
 ### What's new in v0.8.7
 

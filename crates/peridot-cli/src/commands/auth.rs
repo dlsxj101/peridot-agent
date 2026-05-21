@@ -304,7 +304,7 @@ pub(super) async fn run_openai_oauth_login(output: OutputFormat) -> Result<()> {
 
     if output == OutputFormat::Text {
         println!("Open this URL to authorize Peridot:\n{auth_url}");
-        if open_browser(&auth_url) {
+        if !browser_open_disabled() && open_browser(&auth_url) {
             println!("Opened browser; waiting for OAuth callback on {redirect_uri}");
         } else {
             println!("Could not open a browser automatically; paste the URL into your browser.");
@@ -631,6 +631,12 @@ pub(super) fn open_browser(url: &str) -> bool {
         .stderr(Stdio::null())
         .spawn()
         .is_ok()
+}
+
+fn browser_open_disabled() -> bool {
+    std::env::var("PERIDOT_DISABLE_BROWSER_OPEN")
+        .map(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
+        .unwrap_or(false)
 }
 
 pub(super) fn url_encode(value: &str) -> String {

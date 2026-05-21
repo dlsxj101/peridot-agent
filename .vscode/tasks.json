@@ -1,0 +1,46 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Peridot: Build release CLI",
+      "type": "shell",
+      "command": "cargo build --release -p peridot-cli",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": "$rustc",
+      "group": "build"
+    },
+    {
+      "label": "Peridot: Bundle CLI into extension",
+      "type": "shell",
+      "command": "npm run bundle-binary",
+      "options": {
+        "cwd": "${workspaceFolder}/extensions/vscode"
+      },
+      "problemMatcher": [],
+      "dependsOn": [
+        "Peridot: Build release CLI"
+      ],
+      "dependsOrder": "sequence"
+    },
+    {
+      "label": "Peridot: Build extension",
+      "type": "shell",
+      "command": "npm run build",
+      "options": {
+        "cwd": "${workspaceFolder}/extensions/vscode"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Peridot: Prepare bundled extension dev",
+      "dependsOn": [
+        "Peridot: Bundle CLI into extension",
+        "Peridot: Build extension"
+      ],
+      "dependsOrder": "sequence",
+      "problemMatcher": []
+    }
+  ]
+}

@@ -73,7 +73,7 @@ pub(crate) fn settings_registry(config: &PeridotConfig) -> Vec<SettingItem> {
         group: "Autonomy".into(),
         label: "Auto-verify after every file change".into(),
         help: Some(
-            "After every file_write / file_patch / shell_exec, run verify_build automatically so compile errors surface immediately."
+            "After every file_write / file_patch, run verify_build automatically so compile errors surface immediately."
                 .into(),
         ),
         value: SettingValue::Bool(config.defaults.auto_verify_after_mutation),
