@@ -266,8 +266,13 @@ jobs:
           retention-days: 1
 
       - name: Publish universal to Open VSX
+        continue-on-error: true
         env:
           OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        # Open VSX can intermittently disconnect on the large universal
+        # package. Platform-specific Open VSX publishes remain blocking;
+        # the universal fallback is still published to VS Code Marketplace
+        # and attached to the GitHub Release.
         run: |
           set -euo pipefail
           for attempt in 1 2 3; do

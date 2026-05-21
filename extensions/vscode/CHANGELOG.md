@@ -1,5 +1,14 @@
 # Peridot Agent — Extension Changelog
 
+## [0.5.9] — 2026-05-21
+
+### Fixed — universal Open VSX fallback handling
+
+- Universal VSIX publishing to VS Code Marketplace and GitHub Release remains
+  required, while the large universal Open VSX upload is now non-blocking if
+  the registry disconnects. Platform-specific Open VSX publishes still fail
+  the release when they fail.
+
 ## [0.5.8] — 2026-05-21
 
 ### Fixed — release asset publishing
