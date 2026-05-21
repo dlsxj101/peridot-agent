@@ -1,5 +1,26 @@
 # Peridot Agent — Extension Changelog
 
+## [0.5.11] — 2026-05-21
+
+### Added — persistent chat sessions and cleaner transcript UX
+
+- Follow-up prompts now continue the active Peridot daemon session until the
+  user explicitly runs `/clear` or opens a new session. The sidebar keeps the
+  transcript visible across tasks, and a header dropdown lists open sessions
+  with a button for starting a fresh one.
+- The sidebar webview is retained while hidden, so returning to Peridot from
+  another Cursor view restores the chat without requiring a full window reload.
+- Tool activity now renders as a single-line row with status on the same line,
+  and repeated tool calls replace the active row while a disclosure toggle keeps
+  the full tool history available.
+- Assistant messages render Markdown, show a copy button on hover, and no
+  longer display `Finished · undefined` after completion.
+- Assistant/tool message boxes were removed, while user prompt bubbles remain
+  boxed for contrast.
+- The chat title now appears as `Peridot Agent`, the top-left icon is larger,
+  the context display is reduced to the donut only, and the empty ready screen
+  keeps the composer pinned to the bottom.
+
 ## [0.5.10] — 2026-05-21
 
 ### Fixed — marketplace publish retries

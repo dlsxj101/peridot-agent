@@ -436,7 +436,26 @@ async fn handle_session_start(state: &DaemonState, id: Value, params: Option<Val
     };
     let model = optional_str(&params, "model").map(str::to_string);
 
-    let session_id = state.next_id().await;
+    let requested_session_id = optional_str(&params, "session_id")
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    if let Some(requested) = requested_session_id.as_ref()
+        && state.sessions.lock().await.contains_key(requested)
+    {
+        emit_error(
+            state,
+            id,
+            -32602,
+            format!("session_id is already running: {requested}"),
+        )?;
+        return Ok(());
+    }
+
+    let session_id = match requested_session_id {
+        Some(session_id) => session_id,
+        None => state.next_id().await,
+    };
     let cancel = CancelToken::new();
     let cancel_for_task = cancel.clone();
     let state_for_task = state.clone();
@@ -1247,6 +1266,30 @@ mod tests {
         assert!(out.iter().any(|value| {
             value["method"] == "event"
                 && value["params"]["session_id"] == session_id
+                && value["params"]["event"]["kind"] == "run_started"
+        }));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn session_start_can_continue_requested_session_id() {
+        let root = test_project("mock-continue");
+        let response_file = root.join("responses.jsonl");
+        std::fs::write(
+            &response_file,
+            r#"{"action":"agent_done","parameters":{"summary":"done"}}
+"#,
+        )
+        .unwrap();
+        let out = dispatch_and_collect_with_options(
+            r#"{"jsonrpc":"2.0","id":16,"method":"session.start","params":{"task":"continue","session_id":"session-existing"}}"#,
+            test_options(Some(response_file)),
+        )
+        .await;
+        assert_eq!(out[0]["result"]["session_id"], "session-existing");
+        assert!(out.iter().any(|value| {
+            value["method"] == "event"
+                && value["params"]["session_id"] == "session-existing"
                 && value["params"]["event"]["kind"] == "run_started"
         }));
         let _ = std::fs::remove_dir_all(root);

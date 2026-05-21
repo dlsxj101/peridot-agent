@@ -1,4 +1,5 @@
 import './style.css';
+import MarkdownIt from 'markdown-it';
 import type {
   InboundMessage,
   OutboundMessage,
@@ -32,8 +33,24 @@ let composerDraft = '';
 let composerModeOverride: string | undefined;
 let composerPermissionOverride: string | undefined;
 let composerModelOverride: string | undefined;
+let transcriptPinnedToBottom = true;
+let transcriptScrollTop = 0;
+let toolHistoryOpen = false;
 
 const CHATGPT_MODELS = ['gpt-5.5', 'gpt-5.5-fast', 'gpt-5.4', 'gpt-5.4-mini'];
+const markdownRenderer = new MarkdownIt({
+  html: false,
+  linkify: true,
+  typographer: false,
+});
+markdownRenderer.validateLink = (url: string): boolean => {
+  const normalized = url.trim().toLowerCase();
+  return (
+    normalized.startsWith('https://') ||
+    normalized.startsWith('http://') ||
+    normalized.startsWith('mailto:')
+  );
+};
 
 window.addEventListener('message', (event: MessageEvent<InboundMessage>) => {
   if (event.data?.type === 'state') {
@@ -41,6 +58,7 @@ window.addEventListener('message', (event: MessageEvent<InboundMessage>) => {
     render(state);
   }
 });
+vscode.postMessage({ type: 'ready' });
 
 function render(s: SidebarState): void {
   // Preserve composer draft / selection across renders so streaming
@@ -53,6 +71,11 @@ function render(s: SidebarState): void {
   if (permEl) composerPermissionOverride = permEl.value;
   const modelEl = document.getElementById('composer-model') as HTMLInputElement | null;
   if (modelEl) composerModelOverride = modelEl.value;
+  const transcriptEl = document.querySelector<HTMLElement>('.transcript');
+  if (transcriptEl) {
+    transcriptPinnedToBottom = isTranscriptAtBottom(transcriptEl);
+    transcriptScrollTop = transcriptEl.scrollTop;
+  }
   // Remember which element had focus so we can re-focus after the
   // destructive replaceChildren below.
   const focusId = (document.activeElement && (document.activeElement as HTMLElement).id) || '';
@@ -65,6 +88,10 @@ function render(s: SidebarState): void {
     const target = document.getElementById(focusId) as HTMLElement | null;
     target?.focus({ preventScroll: true });
   }
+}
+
+function isTranscriptAtBottom(node: HTMLElement): boolean {
+  return node.scrollHeight - node.scrollTop - node.clientHeight <= 24;
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -474,7 +501,6 @@ function renderSession(s: SidebarState): HTMLElement {
   if (hasHudData(s)) wrap.append(renderHud(s));
   wrap.append(renderTranscript(s));
   wrap.append(renderQueue(s));
-  wrap.append(renderContextDock(s));
   wrap.append(renderComposer(s));
   return wrap;
 }
@@ -487,8 +513,8 @@ function renderHeader(s: SidebarState): HTMLElement {
     img.src = mascotUri;
     img.alt = '';
     img.className = 'header-mascot';
-    img.width = 22;
-    img.height = 22;
+    img.width = 66;
+    img.height = 66;
     left.append(img);
   }
   const titleWrap = el('div', 'header-title-wrap');
@@ -497,6 +523,24 @@ function renderHeader(s: SidebarState): HTMLElement {
   left.append(titleWrap);
 
   const right = el('div', 'header-actions');
+  if (s.sessions.length > 0) {
+    const select = document.createElement('select');
+    select.className = 'session-select';
+    select.title = 'Open sessions';
+    select.setAttribute('aria-label', 'Open sessions');
+    s.sessions.forEach((session) => {
+      const option = document.createElement('option');
+      option.value = session.id;
+      option.textContent = `${session.running ? '● ' : ''}${session.title}`;
+      option.selected = session.active;
+      select.append(option);
+    });
+    select.addEventListener('change', () =>
+      vscode.postMessage({ type: 'selectSession', id: select.value }),
+    );
+    right.append(select);
+  }
+  right.append(iconButton('new', 'New session', () => vscode.postMessage({ type: 'newSession' })));
   right.append(iconButton('refresh', 'Refresh', () => vscode.postMessage({ type: 'refreshStatus' })));
   right.append(
     iconButton('switch', 'Switch provider', () =>
@@ -525,12 +569,16 @@ function iconSvg(kind: string): string {
       return `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12.5 8a4.5 4.5 0 1 1-1.32-3.18"/><path d="M12.5 2.5v3h-3"/></svg>`;
     case 'switch':
       return `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h9"/><path d="M9 3l3 3-3 3"/><path d="M13 10H4"/><path d="M7 13l-3-3 3-3"/></svg>`;
+    case 'new':
+      return `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M8 3v10M3 8h10"/></svg>`;
     case 'stop':
       return `<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor"><rect x="3.5" y="3.5" width="9" height="9" rx="1.5"/></svg>`;
     case 'send':
       return `<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor"><path d="M2 13l12-5L2 3l1.5 5L9 8l-5.5 0z"/></svg>`;
     case 'remove':
       return `<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M4 4l8 8M12 4l-8 8"/></svg>`;
+    case 'copy':
+      return `<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="5" width="8" height="8" rx="1.5"/><path d="M3 10.5H2.8A1.8 1.8 0 0 1 1 8.7V2.8A1.8 1.8 0 0 1 2.8 1h5.9A1.8 1.8 0 0 1 10.5 2.8V3"/></svg>`;
     case 'edit':
       return `<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 13l1-3 7-7 2 2-7 7-3 1z"/></svg>`;
     default:
@@ -638,12 +686,7 @@ function renderContextDock(s: SidebarState): HTMLElement {
   if (pct >= 0.9) donut.classList.add('critical');
   else if (pct >= 0.75) donut.classList.add('warn');
   donut.title = `Context ${exact} (${pctText})`;
-  donut.append(el('span', 'context-donut-label', pctText));
   dock.append(donut);
-  const label = el('div', 'context-dock-label');
-  label.append(el('span', 'context-dock-title', 'Context'));
-  label.append(el('span', 'context-dock-detail', exact));
-  dock.append(label);
   return dock;
 }
 
@@ -682,14 +725,40 @@ function renderPlan(plan: PlanSlice): HTMLElement {
 
 function renderTranscript(s: SidebarState): HTMLElement {
   const wrap = el('main', 'transcript');
+  wrap.addEventListener(
+    'scroll',
+    () => {
+      transcriptPinnedToBottom = isTranscriptAtBottom(wrap);
+      transcriptScrollTop = wrap.scrollTop;
+    },
+    { passive: true },
+  );
   if (!s.transcript || s.transcript.length === 0) {
     wrap.append(renderEmptyState(s.context));
     return wrap;
   }
-  s.transcript.forEach((item) => wrap.append(renderItem(item)));
-  // Auto-scroll to bottom on new content.
+  for (let index = 0; index < s.transcript.length; index += 1) {
+    const item = s.transcript[index];
+    if (item.role === 'tool') {
+      const tools: TranscriptItem[] = [];
+      while (index < s.transcript.length && s.transcript[index].role === 'tool') {
+        tools.push(s.transcript[index]);
+        index += 1;
+      }
+      index -= 1;
+      wrap.append(renderToolStack(tools));
+    } else {
+      wrap.append(renderItem(item));
+    }
+  }
   requestAnimationFrame(() => {
-    wrap.scrollTop = wrap.scrollHeight;
+    if (transcriptPinnedToBottom) {
+      wrap.scrollTop = wrap.scrollHeight;
+    } else {
+      const maxScrollTop = Math.max(0, wrap.scrollHeight - wrap.clientHeight);
+      wrap.scrollTop = Math.min(transcriptScrollTop, maxScrollTop);
+    }
+    transcriptScrollTop = wrap.scrollTop;
   });
   return wrap;
 }
@@ -775,26 +844,91 @@ function renderUserBubble(item: TranscriptItem): HTMLElement {
 function renderAssistantBubble(item: TranscriptItem): HTMLElement {
   const wrap = el('section', 'msg msg-assistant');
   wrap.append(el('div', 'msg-label', 'Peridot'));
-  wrap.append(el('div', 'msg-body', item.text));
+  wrap.append(renderMarkdownBody(item.text));
+  const copy = el('button', 'copy-button', '');
+  copy.type = 'button';
+  copy.title = 'Copy response';
+  copy.setAttribute('aria-label', 'Copy response');
+  copy.innerHTML = iconSvg('copy');
+  copy.addEventListener('click', () => copyText(item.text));
+  wrap.append(copy);
   return wrap;
 }
 
-function renderToolBlock(item: TranscriptItem): HTMLElement {
-  const wrap = el('section', 'msg msg-tool');
-  const header = el('div', 'tool-header');
-  const dot = el('span', `tool-dot${item.pending ? ' tool-dot-pending' : ''}`);
-  header.append(dot);
-  header.append(el('span', 'tool-name', item.toolName || item.text));
-  if (item.pending) {
-    header.append(el('span', 'tool-status', 'running'));
-  } else if (item.toolResultSummary) {
-    header.append(el('span', 'tool-status tool-status-done', 'done'));
+function copyText(text: string): void {
+  if (navigator.clipboard?.writeText) {
+    void navigator.clipboard.writeText(text);
+    return;
   }
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.style.position = 'fixed';
+  textarea.style.left = '-9999px';
+  document.body.append(textarea);
+  textarea.select();
+  document.execCommand('copy');
+  textarea.remove();
+}
+
+function renderMarkdownBody(markdown: string): HTMLElement {
+  const body = el('div', 'msg-body markdown-body');
+  body.innerHTML = markdownRenderer.render(markdown);
+  body.querySelectorAll('a[href]').forEach((link) => {
+    link.setAttribute('target', '_blank');
+    link.setAttribute('rel', 'noreferrer noopener');
+  });
+  body.querySelectorAll('table').forEach((table) => {
+    const wrap = el('div', 'md-table-wrap');
+    table.replaceWith(wrap);
+    wrap.append(table);
+  });
+  return body;
+}
+
+function renderToolBlock(item: TranscriptItem): HTMLElement {
+  return renderToolStack([item]);
+}
+
+function renderToolStack(items: TranscriptItem[]): HTMLElement {
+  const latest = items[items.length - 1];
+  const details = el('details', 'tool-stack');
+  details.open = toolHistoryOpen;
+  details.addEventListener('toggle', () => {
+    toolHistoryOpen = details.open;
+  });
+  const summary = el('summary', 'tool-summary');
+  const name = el('span', 'tool-name', latest.toolName || latest.text);
+  const result = el('span', 'tool-result', toolSummaryText(latest));
+  const status = el(
+    'span',
+    `tool-status${latest.pending ? ' tool-status-running' : ' tool-status-done'}`,
+    latest.pending ? 'running' : 'done',
+  );
+  const toggle = el('span', 'tool-toggle', items.length > 1 ? `${items.length}` : '');
+  summary.append(toggle, name, result, status);
+  details.append(summary);
+
+  const history = el('div', 'tool-history');
+  items.forEach((item) => history.append(renderToolDetail(item)));
+  details.append(history);
+  return details;
+}
+
+function toolSummaryText(item: TranscriptItem): string {
+  if (item.toolResultSummary) return item.toolResultSummary;
+  if (item.detail) return item.detail;
+  if (item.pending) return 'running';
+  return item.text;
+}
+
+function renderToolDetail(item: TranscriptItem): HTMLElement {
+  const wrap = el('div', 'tool-detail-item');
+  const header = el('div', 'tool-detail-header');
+  header.append(el('span', 'tool-detail-name', item.toolName || item.text));
+  header.append(el('span', 'tool-detail-status', item.pending ? 'running' : 'done'));
   wrap.append(header);
 
-  if (item.detail) {
-    wrap.append(el('div', 'tool-detail', item.detail));
-  }
+  if (item.detail) wrap.append(el('div', 'tool-detail', item.detail));
   if (item.toolParameters !== undefined && !item.toolResultSummary) {
     const pre = el('pre', 'tool-code');
     pre.innerHTML = highlightLite(json(item.toolParameters));
@@ -1109,6 +1243,7 @@ function renderComposer(s: SidebarState): HTMLElement {
   optionsRow.append(modeSelect(s.runOptions));
   optionsRow.append(permissionSelect(s.runOptions));
   optionsRow.append(modelControl(s));
+  optionsRow.append(renderContextDock(s));
   wrap.append(optionsRow);
 
   const inputRow = el('div', 'composer-input-row');

@@ -89,6 +89,27 @@ async fn file_write_and_read_round_trip() {
     fs::remove_dir_all(root).unwrap();
 }
 
+#[tokio::test]
+async fn file_read_decodes_invalid_utf8_lossily() {
+    let root =
+        std::env::temp_dir().join(format!("peridot-tools-invalid-utf8-{}", std::process::id()));
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("requirements.txt"), b"fastapi==0.111\n\xff\n").unwrap();
+    let ctx = ToolContext::new(&root, PermissionMode::Auto);
+
+    let result = FileReadTool
+        .execute(serde_json::json!({"path":"requirements.txt"}), &ctx)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        result.output,
+        Value::String("fastapi==0.111\n\u{fffd}\n".to_string())
+    );
+    assert!(result.summary.contains("invalid UTF-8 bytes replaced"));
+    fs::remove_dir_all(root).unwrap();
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn file_write_runs_file_changed_hook() {

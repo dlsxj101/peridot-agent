@@ -4,7 +4,15 @@ Peridot Agent is a Rust CLI/TUI autonomous coding agent with multi-session orche
 
 ## Status
 
-Current version: **0.8.5**
+Current version: **0.8.6**
+
+### What's new in v0.8.6
+
+- **Editor daemon sessions now continue across follow-up prompts.** `session.start`
+  can target an existing session id so Cursor / VS Code clients keep the same
+  context snapshot until the operator explicitly clears or opens a new session.
+- **File reads tolerate non-UTF-8 bytes.** Workspace reads now replace invalid
+  UTF-8 bytes instead of failing the whole tool call.
 
 ### What's new in v0.8.5
 

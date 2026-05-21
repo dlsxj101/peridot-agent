@@ -4,11 +4,12 @@ VS Code panel for [Peridot Agent](https://github.com/dlsxj101/peridot-agent) —
 a Rust CLI/TUI autonomous coding agent with multi-LLM committee mode,
 native tool calling, and 2-Tier context management.
 
-> **Status**: v0.5.10 ships platform-specific `.vsix` packages plus a
+> **Status**: v0.5.11 ships platform-specific `.vsix` packages plus a
 > universal fallback package for Cursor, ChatGPT OAuth defaults to a
 > Codex-compatible GPT model, and the sidebar includes onboarding,
-> queued prompts, approval/diff cards, usage/budget HUD, an inline plan
-> panel, and a compact context donut above the bottom composer.
+> queued prompts, persistent chat sessions, Markdown answers, single-line
+> tool activity, approval/diff cards, usage/budget HUD, an inline plan
+> panel, and a compact context donut in the bottom composer.
 
 ## Commands
 
@@ -39,15 +40,16 @@ provider" button in the session header to come back.
 ## Sidebar
 
 Once a provider is live, the sidebar shows workspace / provider /
-model / auth context, a HUD for token usage and cost / turn budget,
-an inline plan panel that follows `plan_updated`, a compact context
-donut above the composer, a chat-style transcript with collapsed tool cards
-(pulsing dot while a tool is running) and inline unified diffs, plus
-approve/deny controls with a diff preview for `file_write` /
+model / auth context, a session dropdown, a HUD for token usage and
+cost / turn budget, an inline plan panel that follows `plan_updated`,
+a compact context donut in the composer options row, a chat-style
+Markdown transcript with single-line tool activity and inline unified
+diffs, plus approve/deny controls with a diff preview for `file_write` /
 `file_patch`. Type at the composer — Enter sends, Shift+Enter inserts
 a newline. Sending while a task is in flight queues the message; the
 queue UI lets you edit, remove, or clear individual entries before
-they auto-run.
+they auto-run. Follow-up prompts continue the active session until you
+run `/clear` or open a new session from the dropdown.
 
 ## Configuration
 

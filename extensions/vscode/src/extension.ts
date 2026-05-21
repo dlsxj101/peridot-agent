@@ -44,6 +44,7 @@ interface DaemonStatusResult {
 
 interface ActiveRun {
   daemon: PeridotDaemon;
+  clientSessionId: string;
   sessionId?: string;
   disposeNotification: () => void;
   disposeExit: () => void;
@@ -76,7 +77,9 @@ export function activate(context: vscode.ExtensionContext) {
     ): Promise<void> => registerProvider(provider, params, output, sidebar),
   });
   context.subscriptions.push(
-    vscode.window.registerWebviewViewProvider(PeridotSidebarProvider.viewType, sidebar),
+    vscode.window.registerWebviewViewProvider(PeridotSidebarProvider.viewType, sidebar, {
+      webviewOptions: { retainContextWhenHidden: true },
+    }),
   );
   context.subscriptions.push(
     vscode.workspace.onDidChangeWorkspaceFolders(() => {
@@ -196,9 +199,8 @@ async function runTask(
   }
 
   const trimmedTask = task.trim();
-  output.clear();
   output.appendLine(`[peridot] starting daemon for ${folder}`);
-  sidebar.resetForTask(trimmedTask, folder);
+  const prepared = sidebar.prepareForTask(trimmedTask, folder);
 
   let daemon: PeridotDaemon | undefined;
   let disposeNotification: (() => void) | undefined;
@@ -207,7 +209,7 @@ async function runTask(
     const spawned = await PeridotDaemon.spawn(folder);
     daemon = spawned;
     disposeNotification = daemon.onNotification((notification) => {
-      void handleDaemonNotification(notification, output, sidebar);
+      void handleDaemonNotification(notification, output, sidebar, prepared.clientSessionId);
     });
     disposeExit = daemon.onExit((exit) => {
       output.appendLine(
@@ -220,13 +222,19 @@ async function runTask(
       }
       clearActiveRun(spawned);
     });
-    const run: ActiveRun = { daemon, disposeNotification, disposeExit };
+    const run: ActiveRun = {
+      daemon,
+      clientSessionId: prepared.clientSessionId,
+      disposeNotification,
+      disposeExit,
+    };
     activeRun = run;
 
     const result = (await daemon.send('session.start', {
       task: trimmedTask,
       mode: options.mode,
       permission: options.permission,
+      ...(prepared.continueSessionId ? { session_id: prepared.continueSessionId } : {}),
       ...(options.model ? { model: options.model } : {}),
     })) as SessionStartResult;
     run.sessionId = result.session_id;
@@ -741,6 +749,7 @@ async function handleDaemonNotification(
   notification: RpcNotification,
   output: vscode.OutputChannel,
   sidebar: PeridotSidebarProvider,
+  clientSessionId?: string,
 ): Promise<void> {
   if (notification.method !== 'event') {
     output.appendLine(
@@ -756,7 +765,7 @@ async function handleDaemonNotification(
   const sessionId = params.session_id ?? 'unknown-session';
   const event = params.event;
   output.appendLine(formatEvent(sessionId, event));
-  sidebar.appendNotification(params);
+  sidebar.appendNotificationFor(clientSessionId, params);
 
   if (isTerminalEvent(event)) {
     await finishActiveRun(output);

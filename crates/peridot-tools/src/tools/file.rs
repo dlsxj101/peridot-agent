@@ -11,6 +11,27 @@ use crate::{Tool, ToolContext};
 
 const MAX_SYMBOL_FILE_BYTES: u64 = 1_000_000;
 
+#[derive(Clone, Debug)]
+struct DecodedText {
+    content: String,
+    lossy: bool,
+}
+
+fn read_text_file(path: &Path) -> PeriResult<DecodedText> {
+    let bytes = fs::read(path)
+        .map_err(|err| PeriError::Tool(format!("failed to read {}: {err}", path.display())))?;
+    match String::from_utf8(bytes) {
+        Ok(content) => Ok(DecodedText {
+            content,
+            lossy: false,
+        }),
+        Err(err) => Ok(DecodedText {
+            content: String::from_utf8_lossy(err.as_bytes()).into_owned(),
+            lossy: true,
+        }),
+    }
+}
+
 /// Built-in file read tool.
 #[derive(Clone, Debug)]
 pub struct FileReadTool;
@@ -45,12 +66,13 @@ impl Tool for FileReadTool {
 
     async fn execute(&self, params: Value, ctx: &ToolContext) -> PeriResult<ToolResult> {
         let path = workspace_path(ctx, &params)?;
-        let content = fs::read_to_string(&path)
-            .map_err(|err| PeriError::Tool(format!("failed to read {}: {err}", path.display())))?;
-        Ok(ToolResult::success(
-            format!("read {}", path.display()),
-            Value::String(content),
-        ))
+        let decoded = read_text_file(&path)?;
+        let summary = if decoded.lossy {
+            format!("read {} (invalid UTF-8 bytes replaced)", path.display())
+        } else {
+            format!("read {}", path.display())
+        };
+        Ok(ToolResult::success(summary, Value::String(decoded.content)))
     }
 
     fn permission_level(&self) -> PermissionLevel {
@@ -503,8 +525,7 @@ fn outline_file(project_root: &Path, path: &Path, limit: usize) -> PeriResult<Ve
     if metadata.len() > MAX_SYMBOL_FILE_BYTES {
         return Ok(Vec::new());
     }
-    let content = fs::read_to_string(path)
-        .map_err(|err| PeriError::Tool(format!("failed to read {}: {err}", path.display())))?;
+    let content = read_text_file(path)?.content;
     let relative = path
         .strip_prefix(project_root)
         .unwrap_or(path)

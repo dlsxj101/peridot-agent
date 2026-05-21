@@ -3,6 +3,7 @@ import {
   ApprovalResponse,
   AskUserAnswer,
   BudgetSlice,
+  ChatSessionSummary,
   CommitteeRoleSlice,
   ContextSlice,
   HudState,
@@ -43,11 +44,28 @@ interface DaemonEventParams {
   event?: unknown;
 }
 
+interface StoredChatSession {
+  id: string;
+  title: string;
+  daemonSessionId?: string;
+  status: string;
+  running: boolean;
+  transcript: TranscriptItem[];
+  hud: HudState;
+}
+
+export interface PreparedTask {
+  clientSessionId: string;
+  continueSessionId?: string;
+}
+
 export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'peridot.chatView';
 
   private view: vscode.WebviewView | undefined;
   private state: SidebarState = freshState();
+  private sessions = new Map<string, StoredChatSession>();
+  private nextSessionOrdinal = 1;
 
   public constructor(
     private readonly extensionUri: vscode.Uri,
@@ -64,49 +82,68 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       ],
     };
     webviewView.webview.html = this.html(webviewView.webview);
+    webviewView.onDidDispose(() => {
+      if (this.view === webviewView) this.view = undefined;
+    });
     webviewView.webview.onDidReceiveMessage((message: OutboundMessage) => {
       void this.receive(message);
     });
     this.publish();
   }
 
-  public resetForTask(task: string, workspace: string): void {
-    const previous = this.state;
-    this.state = {
-      ...freshState(),
-      view: 'session',
-      landing: previous.landing,
-      runOptions: previous.runOptions,
-      queue: previous.queue,
-      hud: {},
-      context: {
-        ...previous.context,
-        workspace,
-        status: 'Starting daemon',
-        problem: undefined,
-        running: true,
-      },
-      running: true,
+  public prepareForTask(task: string, workspace: string): PreparedTask {
+    const session = this.ensureActiveSession();
+    const continueSessionId = session.daemonSessionId;
+    if (session.title.startsWith('New session')) {
+      session.title = taskTitle(task);
+    }
+    this.state.view = 'session';
+    this.state.context = {
+      ...this.state.context,
+      workspace,
       status: 'Starting daemon',
-      transcript: [
-        { role: 'user', text: task },
-        { role: 'status', text: 'Starting daemon', detail: workspace },
-      ],
+      problem: undefined,
+      running: true,
     };
+    this.state.running = true;
+    this.state.status = 'Starting daemon';
+    this.state.transcript.push({ role: 'user', text: task });
     this.publish();
+    return {
+      clientSessionId: session.id,
+      continueSessionId,
+    };
   }
 
   public setSession(sessionId: string): void {
     this.state.sessionId = sessionId;
     this.state.status = `Running ${sessionId}`;
     this.state.context = { ...this.state.context, status: 'Running', running: true };
-    this.append({ role: 'status', text: 'Session started', detail: sessionId });
+    const session = this.activeStoredSession();
+    if (session) session.daemonSessionId = sessionId;
+    this.publish();
   }
 
-  public appendNotification(params: DaemonEventParams): void {
+  public appendNotificationFor(
+    clientSessionId: string | undefined,
+    params: DaemonEventParams,
+  ): void {
+    const previousActive = this.state.activeChatId;
+    const temporarilyLoaded = Boolean(
+      clientSessionId && clientSessionId !== previousActive && this.sessions.has(clientSessionId),
+    );
+    if (temporarilyLoaded) {
+      this.saveActiveSession();
+      this.loadSessionIntoState(clientSessionId, false);
+    }
     const event = params.event;
     if (!isRecord(event)) {
       this.append({ role: 'status', text: 'Event' });
+      if (temporarilyLoaded) {
+        this.saveActiveSession();
+        this.loadSessionIntoState(previousActive, false);
+        this.publish();
+      }
       return;
     }
     const kind = typeof event.kind === 'string' ? event.kind : '';
@@ -142,6 +179,11 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         status: this.state.status,
         running: false,
       };
+      this.publish();
+    }
+    if (temporarilyLoaded) {
+      this.saveActiveSession();
+      this.loadSessionIntoState(previousActive, false);
       this.publish();
     }
   }
@@ -225,6 +267,31 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
 
   public currentRunOptions(): RunOptions {
     return { ...this.state.runOptions };
+  }
+
+  public createNewSession(workspace?: string): void {
+    this.saveActiveSession();
+    const session = this.createSession();
+    this.state.activeChatId = session.id;
+    this.state.view = 'session';
+    this.state.sessionId = undefined;
+    this.state.status = session.status;
+    this.state.running = false;
+    this.state.transcript = session.transcript;
+    this.state.hud = session.hud;
+    this.state.context = {
+      ...this.state.context,
+      ...(workspace ? { workspace } : {}),
+      status: session.status,
+      running: false,
+      problem: undefined,
+    };
+    this.publish();
+  }
+
+  public selectSession(id: string): void {
+    this.saveActiveSession();
+    this.loadSessionIntoState(id, true);
   }
 
   private appendToolStarted(event: Record<string, unknown>): void {
@@ -402,9 +469,16 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
 
   private async receive(message: OutboundMessage): Promise<void> {
     switch (message.type) {
+      case 'ready':
+        this.publish();
+        return;
       case 'run': {
         const task = message.task.trim();
         if (task.length === 0) return;
+        if (task === '/clear') {
+          this.clearActiveSession();
+          return;
+        }
         this.state.runOptions = message.options;
         await this.handlers.runTask(task, message.options);
         return;
@@ -448,6 +522,12 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       case 'showSession':
         this.state.view = 'session';
         this.publish();
+        return;
+      case 'newSession':
+        this.createNewSession(this.state.context.workspace);
+        return;
+      case 'selectSession':
+        this.selectSession(message.id);
         return;
       case 'queueAdd':
         if (message.task.trim().length > 0) {
@@ -507,8 +587,107 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
   }
 
   private publish(): void {
+    this.saveActiveSession();
+    this.refreshSessionSummaries();
     const message: InboundMessage = { type: 'state', state: this.state };
     this.view?.webview.postMessage(message);
+  }
+
+  private ensureActiveSession(): StoredChatSession {
+    if (this.state.activeChatId && this.sessions.has(this.state.activeChatId)) {
+      return this.sessions.get(this.state.activeChatId)!;
+    }
+    const session = this.createSession();
+    this.state.activeChatId = session.id;
+    this.state.sessionId = session.daemonSessionId;
+    this.state.transcript = session.transcript;
+    this.state.hud = session.hud;
+    this.state.status = session.status;
+    this.state.running = session.running;
+    return session;
+  }
+
+  private activeStoredSession(): StoredChatSession | undefined {
+    return this.state.activeChatId ? this.sessions.get(this.state.activeChatId) : undefined;
+  }
+
+  private createSession(title?: string): StoredChatSession {
+    const id = `chat-${Date.now()}-${this.nextSessionOrdinal}`;
+    const session: StoredChatSession = {
+      id,
+      title: title ?? `New session ${this.nextSessionOrdinal}`,
+      status: 'Idle',
+      running: false,
+      transcript: [],
+      hud: {},
+    };
+    this.nextSessionOrdinal += 1;
+    this.sessions.set(id, session);
+    return session;
+  }
+
+  private saveActiveSession(): void {
+    const id = this.state.activeChatId;
+    if (!id) return;
+    const session = this.sessions.get(id);
+    if (!session) return;
+    session.daemonSessionId = this.state.sessionId;
+    session.status = this.state.status;
+    session.running = this.state.running;
+    session.transcript = this.state.transcript;
+    session.hud = this.state.hud;
+  }
+
+  private loadSessionIntoState(id: string | undefined, publish: boolean): void {
+    if (!id) return;
+    const session = this.sessions.get(id);
+    if (!session) return;
+    this.state.activeChatId = id;
+    this.state.sessionId = session.daemonSessionId;
+    this.state.status = session.status;
+    this.state.running = session.running;
+    this.state.transcript = session.transcript;
+    this.state.hud = session.hud;
+    this.state.context = {
+      ...this.state.context,
+      status: session.status,
+      running: session.running,
+      problem: undefined,
+    };
+    this.state.view = 'session';
+    if (publish) this.publish();
+  }
+
+  private refreshSessionSummaries(): void {
+    const active = this.state.activeChatId;
+    this.state.sessions = Array.from(this.sessions.values()).map(
+      (session): ChatSessionSummary => ({
+        id: session.id,
+        title: session.title,
+        status: session.status,
+        running: session.running,
+        active: session.id === active,
+      }),
+    );
+  }
+
+  private clearActiveSession(): void {
+    this.ensureActiveSession();
+    this.state.sessionId = undefined;
+    this.state.status = 'Idle';
+    this.state.running = false;
+    this.state.transcript = [];
+    this.state.hud = {};
+    this.state.context = { ...this.state.context, status: 'Idle', running: false };
+    const session = this.activeStoredSession();
+    if (session) {
+      session.daemonSessionId = undefined;
+      session.status = 'Idle';
+      session.running = false;
+      session.transcript = [];
+      session.hud = {};
+    }
+    this.publish();
   }
 
   private html(webview: vscode.Webview): string {
@@ -528,7 +707,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
   <meta charset="UTF-8">
   <meta
     http-equiv="Content-Security-Policy"
-    content="default-src 'none'; img-src ${webview.cspSource} data:; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';"
+    content="default-src 'none'; img-src ${webview.cspSource} data: https: http:; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';"
   >
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Peridot</title>
@@ -553,6 +732,7 @@ function freshState(): SidebarState {
     status: 'Idle',
     context: {},
     transcript: [],
+    sessions: [],
     queue: [],
     runOptions: {
       mode: 'execute',
@@ -625,7 +805,7 @@ function transcriptItemForEvent(
       };
     }
     case 'finished':
-      return { role: 'status', text: 'Finished', detail: compactFinishedDetail(event) };
+      return undefined;
     case 'error':
       return { role: 'error', text: stringField(event, 'message') };
     case 'recovery':
@@ -670,14 +850,6 @@ function summarizeToolResult(event: Record<string, unknown>): string {
     }
   }
   return json(event.result ?? event);
-}
-
-function compactFinishedDetail(event: Record<string, unknown>): string {
-  const duration = numberField(event, 'duration_ms');
-  const turns = numberField(event, 'turns');
-  const reason = stringField(event, 'stopped_reason');
-  const seconds = duration > 0 ? `${(duration / 1000).toFixed(1)}s` : '';
-  return [reason, turns > 0 ? `${turns} turns` : '', seconds].filter(Boolean).join(' · ');
 }
 
 function isTerminalEvent(event: unknown): boolean {
@@ -756,6 +928,11 @@ function nonceValue(): string {
 
 function queueId(): string {
   return `q-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+}
+
+function taskTitle(task: string): string {
+  const title = task.replace(/\s+/g, ' ').trim();
+  return title.length > 42 ? `${title.slice(0, 39)}...` : title || 'New session';
 }
 
 async function readWorkspaceFile(relativePath: string): Promise<string | null> {

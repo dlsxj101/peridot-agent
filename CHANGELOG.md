@@ -12,6 +12,32 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 
 ---
 
+## [0.8.6] — 2026-05-21
+
+### Added — daemon session continuation for editor clients
+
+`session.start` now accepts an optional `session_id`. When a VS Code / Cursor
+client sends a follow-up prompt for an existing inactive session, the daemon
+reuses that session id and reloads the previous context snapshot instead of
+starting a disconnected conversation. New sessions are still created when the
+client omits `session_id`, and active duplicate starts continue to return the
+existing active id.
+
+### Fixed — lossy text reads for invalid UTF-8 files
+
+`file_read` now falls back to UTF-8 replacement decoding when a workspace text
+file contains invalid byte sequences. The tool result includes the readable
+content and marks the summary with `(invalid UTF-8 bytes replaced)` so clients
+can keep working on Windows-created or mixed-encoding project files instead of
+failing with `stream did not contain valid UTF-8`.
+
+### Migration notes
+
+- Workspace 0.8.5 → 0.8.6.
+- No CLI flags or config keys changed.
+
+---
+
 ## [0.8.0] — 2026-05-20
 
 ### Added — async daemon runtime plus real session control

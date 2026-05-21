@@ -118,6 +118,14 @@ export interface QueuedMessage {
   text: string;
 }
 
+export interface ChatSessionSummary {
+  id: string;
+  title: string;
+  status: string;
+  running: boolean;
+  active: boolean;
+}
+
 export type SidebarView = 'landing' | 'session';
 export type LandingScreen = 'home' | 'openrouter' | 'localLlm' | 'claude' | 'openai';
 
@@ -125,10 +133,12 @@ export interface SidebarState {
   view: SidebarView;
   landing: LandingScreen;
   running: boolean;
+  activeChatId?: string;
   sessionId?: string;
   status: string;
   context: SidebarContext;
   transcript: TranscriptItem[];
+  sessions: ChatSessionSummary[];
   queue: QueuedMessage[];
   runOptions: RunOptions;
   hud: HudState;
@@ -141,6 +151,7 @@ export type ProviderChoice = 'chatgpt' | 'openrouter' | 'localLlm' | 'claude' | 
 
 /** Messages the webview sends to the extension host. */
 export type OutboundMessage =
+  | { type: 'ready' }
   | { type: 'run'; task: string; options: RunOptions }
   | { type: 'cancel' }
   | { type: 'loginOpenAi' }
@@ -158,6 +169,8 @@ export type OutboundMessage =
   | { type: 'registerProvider'; provider: ProviderChoice; params: Record<string, string> }
   | { type: 'showLanding'; screen?: LandingScreen }
   | { type: 'showSession' }
+  | { type: 'newSession' }
+  | { type: 'selectSession'; id: string }
   | { type: 'queueAdd'; task: string }
   | { type: 'queueRemove'; id: string }
   | { type: 'queueEdit'; id: string; text: string }
