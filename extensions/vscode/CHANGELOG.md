@@ -1,5 +1,15 @@
 # Peridot Agent — Extension Changelog
 
+## [0.5.5] — 2026-05-21
+
+### Fixed — Windows login environment
+
+- Peridot child processes spawned by the extension now receive a `HOME`
+  fallback from `USERPROFILE` when Cursor's Windows extension host does
+  not provide one, fixing ChatGPT login failures with `HOME is required`.
+- The bundled CLI now also treats `USERPROFILE` as the user home on
+  Windows for auth, config, update-check, cache, and memory paths.
+
 ## [0.5.4] — 2026-05-21
 
 ### Changed — marketplace icon

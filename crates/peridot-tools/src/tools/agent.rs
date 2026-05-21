@@ -7,6 +7,7 @@ use peridot_agents::{
 };
 use peridot_common::{
     AskUserAnswer, AskUserRequest, PeriError, PeriResult, PermissionLevel, ToolGroup, ToolResult,
+    peridot_home_dir,
 };
 use peridot_memory::{ErrorResolution, MemoryStore, StoredSkill};
 use serde::Serialize;
@@ -610,10 +611,7 @@ pub(crate) fn search_memory_layer(
 }
 
 fn global_memory_path() -> Option<PathBuf> {
-    if let Some(home) = std::env::var_os("PERIDOT_HOME") {
-        return Some(PathBuf::from(home).join("memory.db"));
-    }
-    std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".peridot/memory.db"))
+    peridot_home_dir().map(|home| home.join("memory.db"))
 }
 
 /// Built-in completion declaration tool.

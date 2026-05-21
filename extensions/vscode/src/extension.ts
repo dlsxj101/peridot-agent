@@ -7,6 +7,7 @@ import * as childProcess from 'child_process';
 import * as vscode from 'vscode';
 import { PeridotDaemon, RpcNotification } from './daemon';
 import { resetBinaryCache, resolvePeridotBinary } from './peridotBin';
+import { peridotChildEnv } from './processEnv';
 import { StatusCache } from './statusCache';
 import {
   PeridotSidebarProvider,
@@ -368,6 +369,7 @@ function runProcess(
   return new Promise((resolve, reject) => {
     const child = childProcess.spawn(command, args, {
       cwd,
+      env: peridotChildEnv(),
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     // Capture stderr separately so we can surface the last few lines on
@@ -415,6 +417,7 @@ function runProcessWithStdin(
   return new Promise((resolve, reject) => {
     const child = childProcess.spawn(command, args, {
       cwd,
+      env: peridotChildEnv(),
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     child.stdout.on('data', (chunk: Buffer) => {

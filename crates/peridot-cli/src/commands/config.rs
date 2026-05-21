@@ -1,4 +1,5 @@
 use super::*;
+use peridot_common::peridot_home_dir;
 
 pub(crate) fn load_effective_config(
     project_root: &Path,
@@ -77,10 +78,7 @@ pub(super) fn merge_config_file(
 }
 
 pub(super) fn global_config_path() -> Option<PathBuf> {
-    if let Some(home) = std::env::var_os("PERIDOT_HOME") {
-        return Some(PathBuf::from(home).join("config.toml"));
-    }
-    std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".peridot/config.toml"))
+    peridot_home_dir().map(|home| home.join("config.toml"))
 }
 
 pub(super) fn apply_agents_preferences(
@@ -672,13 +670,9 @@ fn default_provider_choice() -> usize {
 }
 
 fn openai_oauth_credentials_path() -> PathBuf {
-    if let Some(home) = std::env::var_os("PERIDOT_HOME") {
-        return PathBuf::from(home).join("auth/openai-oauth.json");
-    }
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".peridot/auth/openai-oauth.json")
+    peridot_home_dir()
+        .unwrap_or_else(|| PathBuf::from(".peridot"))
+        .join("auth/openai-oauth.json")
 }
 
 fn prompt_model_choice(label: &str, options: &[&str], default: &str) -> Result<String> {

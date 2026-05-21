@@ -1,4 +1,5 @@
 use super::*;
+use peridot_common::peridot_home_dir;
 
 #[derive(Clone, Debug)]
 pub(super) struct LatestRelease {
@@ -167,10 +168,7 @@ pub(super) fn mark_update_checked() -> Result<()> {
 }
 
 pub(super) fn update_check_state_path() -> Option<PathBuf> {
-    if let Some(home) = std::env::var_os("PERIDOT_HOME") {
-        return Some(PathBuf::from(home).join("update-check"));
-    }
-    std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".peridot/update-check"))
+    peridot_home_dir().map(|home| home.join("update-check"))
 }
 
 pub(super) fn parse_update_interval(value: &str) -> Duration {

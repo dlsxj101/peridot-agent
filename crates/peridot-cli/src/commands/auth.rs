@@ -1,4 +1,5 @@
 use super::*;
+use peridot_common::{peridot_home_dir, user_home_dir};
 
 pub(crate) async fn run_login_command(provider: AuthProvider, output: OutputFormat) -> Result<()> {
     if provider == AuthProvider::OpenaiOauth {
@@ -666,8 +667,8 @@ pub(super) fn percent_decode(value: &str) -> Result<String> {
 }
 
 pub(super) fn auth_file(provider: AuthProvider) -> Result<PathBuf> {
-    let home = std::env::var_os("HOME").with_context(|| "HOME is required")?;
-    Ok(PathBuf::from(home)
+    let home = user_home_dir().with_context(|| "HOME or USERPROFILE is required")?;
+    Ok(home
         .join(".peridot/auth")
         .join(format!("{}.json", provider.id())))
 }
@@ -677,11 +678,7 @@ pub(super) fn env_store_file() -> Result<PathBuf> {
 }
 
 pub(super) fn peridot_home() -> Result<PathBuf> {
-    if let Some(home) = std::env::var_os("PERIDOT_HOME") {
-        return Ok(PathBuf::from(home));
-    }
-    let home = std::env::var_os("HOME").with_context(|| "HOME is required")?;
-    Ok(PathBuf::from(home).join(".peridot"))
+    peridot_home_dir().with_context(|| "HOME or USERPROFILE is required")
 }
 
 pub(super) fn upsert_managed_env_var(key: &str, value: &str) -> Result<PathBuf> {

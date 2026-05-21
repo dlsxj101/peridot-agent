@@ -15,6 +15,43 @@ use thiserror::Error;
 /// Result alias used by Peridot domain crates.
 pub type PeriResult<T> = Result<T, PeriError>;
 
+/// Returns the user's home directory using cross-platform environment
+/// conventions.
+///
+/// Unix-like shells usually provide `HOME`; Windows-native extension hosts
+/// commonly provide `USERPROFILE` instead. The `HOMEDRIVE` + `HOMEPATH`
+/// fallback covers older Windows process environments.
+pub fn user_home_dir() -> Option<PathBuf> {
+    if let Some(home) = std::env::var_os("HOME").filter(|value| !value.is_empty()) {
+        return Some(PathBuf::from(home));
+    }
+    if let Some(profile) = std::env::var_os("USERPROFILE").filter(|value| !value.is_empty()) {
+        return Some(PathBuf::from(profile));
+    }
+    let drive = std::env::var_os("HOMEDRIVE").filter(|value| !value.is_empty());
+    let path = std::env::var_os("HOMEPATH").filter(|value| !value.is_empty());
+    match (drive, path) {
+        (Some(drive), Some(path)) => {
+            let mut home = PathBuf::from(drive);
+            home.push(path);
+            Some(home)
+        }
+        _ => None,
+    }
+}
+
+/// Returns Peridot's global state directory.
+///
+/// `PERIDOT_HOME` remains the explicit override. When it is unset, the
+/// directory is `$HOME/.peridot` on Unix-like hosts and
+/// `%USERPROFILE%\.peridot` on Windows hosts.
+pub fn peridot_home_dir() -> Option<PathBuf> {
+    if let Some(home) = std::env::var_os("PERIDOT_HOME").filter(|value| !value.is_empty()) {
+        return Some(PathBuf::from(home));
+    }
+    user_home_dir().map(|home| home.join(".peridot"))
+}
+
 /// Cross-crate error type for deterministic domain failures.
 #[derive(Debug, Error)]
 pub enum PeriError {

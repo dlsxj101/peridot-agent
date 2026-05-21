@@ -14,6 +14,7 @@ use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
+use peridot_common::peridot_home_dir;
 use serde::{Deserialize, Serialize};
 
 const OPENROUTER_MODELS_URL: &str = "https://openrouter.ai/api/v1/models";
@@ -197,10 +198,10 @@ fn openai_codex_cache_filename(account_id: &str) -> String {
     format!("openai-codex-models-{:016x}.json", hasher.finish())
 }
 
-/// Returns the default cache directory under `$HOME/.peridot/cache`. Used
-/// by the CLI; library tests can pass any path explicitly.
+/// Returns the default cache directory under Peridot's global state
+/// directory. Used by the CLI; library tests can pass any path explicitly.
 pub fn default_cache_dir() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".peridot/cache"))
+    peridot_home_dir().map(|home| home.join("cache"))
 }
 
 #[cfg(test)]

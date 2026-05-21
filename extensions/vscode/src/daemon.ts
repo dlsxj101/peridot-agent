@@ -7,6 +7,7 @@
 import * as childProcess from 'child_process';
 import * as readline from 'readline';
 import { resolvePeridotBinary } from './peridotBin';
+import { peridotChildEnv } from './processEnv';
 
 /** One JSON-RPC 2.0 request envelope. */
 interface RpcRequest {
@@ -92,6 +93,7 @@ export class PeridotDaemon {
   public static async spawn(projectRoot: string): Promise<PeridotDaemon> {
     const binary = await resolvePeridotBinary();
     const child = childProcess.spawn(binary, ['--project', projectRoot, 'daemon'], {
+      env: peridotChildEnv(),
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     // stderr is forwarded to extension host's console for debugging.
