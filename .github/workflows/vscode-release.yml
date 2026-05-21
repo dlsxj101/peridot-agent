@@ -169,7 +169,26 @@ jobs:
         # so we pass --packagePath rather than re-packaging. The
         # git tag and `package.json` version are expected to match;
         # mismatched uploads are rejected by the Marketplace.
-        run: npx vsce publish --packagePath *.vsix --no-dependencies -p "$VSCE_PAT"
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            set +e
+            output="$(npx vsce publish --packagePath *.vsix --no-dependencies -p "$VSCE_PAT" 2>&1)"
+            status=$?
+            set -e
+            echo "$output"
+            if [ "$status" -eq 0 ]; then
+              exit 0
+            fi
+            if echo "$output" | grep -Eiq 'already (exists|published)|version .*already|duplicate'; then
+              echo "Marketplace reports this package is already published; treating as success."
+              exit 0
+            fi
+            if [ "$attempt" = "3" ]; then
+              exit "$status"
+            fi
+            sleep 60
+          done
 
       - name: Upload .vsix artifact
         uses: actions/upload-artifact@v7
@@ -189,11 +208,20 @@ jobs:
         run: |
           set -euo pipefail
           for attempt in 1 2 3; do
-            if npx ovsx publish *.vsix -p "$OVSX_PAT"; then
+            set +e
+            output="$(npx ovsx publish *.vsix -p "$OVSX_PAT" 2>&1)"
+            status=$?
+            set -e
+            echo "$output"
+            if [ "$status" -eq 0 ]; then
+              exit 0
+            fi
+            if echo "$output" | grep -Eiq 'already (exists|published)|version .*already|duplicate'; then
+              echo "Open VSX reports this package is already published; treating as success."
               exit 0
             fi
             if [ "$attempt" = "3" ]; then
-              exit 1
+              exit "$status"
             fi
             sleep 30
           done
@@ -255,7 +283,26 @@ jobs:
       - name: Publish universal to VS Code Marketplace
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
-        run: npx vsce publish --packagePath *.vsix --no-dependencies -p "$VSCE_PAT"
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            set +e
+            output="$(npx vsce publish --packagePath *.vsix --no-dependencies -p "$VSCE_PAT" 2>&1)"
+            status=$?
+            set -e
+            echo "$output"
+            if [ "$status" -eq 0 ]; then
+              exit 0
+            fi
+            if echo "$output" | grep -Eiq 'already (exists|published)|version .*already|duplicate'; then
+              echo "Marketplace reports this package is already published; treating as success."
+              exit 0
+            fi
+            if [ "$attempt" = "3" ]; then
+              exit "$status"
+            fi
+            sleep 60
+          done
 
       - name: Upload universal .vsix artifact
         uses: actions/upload-artifact@v7
@@ -276,11 +323,20 @@ jobs:
         run: |
           set -euo pipefail
           for attempt in 1 2 3; do
-            if npx ovsx publish *.vsix -p "$OVSX_PAT"; then
+            set +e
+            output="$(npx ovsx publish *.vsix -p "$OVSX_PAT" 2>&1)"
+            status=$?
+            set -e
+            echo "$output"
+            if [ "$status" -eq 0 ]; then
+              exit 0
+            fi
+            if echo "$output" | grep -Eiq 'already (exists|published)|version .*already|duplicate'; then
+              echo "Open VSX reports this package is already published; treating as success."
               exit 0
             fi
             if [ "$attempt" = "3" ]; then
-              exit 1
+              exit "$status"
             fi
             sleep 30
           done

@@ -1,5 +1,14 @@
 # Peridot Agent — Extension Changelog
 
+## [0.5.10] — 2026-05-21
+
+### Fixed — marketplace publish retries
+
+- VS Code Marketplace and Open VSX publish steps now retry transient timeouts
+  and treat duplicate/already-published responses as success. This handles
+  cases where a registry accepts the upload but the client times out before
+  receiving the final response.
+
 ## [0.5.9] — 2026-05-21
 
 ### Fixed — universal Open VSX fallback handling
