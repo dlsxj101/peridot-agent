@@ -1,5 +1,12 @@
 # Peridot Agent — Extension Changelog
 
+## [0.5.4] — 2026-05-21
+
+### Changed — marketplace icon
+
+- Replaced the extension marketplace and onboarding mascot PNG with the
+  updated Peridot pixel mascot.
+
 ## [0.5.3] — 2026-05-21
 
 ### Fixed — bundled binary and mascot resources
