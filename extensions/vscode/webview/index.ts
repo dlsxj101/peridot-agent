@@ -85,6 +85,7 @@ const SLASH_COMMANDS: SlashCommandSpec[] = [
   { name: '/branch save', description: 'Snapshot current session branch', argHint: '<name>' },
   { name: '/branch restore', description: 'Restore a saved branch snapshot', argHint: '<name>' },
   { name: '/branch list', description: 'List saved branch snapshots' },
+  { name: '/branch turn', description: 'Fork at a past turn', argHint: '<turn-id>' },
   { name: '/branch tree', description: 'Show saved branch tree' },
   { name: '/branch switch', description: 'Switch to a saved branch limb', argHint: '<index>' },
   { name: '/session new', description: 'Open a new chat session', argHint: '[task]' },
@@ -892,6 +893,8 @@ function renderItem(item: TranscriptItem): HTMLElement {
       return renderApprovalBubble(item);
     case 'diff':
       return renderDiffBlock(item);
+    case 'command':
+      return renderCommandBlock(item);
     default:
       return el('div', 'transcript-fallback', item.text);
   }
@@ -1256,6 +1259,56 @@ function renderDiffBlock(item: TranscriptItem): HTMLElement {
   wrap.append(header);
   wrap.append(renderUnifiedDiff(item.before, item.after, item.path));
   if (item.detail) wrap.append(el('div', 'diff-meta', item.detail));
+  return wrap;
+}
+
+function renderCommandBlock(item: TranscriptItem): HTMLElement {
+  const result = item.commandResult;
+  const wrap = el('section', `command-block ${result?.severity === 'error' ? 'error' : ''}`);
+  const header = el('div', 'command-header');
+  header.append(el('span', 'command-title', result?.title ?? result?.kind ?? 'Command'));
+  if (result?.command) header.append(el('span', 'command-chip', result.command));
+  wrap.append(header);
+  if (result?.message) {
+    wrap.append(el('div', 'command-message', result.message));
+  } else if (item.text) {
+    wrap.append(el('div', 'command-message', item.text));
+  }
+  if (result?.source_totals) {
+    const totals = el('div', 'command-totals');
+    Object.entries(result.source_totals).forEach(([source, tokens]) => {
+      totals.append(el('span', 'command-total', `${source} ${formatTokens(tokens)}`));
+    });
+    wrap.append(totals);
+  }
+  if (typeof result?.diff === 'string') {
+    const pre = el('pre', 'command-code');
+    pre.innerHTML = highlightLite(result.diff.trim() || '(no changes)');
+    wrap.append(pre);
+  }
+  if (Array.isArray(result?.items) && result.items.length > 0) {
+    const list = el('div', 'command-list');
+    result.items.forEach((row) => {
+      const line = el('div', 'command-row');
+      const label = row.label ?? row.path ?? row.source ?? '';
+      if (row.path) {
+        line.append(renderFilePathButton(row.path, 'command-path', row.line, row.column));
+      } else if (label) {
+        line.append(el('span', 'command-row-label', label));
+      }
+      const meta = [
+        typeof row.line === 'number' ? `:${row.line}` : '',
+        typeof row.tokens === 'number' ? `${formatTokens(row.tokens)}` : '',
+        row.transport,
+        typeof row.turn_id === 'number' ? `turn ${row.turn_id}` : '',
+      ].filter(Boolean);
+      if (meta.length > 0) line.append(el('span', 'command-row-meta', meta.join(' · ')));
+      if (row.detail) line.append(el('span', 'command-row-detail', row.detail));
+      list.append(line);
+    });
+    wrap.append(list);
+    if (result.truncated) wrap.append(el('div', 'command-footnote', 'further hits truncated'));
+  }
   return wrap;
 }
 

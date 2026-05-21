@@ -5,6 +5,7 @@ import {
   BudgetSlice,
   ChatSessionSummary,
   CommitteeRoleSlice,
+  CommandResultView,
   ContextSlice,
   HudState,
   InboundMessage,
@@ -30,6 +31,7 @@ export type {
 
 export interface SidebarHandlers {
   runTask: (task: string, options: RunOptions) => Promise<void>;
+  runSlashCommand: (command: string, options: RunOptions) => Promise<CommandResultView>;
   cancelTask: () => Promise<void>;
   clearSession: () => Promise<void>;
   loginOpenAi: () => Promise<void>;
@@ -54,6 +56,20 @@ interface StoredChatSession {
   transcript: TranscriptItem[];
   hud: HudState;
 }
+
+interface PersistedSidebarSnapshot {
+  version: 1;
+  activeChatId?: string;
+  nextSessionOrdinal: number;
+  runOptions: RunOptions;
+  context: SidebarContext;
+  view: SidebarState['view'];
+  landing: SidebarState['landing'];
+  queue: QueuedMessage[];
+  sessions: StoredChatSession[];
+}
+
+const PERSISTENCE_KEY = 'peridot.sidebarState.v1';
 
 const EXTENSION_SLASH_COMMANDS: Array<[string, string]> = [
   ['/plan', 'switch to plan mode'],
@@ -95,6 +111,7 @@ const EXTENSION_SLASH_COMMANDS: Array<[string, string]> = [
   ['/branch save <name>', 'snapshot the current session branch'],
   ['/branch restore <name>', 'restore a saved branch snapshot'],
   ['/branch list', 'list saved branch snapshots'],
+  ['/branch turn <turn-id>', 'fork the session at a previous turn'],
   ['/branch tree', 'show saved branch tree'],
   ['/branch switch <index>', 'switch to a saved branch limb'],
   ['/session new [task]', 'open a new chat session'],
@@ -120,8 +137,11 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
 
   public constructor(
     private readonly extensionUri: vscode.Uri,
+    private readonly storage: vscode.Memento,
     private readonly handlers: SidebarHandlers,
-  ) {}
+  ) {
+    this.restorePersistedState();
+  }
 
   public resolveWebviewView(webviewView: vscode.WebviewView): void {
     this.view = webviewView;
@@ -318,6 +338,31 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
 
   public currentRunOptions(): RunOptions {
     return { ...this.state.runOptions };
+  }
+
+  public currentDaemonSessionId(): string | undefined {
+    return this.state.sessionId;
+  }
+
+  public appendCommandResult(result: CommandResultView): void {
+    this.append({
+      role: result.severity === 'error' ? 'error' : 'command',
+      text: result.message ?? result.title ?? result.kind ?? 'Command',
+      commandResult: result,
+    });
+  }
+
+  public appendAuthLink(url: string): void {
+    this.append({
+      role: 'assistant',
+      text: [
+        'ChatGPT 로그인 브라우저가 자동으로 열리지 않으면 아래 링크를 열어주세요.',
+        '',
+        `[Sign in with ChatGPT](${url})`,
+        '',
+        url,
+      ].join('\n'),
+    });
   }
 
   public createNewSession(workspace?: string): void {
@@ -643,6 +688,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
   private publish(): void {
     this.saveActiveSession();
     this.refreshSessionSummaries();
+    this.persistState();
     const message: InboundMessage = { type: 'state', state: this.state };
     this.view?.webview.postMessage(message);
   }
@@ -759,13 +805,13 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         break;
       case 'compact':
         if (rest.length === 0) {
-          this.append({ role: 'status', text: 'compact: context compaction requested' });
+          await this.executeDaemonSlash(input, options);
           return;
         }
         break;
       case 'context':
         if (rest === 'top' || rest.length === 0) {
-          this.showContextUsage();
+          await this.executeDaemonSlash(input, options);
           return;
         }
         break;
@@ -784,13 +830,13 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         break;
       case 'diff':
         if (rest.length === 0) {
-          await this.runAgentBackedSlash('Show the current working-tree diff.', options, 'diff');
+          await this.executeDaemonSlash(input, options);
           return;
         }
         break;
       case 'undo':
         if (rest.length === 0) {
-          await this.runAgentBackedSlash('Undo the last change safely.', options, 'undo');
+          await this.executeDaemonSlash(input, options);
           return;
         }
         break;
@@ -813,14 +859,14 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       case 'fork':
       case 'teammate':
         if (rest.length > 0) {
-          await this.runAgentBackedSlash(`/${command} ${rest}`, options, command);
+          await this.executeDaemonSlash(input, options);
           return;
         }
         this.appendError(`Usage: /${command} <task>`);
         return;
       case 'worktree':
         if (rest.length > 0) {
-          await this.runAgentBackedSlash(`/worktree ${rest}`, options, 'worktree');
+          await this.executeDaemonSlash(input, options);
           return;
         }
         this.appendError('Usage: /worktree <branch> <task>');
@@ -833,15 +879,11 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         this.appendError('Usage: /subagent model <name|reset>');
         return;
       case 'mcp':
-        this.handleMcpSlash(rest);
+        await this.executeDaemonSlash(input, options);
         return;
       case 'todos':
         if (rest.length === 0) {
-          await this.runAgentBackedSlash(
-            'List every TODO, FIXME, HACK, XXX, and BUG comment in the project.',
-            options,
-            'todos',
-          );
+          await this.executeDaemonSlash(input, options);
           return;
         }
         break;
@@ -852,7 +894,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         }
         break;
       case 'branch':
-        this.handleBranchSlash(rest);
+        await this.executeDaemonSlash(input, options);
         return;
       case 'autofix':
         if (rest.length === 0 || rest === 'on' || rest === 'off' || /^\d+$/.test(rest)) {
@@ -963,13 +1005,22 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
     this.append({ role: 'status', text: notice });
   }
 
-  private async runAgentBackedSlash(
-    task: string,
-    options: RunOptions,
-    label: string,
-  ): Promise<void> {
-    this.append({ role: 'status', text: `${label}: starting` });
-    await this.handlers.runTask(task, options);
+  private async executeDaemonSlash(input: string, options: RunOptions): Promise<void> {
+    try {
+      const result = await this.handlers.runSlashCommand(input, options);
+      if (result.action === 'clear') {
+        await this.handlers.clearSession();
+        this.clearActiveSession();
+        this.append({ role: 'status', text: 'clear: transcript + context wiped, new session' });
+        return;
+      }
+      this.appendCommandResult(result);
+      if (result.kind === 'start_task' && result.task) {
+        await this.handlers.runTask(result.task, options);
+      }
+    } catch (err) {
+      this.appendError(err instanceof Error ? err.message : String(err));
+    }
   }
 
   private showInfo(): void {
@@ -1009,19 +1060,6 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
     });
   }
 
-  private showContextUsage(): void {
-    const context = this.state.hud.context;
-    if (!context || context.threshold <= 0) {
-      this.append({ role: 'assistant', text: 'No context usage data yet.' });
-      return;
-    }
-    const pct = Math.round((context.tokensUsed / context.threshold) * 100);
-    this.append({
-      role: 'assistant',
-      text: `Context: ${context.tokensUsed} / ${context.threshold} tokens (${pct}%)`,
-    });
-  }
-
   private showPlan(): void {
     const steps = this.state.hud.plan?.steps ?? [];
     if (steps.length === 0) {
@@ -1032,38 +1070,6 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       role: 'assistant',
       text: steps.map((step, index) => `${index + 1}. ${step.status ?? 'pending'} ${step.text}`).join('\n'),
     });
-  }
-
-  private handleMcpSlash(rest: string): void {
-    const [subcommand, ...tailParts] = rest.split(/\s+/).filter(Boolean);
-    const tail = tailParts.join(' ').trim();
-    if (subcommand === 'list') {
-      this.append({ role: 'status', text: 'mcp list: registered' });
-      return;
-    }
-    if ((subcommand === 'add' || subcommand === 'remove' || subcommand === 'test') && tail) {
-      this.append({ role: 'status', text: `mcp ${subcommand}: ${tail}` });
-      return;
-    }
-    this.appendError(
-      'Usage: /mcp list | /mcp add <name> <stdio|http> <command|url> | /mcp remove <name> | /mcp test <name>',
-    );
-  }
-
-  private handleBranchSlash(rest: string): void {
-    const [subcommand, ...tailParts] = rest.split(/\s+/).filter(Boolean);
-    const tail = tailParts.join(' ').trim();
-    if (subcommand === 'list' || subcommand === 'tree') {
-      this.append({ role: 'status', text: `branch ${subcommand}` });
-      return;
-    }
-    if ((subcommand === 'save' || subcommand === 'restore' || subcommand === 'switch') && tail) {
-      this.append({ role: 'status', text: `branch ${subcommand}: ${tail}` });
-      return;
-    }
-    this.appendError(
-      'Usage: /branch save <name> | /branch restore <name> | /branch list | /branch tree | /branch switch <index>',
-    );
   }
 
   private rewindLastExchange(): void {
@@ -1161,6 +1167,69 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
     session.running = this.state.running;
     session.transcript = this.state.transcript;
     session.hud = this.state.hud;
+  }
+
+  private restorePersistedState(): void {
+    const snapshot = this.storage.get<PersistedSidebarSnapshot>(PERSISTENCE_KEY);
+    if (!snapshot || snapshot.version !== 1 || !Array.isArray(snapshot.sessions)) {
+      return;
+    }
+    this.sessions.clear();
+    for (const raw of snapshot.sessions) {
+      const session: StoredChatSession = {
+        ...raw,
+        status: raw.running ? 'Idle' : raw.status,
+        running: false,
+        transcript: Array.isArray(raw.transcript) ? raw.transcript : [],
+        hud: raw.hud ?? {},
+      };
+      this.sessions.set(session.id, session);
+    }
+    this.nextSessionOrdinal = Math.max(1, snapshot.nextSessionOrdinal);
+    this.state = {
+      ...freshState(),
+      view: snapshot.view ?? 'landing',
+      landing: snapshot.landing ?? 'home',
+      activeChatId: snapshot.activeChatId,
+      context: {
+        ...(snapshot.context ?? {}),
+        status: 'Idle',
+        running: false,
+        problem: undefined,
+      },
+      queue: Array.isArray(snapshot.queue) ? snapshot.queue : [],
+      runOptions: snapshot.runOptions ?? freshState().runOptions,
+    };
+    if (this.state.activeChatId && this.sessions.has(this.state.activeChatId)) {
+      this.loadSessionIntoState(this.state.activeChatId, false);
+    }
+    this.refreshSessionSummaries();
+  }
+
+  private persistState(): void {
+    const sessions = Array.from(this.sessions.values()).map(
+      (session): StoredChatSession => ({
+        ...session,
+        status: session.running ? 'Idle' : session.status,
+        running: false,
+      }),
+    );
+    const snapshot: PersistedSidebarSnapshot = {
+      version: 1,
+      activeChatId: this.state.activeChatId,
+      nextSessionOrdinal: this.nextSessionOrdinal,
+      runOptions: this.state.runOptions,
+      context: {
+        ...this.state.context,
+        status: this.state.running ? 'Idle' : this.state.status,
+        running: false,
+      },
+      view: this.state.view,
+      landing: this.state.landing,
+      queue: this.state.queue,
+      sessions,
+    };
+    void this.storage.update(PERSISTENCE_KEY, snapshot);
   }
 
   private loadSessionIntoState(id: string | undefined, publish: boolean): void {
@@ -1383,6 +1452,8 @@ function transcriptItemForEvent(
       return { role: 'error', text: 'Approval denied' };
     case 'plan_updated':
       return { role: 'status', text: 'Plan updated' };
+    case 'command_result':
+      return undefined;
     case 'file_diff': {
       const path = stringField(event, 'path');
       return {

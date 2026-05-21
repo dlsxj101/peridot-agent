@@ -39,12 +39,41 @@ export type TranscriptRole =
   | 'error'
   | 'interaction'
   | 'diff'
+  | 'command'
   | 'approval';
+
+export interface CommandResultItem {
+  label?: string;
+  detail?: string;
+  path?: string;
+  line?: number;
+  column?: number;
+  tokens?: number;
+  turn_id?: number;
+  source?: string;
+  transport?: string;
+}
+
+export interface CommandResultView {
+  kind?: string;
+  title?: string;
+  message?: string;
+  severity?: 'info' | 'error';
+  command?: string;
+  action?: string;
+  task?: string;
+  label?: string;
+  diff?: string;
+  items?: CommandResultItem[];
+  source_totals?: Record<string, number>;
+  truncated?: boolean;
+}
 
 export interface TranscriptItem {
   role: TranscriptRole;
   text: string;
   detail?: string;
+  commandResult?: CommandResultView;
   requestId?: string;
   request?: unknown;
   path?: string;

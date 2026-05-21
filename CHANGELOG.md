@@ -12,6 +12,38 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 
 ---
 
+## [0.8.9] — 2026-05-22
+
+### Added — daemon-backed slash command RPC for editor clients
+
+`peridot daemon` now exposes `session.command`, letting VS Code / Cursor
+clients execute the same project-state slash commands as the TUI. The new RPC
+handles branch snapshots and limbs, MCP list/add/remove/test, TODO scanning,
+working-tree diff, checkpoint undo, context-top inspection, and live compact
+requests. Running sessions share the compact flag with the harness loop; idle
+editor sessions can still operate on their persisted context snapshots.
+
+### Added — persistent editor sessions and structured command UI
+
+The VS Code extension now stores open chat sessions, transcripts, daemon
+session ids, queued prompts, and run options in workspace storage so an
+Extension Host reload does not wipe the chat list. Daemon command results render
+as structured branch/MCP/TODO/context/diff blocks instead of plain status text.
+
+### Fixed — OAuth and packaging polish
+
+ChatGPT OAuth now always surfaces a visible manual login link in the chat when
+the browser handoff is attempted, and the VSIX package includes an MIT license
+file to remove the publish warning.
+
+### Migration notes
+
+- Workspace 0.8.8 → 0.8.9.
+- Extension package 0.5.13 → 0.5.14.
+- No config keys changed.
+
+---
+
 ## [0.8.6] — 2026-05-21
 
 ### Added — daemon session continuation for editor clients

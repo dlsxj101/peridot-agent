@@ -5,24 +5,31 @@
 //! notifications are serialized onto a single stdout writer task so concurrent
 //! session tasks cannot interleave JSON frames.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::Result;
 use async_trait::async_trait;
 use peridot_common::{
-    AskUserAnswer, AskUserRequest, CancelToken, ExecutionMode, PeridotConfig, PermissionMode,
-    ReasoningEffort,
+    AskUserAnswer, AskUserRequest, CancelToken, ExecutionMode, McpTransport, PeridotConfig,
+    PermissionMode, ReasoningEffort,
 };
-use peridot_core::{AgentRunEvent, StopReason};
+use peridot_context::{BranchJournal, ContextEntry, ContextSource, estimate_tokens_for_text};
+use peridot_core::{
+    AgentRunEvent, AutoFixAction, SlashCommand, StopReason, SubagentModelChange,
+    parse_slash_command,
+};
+use peridot_git::GitManager;
 use peridot_tools::AskUserPort;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::{Mutex, mpsc, oneshot};
 
+use crate::checkpoints::restore_latest_checkpoint;
 use crate::commands::{
     AuthProvider, read_managed_env_var, read_stored_api_key, read_stored_openai_oauth_credentials,
 };
@@ -70,6 +77,7 @@ impl DaemonState {
 
 struct SessionEntry {
     cancel: CancelToken,
+    compact_request: Arc<AtomicBool>,
     task: Option<tokio::task::JoinHandle<()>>,
     spec: SessionRunSpec,
     approval_grants: Vec<ApprovalGrant>,
@@ -278,6 +286,10 @@ async fn dispatch_request(state: &DaemonState, request: RpcRequest) -> Result<bo
         },
         "session.start" => {
             handle_session_start(state, request.id.unwrap_or(Value::Null), request.params).await?;
+        }
+        "session.command" => {
+            handle_session_command(state, request.id.unwrap_or(Value::Null), request.params)
+                .await?;
         }
         "session.cancel" => {
             handle_session_cancel(state, request.id.unwrap_or(Value::Null), request.params).await?;
@@ -492,6 +504,8 @@ async fn handle_session_start(state: &DaemonState, id: Value, params: Option<Val
     };
     let cancel = CancelToken::new();
     let cancel_for_task = cancel.clone();
+    let compact_request = Arc::new(AtomicBool::new(false));
+    let compact_request_for_task = compact_request.clone();
     let state_for_task = state.clone();
     let session_id_for_task = session_id.clone();
     let spec = SessionRunSpec {
@@ -512,6 +526,7 @@ async fn handle_session_start(state: &DaemonState, id: Value, params: Option<Val
             session_id_for_task,
             spec_for_task,
             cancel_for_task,
+            compact_request_for_task,
         )
         .await;
     });
@@ -520,6 +535,7 @@ async fn handle_session_start(state: &DaemonState, id: Value, params: Option<Val
         session_id.clone(),
         SessionEntry {
             cancel,
+            compact_request,
             task: Some(handle),
             spec,
             approval_grants: Vec::new(),
@@ -536,6 +552,7 @@ async fn run_session_task(
     session_id: String,
     spec: SessionRunSpec,
     cancel: CancelToken,
+    compact_request: Arc<AtomicBool>,
 ) {
     let mut options = (*state.run_template).clone();
     options.permission = spec.permission;
@@ -569,7 +586,7 @@ async fn run_session_task(
         config,
         state.project_root.as_ref().clone(),
         Some(cancel),
-        None,
+        Some(compact_request),
         context_snapshot_path,
         Some(ask_user_port),
         MessageBusHookup::None,
@@ -729,6 +746,317 @@ async fn handle_session_cancel(
     )
 }
 
+async fn handle_session_command(
+    state: &DaemonState,
+    id: Value,
+    params: Option<Value>,
+) -> Result<()> {
+    let Some(Value::Object(params)) = params else {
+        emit_error(
+            state,
+            id,
+            -32602,
+            "params must be an object with `command` and optional `session_id` fields".to_string(),
+        )?;
+        return Ok(());
+    };
+    let Some(raw_command) = params.get("command").and_then(Value::as_str) else {
+        emit_error(
+            state,
+            id,
+            -32602,
+            "params.command must be a string".to_string(),
+        )?;
+        return Ok(());
+    };
+    let command_text = if raw_command.trim_start().starts_with('/') {
+        raw_command.trim().to_string()
+    } else {
+        format!("/{}", raw_command.trim())
+    };
+    let Some(command) = parse_slash_command(&command_text) else {
+        emit_error(
+            state,
+            id,
+            -32602,
+            format!("invalid slash command: {command_text}"),
+        )?;
+        return Ok(());
+    };
+    let session_id = optional_str(&params, "session_id").map(str::to_string);
+
+    match execute_session_command(state, session_id.as_deref(), &command_text, command).await {
+        Ok(result) => {
+            if let Some(session_id) = session_id.as_deref() {
+                emit_event(
+                    state,
+                    session_id,
+                    serde_json::json!({
+                        "kind": "command_result",
+                        "result": result,
+                    }),
+                );
+            }
+            emit_response(state, id, result)?;
+        }
+        Err(message) => {
+            if let Some(session_id) = session_id.as_deref() {
+                emit_event(
+                    state,
+                    session_id,
+                    serde_json::json!({
+                        "kind": "command_result",
+                        "result": command_result("error", "Command failed", &message, "error"),
+                    }),
+                );
+            }
+            emit_error(state, id, -32010, message)?;
+        }
+    }
+    Ok(())
+}
+
+async fn execute_session_command(
+    state: &DaemonState,
+    session_id: Option<&str>,
+    raw_command: &str,
+    command: SlashCommand,
+) -> Result<Value, String> {
+    match command {
+        SlashCommand::Plan => {
+            update_session_spec(state, session_id, |spec| spec.mode = ExecutionMode::Plan).await;
+            Ok(command_result("setting", "Mode", "mode: plan", "info"))
+        }
+        SlashCommand::Execute => {
+            update_session_spec(state, session_id, |spec| spec.mode = ExecutionMode::Execute).await;
+            Ok(command_result("setting", "Mode", "mode: execute", "info"))
+        }
+        SlashCommand::Safe => {
+            update_session_spec(state, session_id, |spec| {
+                spec.permission = PermissionMode::Safe
+            })
+            .await;
+            Ok(command_result(
+                "setting",
+                "Permission",
+                "permission: safe",
+                "info",
+            ))
+        }
+        SlashCommand::Auto => {
+            update_session_spec(state, session_id, |spec| {
+                spec.permission = PermissionMode::Auto
+            })
+            .await;
+            Ok(command_result(
+                "setting",
+                "Permission",
+                "permission: auto",
+                "info",
+            ))
+        }
+        SlashCommand::Yolo => {
+            update_session_spec(state, session_id, |spec| {
+                spec.permission = PermissionMode::Yolo
+            })
+            .await;
+            Ok(command_result(
+                "setting",
+                "Permission",
+                "permission: yolo",
+                "info",
+            ))
+        }
+        SlashCommand::Model(model) => {
+            update_session_spec(state, session_id, |spec| spec.model = Some(model.clone())).await;
+            Ok(command_result(
+                "setting",
+                "Model",
+                &format!("model: {model}"),
+                "info",
+            ))
+        }
+        SlashCommand::Provider(provider) => Ok(command_result(
+            "setting",
+            "Provider",
+            &format!("provider: {provider}"),
+            "info",
+        )),
+        SlashCommand::Reasoning(effort) => {
+            update_session_spec(state, session_id, |spec| {
+                spec.reasoning_effort = Some(effort)
+            })
+            .await;
+            Ok(command_result(
+                "setting",
+                "Reasoning",
+                &format!("reasoning: {effort}"),
+                "info",
+            ))
+        }
+        SlashCommand::Fast(value) => {
+            let enabled = value.unwrap_or(true);
+            update_session_spec(state, session_id, |spec| {
+                spec.service_tier = Some(if enabled {
+                    Some("fast".to_string())
+                } else {
+                    None
+                });
+            })
+            .await;
+            Ok(command_result(
+                "setting",
+                "Service Tier",
+                if enabled {
+                    "service tier: fast"
+                } else {
+                    "service tier: standard"
+                },
+                "info",
+            ))
+        }
+        SlashCommand::Committee(mode) => Ok(command_result(
+            "setting",
+            "Committee",
+            &format!("committee: {mode:?}"),
+            "info",
+        )),
+        SlashCommand::SubagentModel(change) => {
+            let message = match change {
+                SubagentModelChange::Set(model) => format!("subagent model: {model}"),
+                SubagentModelChange::Reset => "subagent model: reset".to_string(),
+            };
+            Ok(command_result("setting", "Subagent", &message, "info"))
+        }
+        SlashCommand::AutoFix(action) => {
+            let message = match action {
+                AutoFixAction::On => "autofix: on".to_string(),
+                AutoFixAction::Off => "autofix: off".to_string(),
+                AutoFixAction::MaxAttempts(max) => format!("autofix: {max} attempt(s)"),
+            };
+            Ok(command_result("setting", "Auto-fix", &message, "info"))
+        }
+        SlashCommand::Note(note) => Ok(command_result(
+            "note",
+            "Note",
+            &format!("note: {note}"),
+            "info",
+        )),
+        SlashCommand::Lang(locale) => Ok(command_result(
+            "setting",
+            "Language",
+            &format!("language: {locale:?}"),
+            "info",
+        )),
+        SlashCommand::Help => Ok(serde_json::json!({
+            "kind": "help",
+            "title": "Slash Commands",
+            "message": "Use the extension picker to select a command. Commands that touch project state are executed through the Peridot daemon.",
+            "severity": "info",
+            "command": raw_command,
+        })),
+        SlashCommand::Clear => Ok(serde_json::json!({
+            "kind": "client_action",
+            "action": "clear",
+            "title": "Clear",
+            "message": "clear: transcript + context should be cleared by the client",
+            "severity": "info",
+            "command": raw_command,
+        })),
+        SlashCommand::Cost
+        | SlashCommand::PlanShow
+        | SlashCommand::Info
+        | SlashCommand::SessionSave
+        | SlashCommand::SidepanelToggle
+        | SlashCommand::Collapse
+        | SlashCommand::Rewind
+        | SlashCommand::SessionNew(_)
+        | SlashCommand::SessionSwitch(_)
+        | SlashCommand::SessionClose(_)
+        | SlashCommand::SessionList
+        | SlashCommand::GoalStart(_)
+        | SlashCommand::GoalPause
+        | SlashCommand::GoalResume
+        | SlashCommand::GoalClear
+        | SlashCommand::GoalStatus => Ok(serde_json::json!({
+            "kind": "client_action",
+            "action": "local",
+            "title": "Handled by Extension",
+            "message": format!("{raw_command}: handled by the extension UI"),
+            "severity": "info",
+            "command": raw_command,
+        })),
+        SlashCommand::Fork(task) => Ok(start_task_result("fork", task)),
+        SlashCommand::Teammate(task) => {
+            Ok(start_task_result("teammate", format!("/teammate {task}")))
+        }
+        SlashCommand::Worktree { branch, task } => Ok(start_task_result(
+            "worktree",
+            format!("/worktree {branch} {task}"),
+        )),
+        SlashCommand::ContextTop => handle_command_context_top(state, session_id, raw_command),
+        SlashCommand::Compact => handle_command_compact(state, session_id).await,
+        SlashCommand::Diff => handle_command_diff(state, raw_command),
+        SlashCommand::Undo => handle_command_undo(state, raw_command),
+        SlashCommand::Todos => handle_command_todos(state, raw_command),
+        SlashCommand::McpList => handle_command_mcp_list(state, raw_command),
+        SlashCommand::McpAdd {
+            name,
+            transport,
+            target,
+        } => handle_command_mcp_add(state, raw_command, &name, &transport, &target),
+        SlashCommand::McpRemove(name) => handle_command_mcp_remove(state, raw_command, &name),
+        SlashCommand::McpTest(name) => handle_command_mcp_test(state, raw_command, &name).await,
+        SlashCommand::BranchSave(name) => {
+            handle_command_branch_save(state, session_id, raw_command, &name)
+        }
+        SlashCommand::BranchRestore(name) => {
+            handle_command_branch_restore(state, session_id, raw_command, &name)
+        }
+        SlashCommand::BranchList => handle_command_branch_list(state, raw_command),
+        SlashCommand::BranchPicker => handle_command_branch_picker(state, session_id, raw_command),
+        SlashCommand::BranchTurn(turn_id) => {
+            handle_command_branch_turn(state, session_id, raw_command, turn_id)
+        }
+        SlashCommand::BranchTree => handle_command_branch_tree(state, session_id, raw_command),
+        SlashCommand::BranchSwitch(index) => {
+            handle_command_branch_switch(state, session_id, raw_command, index)
+        }
+    }
+}
+
+async fn update_session_spec<F>(state: &DaemonState, session_id: Option<&str>, update: F)
+where
+    F: FnOnce(&mut SessionRunSpec),
+{
+    let Some(session_id) = session_id else {
+        return;
+    };
+    if let Some(entry) = state.sessions.lock().await.get_mut(session_id) {
+        update(&mut entry.spec);
+    }
+}
+
+fn command_result(kind: &str, title: &str, message: &str, severity: &str) -> Value {
+    serde_json::json!({
+        "kind": kind,
+        "title": title,
+        "message": message,
+        "severity": severity,
+    })
+}
+
+fn start_task_result(label: &str, task: String) -> Value {
+    serde_json::json!({
+        "kind": "start_task",
+        "title": label,
+        "message": format!("{label}: starting"),
+        "task": task,
+        "label": label,
+        "severity": "info",
+    })
+}
+
 async fn handle_interaction_respond(
     state: &DaemonState,
     id: Value,
@@ -853,7 +1181,7 @@ async fn handle_approval_respond(
         return Ok(());
     }
 
-    let (spec, cancel_for_task) = {
+    let (spec, cancel_for_task, compact_request) = {
         let mut sessions = state.sessions.lock().await;
         let Some(entry) = sessions.get_mut(session_id) else {
             emit_response(
@@ -885,9 +1213,10 @@ async fn handle_approval_respond(
         entry.approval_grants.push(grant);
         entry.waiting_approval = None;
         let cancel = CancelToken::new();
+        let compact_request = entry.compact_request.clone();
         entry.cancel = cancel.clone();
         let spec = entry.spec.clone();
-        (spec, cancel)
+        (spec, cancel, compact_request)
     };
 
     let state_for_task = state.clone();
@@ -899,6 +1228,7 @@ async fn handle_approval_respond(
             session_id_for_task,
             spec_for_task,
             cancel_for_task,
+            compact_request,
         )
         .await;
     });
@@ -1058,6 +1388,750 @@ fn context_snapshot_path(state: &DaemonState, session_id: &str) -> PathBuf {
         .join("sessions")
         .join(session_id)
         .join("context.bin")
+}
+
+fn branch_journal_path(state: &DaemonState, session_id: &str) -> PathBuf {
+    state
+        .project_root
+        .join(".peridot")
+        .join("sessions")
+        .join(session_id)
+        .join("branches.json")
+}
+
+fn require_session_id(session_id: Option<&str>, command: &str) -> Result<String, String> {
+    session_id
+        .map(str::to_string)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| format!("{command}: no active session id"))
+}
+
+fn read_context_snapshot(
+    state: &DaemonState,
+    session_id: &str,
+) -> Result<Vec<ContextEntry>, String> {
+    let snapshot_path = context_snapshot_path(state, session_id);
+    if !snapshot_path.exists() {
+        return Err("no context snapshot has been written for this session yet".to_string());
+    }
+    let bytes = std::fs::read(&snapshot_path)
+        .map_err(|err| format!("failed to read {}: {err}", snapshot_path.display()))?;
+    serde_json::from_slice(&bytes)
+        .map_err(|err| format!("failed to parse {}: {err}", snapshot_path.display()))
+}
+
+fn source_label(source: &ContextSource) -> &'static str {
+    match source {
+        ContextSource::User => "user",
+        ContextSource::Assistant => "assistant",
+        ContextSource::Tool => "tool",
+        ContextSource::PlanReminder => "plan",
+        ContextSource::ReviewerComment => "review",
+        ContextSource::External => "external",
+    }
+}
+
+fn preview_line(content: &str, max_chars: usize) -> String {
+    let single = content.replace(['\n', '\r', '\t'], " ");
+    let trimmed = single.trim();
+    if trimmed.chars().count() <= max_chars {
+        trimmed.to_string()
+    } else {
+        let head: String = trimmed.chars().take(max_chars).collect();
+        format!("{head}...")
+    }
+}
+
+fn handle_command_context_top(
+    state: &DaemonState,
+    session_id: Option<&str>,
+    raw_command: &str,
+) -> Result<Value, String> {
+    let session_id = require_session_id(session_id, "context top")?;
+    let entries = read_context_snapshot(state, &session_id)?;
+    if entries.is_empty() {
+        return Ok(serde_json::json!({
+            "kind": "context_top",
+            "title": "Context",
+            "message": "context top: <empty>",
+            "severity": "info",
+            "command": raw_command,
+            "items": [],
+        }));
+    }
+    let mut source_totals: BTreeMap<&'static str, usize> = BTreeMap::new();
+    let mut rows: Vec<(&ContextEntry, usize)> = entries
+        .iter()
+        .map(|entry| {
+            let tokens = estimate_tokens_for_text(&entry.content);
+            *source_totals
+                .entry(source_label(&entry.source))
+                .or_default() += tokens;
+            (entry, tokens)
+        })
+        .collect();
+    rows.sort_by_key(|row| std::cmp::Reverse(row.1));
+    let estimated_total: usize = rows.iter().map(|(_, tokens)| *tokens).sum();
+    let items: Vec<Value> = rows
+        .into_iter()
+        .take(10)
+        .map(|(entry, tokens)| {
+            serde_json::json!({
+                "label": source_label(&entry.source),
+                "detail": preview_line(&entry.content, 160),
+                "tokens": tokens,
+                "turn_id": entry.turn_id,
+                "untrusted": entry.untrusted,
+                "tool_call_id": entry.tool_call_id,
+            })
+        })
+        .collect();
+    Ok(serde_json::json!({
+        "kind": "context_top",
+        "title": "Context",
+        "message": format!("context top: {} entries · estimated {} tok", entries.len(), estimated_total),
+        "severity": "info",
+        "command": raw_command,
+        "source_totals": source_totals,
+        "items": items,
+    }))
+}
+
+async fn handle_command_compact(
+    state: &DaemonState,
+    session_id: Option<&str>,
+) -> Result<Value, String> {
+    let session_id = require_session_id(session_id, "compact")?;
+    let queued = {
+        let sessions = state.sessions.lock().await;
+        sessions
+            .get(&session_id)
+            .map(|entry| {
+                entry.compact_request.store(true, Ordering::SeqCst);
+                true
+            })
+            .unwrap_or(false)
+    };
+    if queued {
+        Ok(command_result(
+            "compact",
+            "Compact",
+            "compact: flag set - will fire on next turn",
+            "info",
+        ))
+    } else {
+        Err(format!("compact: session {session_id} is not running"))
+    }
+}
+
+fn handle_command_diff(state: &DaemonState, raw_command: &str) -> Result<Value, String> {
+    let diff = GitManager::new(state.project_root.as_ref().clone())
+        .diff()
+        .map_err(|err| format!("diff: {err}"))?;
+    Ok(serde_json::json!({
+        "kind": "diff",
+        "title": "Working Tree Diff",
+        "message": if diff.trim().is_empty() { "diff: no changes" } else { "diff: working tree changes" },
+        "severity": "info",
+        "command": raw_command,
+        "diff": diff,
+    }))
+}
+
+fn handle_command_undo(state: &DaemonState, raw_command: &str) -> Result<Value, String> {
+    let message = restore_latest_checkpoint(state.project_root.as_ref())
+        .map_err(|err| format!("undo: {err}"))?;
+    Ok(serde_json::json!({
+        "kind": "undo",
+        "title": "Undo",
+        "message": message,
+        "severity": "info",
+        "command": raw_command,
+    }))
+}
+
+fn handle_command_todos(state: &DaemonState, raw_command: &str) -> Result<Value, String> {
+    const MAX_HITS: usize = 500;
+    const SKIP_DIRS: &[&str] = &[
+        ".git",
+        "target",
+        "node_modules",
+        ".peridot",
+        ".idea",
+        ".vscode",
+    ];
+    const MARKERS: &[&str] = &["TODO", "FIXME", "HACK", "XXX", "BUG"];
+    let mut hits = Vec::new();
+    let mut walked = 0usize;
+    walk_for_todos(
+        state.project_root.as_ref(),
+        state.project_root.as_ref(),
+        &mut hits,
+        &mut walked,
+        SKIP_DIRS,
+        MARKERS,
+        MAX_HITS,
+    );
+    let message = if hits.is_empty() {
+        format!("todos: no markers found (scanned {walked} file(s))")
+    } else {
+        format!("todos: {} hit(s) across {walked} file(s)", hits.len())
+    };
+    Ok(serde_json::json!({
+        "kind": "todos",
+        "title": "TODOs",
+        "message": message,
+        "severity": "info",
+        "command": raw_command,
+        "items": hits,
+        "truncated": hits.len() == MAX_HITS,
+    }))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn walk_for_todos(
+    root: &Path,
+    dir: &Path,
+    hits: &mut Vec<Value>,
+    walked: &mut usize,
+    skip_dirs: &[&str],
+    markers: &[&str],
+    cap: usize,
+) {
+    if hits.len() >= cap {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if hits.len() >= cap {
+            return;
+        }
+        let path = entry.path();
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if file_type.is_dir() {
+            if skip_dirs.iter().any(|s| *s == name_str) || name_str.starts_with('.') {
+                continue;
+            }
+            walk_for_todos(root, &path, hits, walked, skip_dirs, markers, cap);
+            continue;
+        }
+        if !file_type.is_file() || name_str.starts_with('.') {
+            continue;
+        }
+        if entry.metadata().map(|m| m.len()).unwrap_or(0) > 1_000_000 {
+            continue;
+        }
+        let Ok(content) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        *walked += 1;
+        let rel = path
+            .strip_prefix(root)
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        for (idx, line) in content.lines().enumerate() {
+            if hits.len() >= cap {
+                return;
+            }
+            if let Some(marker) = markers.iter().find(|m| line.contains(**m)) {
+                hits.push(serde_json::json!({
+                    "label": marker,
+                    "path": rel,
+                    "line": idx + 1,
+                    "detail": preview_line(line.trim(), 240),
+                }));
+            }
+        }
+    }
+}
+
+fn config_path(state: &DaemonState) -> PathBuf {
+    state.project_root.join(".peridot/config.toml")
+}
+
+fn handle_command_mcp_list(state: &DaemonState, raw_command: &str) -> Result<Value, String> {
+    let path = config_path(state);
+    let config = read_project_config(&path)?;
+    let items: Vec<Value> = config
+        .mcp
+        .iter()
+        .map(|entry| {
+            let detail = match entry.transport {
+                McpTransport::Stdio => {
+                    let args = if entry.args.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" {}", entry.args.join(" "))
+                    };
+                    format!("{}{}", entry.command.clone().unwrap_or_default(), args)
+                }
+                McpTransport::Http => entry.url.clone().unwrap_or_default(),
+            };
+            serde_json::json!({
+                "label": entry.name,
+                "detail": detail,
+                "transport": entry.transport.to_string(),
+            })
+        })
+        .collect();
+    Ok(serde_json::json!({
+        "kind": "mcp",
+        "title": "MCP Servers",
+        "message": if items.is_empty() { "mcp: <none configured>".to_string() } else { format!("mcp: {} server(s)", items.len()) },
+        "severity": "info",
+        "command": raw_command,
+        "items": items,
+    }))
+}
+
+fn handle_command_mcp_add(
+    state: &DaemonState,
+    raw_command: &str,
+    name: &str,
+    transport: &str,
+    target: &str,
+) -> Result<Value, String> {
+    let path = config_path(state);
+    let existing = read_project_config(&path)?;
+    if existing.mcp.iter().any(|m| m.name == name) {
+        return Err(format!(
+            "mcp add: '{name}' already configured - use /mcp remove first"
+        ));
+    }
+    let block = match transport.to_ascii_lowercase().as_str() {
+        "stdio" => {
+            let mut parts = target.split_whitespace();
+            let Some(command) = parts.next() else {
+                return Err("mcp add: stdio transport requires a command".to_string());
+            };
+            let args: Vec<&str> = parts.collect();
+            let args_toml = if args.is_empty() {
+                String::new()
+            } else {
+                let quoted = args
+                    .iter()
+                    .map(|a| format!("\"{}\"", escape_toml_string(a)))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("args = [{quoted}]\n")
+            };
+            format!(
+                "\n[[mcp]]\nname = \"{}\"\ntransport = \"stdio\"\ncommand = \"{}\"\n{}",
+                escape_toml_string(name),
+                escape_toml_string(command),
+                args_toml,
+            )
+        }
+        "http" | "sse" => format!(
+            "\n[[mcp]]\nname = \"{}\"\ntransport = \"http\"\nurl = \"{}\"\n",
+            escape_toml_string(name),
+            escape_toml_string(target),
+        ),
+        other => {
+            return Err(format!(
+                "mcp add: unknown transport '{other}' (use stdio or http)"
+            ));
+        }
+    };
+    let existing_content = match std::fs::read_to_string(&path) {
+        Ok(content) => content,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(err) => return Err(format!("mcp add: read {}: {err}", path.display())),
+    };
+    let new_content = if existing_content.is_empty() {
+        block.trim_start_matches('\n').to_string()
+    } else if existing_content.ends_with('\n') {
+        format!("{existing_content}{block}")
+    } else {
+        format!("{existing_content}\n{block}")
+    };
+    atomic_write(&path, &new_content)?;
+    Ok(serde_json::json!({
+        "kind": "mcp",
+        "title": "MCP",
+        "message": format!("mcp: added '{name}' to {}. Restart this session for it to take effect.", path.display()),
+        "severity": "info",
+        "command": raw_command,
+    }))
+}
+
+fn handle_command_mcp_remove(
+    state: &DaemonState,
+    raw_command: &str,
+    name: &str,
+) -> Result<Value, String> {
+    let path = config_path(state);
+    let content = std::fs::read_to_string(&path)
+        .map_err(|err| format!("mcp remove: read {}: {err}", path.display()))?;
+    let Some(new_content) = remove_mcp_block(&content, name) else {
+        return Err(format!("mcp remove: no server named '{name}'"));
+    };
+    atomic_write(&path, &new_content)?;
+    Ok(serde_json::json!({
+        "kind": "mcp",
+        "title": "MCP",
+        "message": format!("mcp: removed '{name}' from {}. Restart this session to drop its tools from the registry.", path.display()),
+        "severity": "info",
+        "command": raw_command,
+    }))
+}
+
+async fn handle_command_mcp_test(
+    state: &DaemonState,
+    raw_command: &str,
+    name: &str,
+) -> Result<Value, String> {
+    let path = config_path(state);
+    let config = read_project_config(&path)?;
+    let Some(entry) = config.mcp.iter().find(|m| m.name == name).cloned() else {
+        return Err(format!("mcp test: no server named '{name}'"));
+    };
+    let client = peridot_mcp::McpClient::new(entry);
+    let count = client
+        .list_tools()
+        .await
+        .map_err(|err| format!("mcp test '{name}': {err}"))?
+        .len();
+    Ok(serde_json::json!({
+        "kind": "mcp",
+        "title": "MCP",
+        "message": format!("mcp: '{name}' reachable - {count} tool(s) exposed"),
+        "severity": "info",
+        "command": raw_command,
+    }))
+}
+
+fn validate_branch_name(name: &str) -> Result<(), String> {
+    if name.is_empty() {
+        return Err("branch name must not be empty".to_string());
+    }
+    if name
+        .chars()
+        .any(|c| matches!(c, '/' | '\\' | '.' | ':' | ' '))
+    {
+        return Err(format!(
+            "branch name '{name}' contains forbidden character (only ASCII letters / digits / `-` / `_` allowed)"
+        ));
+    }
+    Ok(())
+}
+
+fn handle_command_branch_save(
+    state: &DaemonState,
+    session_id: Option<&str>,
+    raw_command: &str,
+    name: &str,
+) -> Result<Value, String> {
+    validate_branch_name(name)?;
+    let session_id = require_session_id(session_id, "branch save")?;
+    let src = context_snapshot_path(state, &session_id);
+    if !src.exists() {
+        return Err(format!(
+            "branch save: no context.bin yet for session {session_id} - submit at least one turn first"
+        ));
+    }
+    let dst_dir = state.project_root.join(".peridot/branches").join(name);
+    if dst_dir.exists() {
+        return Err(format!(
+            "branch save: '{name}' already exists - remove it manually first"
+        ));
+    }
+    std::fs::create_dir_all(&dst_dir)
+        .map_err(|err| format!("branch save: create {}: {err}", dst_dir.display()))?;
+    let dst = dst_dir.join("context.bin");
+    std::fs::copy(&src, &dst).map_err(|err| format!("branch save: copy: {err}"))?;
+    Ok(serde_json::json!({
+        "kind": "branch",
+        "title": "Branch",
+        "message": format!("branch: saved '{name}' from session {session_id}"),
+        "severity": "info",
+        "command": raw_command,
+    }))
+}
+
+fn handle_command_branch_restore(
+    state: &DaemonState,
+    session_id: Option<&str>,
+    raw_command: &str,
+    name: &str,
+) -> Result<Value, String> {
+    validate_branch_name(name)?;
+    let session_id = require_session_id(session_id, "branch restore")?;
+    let src = state
+        .project_root
+        .join(".peridot/branches")
+        .join(name)
+        .join("context.bin");
+    if !src.exists() {
+        return Err(format!("branch restore: no branch named '{name}'"));
+    }
+    let session_dir = state
+        .project_root
+        .join(".peridot/sessions")
+        .join(&session_id);
+    std::fs::create_dir_all(&session_dir)
+        .map_err(|err| format!("branch restore: create {}: {err}", session_dir.display()))?;
+    let dst = session_dir.join("context.bin");
+    std::fs::copy(&src, &dst).map_err(|err| format!("branch restore: copy: {err}"))?;
+    Ok(serde_json::json!({
+        "kind": "branch",
+        "title": "Branch",
+        "message": format!("branch: restored '{name}' into session {session_id}. Submit your next task to continue from that point."),
+        "severity": "info",
+        "command": raw_command,
+    }))
+}
+
+fn handle_command_branch_list(state: &DaemonState, raw_command: &str) -> Result<Value, String> {
+    let dir = state.project_root.join(".peridot/branches");
+    let mut rows: Vec<Value> = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let stamp = path
+                .metadata()
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs().to_string())
+                .unwrap_or_else(|| "?".to_string());
+            rows.push(serde_json::json!({ "label": name, "detail": format!("unix {stamp}") }));
+        }
+    }
+    rows.sort_by(|a, b| {
+        a.get("label")
+            .and_then(Value::as_str)
+            .cmp(&b.get("label").and_then(Value::as_str))
+    });
+    Ok(serde_json::json!({
+        "kind": "branch",
+        "title": "Branches",
+        "message": if rows.is_empty() { "branches: <none>".to_string() } else { format!("branches: {} saved", rows.len()) },
+        "severity": "info",
+        "command": raw_command,
+        "items": rows,
+    }))
+}
+
+fn handle_command_branch_picker(
+    state: &DaemonState,
+    session_id: Option<&str>,
+    raw_command: &str,
+) -> Result<Value, String> {
+    let session_id = require_session_id(session_id, "branch picker")?;
+    let entries = read_context_snapshot(state, &session_id)?;
+    let mut seen: BTreeMap<u64, Value> = BTreeMap::new();
+    for entry in entries {
+        seen.entry(entry.turn_id).or_insert_with(|| {
+            serde_json::json!({
+                "label": format!("turn {}", entry.turn_id),
+                "detail": preview_line(&entry.content, 100),
+                "turn_id": entry.turn_id,
+                "source": source_label(&entry.source),
+            })
+        });
+    }
+    let items: Vec<Value> = seen.into_values().collect();
+    Ok(serde_json::json!({
+        "kind": "branch_picker",
+        "title": "Branch Turns",
+        "message": if items.is_empty() { "branch picker: no turns".to_string() } else { format!("branch picker: {} turn(s)", items.len()) },
+        "severity": "info",
+        "command": raw_command,
+        "items": items,
+    }))
+}
+
+fn handle_command_branch_turn(
+    state: &DaemonState,
+    session_id: Option<&str>,
+    raw_command: &str,
+    turn_id: u64,
+) -> Result<Value, String> {
+    let session_id = require_session_id(session_id, "branch turn")?;
+    let snapshot_path = context_snapshot_path(state, &session_id);
+    let entries = read_context_snapshot(state, &session_id)?;
+    let Some(last_keep) = entries.iter().rposition(|entry| entry.turn_id <= turn_id) else {
+        return Err(format!(
+            "branch turn: turn id {turn_id} not found in snapshot"
+        ));
+    };
+    let kept = &entries[..=last_keep];
+    let dropped_entries: Vec<ContextEntry> = entries[last_keep + 1..].to_vec();
+    let dropped_count = dropped_entries.len();
+    if !dropped_entries.is_empty() {
+        let journal_path = branch_journal_path(state, &session_id);
+        let mut journal = BranchJournal::load(&journal_path);
+        journal.record(turn_id, dropped_entries);
+        journal
+            .save(&journal_path)
+            .map_err(|err| format!("branch turn: journal write error - {err}"))?;
+    }
+    let serialized =
+        serde_json::to_vec(kept).map_err(|err| format!("branch turn: serialise error - {err}"))?;
+    std::fs::write(&snapshot_path, &serialized)
+        .map_err(|err| format!("branch turn: write error - {err}"))?;
+    Ok(serde_json::json!({
+        "kind": "branch",
+        "title": "Branch",
+        "message": format!("branch turn: forked at turn {turn_id} ({dropped_count} entries saved to journal)"),
+        "severity": "info",
+        "command": raw_command,
+    }))
+}
+
+fn handle_command_branch_tree(
+    state: &DaemonState,
+    session_id: Option<&str>,
+    raw_command: &str,
+) -> Result<Value, String> {
+    let session_id = require_session_id(session_id, "branch tree")?;
+    let journal = BranchJournal::load(&branch_journal_path(state, &session_id));
+    let items: Vec<Value> = journal
+        .tree_summary()
+        .into_iter()
+        .map(|line| serde_json::json!({ "label": line }))
+        .collect();
+    Ok(serde_json::json!({
+        "kind": "branch",
+        "title": "Branch Tree",
+        "message": if journal.limbs.is_empty() { "branch tree: no abandoned limbs yet - fork with `/branch turn <id>` first".to_string() } else { format!("branch tree: {} limb(s)", journal.limbs.len()) },
+        "severity": "info",
+        "command": raw_command,
+        "items": items,
+    }))
+}
+
+fn handle_command_branch_switch(
+    state: &DaemonState,
+    session_id: Option<&str>,
+    raw_command: &str,
+    index: usize,
+) -> Result<Value, String> {
+    let session_id = require_session_id(session_id, "branch switch")?;
+    let snapshot_path = context_snapshot_path(state, &session_id);
+    if !snapshot_path.exists() {
+        return Err("branch switch: no context snapshot".to_string());
+    }
+    let journal_path = branch_journal_path(state, &session_id);
+    let mut journal = BranchJournal::load(&journal_path);
+    let Some(limb) = journal.take_limb(index) else {
+        return Err(format!(
+            "branch switch: limb [{index}] not found (have {} limbs)",
+            journal.limbs.len()
+        ));
+    };
+    let bytes = std::fs::read(&snapshot_path)
+        .map_err(|err| format!("branch switch: read snapshot - {err}"))?;
+    let current_entries: Vec<ContextEntry> = serde_json::from_slice(&bytes)
+        .map_err(|err| format!("branch switch: parse snapshot - {err}"))?;
+    let fork_turn = limb.parent_turn_id;
+    let Some(last_keep) = current_entries
+        .iter()
+        .rposition(|entry| entry.turn_id <= fork_turn)
+    else {
+        journal.limbs.insert(index, limb);
+        return Err(format!(
+            "branch switch: fork point turn {fork_turn} not in current snapshot"
+        ));
+    };
+    let current_tail: Vec<ContextEntry> = current_entries[last_keep + 1..].to_vec();
+    if !current_tail.is_empty() {
+        journal.record(fork_turn, current_tail);
+    }
+    let mut new_entries = current_entries[..=last_keep].to_vec();
+    new_entries.extend(limb.entries);
+    let serialized = serde_json::to_vec(&new_entries)
+        .map_err(|err| format!("branch switch: serialise - {err}"))?;
+    std::fs::write(&snapshot_path, &serialized)
+        .map_err(|err| format!("branch switch: write - {err}"))?;
+    journal
+        .save(&journal_path)
+        .map_err(|err| format!("branch switch: journal write - {err}"))?;
+    Ok(serde_json::json!({
+        "kind": "branch",
+        "title": "Branch",
+        "message": format!("branch switch: swapped to limb [{index}] (fork@turn {fork_turn}). Submit your next task to continue."),
+        "severity": "info",
+        "command": raw_command,
+    }))
+}
+
+fn read_project_config(path: &Path) -> Result<PeridotConfig, String> {
+    match std::fs::read_to_string(path) {
+        Ok(content) => toml::from_str::<PeridotConfig>(&content)
+            .map_err(|err| format!("failed to parse {}: {err}", path.display())),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(PeridotConfig::default()),
+        Err(err) => Err(format!("failed to read {}: {err}", path.display())),
+    }
+}
+
+fn remove_mcp_block(content: &str, target: &str) -> Option<String> {
+    let lines: Vec<&str> = content.lines().collect();
+    let mut blocks: Vec<(usize, usize, Option<String>)> = Vec::new();
+    let mut current_start: Option<usize> = None;
+    let mut current_name: Option<String> = None;
+    for (idx, line) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+        if trimmed == "[[mcp]]" {
+            if let Some(start) = current_start.take() {
+                blocks.push((start, idx, current_name.take()));
+            }
+            current_start = Some(idx);
+        } else if let Some(name_value) = trimmed
+            .strip_prefix("name")
+            .and_then(|s| s.trim_start().strip_prefix('='))
+            .map(|s| s.trim().trim_matches('"'))
+            && current_start.is_some()
+            && current_name.is_none()
+        {
+            current_name = Some(name_value.to_string());
+        } else if (trimmed.starts_with("[[") || trimmed.starts_with('['))
+            && let Some(start) = current_start.take()
+        {
+            blocks.push((start, idx, current_name.take()));
+        }
+    }
+    if let Some(start) = current_start.take() {
+        blocks.push((start, lines.len(), current_name.take()));
+    }
+    let (start, end, _) = blocks
+        .into_iter()
+        .find(|(_, _, name)| name.as_deref() == Some(target))?;
+    let mut kept: Vec<&str> = Vec::with_capacity(lines.len());
+    kept.extend(lines.iter().take(start).copied());
+    kept.extend(lines.iter().skip(end).copied());
+    let mut result = kept.join("\n");
+    if content.ends_with('\n') {
+        result.push('\n');
+    }
+    Some(result)
+}
+
+fn escape_toml_string(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+fn atomic_write(path: &Path, content: &str) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|err| format!("create {}: {err}", parent.display()))?;
+    }
+    let temp = path.with_extension("toml.tmp");
+    std::fs::write(&temp, content).map_err(|err| format!("write {}: {err}", temp.display()))?;
+    std::fs::rename(&temp, path)
+        .map_err(|err| format!("rename {} -> {}: {err}", temp.display(), path.display()))
 }
 
 fn parse_ask_user_answer(value: &Value) -> Result<AskUserAnswer, String> {
@@ -1286,6 +2360,39 @@ mod tests {
         let out = dispatch_and_collect(r#"{"jsonrpc":"2.0","id":4,"method":"not.real"}"#).await;
         assert_eq!(out[0]["id"], 4);
         assert_eq!(out[0]["error"]["code"], -32601);
+    }
+
+    #[tokio::test]
+    async fn session_command_todos_returns_structured_hits() {
+        let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+        let root = test_project("command-todos");
+        let src = root.join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("lib.rs"), "// TODO: wire command rpc\n").unwrap();
+        let state = DaemonState::new(
+            root.clone(),
+            PeridotConfig::default(),
+            test_options(None),
+            tx,
+        );
+        let line = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 41,
+            "method": "session.command",
+            "params": { "command": "/todos" }
+        })
+        .to_string();
+
+        let _ = dispatch_line(&state, &line).await.unwrap();
+        let response: Value = serde_json::from_str(&rx.recv().await.unwrap()).unwrap();
+
+        assert_eq!(response["id"], 41);
+        assert_eq!(response["result"]["kind"], "todos");
+        assert_eq!(response["result"]["items"][0]["path"], "src/lib.rs");
+        assert_eq!(response["result"]["items"][0]["line"], 1);
+
+        shutdown_sessions(&state).await;
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[tokio::test]

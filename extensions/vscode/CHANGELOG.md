@@ -1,5 +1,18 @@
 # Peridot Agent — Extension Changelog
 
+## [0.5.14] — 2026-05-22
+
+### Added — daemon slash command parity and persistent sessions
+
+- Branch, MCP, compact, TODO, diff, undo, and context slash commands now call
+  the daemon `session.command` RPC instead of using local placeholder text.
+- Open chat sessions, transcripts, daemon session ids, queued prompts, and run
+  options are restored from workspace storage after Extension Host reloads.
+- Branch/MCP/TODO/context/diff command results render as structured rows in the
+  sidebar, and ChatGPT OAuth shows a manual login link when browser handoff is
+  attempted.
+- The VSIX package now includes the MIT license file.
+
 ## [0.5.11] — 2026-05-21
 
 ### Added — persistent chat sessions and cleaner transcript UX

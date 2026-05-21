@@ -9,6 +9,7 @@ import { PeridotDaemon, RpcNotification } from './daemon';
 import { resetBinaryCache, resolvePeridotBinary } from './peridotBin';
 import { peridotChildEnv } from './processEnv';
 import { StatusCache } from './statusCache';
+import type { CommandResultView } from './types';
 import {
   PeridotSidebarProvider,
   type ApprovalResponse,
@@ -60,9 +61,11 @@ const OPENAI_OAUTH_BASE_URL = 'https://chatgpt.com/backend-api/codex';
 export function activate(context: vscode.ExtensionContext) {
   const output = vscode.window.createOutputChannel('Peridot');
   context.subscriptions.push(output);
-  const sidebar: PeridotSidebarProvider = new PeridotSidebarProvider(context.extensionUri, {
+  const sidebar: PeridotSidebarProvider = new PeridotSidebarProvider(context.extensionUri, context.workspaceState, {
     runTask: async (task: string, options: RunOptions): Promise<void> =>
       runTask(task, output, sidebar, options),
+    runSlashCommand: async (command: string, options: RunOptions): Promise<CommandResultView> =>
+      runSlashCommand(command, output, sidebar, options),
     cancelTask: async (): Promise<void> => cancelTask(output),
     clearSession: async (): Promise<void> => clearExtensionSession(output),
     loginOpenAi: async (): Promise<void> => loginOpenAi(output, sidebar),
@@ -257,6 +260,47 @@ async function runTask(
     sidebar.appendError(message);
     await vscode.window.showErrorMessage(`Peridot run failed: ${message}`);
   }
+}
+
+async function runSlashCommand(
+  command: string,
+  output: vscode.OutputChannel,
+  sidebar: PeridotSidebarProvider,
+  _options: RunOptions,
+): Promise<CommandResultView> {
+  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!folder) {
+    throw new Error('Open a workspace folder before running Peridot commands.');
+  }
+  const sessionId = activeRun?.sessionId ?? sidebar.currentDaemonSessionId();
+  const params = {
+    command,
+    ...(sessionId ? { session_id: sessionId } : {}),
+  };
+  if (activeRun?.daemon) {
+    output.appendLine(`[peridot] session.command ${command}`);
+    return asCommandResult(await activeRun.daemon.send('session.command', params));
+  }
+
+  output.appendLine(`[peridot] session.command (spawn) ${command}`);
+  const daemon = await PeridotDaemon.spawn(folder);
+  try {
+    return asCommandResult(await daemon.send('session.command', params));
+  } finally {
+    await daemon.shutdown();
+  }
+}
+
+function asCommandResult(value: unknown): CommandResultView {
+  if (typeof value === 'object' && value !== null) {
+    return value as CommandResultView;
+  }
+  return {
+    kind: 'message',
+    title: 'Command',
+    message: String(value),
+    severity: 'info',
+  };
 }
 
 interface RefreshOptions {
@@ -485,18 +529,23 @@ function chatGptLoginProcessOptions(
   output: vscode.OutputChannel,
   sidebar: PeridotSidebarProvider,
 ): RunProcessOptions {
+  let surfacedUrl: string | undefined;
   return {
     env: { PERIDOT_DISABLE_BROWSER_OPEN: '1' },
     onStdoutLine: (line) => {
       const authUrl = extractOpenAiAuthUrl(line);
       if (!authUrl) return;
-      sidebar.appendSystem('Opening ChatGPT login in your browser');
+      if (surfacedUrl !== authUrl) {
+        surfacedUrl = authUrl;
+        sidebar.appendSystem('Opening ChatGPT login in your browser');
+        sidebar.appendAuthLink(authUrl);
+      }
       output.appendLine(`[peridot] opening ChatGPT login URL via Cursor: ${authUrl}`);
       void vscode.env.openExternal(vscode.Uri.parse(authUrl)).then((opened) => {
         if (!opened) {
           output.appendLine(`[peridot] Cursor could not open browser: ${authUrl}`);
           void vscode.window.showWarningMessage(
-            'Peridot could not open the ChatGPT login page automatically. Check the Peridot output for the URL.',
+            'Peridot could not open the ChatGPT login page automatically. Use the login link shown in the Peridot chat.',
           );
         }
       });
