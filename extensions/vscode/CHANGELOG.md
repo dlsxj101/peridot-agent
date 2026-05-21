@@ -1,5 +1,15 @@
 # Peridot Agent — Extension Changelog
 
+## [0.5.8] — 2026-05-21
+
+### Fixed — release asset publishing
+
+- GitHub Release asset upload now runs once after all VSIX packages are
+  produced, avoiding concurrent release creation conflicts between platform
+  publish jobs.
+- VS Code extension workflows suppress noisy Node deprecation warnings from
+  action internals while using Node 24-compatible artifact actions.
+
 ## [0.5.7] — 2026-05-21
 
 ### Fixed — release workflow resilience

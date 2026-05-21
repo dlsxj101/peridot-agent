@@ -8,6 +8,9 @@ on:
       # artefacts.
       - "vsce/v*"
 
+env:
+  NODE_OPTIONS: --no-deprecation
+
 jobs:
   verify-secrets:
     name: Verify publish secrets present
@@ -104,8 +107,6 @@ jobs:
     name: Publish ${{ matrix.vsce-target }}
     needs: build-binary
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     strategy:
       # One publish job per platform — same .vsix build, different
       # `resources/peridot[.exe]` swapped in before `vsce package
@@ -170,16 +171,13 @@ jobs:
         # mismatched uploads are rejected by the Marketplace.
         run: npx vsce publish --packagePath *.vsix --no-dependencies -p "$VSCE_PAT"
 
-      - name: Upload .vsix to GitHub Release
-        uses: softprops/action-gh-release@v3
+      - name: Upload .vsix artifact
+        uses: actions/upload-artifact@v7
         with:
-          files: extensions/vscode/*.vsix
-          fail_on_unmatched_files: true
-          # Auto-creates the GitHub Release from the tag, attaches the
-          # .vsix as a downloadable asset for sideloading
-          # (`code --install-extension peridot-vscode-X.Y.Z.vsix`).
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          name: peridot-vscode-${{ matrix.vsce-target }}-vsix
+          path: extensions/vscode/*.vsix
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Publish to Open VSX
         env:
@@ -204,8 +202,6 @@ jobs:
     name: Publish universal
     needs: build-binary
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     defaults:
       run:
         working-directory: extensions/vscode
@@ -261,13 +257,13 @@ jobs:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
         run: npx vsce publish --packagePath *.vsix --no-dependencies -p "$VSCE_PAT"
 
-      - name: Upload universal .vsix to GitHub Release
-        uses: softprops/action-gh-release@v3
+      - name: Upload universal .vsix artifact
+        uses: actions/upload-artifact@v7
         with:
-          files: extensions/vscode/*.vsix
-          fail_on_unmatched_files: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          name: peridot-vscode-universal-vsix
+          path: extensions/vscode/*.vsix
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Publish universal to Open VSX
         env:
@@ -283,3 +279,28 @@ jobs:
             fi
             sleep 30
           done
+
+  publish-release-assets:
+    name: Upload VSIX assets to GitHub Release
+    needs:
+      - publish
+      - publish-universal
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download packaged VSIX artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: peridot-vscode-*-vsix
+          path: vsix-assets
+          merge-multiple: true
+
+      - name: Upload .vsix files to GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          files: vsix-assets/*.vsix
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

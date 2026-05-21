@@ -12,6 +12,9 @@ on:
       - "extensions/vscode/**"
       - ".github/workflows/vscode-ci.yml"
 
+env:
+  NODE_OPTIONS: --no-deprecation
+
 jobs:
   compile:
     name: TypeScript compile + package
