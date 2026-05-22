@@ -94,6 +94,19 @@ its parent transcript (M4), and the attention notifier line (M5).
 - The `/help` slash now renders one line per `SlashCommandSpec` returned by `slash_command_catalog()`: `<name> <arg_hint>  ·  <description> [<category>]`. Newly registered slashes therefore appear in `/help` automatically — no more drift between the catalog and the help text.
 - Output remains a single `push_transcript` so the existing transcript-wrap logic handles long help lists.
 
+### M35b — Editor slash catalog sync (landed)
+- The daemon exposes the same TUI slash catalog through `session.command_catalog`.
+- The VS Code extension fetches that catalog on activation and whenever the
+  daemon status refreshes, then passes it into the webview state. The sidebar
+  and webview no longer carry duplicated command arrays.
+- Editor session-control slashes use daemon `session.command` results first and
+  apply local UI updates only after success, keeping mode / permission / model /
+  provider / committee / goal control state aligned with the TUI command
+  semantics.
+- `/branch` without arguments returns a structured `branch_picker` result for
+  editor clients; the extension renders it as a picker and dispatches
+  `/branch turn <id>` when the operator selects a turn.
+
 ### M34 — `peridot version --detailed` (landed)
 - Bare `peridot version` still prints `peridot <semver>` for backwards compatibility with scripts that grep the first token.
 - `peridot version --detailed` adds three indented follow-up lines: `target: <os>`, `arch: <arch>`, and `profile: <release|dev>` when the binary was built with `CARGO_BUILD_PROFILE` propagated. Helpful when triaging "which binary is the operator running" against a release vs a local dev build.

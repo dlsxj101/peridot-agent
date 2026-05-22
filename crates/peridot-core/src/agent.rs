@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -28,7 +28,7 @@ use crate::recovery::{
 };
 use crate::requests::{
     AgentRunEvent, AgentRunRequest, AgentRunSummary, AgentTurnOutcome, AgentTurnRequest,
-    FileDiffPayload, StopReason,
+    FileDiffPayload, PlanStepUpdate, StopReason,
 };
 use crate::role::AgentRole;
 use crate::state::AgentState;
@@ -329,6 +329,15 @@ impl HarnessAgent {
             .ok_or_else(|| PeriError::Tool(format!("unknown tool: {}", call.name)))?;
         ensure_tool_allowed(self.state.mode, self.state.phase, tool.group(), &call.name)?;
         let project_root = project_root.into();
+        tool.validate_params(&call.parameters)?;
+        if tool.requires_confirmation(self.state.permission)
+            && !tool_call_has_confirmation_grant(&call, &security)
+        {
+            return Err(PeriError::PermissionDenied(format!(
+                "{} requires explicit user approval",
+                call.name
+            )));
+        }
         let mut ctx = ToolContext::new(project_root.clone(), self.state.permission)
             .with_denied_paths(denied_paths)
             .with_hooks(hooks)
@@ -345,7 +354,6 @@ impl HarnessAgent {
         if let Some(bus) = self.message_bus.clone() {
             ctx = ctx.with_message_bus(bus);
         }
-        tool.validate_params(&call.parameters)?;
         let runner = HookRunner::new(&project_root, ctx.hooks.clone());
         let mut variables = tool_hook_variables(&call.name, &call.parameters);
         variables.insert(
@@ -651,7 +659,7 @@ impl HarnessAgent {
                     name: tool_name.clone(),
                     parameters: tool_parameters.clone(),
                 },
-                request.project_root,
+                request.project_root.clone(),
                 request.denied_paths,
                 request.hooks,
                 request.security,
@@ -718,6 +726,7 @@ impl HarnessAgent {
                 name: tool_name.clone(),
                 result: tool_result.clone(),
             });
+            emit_plan_updated_after_tool(&tool_name, &tool_result, &request.project_root, events);
         }
         // The tool result is a tool-role message paired with the assistant's
         // `tool_call_id`. We bypass `append_observation` because it stamps every
@@ -810,6 +819,12 @@ impl HarnessAgent {
                         name: pending_name.clone(),
                         result: result.clone(),
                     });
+                    emit_plan_updated_after_tool(
+                        &pending_name,
+                        &result,
+                        &request.project_root,
+                        &mut events,
+                    );
                     append_pending_resume_observation(&mut self.context, &pending_name, &result)?;
                 }
                 Err(err) => {
@@ -1447,6 +1462,56 @@ fn take_pending_resume(path: Option<&PathBuf>) -> Option<ToolCall> {
     Some(call)
 }
 
+#[derive(serde::Deserialize)]
+struct TodoPlanFile {
+    steps: Vec<TodoPlanStep>,
+}
+
+#[derive(serde::Deserialize)]
+struct TodoPlanStep {
+    text: String,
+    status: String,
+}
+
+fn emit_plan_updated_after_tool<F>(
+    tool_name: &str,
+    result: &ToolResult,
+    project_root: &Path,
+    events: &mut F,
+) where
+    F: FnMut(AgentRunEvent),
+{
+    if !result.success || !matches!(tool_name, "plan_create" | "plan_update") {
+        return;
+    }
+    let Some((steps, current)) = read_todo_plan_updates(project_root) else {
+        return;
+    };
+    events(AgentRunEvent::PlanUpdated { steps, current });
+}
+
+fn read_todo_plan_updates(project_root: &Path) -> Option<(Vec<PlanStepUpdate>, Option<u32>)> {
+    let content = std::fs::read_to_string(project_root.join("todo.json")).ok()?;
+    let plan: TodoPlanFile = serde_json::from_str(&content).ok()?;
+    let mut current = None;
+    let steps = plan
+        .steps
+        .into_iter()
+        .enumerate()
+        .map(|(index, step)| {
+            let done = matches!(step.status.as_str(), "done" | "completed");
+            if !done && current.is_none() {
+                current = Some(index as u32);
+            }
+            PlanStepUpdate {
+                label: step.text,
+                done,
+            }
+        })
+        .collect();
+    Some((steps, current))
+}
+
 fn append_pending_resume_observation(
     context: &mut ContextManager,
     tool_name: &str,
@@ -1850,6 +1915,71 @@ fn tool_invocation_parameters(invocation: &ToolInvocation) -> serde_json::Value 
         }
         other => other.clone(),
     }
+}
+
+fn tool_call_has_confirmation_grant(call: &ToolCall, security: &SecurityConfig) -> bool {
+    if security
+        .approved_session_tools
+        .iter()
+        .any(|tool| tool == &call.name)
+    {
+        return true;
+    }
+
+    let call_key = approved_tool_call_key(&call.name, &call.parameters);
+    if security
+        .approved_tool_calls
+        .iter()
+        .any(|approved| approved == &call_key)
+    {
+        return true;
+    }
+
+    if let Some(path) = call
+        .parameters
+        .get("path")
+        .and_then(serde_json::Value::as_str)
+    {
+        let path_key = approved_tool_path_key(&call.name, path);
+        if security
+            .approved_tool_path_scopes
+            .iter()
+            .any(|approved| approved == &path_key)
+        {
+            return true;
+        }
+    }
+
+    if call.name == "shell_exec"
+        && let Some(command) = call
+            .parameters
+            .get("command")
+            .and_then(serde_json::Value::as_str)
+    {
+        let normalized = normalize_shell_command_for_approval(command);
+        if security
+            .approved_shell_commands
+            .iter()
+            .any(|approved| approved == &normalized)
+        {
+            return true;
+        }
+    }
+
+    false
+}
+
+fn approved_tool_call_key(tool_name: &str, parameters: &serde_json::Value) -> String {
+    let encoded = serde_json::to_string(parameters).unwrap_or_else(|_| parameters.to_string());
+    format!("{tool_name}:{encoded}")
+}
+
+fn approved_tool_path_key(tool_name: &str, path: &str) -> String {
+    format!("{tool_name}:{path}")
+}
+
+fn normalize_shell_command_for_approval(command: &str) -> String {
+    command.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 #[cfg(test)]

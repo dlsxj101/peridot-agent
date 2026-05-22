@@ -8,6 +8,7 @@ import type {
   RunOptions,
   SidebarContext,
   SidebarState,
+  SlashCommandSpec,
   TranscriptItem,
 } from '../src/types';
 import { diffStats, renderUnifiedDiff } from './diff';
@@ -35,66 +36,25 @@ let composerPermissionOverride: string | undefined;
 let composerModelOverride: string | undefined;
 let transcriptPinnedToBottom = true;
 let transcriptScrollTop = 0;
+let forceTranscriptBottomOnce = false;
+let transcriptScrollRestorePending = false;
+let transcriptScrollRestoreToken = 0;
+let lastTranscriptAnimationKey = '';
+let lastTranscriptCount = 0;
+let lastComposerRunning: boolean | undefined;
+interface AssistantStreamSnapshot {
+  markdown: string;
+  visibleText: string;
+}
+const assistantTextByKey = new Map<string, AssistantStreamSnapshot>();
+let lastComposerSessionKey = '';
 let toolHistoryOpen = false;
 let slashPickerSelected = 0;
+let slashCommands: SlashCommandSpec[] = [];
+let todoExpanded = false;
+let lastTodoCurrentKey = '';
 
 const CHATGPT_MODELS = ['gpt-5.5', 'gpt-5.5-fast', 'gpt-5.4', 'gpt-5.4-mini'];
-interface SlashCommandSpec {
-  name: string;
-  description: string;
-  argHint?: string;
-}
-
-const SLASH_COMMANDS: SlashCommandSpec[] = [
-  { name: '/plan', description: 'Switch to plan mode' },
-  { name: '/execute', description: 'Switch to execute mode' },
-  { name: '/goal', description: 'Start a durable goal or manage it', argHint: '<objective|pause|resume|clear|status>' },
-  { name: '/safe', description: 'Use safe permission mode' },
-  { name: '/auto', description: 'Use auto permission mode' },
-  { name: '/yolo', description: 'Use yolo permission mode' },
-  { name: '/model', description: 'Switch the active model', argHint: '<name>' },
-  { name: '/provider', description: 'Switch the active provider', argHint: '<name>' },
-  { name: '/note', description: 'Attach an operator note', argHint: '<text>' },
-  { name: '/info', description: 'Show current session status' },
-  { name: '/committee', description: 'Toggle committee mode', argHint: '<off|planner|full>' },
-  { name: '/cost', description: 'Show cost and token totals' },
-  { name: '/compact', description: 'Request context compaction' },
-  { name: '/context top', description: 'Show context usage' },
-  { name: '/sidepanel', description: 'Show status summary' },
-  { name: '/status', description: 'Show status summary' },
-  { name: '/collapse', description: 'Toggle compact transcript preference' },
-  { name: '/session save', description: 'Save the current session' },
-  { name: '/plan show', description: 'Show current plan steps' },
-  { name: '/diff', description: 'Show working-tree diff' },
-  { name: '/undo', description: 'Undo the last change safely' },
-  { name: '/lang', description: 'Switch display locale', argHint: 'en|ko' },
-  { name: '/clear', description: 'Clear transcript and start a fresh session' },
-  { name: '/fork', description: 'Spawn a fork subagent task', argHint: '<task>' },
-  { name: '/teammate', description: 'Spawn a teammate subagent task', argHint: '<task>' },
-  { name: '/worktree', description: 'Request worktree-isolated subagent work', argHint: '<branch> <task>' },
-  { name: '/subagent model', description: 'Set subagent model preference', argHint: '<name|reset>' },
-  { name: '/reasoning', description: 'Set reasoning intensity', argHint: '<off|low|medium|high>' },
-  { name: '/fast', description: 'Toggle fast / priority service tier', argHint: '[on|off|toggle]' },
-  { name: '/think', description: 'Shortcut for reasoning high', argHint: '[off]' },
-  { name: '/mcp list', description: 'List configured MCP servers' },
-  { name: '/mcp add', description: 'Register an MCP server', argHint: '<name> <stdio|http> <command|url>' },
-  { name: '/mcp remove', description: 'Remove an MCP server', argHint: '<name>' },
-  { name: '/mcp test', description: 'Test an MCP server', argHint: '<name>' },
-  { name: '/todos', description: 'List TODO/FIXME/HACK/XXX/BUG comments' },
-  { name: '/rewind', description: 'Remove the last local exchange' },
-  { name: '/branch save', description: 'Snapshot current session branch', argHint: '<name>' },
-  { name: '/branch restore', description: 'Restore a saved branch snapshot', argHint: '<name>' },
-  { name: '/branch list', description: 'List saved branch snapshots' },
-  { name: '/branch turn', description: 'Fork at a past turn', argHint: '<turn-id>' },
-  { name: '/branch tree', description: 'Show saved branch tree' },
-  { name: '/branch switch', description: 'Switch to a saved branch limb', argHint: '<index>' },
-  { name: '/session new', description: 'Open a new chat session', argHint: '[task]' },
-  { name: '/session list', description: 'List open chat sessions' },
-  { name: '/session switch', description: 'Switch to another session', argHint: '<id|title>' },
-  { name: '/session close', description: 'Close a chat session', argHint: '<id|title>' },
-  { name: '/autofix', description: 'Toggle or configure auto-fix', argHint: '[on|off|N]' },
-  { name: '/help', description: 'Show slash command help' },
-];
 
 const markdownRenderer = new MarkdownIt({
   html: false,
@@ -119,20 +79,31 @@ window.addEventListener('message', (event: MessageEvent<InboundMessage>) => {
 vscode.postMessage({ type: 'ready' });
 
 function render(s: SidebarState): void {
+  slashCommands = s.slashCommands;
+  const composerSessionKey = s.view === 'session' ? s.activeChatId ?? s.sessionId ?? 'draft' : s.view;
+  const composerSessionChanged = composerSessionKey !== lastComposerSessionKey;
+  if (composerSessionChanged) {
+    composerModeOverride = undefined;
+    composerPermissionOverride = undefined;
+    composerModelOverride = undefined;
+    lastComposerSessionKey = composerSessionKey;
+  }
   // Preserve composer draft / selection across renders so streaming
   // events don't clobber what the user is typing or picking.
   const textarea = document.getElementById('composer-input') as HTMLTextAreaElement | null;
   if (textarea) composerDraft = textarea.value;
   const modeEl = document.getElementById('composer-mode') as HTMLSelectElement | null;
-  if (modeEl) composerModeOverride = modeEl.value;
+  if (modeEl && !composerSessionChanged) composerModeOverride = modeEl.value;
   const permEl = document.getElementById('composer-permission') as HTMLSelectElement | null;
-  if (permEl) composerPermissionOverride = permEl.value;
+  if (permEl && !composerSessionChanged) composerPermissionOverride = permEl.value;
   const modelEl = document.getElementById('composer-model') as HTMLInputElement | null;
-  if (modelEl) composerModelOverride = modelEl.value;
+  if (modelEl && !composerSessionChanged) composerModelOverride = modelEl.value;
   const transcriptEl = document.querySelector<HTMLElement>('.transcript');
-  if (transcriptEl) {
+  if (transcriptEl && !forceTranscriptBottomOnce && !transcriptScrollRestorePending) {
     transcriptPinnedToBottom = isTranscriptAtBottom(transcriptEl);
     transcriptScrollTop = transcriptEl.scrollTop;
+  } else if (forceTranscriptBottomOnce) {
+    transcriptPinnedToBottom = true;
   }
   // Remember which element had focus so we can re-focus after the
   // destructive replaceChildren below.
@@ -150,6 +121,16 @@ function render(s: SidebarState): void {
 
 function isTranscriptAtBottom(node: HTMLElement): boolean {
   return node.scrollHeight - node.scrollTop - node.clientHeight <= 24;
+}
+
+function pinTranscriptToBottomOnNextRender(): void {
+  forceTranscriptBottomOnce = true;
+  transcriptPinnedToBottom = true;
+  const transcriptEl = document.querySelector<HTMLElement>('.transcript');
+  if (transcriptEl) {
+    transcriptEl.scrollTop = transcriptEl.scrollHeight;
+    transcriptScrollTop = transcriptEl.scrollTop;
+  }
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -556,9 +537,13 @@ function renderSession(s: SidebarState): HTMLElement {
   const wrap = el('div', 'session');
   wrap.append(renderHeader(s));
   wrap.append(renderContextStrip(s.context));
+  if (s.hud.plan && s.hud.plan.steps.length > 0) wrap.append(renderTodoProgress(s.hud.plan, s.running));
   if (hasHudData(s)) wrap.append(renderHud(s));
   wrap.append(renderTranscript(s));
   wrap.append(renderQueue(s));
+  if (s.branchPicker) wrap.append(renderBranchPicker(s));
+  const approval = latestPendingApproval(s);
+  if (approval) wrap.append(renderApprovalDock(approval));
   wrap.append(renderComposer(s));
   return wrap;
 }
@@ -577,28 +562,17 @@ function renderHeader(s: SidebarState): HTMLElement {
   }
   const titleWrap = el('div', 'header-title-wrap');
   titleWrap.append(el('div', 'header-title', 'Peridot Agent'));
-  titleWrap.append(el('div', 'header-status', s.status));
+  titleWrap.append(
+    el(
+      'div',
+      `header-status ${isAnimatedStatus(s.status) ? 'text-gradient-active' : ''}`,
+      statusLabel(s.status),
+    ),
+  );
   left.append(titleWrap);
 
   const right = el('div', 'header-actions');
-  if (s.sessions.length > 0) {
-    const select = document.createElement('select');
-    select.className = 'session-select';
-    select.title = 'Open sessions';
-    select.setAttribute('aria-label', 'Open sessions');
-    s.sessions.forEach((session) => {
-      const option = document.createElement('option');
-      option.value = session.id;
-      option.textContent = `${session.running ? '● ' : ''}${session.title}`;
-      option.selected = session.active;
-      select.append(option);
-    });
-    select.addEventListener('change', () =>
-      vscode.postMessage({ type: 'selectSession', id: select.value }),
-    );
-    right.append(select);
-  }
-  right.append(iconButton('new', 'New session', () => vscode.postMessage({ type: 'newSession' })));
+  right.append(renderSessionMenu(s));
   right.append(iconButton('refresh', 'Refresh', () => vscode.postMessage({ type: 'refreshStatus' })));
   right.append(
     iconButton('switch', 'Switch provider', () =>
@@ -607,6 +581,65 @@ function renderHeader(s: SidebarState): HTMLElement {
   );
   header.append(left, right);
   return header;
+}
+
+function isAnimatedStatus(status: string): boolean {
+  return ['Waiting for model', 'Starting daemon', 'Running'].includes(status);
+}
+
+function statusLabel(status: string): string {
+  return status === 'Waiting for model' ? 'Preparing response' : status;
+}
+
+function renderSessionMenu(s: SidebarState): HTMLElement {
+  const active = s.sessions.find((session) => session.active);
+  const details = el('details', 'session-menu');
+  const summary = el('summary', 'session-menu-trigger');
+  summary.title = 'Open sessions';
+  summary.setAttribute('aria-label', 'Open sessions');
+  summary.append(el('span', 'session-menu-current', active?.title ?? 'New session'));
+  summary.append(el('span', 'session-menu-chevron', ''));
+  details.append(summary);
+
+  const menu = el('div', 'session-menu-list');
+  const newButton = el('button', 'session-menu-item session-menu-new');
+  newButton.type = 'button';
+  const newIcon = el('span', 'session-menu-icon');
+  newIcon.innerHTML = iconSvg('new');
+  newButton.append(newIcon);
+  const newText = el('span', 'session-menu-text');
+  newText.append(el('span', 'session-menu-title', 'New session'));
+  newText.append(el('span', 'session-menu-subtitle', 'Start when you send the first message'));
+  newButton.append(newText);
+  newButton.addEventListener('click', () => {
+    composerDraft = '';
+    vscode.postMessage({ type: 'newSession' });
+  });
+  menu.append(newButton);
+
+  if (s.sessions.length > 0) {
+    menu.append(el('div', 'session-menu-divider'));
+  }
+
+  for (const session of s.sessions) {
+    const item = el('button', `session-menu-item ${session.active ? 'active' : ''}`);
+    item.type = 'button';
+    item.disabled = session.active;
+    const marker = el('span', `session-menu-marker ${session.running ? 'running' : ''}`);
+    marker.textContent = session.active ? '✓' : session.running ? '●' : '';
+    const text = el('span', 'session-menu-text');
+    text.append(el('span', 'session-menu-title', session.title));
+    text.append(el('span', 'session-menu-subtitle', session.running ? 'Running' : session.status));
+    item.append(marker, text);
+    item.addEventListener('click', () => {
+      composerDraft = '';
+      vscode.postMessage({ type: 'selectSession', id: session.id });
+    });
+    menu.append(item);
+  }
+
+  details.append(menu);
+  return details;
 }
 
 function iconButton(kind: string, label: string, onClick: () => void): HTMLElement {
@@ -688,7 +721,7 @@ function pill(text: string, variant: string): HTMLElement {
 }
 
 function hasHudData(s: SidebarState): boolean {
-  return Boolean(s.hud.usage || s.hud.budget || s.hud.plan || s.hud.committee);
+  return Boolean(s.hud.usage || s.hud.budget || s.hud.committee);
 }
 
 function renderHud(s: SidebarState): HTMLElement {
@@ -732,9 +765,6 @@ function renderHud(s: SidebarState): HTMLElement {
   }
   hud.append(meters);
 
-  if (hudState.plan && hudState.plan.steps.length > 0) {
-    hud.append(renderPlan(hudState.plan));
-  }
   return hud;
 }
 
@@ -762,25 +792,69 @@ function meter(label: string, primary: string, secondary: string): HTMLElement {
   return wrap;
 }
 
-function renderPlan(plan: PlanSlice): HTMLElement {
-  const details = el('details', 'plan-panel');
-  details.open = true;
-  const summary = el(
-    'summary',
-    'plan-summary',
-    `Plan · ${plan.steps.length} step${plan.steps.length === 1 ? '' : 's'}` +
-      (typeof plan.current === 'number' ? ` · on step ${plan.current + 1}` : ''),
-  );
+function renderTodoProgress(plan: PlanSlice, running: boolean): HTMLElement {
+  const currentIndex = activePlanIndex(plan);
+  const current = plan.steps[currentIndex] ?? plan.steps[0];
+  const doneCount = plan.steps.filter((step) => isDoneStep(step.status)).length;
+  const key = `${currentIndex}:${current?.text ?? ''}:${current?.status ?? ''}:${running}`;
+  const changed = lastTodoCurrentKey.length > 0 && lastTodoCurrentKey !== key;
+  lastTodoCurrentKey = key;
+
+  const details = el('details', 'todo-progress');
+  details.open = todoExpanded;
+  details.addEventListener('toggle', () => {
+    todoExpanded = details.open;
+  });
+
+  const summary = el('summary', `todo-summary ${changed && !todoExpanded ? 'is-changing' : ''}`);
+  const label = el('span', 'todo-summary-label', 'Todo');
+  const text = el('span', 'todo-summary-text');
+  text.textContent = current
+    ? current.text
+    : `${doneCount}/${plan.steps.length} complete`;
+  const meta = el('span', 'todo-summary-meta', `${doneCount}/${plan.steps.length}`);
+  summary.append(label);
+  if (running && current && !isDoneStep(current.status)) summary.append(el('span', 'todo-spinner'));
+  summary.append(text, meta);
   details.append(summary);
-  const ol = el('ol', 'plan-steps');
+
+  const ol = el('ol', 'todo-steps');
   plan.steps.forEach((step, index) => {
-    const li = el('li', 'plan-step', step.text);
-    if (step.status === 'done') li.classList.add('plan-done');
-    if (plan.current === index) li.classList.add('plan-current');
+    const li = el('li', `todo-step ${statusClass(step.status)} ${index === currentIndex ? 'current' : ''}`);
+    li.append(el('span', 'todo-step-marker', stepMarker(step.status, index === currentIndex)));
+    li.append(el('span', 'todo-step-text', step.text));
     ol.append(li);
   });
   details.append(ol);
   return details;
+}
+
+function activePlanIndex(plan: PlanSlice): number {
+  if (
+    typeof plan.current === 'number' &&
+    plan.current >= 0 &&
+    plan.current < plan.steps.length
+  ) {
+    return plan.current;
+  }
+  const firstActive = plan.steps.findIndex((step) => !isDoneStep(step.status));
+  return firstActive >= 0 ? firstActive : Math.max(0, plan.steps.length - 1);
+}
+
+function isDoneStep(status: string | undefined): boolean {
+  return status === 'done' || status === 'completed';
+}
+
+function statusClass(status: string | undefined): string {
+  if (isDoneStep(status)) return 'done';
+  if (status === 'in_progress' || status === 'active') return 'active';
+  return 'pending';
+}
+
+function stepMarker(status: string | undefined, current: boolean): string {
+  if (isDoneStep(status)) return '✓';
+  if (current) return '●';
+  return '';
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -789,6 +863,13 @@ function renderPlan(plan: PlanSlice): HTMLElement {
 
 function renderTranscript(s: SidebarState): HTMLElement {
   const wrap = el('main', 'transcript');
+  const transcriptKey = s.activeChatId ?? s.sessionId ?? 'draft';
+  const sameTranscript = transcriptKey === lastTranscriptAnimationKey;
+  const animationStartIndex = forceTranscriptBottomOnce
+    ? Math.max(0, s.transcript.length - 1)
+    : sameTranscript
+      ? lastTranscriptCount
+      : s.transcript.length;
   wrap.addEventListener(
     'scroll',
     () => {
@@ -799,6 +880,11 @@ function renderTranscript(s: SidebarState): HTMLElement {
   );
   if (!s.transcript || s.transcript.length === 0) {
     wrap.append(renderEmptyState(s.context));
+    lastTranscriptAnimationKey = transcriptKey;
+    lastTranscriptCount = 0;
+    transcriptScrollRestoreToken += 1;
+    transcriptScrollRestorePending = false;
+    forceTranscriptBottomOnce = false;
     return wrap;
   }
   for (let index = 0; index < s.transcript.length; index += 1) {
@@ -809,22 +895,68 @@ function renderTranscript(s: SidebarState): HTMLElement {
         tools.push(s.transcript[index]);
         index += 1;
       }
+      const stackEnd = index - 1;
       index -= 1;
-      wrap.append(renderToolStack(tools));
+      wrap.append(
+        decorateTranscriptEntry(
+          renderToolStack(tools),
+          tools[tools.length - 1],
+          stackEnd >= animationStartIndex,
+        ),
+      );
     } else {
-      wrap.append(renderItem(item));
+      wrap.append(
+        decorateTranscriptEntry(
+          renderItem(item, `${transcriptKey}:${index}`),
+          item,
+          index >= animationStartIndex,
+        ),
+      );
     }
   }
+  lastTranscriptAnimationKey = transcriptKey;
+  lastTranscriptCount = s.transcript.length;
+  const restoreToken = ++transcriptScrollRestoreToken;
+  transcriptScrollRestorePending = true;
   requestAnimationFrame(() => {
-    if (transcriptPinnedToBottom) {
+    if (!wrap.isConnected || restoreToken !== transcriptScrollRestoreToken) return;
+    if (forceTranscriptBottomOnce || transcriptPinnedToBottom) {
       wrap.scrollTop = wrap.scrollHeight;
     } else {
       const maxScrollTop = Math.max(0, wrap.scrollHeight - wrap.clientHeight);
       wrap.scrollTop = Math.min(transcriptScrollTop, maxScrollTop);
     }
+    forceTranscriptBottomOnce = false;
+    transcriptScrollRestorePending = false;
     transcriptScrollTop = wrap.scrollTop;
   });
   return wrap;
+}
+
+function decorateTranscriptEntry(
+  node: HTMLElement,
+  item: TranscriptItem,
+  shouldAnimate: boolean,
+): HTMLElement {
+  if (!shouldAnimate) return node;
+  node.classList.add('bubble-enter', `bubble-enter-${animationKindForItem(item)}`);
+  return node;
+}
+
+function animationKindForItem(item: TranscriptItem): string {
+  switch (item.role) {
+    case 'user':
+      return 'user';
+    case 'assistant':
+      return 'assistant';
+    case 'tool':
+      return 'tool';
+    case 'interaction':
+    case 'approval':
+      return 'prompt';
+    default:
+      return 'neutral';
+  }
 }
 
 function renderEmptyState(context: SidebarContext): HTMLElement {
@@ -875,18 +1007,20 @@ function renderEmptyState(context: SidebarContext): HTMLElement {
   return wrap;
 }
 
-function renderItem(item: TranscriptItem): HTMLElement {
+function renderItem(item: TranscriptItem, itemKey?: string): HTMLElement {
   switch (item.role) {
     case 'user':
       return renderUserBubble(item);
     case 'assistant':
-      return renderAssistantBubble(item);
+      return renderAssistantBubble(item, itemKey);
     case 'tool':
       return renderToolBlock(item);
     case 'status':
       return renderStatusLine(item);
     case 'error':
       return renderErrorLine(item);
+    case 'thinking':
+      return renderThinkingBlock(item);
     case 'interaction':
       return renderAskUserBubble(item);
     case 'approval':
@@ -907,10 +1041,22 @@ function renderUserBubble(item: TranscriptItem): HTMLElement {
   return wrap;
 }
 
-function renderAssistantBubble(item: TranscriptItem): HTMLElement {
+function renderAssistantBubble(item: TranscriptItem, itemKey?: string): HTMLElement {
   const wrap = el('section', 'msg msg-assistant');
   wrap.append(el('div', 'msg-label', 'Peridot'));
-  wrap.append(renderMarkdownBody(item.text));
+  const streamKey = itemKey ?? `assistant:${item.text.length}`;
+  const previous = assistantTextByKey.get(streamKey);
+  const body = renderMarkdownBody(item.text);
+  const visibleText = body.textContent ?? '';
+  const textGrew =
+    previous !== undefined &&
+    item.text.length > previous.markdown.length &&
+    item.text.startsWith(previous.markdown);
+  if (textGrew) {
+    animateVisibleTextSuffix(body, commonPrefixLength(previous.visibleText, visibleText));
+  }
+  assistantTextByKey.set(streamKey, { markdown: item.text, visibleText });
+  wrap.append(body);
   const copy = el('button', 'copy-button', '');
   copy.type = 'button';
   copy.title = 'Copy response';
@@ -967,20 +1113,77 @@ function renderMarkdownBody(markdown: string): HTMLElement {
   return body;
 }
 
+function commonPrefixLength(left: string, right: string): number {
+  const max = Math.min(left.length, right.length);
+  let index = 0;
+  while (index < max && left.charCodeAt(index) === right.charCodeAt(index)) {
+    index += 1;
+  }
+  return index;
+}
+
+function animateVisibleTextSuffix(rootEl: HTMLElement, startOffset: number): void {
+  const walker = document.createTreeWalker(rootEl, NodeFilter.SHOW_TEXT);
+  const textNodes: Text[] = [];
+  while (walker.nextNode()) {
+    const node = walker.currentNode as Text;
+    if (!node.nodeValue || isAnimationSkippedTextNode(node)) continue;
+    textNodes.push(node);
+  }
+
+  let offset = 0;
+  let delayIndex = 0;
+  for (const node of textNodes) {
+    const text = node.nodeValue ?? '';
+    const nodeStart = offset;
+    const nodeEnd = nodeStart + text.length;
+    offset = nodeEnd;
+    if (nodeEnd <= startOffset) continue;
+
+    const splitIndex = Math.max(0, startOffset - nodeStart);
+    const before = text.slice(0, splitIndex);
+    const suffix = text.slice(splitIndex);
+    const fragment = document.createDocumentFragment();
+    if (before) fragment.append(document.createTextNode(before));
+    for (const char of Array.from(suffix)) {
+      const span = document.createElement('span');
+      span.className = 'stream-weight-char';
+      span.textContent = char;
+      span.style.setProperty('--stream-delay', `${Math.min(delayIndex, 24) * 18}ms`);
+      if (/\s/.test(char)) span.classList.add('stream-weight-space');
+      fragment.append(span);
+      delayIndex += 1;
+    }
+    node.replaceWith(fragment);
+  }
+}
+
+function isAnimationSkippedTextNode(node: Text): boolean {
+  const parent = node.parentElement;
+  return Boolean(parent?.closest('pre, code, .tool-code, .command-code'));
+}
+
 function renderToolBlock(item: TranscriptItem): HTMLElement {
   return renderToolStack([item]);
 }
 
 function renderToolStack(items: TranscriptItem[]): HTMLElement {
   const latest = items[items.length - 1];
-  const details = el('details', 'tool-stack');
+  const details = el('details', `tool-stack ${latest.pending ? 'tool-stack-running' : ''}`);
   details.open = toolHistoryOpen;
   details.addEventListener('toggle', () => {
     toolHistoryOpen = details.open;
+    if (details.open) {
+      ensureToolHistoryRendered(details, items);
+    }
   });
   const summary = el('summary', 'tool-summary');
-  const name = el('span', 'tool-name', latest.toolName || latest.text);
-  const result = el('span', 'tool-result', toolSummaryText(latest));
+  const name = el(
+    'span',
+    `tool-name ${latest.pending ? 'text-gradient-active' : ''}`,
+    latest.toolName || latest.text,
+  );
+  const result = el('span', 'tool-result', compactMiddle(toolSummaryText(latest), 180));
   const status = el(
     'span',
     `tool-status${latest.pending ? ' tool-status-running' : ' tool-status-done'}`,
@@ -994,10 +1197,36 @@ function renderToolStack(items: TranscriptItem[]): HTMLElement {
   summary.append(result, status);
   details.append(summary);
 
+  if (details.open) {
+    ensureToolHistoryRendered(details, items);
+  }
+  return details;
+}
+
+function ensureToolHistoryRendered(details: HTMLElement, items: TranscriptItem[]): void {
+  if (details.querySelector('.tool-history')) return;
   const history = el('div', 'tool-history');
   items.forEach((item) => history.append(renderToolDetail(item)));
   details.append(history);
+}
+
+function renderThinkingBlock(item: TranscriptItem): HTMLElement {
+  const details = el('details', 'thinking-block thinking-active');
+  const summary = el('summary', 'thinking-summary');
+  const label = el('span', 'thinking-label text-gradient-active', 'Thinking');
+  const state = el('span', 'thinking-state', 'reasoning trace');
+  summary.append(el('span', 'thinking-pulse'), label, state);
+  details.append(summary);
+  const body = el('pre', 'thinking-body');
+  body.textContent = item.text;
+  details.append(body);
   return details;
+}
+
+function compactMiddle(text: string, maxLength: number): string {
+  if (text.length <= maxLength) return text;
+  const keep = Math.max(20, Math.floor((maxLength - 1) / 2));
+  return `${text.slice(0, keep)}…${text.slice(-keep)}`;
 }
 
 function toolSummaryText(item: TranscriptItem): string {
@@ -1118,6 +1347,7 @@ function renderApprovalBubble(item: TranscriptItem): HTMLElement {
       toolName: item.toolName,
       reason: item.reason,
       parameters: item.parameters,
+      sessionId: item.approvalSessionId,
     });
   });
   const deny = el('button', 'secondary-button compact-button', 'Deny');
@@ -1130,10 +1360,21 @@ function renderApprovalBubble(item: TranscriptItem): HTMLElement {
       toolName: item.toolName,
       reason: item.reason,
       parameters: item.parameters,
+      sessionId: item.approvalSessionId,
     });
   });
   actions.append(scope, approve, deny);
   wrap.append(actions);
+  return wrap;
+}
+
+function latestPendingApproval(s: SidebarState): TranscriptItem | undefined {
+  return s.pendingApproval ?? [...s.transcript].reverse().find((item) => item.role === 'approval');
+}
+
+function renderApprovalDock(item: TranscriptItem): HTMLElement {
+  const wrap = el('div', 'approval-dock');
+  wrap.append(renderApprovalBubble(item));
   return wrap;
 }
 
@@ -1312,6 +1553,49 @@ function renderCommandBlock(item: TranscriptItem): HTMLElement {
   return wrap;
 }
 
+function renderBranchPicker(s: SidebarState): HTMLElement {
+  const result = s.branchPicker;
+  const wrap = el('section', 'branch-picker-panel');
+  const header = el('div', 'branch-picker-header');
+  header.append(el('div', 'branch-picker-title', result?.title ?? 'Branch Turns'));
+  const close = iconButton('remove', 'Close branch picker', () =>
+    vscode.postMessage({ type: 'dismissBranchPicker' }),
+  );
+  header.append(close);
+  wrap.append(header);
+  if (result?.message) wrap.append(el('div', 'branch-picker-message', result.message));
+  const items = Array.isArray(result?.items) ? result.items : [];
+  if (items.length === 0) {
+    wrap.append(el('div', 'branch-picker-empty', 'No turns available'));
+    return wrap;
+  }
+  const list = el('div', 'branch-picker-list');
+  items.forEach((item) => {
+    const turnId = item.turn_id;
+    const row = el('button', 'branch-picker-row');
+    row.type = 'button';
+    row.disabled = typeof turnId !== 'number' || s.running;
+    row.addEventListener('click', () => {
+      if (typeof turnId !== 'number') return;
+      vscode.postMessage({ type: 'dismissBranchPicker' });
+      vscode.postMessage({
+        type: 'run',
+        task: `/branch turn ${turnId}`,
+        options: currentOptionsFromDom(),
+      });
+    });
+    row.append(el('span', 'branch-picker-row-title', item.label ?? `turn ${turnId ?? '?'}`));
+    const meta = [item.source, typeof turnId === 'number' ? `turn ${turnId}` : '']
+      .filter(Boolean)
+      .join(' · ');
+    if (meta) row.append(el('span', 'branch-picker-row-meta', meta));
+    if (item.detail) row.append(el('span', 'branch-picker-row-detail', item.detail));
+    list.append(row);
+  });
+  wrap.append(list);
+  return wrap;
+}
+
 // ──────────────────────────────────────────────────────────────────────
 // Queue strip: messages typed while the agent is busy.
 // ──────────────────────────────────────────────────────────────────────
@@ -1462,10 +1746,11 @@ function renderComposer(s: SidebarState): HTMLElement {
   button.type = 'button';
   button.title = s.running ? 'Stop current task' : 'Send';
   button.innerHTML = iconSvg(s.running ? 'stop' : 'send');
-  // Animate the icon swap when the running state flips. The class is
-  // applied once, then auto-cleared after the keyframes finish.
+  const shouldAnimateIconSwap =
+    lastComposerRunning !== undefined && lastComposerRunning !== s.running;
+  lastComposerRunning = s.running;
   const innerSvg = button.querySelector('svg');
-  if (innerSvg) {
+  if (innerSvg && shouldAnimateIconSwap) {
     innerSvg.classList.add('icon-swap');
     setTimeout(() => innerSvg.classList.remove('icon-swap'), 240);
   }
@@ -1489,6 +1774,7 @@ function renderComposer(s: SidebarState): HTMLElement {
   function handleSubmit(): void {
     const value = textarea.value.trim();
     if (!value) return;
+    pinTranscriptToBottomOnNextRender();
     if (s.running && !value.startsWith('/')) {
       vscode.postMessage({ type: 'queueAdd', task: value });
     } else {
@@ -1510,8 +1796,8 @@ function filteredSlashCommands(input: string): SlashCommandSpec[] {
   const query = input.trimEnd();
   if (!query.startsWith('/') || query.includes('\n')) return [];
   const needle = query.slice(1).trim().toLowerCase();
-  if (needle.length === 0) return SLASH_COMMANDS;
-  return SLASH_COMMANDS.filter((command) => {
+  if (needle.length === 0) return slashCommands;
+  return slashCommands.filter((command) => {
     const name = command.name.slice(1).toLowerCase();
     const description = command.description.toLowerCase();
     return name.startsWith(needle) || name.includes(` ${needle}`) || description.includes(needle);

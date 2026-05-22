@@ -854,11 +854,18 @@ fn runtime_events_update_tui_without_exiting() {
         .expect("assistant entry");
     assert_eq!(assistant_text.text, "thinking");
     assert!(
-        !snapshot.contains("thinking: checking the failing test path"),
-        "thinking text should be hidden in non-debug view"
+        snapshot.contains("thinking: checking the failing test path"),
+        "thinking text should follow tui.show_thinking in non-debug view"
     );
     assert!(snapshot.contains("tool verify_test: ok: passed"));
     assert!(snapshot.contains("run: stopped=Done turns=1"));
+
+    state.config.show_thinking = false;
+    let hidden_snapshot = render_text_snapshot(&state);
+    assert!(
+        !hidden_snapshot.contains("thinking: checking the failing test path"),
+        "thinking text should be hidden when tui.show_thinking is disabled"
+    );
 
     state.debug_view = true;
     let debug_snapshot = render_text_snapshot(&state);
@@ -965,6 +972,10 @@ fn thinking_log_persists_regardless_of_debug_view() {
     });
     assert_eq!(state.thinking_log.len(), 2);
 
+    let snapshot = render_text_snapshot(&state);
+    assert!(snapshot.contains("first thought"));
+
+    state.config.show_thinking = false;
     let snapshot = render_text_snapshot(&state);
     assert!(!snapshot.contains("first thought"));
 

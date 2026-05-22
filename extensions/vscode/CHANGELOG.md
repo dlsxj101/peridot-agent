@@ -6,11 +6,22 @@
 
 - Branch, MCP, compact, TODO, diff, undo, and context slash commands now call
   the daemon `session.command` RPC instead of using local placeholder text.
+- The extension asks the daemon for `session.command_catalog`, so the webview
+  slash picker and help text use the same catalog as the TUI instead of a
+  duplicated local list.
+- Mode, permission, model, provider, reasoning, fast tier, committee, note,
+  autofix, collapse, clear, and goal control slashes now flow through daemon
+  command results before the sidebar applies matching local UI state.
+- `/branch` without arguments now renders a picker UI from the daemon's
+  structured `branch_picker` result; selecting a row runs `/branch turn <id>`.
 - Open chat sessions, transcripts, daemon session ids, queued prompts, and run
   options are restored from workspace storage after Extension Host reloads.
 - Branch/MCP/TODO/context/diff command results render as structured rows in the
   sidebar, and ChatGPT OAuth shows a manual login link when browser handoff is
   attempted.
+- The local development launch path typechecks the extension, builds and
+  bundles the release CLI, and smoke-checks the bundled binary before opening
+  an Extension Development Host.
 - The VSIX package now includes the MIT license file.
 
 ## [0.5.11] — 2026-05-21

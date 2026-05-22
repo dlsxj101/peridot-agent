@@ -104,8 +104,10 @@ struct ApprovalRequestSnapshot {
 
 #[derive(Clone, Debug)]
 struct ApprovalGrant {
+    tool_name: String,
     reason: String,
     scope: ApprovalScope,
+    call_key: String,
     command: Option<String>,
     path: Option<String>,
 }
@@ -266,6 +268,13 @@ async fn dispatch_request(state: &DaemonState, request: RpcRequest) -> Result<bo
         "peridot.status" => {
             handle_status(state, request.id.unwrap_or(Value::Null)).await?;
         }
+        "session.command_catalog" => {
+            emit_response(
+                state,
+                request.id.unwrap_or(Value::Null),
+                slash_command_catalog_result(),
+            )?;
+        }
         "peridot.echo" => match request.params {
             Some(Value::Object(map)) => {
                 let echo = map.get("text").cloned().unwrap_or(Value::Null);
@@ -318,6 +327,21 @@ async fn dispatch_request(state: &DaemonState, request: RpcRequest) -> Result<bo
         }
     }
     Ok(false)
+}
+
+fn slash_command_catalog_result() -> Value {
+    let commands: Vec<Value> = peridot_tui::slash_command_catalog()
+        .iter()
+        .map(|spec| {
+            serde_json::json!({
+                "name": spec.name,
+                "description": spec.description,
+                "arg_hint": spec.arg_hint,
+                "category": spec.category,
+            })
+        })
+        .collect();
+    serde_json::json!({ "commands": commands })
 }
 
 async fn handle_status(state: &DaemonState, id: Value) -> Result<()> {
@@ -1293,8 +1317,10 @@ fn approval_grant_from_snapshot(
     scope: ApprovalScope,
 ) -> ApprovalGrant {
     ApprovalGrant {
+        tool_name: snapshot.tool_name.clone(),
         reason: snapshot.reason.clone(),
         scope,
+        call_key: approved_tool_call_key(&snapshot.tool_name, &snapshot.parameters),
         command: snapshot
             .parameters
             .get("command")
@@ -1311,6 +1337,10 @@ fn approval_grant_from_snapshot(
 fn apply_approval_grant_to_config(config: &mut PeridotConfig, grant: &ApprovalGrant) {
     match grant.scope {
         ApprovalScope::Once | ApprovalScope::Command => {
+            push_unique_string(
+                &mut config.security.approved_tool_calls,
+                grant.call_key.clone(),
+            );
             if let Some(command) = grant.command.as_ref() {
                 push_unique_string(
                     &mut config.security.approved_shell_commands,
@@ -1320,9 +1350,19 @@ fn apply_approval_grant_to_config(config: &mut PeridotConfig, grant: &ApprovalGr
                 relax_security_for_approval(config, &grant.reason);
             }
         }
-        ApprovalScope::Session => relax_security_for_approval(config, &grant.reason),
+        ApprovalScope::Session => {
+            push_unique_string(
+                &mut config.security.approved_session_tools,
+                grant.tool_name.clone(),
+            );
+            relax_security_for_approval(config, &grant.reason);
+        }
         ApprovalScope::Path => {
             if let Some(path) = grant.path.as_ref() {
+                push_unique_string(
+                    &mut config.security.approved_tool_path_scopes,
+                    approved_tool_path_key(&grant.tool_name, path),
+                );
                 push_unique_string(
                     &mut config.security.approved_shell_path_scopes,
                     path.clone(),
@@ -1352,6 +1392,15 @@ fn push_unique_string(values: &mut Vec<String>, value: String) {
     if !values.iter().any(|existing| existing == &value) {
         values.push(value);
     }
+}
+
+fn approved_tool_call_key(tool_name: &str, parameters: &Value) -> String {
+    let encoded = serde_json::to_string(parameters).unwrap_or_else(|_| parameters.to_string());
+    format!("{tool_name}:{encoded}")
+}
+
+fn approved_tool_path_key(tool_name: &str, path: &str) -> String {
+    format!("{tool_name}:{path}")
 }
 
 fn normalize_shell_command_for_grant(command: &str) -> String {
@@ -2336,6 +2385,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn command_catalog_method_returns_tui_catalog() {
+        let out =
+            dispatch_and_collect(r#"{"jsonrpc":"2.0","id":10,"method":"session.command_catalog"}"#)
+                .await;
+        assert_eq!(out[0]["jsonrpc"], "2.0");
+        assert_eq!(out[0]["id"], 10);
+        let commands = out[0]["result"]["commands"].as_array().unwrap();
+        let catalog = peridot_tui::slash_command_catalog();
+        assert_eq!(commands.len(), catalog.len());
+        for (actual, expected) in commands.iter().zip(catalog.iter()) {
+            assert_eq!(actual["name"], expected.name);
+            assert_eq!(actual["description"], expected.description);
+            assert_eq!(actual["category"], expected.category);
+            assert_eq!(
+                actual["arg_hint"].as_str().unwrap_or(""),
+                expected.arg_hint.unwrap_or("")
+            );
+        }
+        assert!(commands.iter().any(|entry| entry["name"] == "/plan"));
+        assert!(
+            commands
+                .iter()
+                .any(|entry| entry["name"] == "/branch switch")
+        );
+        assert!(
+            commands
+                .iter()
+                .all(|entry| entry["description"].as_str().is_some())
+        );
+    }
+
+    #[tokio::test]
     async fn echo_method_returns_text_unchanged() {
         let out = dispatch_and_collect(
             r#"{"jsonrpc":"2.0","id":2,"method":"peridot.echo","params":{"text":"hello"}}"#,
@@ -2390,6 +2471,57 @@ mod tests {
         assert_eq!(response["result"]["kind"], "todos");
         assert_eq!(response["result"]["items"][0]["path"], "src/lib.rs");
         assert_eq!(response["result"]["items"][0]["line"], 1);
+
+        shutdown_sessions(&state).await;
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn session_command_branch_returns_picker_result() {
+        let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+        let root = test_project("command-branch-picker");
+        let state = DaemonState::new(
+            root.clone(),
+            PeridotConfig::default(),
+            test_options(None),
+            tx,
+        );
+        let session_id = "session-test-branch";
+        let snapshot_path = context_snapshot_path(&state, session_id);
+        std::fs::create_dir_all(snapshot_path.parent().unwrap()).unwrap();
+        let mut first = ContextEntry::trusted(ContextSource::User, "draft the plan");
+        first.turn_id = 1;
+        let mut second = ContextEntry::trusted(ContextSource::Assistant, "implemented the plan");
+        second.turn_id = 2;
+        std::fs::write(
+            &snapshot_path,
+            serde_json::to_vec(&vec![first, second]).unwrap(),
+        )
+        .unwrap();
+        let line = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "method": "session.command",
+            "params": { "session_id": session_id, "command": "/branch" }
+        })
+        .to_string();
+
+        let _ = dispatch_line(&state, &line).await.unwrap();
+        let mut response = Value::Null;
+        while let Some(line) = rx.recv().await {
+            let value: Value = serde_json::from_str(&line).unwrap();
+            if value["id"] == 42 {
+                response = value;
+                break;
+            }
+        }
+
+        assert_eq!(response["id"], 42);
+        assert_eq!(response["result"]["kind"], "branch_picker");
+        assert_eq!(response["result"]["items"].as_array().unwrap().len(), 2);
+        assert_eq!(response["result"]["items"][0]["turn_id"], 1);
+        assert_eq!(response["result"]["items"][0]["source"], "user");
+        assert_eq!(response["result"]["items"][1]["turn_id"], 2);
 
         shutdown_sessions(&state).await;
         let _ = std::fs::remove_dir_all(root);

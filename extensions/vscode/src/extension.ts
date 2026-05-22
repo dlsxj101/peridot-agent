@@ -9,7 +9,7 @@ import { PeridotDaemon, RpcNotification } from './daemon';
 import { resetBinaryCache, resolvePeridotBinary } from './peridotBin';
 import { peridotChildEnv } from './processEnv';
 import { StatusCache } from './statusCache';
-import type { CommandResultView } from './types';
+import type { CommandResultView, SlashCommandSpec } from './types';
 import {
   PeridotSidebarProvider,
   type ApprovalResponse,
@@ -43,6 +43,15 @@ interface DaemonStatusResult {
   };
 }
 
+interface SlashCommandCatalogResult {
+  commands?: Array<{
+    name?: string;
+    description?: string;
+    arg_hint?: string | null;
+    category?: string;
+  }>;
+}
+
 interface ActiveRun {
   daemon: PeridotDaemon;
   clientSessionId: string;
@@ -66,7 +75,7 @@ export function activate(context: vscode.ExtensionContext) {
       runTask(task, output, sidebar, options),
     runSlashCommand: async (command: string, options: RunOptions): Promise<CommandResultView> =>
       runSlashCommand(command, output, sidebar, options),
-    cancelTask: async (): Promise<void> => cancelTask(output),
+    cancelTask: async (): Promise<void> => cancelTask(output, sidebar),
     clearSession: async (): Promise<void> => clearExtensionSession(output),
     loginOpenAi: async (): Promise<void> => loginOpenAi(output, sidebar),
     refreshStatus: async (): Promise<void> => refreshStatus(output, sidebar, { force: true }),
@@ -149,7 +158,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(
     vscode.commands.registerCommand('peridot.cancelTask', async () => {
-      await cancelTask(output);
+      await cancelTask(output, sidebar);
     }),
   );
 
@@ -332,6 +341,12 @@ async function refreshStatus(
 
   try {
     const result = await statusCache.get(options.force ?? false);
+    void fetchSlashCatalog(folder, output)
+      .then((commands) => sidebar.setSlashCommands(commands))
+      .catch((err) => {
+        const message = err instanceof Error ? err.message : String(err);
+        output.appendLine(`[peridot] slash catalog failed: ${message}`);
+      });
     const extensionVersion =
       vscode.extensions.getExtension('dlsxj101.peridot-vscode')?.packageJSON?.version ??
       'unknown';
@@ -361,6 +376,38 @@ async function refreshStatus(
       running: Boolean(activeRun),
     });
   }
+}
+
+async function fetchSlashCatalog(
+  folder: string,
+  output: vscode.OutputChannel,
+): Promise<SlashCommandSpec[]> {
+  if (activeRun?.daemon) {
+    return normalizeSlashCatalog(
+      (await activeRun.daemon.send('session.command_catalog')) as SlashCommandCatalogResult,
+    );
+  }
+  output.appendLine(`[peridot] slash catalog fetch (spawn) for ${folder}`);
+  const daemon = await PeridotDaemon.spawn(folder);
+  try {
+    return normalizeSlashCatalog(
+      (await daemon.send('session.command_catalog')) as SlashCommandCatalogResult,
+    );
+  } finally {
+    await daemon.shutdown();
+  }
+}
+
+function normalizeSlashCatalog(result: SlashCommandCatalogResult): SlashCommandSpec[] {
+  const commands = Array.isArray(result.commands) ? result.commands : [];
+  return commands
+    .filter((entry) => typeof entry.name === 'string' && typeof entry.description === 'string')
+    .map((entry) => ({
+      name: entry.name as string,
+      description: entry.description as string,
+      ...(typeof entry.arg_hint === 'string' ? { argHint: entry.arg_hint } : {}),
+      ...(typeof entry.category === 'string' ? { category: entry.category } : {}),
+    }));
 }
 
 async function fetchStatus(
@@ -553,7 +600,10 @@ function chatGptLoginProcessOptions(
   };
 }
 
-async function cancelTask(output: vscode.OutputChannel): Promise<void> {
+async function cancelTask(
+  output: vscode.OutputChannel,
+  sidebar?: PeridotSidebarProvider,
+): Promise<void> {
   if (!activeRun) {
     await vscode.window.showInformationMessage('Peridot is not running a task.');
     return;
@@ -563,6 +613,7 @@ async function cancelTask(output: vscode.OutputChannel): Promise<void> {
   if (!sessionId) {
     output.appendLine('[peridot] cancelling daemon before session id was assigned');
     await finishActiveRun(output);
+    sidebar?.markIdle('Cancelled');
     return;
   }
   try {
@@ -572,6 +623,11 @@ async function cancelTask(output: vscode.OutputChannel): Promise<void> {
     output.appendLine(
       `[peridot] cancel requested for ${result.session_id}: ${result.cancelled}`,
     );
+    if (result.cancelled) {
+      sidebar?.appendSystem('Cancelled');
+      sidebar?.markIdle('Cancelled');
+      await finishActiveRun(output);
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     output.appendLine(`[peridot] cancel failed: ${message}`);
@@ -616,7 +672,8 @@ async function respondApproval(
   output: vscode.OutputChannel,
   sidebar: PeridotSidebarProvider,
 ): Promise<void> {
-  if (!activeRun?.sessionId) {
+  const sessionId = decision.sessionId ?? activeRun?.sessionId;
+  if (!sessionId || !activeRun?.daemon) {
     const message = 'No active Peridot run can receive this approval decision.';
     sidebar.appendError(message);
     await vscode.window.showWarningMessage(message);
@@ -624,7 +681,7 @@ async function respondApproval(
   }
   try {
     const result = (await activeRun.daemon.send('approval.respond', {
-      session_id: activeRun.sessionId,
+      session_id: sessionId,
       approved: decision.approved,
       scope: decision.scope,
       tool_name: decision.toolName,
@@ -632,7 +689,7 @@ async function respondApproval(
       parameters: decision.parameters,
     })) as { accepted?: boolean; resumed?: boolean; session_id?: string; message?: string };
     output.appendLine(
-      `[peridot] approval ${result.session_id ?? activeRun.sessionId}: ${
+      `[peridot] approval ${result.session_id ?? sessionId}: ${
         result.accepted ? 'accepted' : 'not accepted'
       }${result.resumed ? ' resumed' : ''}`,
     );
@@ -844,6 +901,7 @@ async function openWorkspaceFile(
   output: vscode.OutputChannel,
   line?: number,
   column?: number,
+  openOptions?: { beside?: boolean; preview?: boolean },
 ): Promise<void> {
   const folder = vscode.workspace.workspaceFolders?.[0];
   if (!folder) {
@@ -854,7 +912,7 @@ async function openWorkspaceFile(
     const uri = relativePath.startsWith('/') || /^[A-Za-z]:[\\/]/.test(relativePath)
       ? vscode.Uri.file(relativePath)
       : vscode.Uri.joinPath(folder.uri, relativePath);
-    const options =
+    const selectionOptions =
       typeof line === 'number'
         ? {
             selection: new vscode.Range(
@@ -865,7 +923,15 @@ async function openWorkspaceFile(
             ),
           }
         : undefined;
-    await vscode.commands.executeCommand('vscode.open', uri, options);
+    const document = await vscode.workspace.openTextDocument(uri);
+    await vscode.window.showTextDocument(document, {
+      ...selectionOptions,
+      preview: openOptions?.preview ?? false,
+      viewColumn:
+        openOptions?.beside && vscode.window.activeTextEditor
+          ? vscode.ViewColumn.Beside
+          : vscode.ViewColumn.Active,
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     output.appendLine(`[peridot] openFile failed: ${message}`);
@@ -905,6 +971,13 @@ async function handleDaemonNotification(
   const event = params.event;
   output.appendLine(formatEvent(sessionId, event));
   sidebar.appendNotificationFor(clientSessionId, params);
+  const planDocumentPath = planDocumentPathFromEvent(event);
+  if (planDocumentPath) {
+    await openWorkspaceFile(planDocumentPath, output, undefined, undefined, {
+      beside: true,
+      preview: false,
+    });
+  }
 
   if (isTerminalEvent(event)) {
     await finishActiveRun(output);
@@ -984,6 +1057,28 @@ function isTerminalEvent(event: unknown): boolean {
   return (
     isRecord(event) &&
     (event.kind === 'finished' || event.kind === 'error' || event.kind === 'approval_denied')
+  );
+}
+
+function planDocumentPathFromEvent(event: unknown): string | undefined {
+  if (!isRecord(event) || event.kind !== 'tool_finished') return undefined;
+  const name = typeof event.name === 'string' ? event.name : '';
+  if (name !== 'file_write' && name !== 'file_patch') return undefined;
+  const output = isRecord(event.output) ? event.output : undefined;
+  const path = typeof output?.path === 'string' ? output.path : undefined;
+  if (!path || !isPlanDocumentPath(path)) return undefined;
+  return path;
+}
+
+function isPlanDocumentPath(path: string): boolean {
+  const normalized = path.replace(/\\/g, '/').toLowerCase();
+  const basename = normalized.split('/').pop() ?? normalized;
+  if (basename === 'todo.md' || basename === 'todo.markdown') return false;
+  if (!basename.endsWith('.md') && !basename.endsWith('.markdown')) return false;
+  return (
+    basename.includes('plan') ||
+    normalized.includes('/plans/') ||
+    normalized.includes('/planning/')
   );
 }
 

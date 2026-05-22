@@ -4,12 +4,12 @@ VS Code panel for [Peridot Agent](https://github.com/dlsxj101/peridot-agent) —
 a Rust CLI/TUI autonomous coding agent with multi-LLM committee mode,
 native tool calling, and 2-Tier context management.
 
-> **Status**: v0.5.11 ships platform-specific `.vsix` packages plus a
-> universal fallback package for Cursor, ChatGPT OAuth defaults to a
-> Codex-compatible GPT model, and the sidebar includes onboarding,
+> **Status**: v0.5.14 ships platform-specific `.vsix` packages plus a
+> universal fallback package for Cursor. The sidebar includes onboarding,
 > queued prompts, persistent chat sessions, Markdown answers, single-line
 > tool activity, approval/diff cards, usage/budget HUD, an inline plan
-> panel, and a compact context donut in the bottom composer.
+> panel, a compact context donut, daemon-backed slash commands, and a
+> structured `/branch` picker.
 
 ## Commands
 
@@ -45,11 +45,19 @@ cost / turn budget, an inline plan panel that follows `plan_updated`,
 a compact context donut in the composer options row, a chat-style
 Markdown transcript with single-line tool activity and inline unified
 diffs, plus approve/deny controls with a diff preview for `file_write` /
-`file_patch`. Type at the composer — Enter sends, Shift+Enter inserts
-a newline. Sending while a task is in flight queues the message; the
-queue UI lets you edit, remove, or clear individual entries before
-they auto-run. Follow-up prompts continue the active session until you
-run `/clear` or open a new session from the dropdown.
+`file_patch`. The slash picker loads the same command catalog exposed by
+the TUI through the daemon `session.command_catalog` RPC, and supported
+session-control slashes run through `session.command` so mode, permission,
+model, provider, committee, goal control, note, compact, branch, MCP,
+TODO, diff, undo, and context results stay aligned with the daemon.
+Typing `/branch` opens a picker backed by the current context turns;
+selecting a row runs `/branch turn <id>`.
+
+Type at the composer — Enter sends, Shift+Enter inserts a newline.
+Sending while a task is in flight queues the message; the queue UI lets
+you edit, remove, or clear individual entries before they auto-run.
+Follow-up prompts continue the active session until you run `/clear` or
+open a new session from the dropdown.
 
 ## Configuration
 
@@ -71,6 +79,19 @@ npm run bundle-binary       # copies target/release/peridot into resources/
 npm run package             # .vsix now contains the binary
 ```
 
+For WSL/Cursor extension development, install extension dependencies first:
+
+```bash
+cd extensions/vscode
+npm install
+```
+
+Then use the VS Code/Cursor launch configuration **Peridot: Run Extension
+with bundled CLI**. Its prelaunch task typechecks the extension, builds the
+release `peridot-cli`, copies the binary into `extensions/vscode/resources/`,
+and smoke-checks the bundled CLI with `resources/peridot --version` before
+opening the Extension Development Host.
+
 `resources/peridot`, `resources/peridot.exe`, and `resources/bin/` are
 gitignored so local binary copies never land on `main`. The release
 pipeline drops platform-specific binaries into `resources/peridot[.exe]`
@@ -84,8 +105,9 @@ fallback package.
   budget / context, inline plan panel, inline unified-diff cards,
   pre-approval diff preview for `file_write` / `file_patch`, and
   cached / reused-daemon status reads.
-- **v0.6.0** — Skill picker, slash commands, branch picker, multi-session
-  tab bar. (Requires new daemon RPCs — designed alongside the daemon.)
+- **v0.6.0** — Skill picker, multi-session tab bar, and remaining editor
+  parity polish. Slash command catalog sync, daemon-backed session commands,
+  and the `/branch` picker are already available in v0.5.14.
 
 ## Source
 

@@ -2,6 +2,16 @@
   "version": "2.0.0",
   "tasks": [
     {
+      "label": "Peridot: Typecheck extension",
+      "type": "shell",
+      "command": "npm run typecheck",
+      "options": {
+        "cwd": "${workspaceFolder}/extensions/vscode"
+      },
+      "problemMatcher": "$tsc",
+      "group": "build"
+    },
+    {
       "label": "Peridot: Build release CLI",
       "type": "shell",
       "command": "cargo build --release -p peridot-cli",
@@ -25,6 +35,20 @@
       "dependsOrder": "sequence"
     },
     {
+      "label": "Peridot: Smoke bundled CLI",
+      "type": "shell",
+      "command": "${workspaceFolder}/extensions/vscode/resources/peridot --version",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [],
+      "dependsOn": [
+        "Peridot: Bundle CLI into extension"
+      ],
+      "dependsOrder": "sequence",
+      "group": "test"
+    },
+    {
       "label": "Peridot: Build extension",
       "type": "shell",
       "command": "npm run build",
@@ -36,8 +60,10 @@
     {
       "label": "Peridot: Prepare bundled extension dev",
       "dependsOn": [
+        "Peridot: Typecheck extension",
         "Peridot: Bundle CLI into extension",
-        "Peridot: Build extension"
+        "Peridot: Build extension",
+        "Peridot: Smoke bundled CLI"
       ],
       "dependsOrder": "sequence",
       "problemMatcher": []

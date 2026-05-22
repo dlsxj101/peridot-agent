@@ -144,6 +144,68 @@ async fn run_until_done_emits_ui_events() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+#[tokio::test]
+async fn plan_tools_emit_plan_updated_event() {
+    let root =
+        std::env::temp_dir().join(format!("peridot-core-plan-updated-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    let mut registry = ToolRegistry::new();
+    register_builtin_tools(&mut registry).unwrap();
+    let mut agent = HarnessAgent::new(
+        AgentState::new(ExecutionMode::Execute, PermissionMode::Auto),
+        ContextManager::new(),
+        registry,
+    );
+    let provider = StaticProvider::new(vec![
+        json!({
+            "action": "plan_create",
+            "parameters": {
+                "objective": "ship todo UI",
+                "steps": ["wire event", "render panel"]
+            }
+        })
+        .to_string(),
+    ]);
+    let mut events = Vec::new();
+
+    let _summary = agent
+        .run_until_done_with_events(
+            &provider,
+            AgentRunRequest {
+                task: "create a plan".to_string(),
+                model: "mock".to_string(),
+                goal_checker_model: None,
+                max_turns: 1,
+                max_tokens: 512,
+                reasoning_effort: peridot_common::ReasoningEffort::Off,
+                service_tier: None,
+                budget_usd: 5.0,
+                budget_warning_pct: 50,
+                project_root: root.clone(),
+                denied_paths: Vec::new(),
+                hooks: HooksConfig::default(),
+                security: SecurityConfig::default(),
+            },
+            |event| events.push(event),
+        )
+        .await
+        .unwrap();
+
+    let plan_event = events
+        .iter()
+        .find_map(|event| match event {
+            AgentRunEvent::PlanUpdated { steps, current } => Some((steps, current)),
+            _ => None,
+        })
+        .expect("plan_create should emit PlanUpdated");
+    assert_eq!(plan_event.0.len(), 2);
+    assert_eq!(plan_event.0[0].label, "wire event");
+    assert!(!plan_event.0[0].done);
+    assert_eq!(*plan_event.1, Some(0));
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 /// A plain-text reply with no tool calls (e.g. "hi -> 안녕하세요!") must finish
 /// the turn through a synthesized `agent_done` WITHOUT surfacing
 /// `ToolStarted` / `ToolFinished` events — the assistant text is already
@@ -405,6 +467,105 @@ async fn permission_denied_tool_emits_approval_event() {
         AgentRunEvent::Finished { summary }
             if summary.stopped_reason == StopReason::ApprovalRequired
     ));
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn safe_shell_exec_requires_approval_for_read_only_command() {
+    let root = std::env::temp_dir().join(format!(
+        "peridot-core-safe-shell-approval-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let mut registry = ToolRegistry::new();
+    register_builtin_tools(&mut registry).unwrap();
+    let mut agent = HarnessAgent::new(
+        AgentState::new(ExecutionMode::Execute, PermissionMode::Safe),
+        ContextManager::new(),
+        registry,
+    );
+    let provider = StaticProvider::new(vec![
+        json!({
+            "action": "shell_exec",
+            "parameters": {"command": "printf ok"}
+        })
+        .to_string(),
+    ]);
+    let mut events = Vec::new();
+
+    let summary = agent
+        .run_until_done_with_events(
+            &provider,
+            AgentRunRequest {
+                task: "inspect with shell".to_string(),
+                model: "mock".to_string(),
+                goal_checker_model: None,
+                max_turns: 1,
+                max_tokens: 512,
+                reasoning_effort: peridot_common::ReasoningEffort::Off,
+                service_tier: None,
+                budget_usd: 5.0,
+                budget_warning_pct: 50,
+                project_root: root.clone(),
+                denied_paths: Vec::new(),
+                hooks: HooksConfig::default(),
+                security: SecurityConfig::default(),
+            },
+            |event| events.push(event),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(summary.stopped_reason, StopReason::ApprovalRequired);
+    assert!(events.iter().any(|event| {
+        matches!(
+            event,
+            AgentRunEvent::ApprovalRequested { tool_name, reason, parameters }
+                if tool_name == "shell_exec"
+                    && reason == "shell_exec requires explicit user approval"
+                    && parameters.get("command").and_then(serde_json::Value::as_str)
+                        == Some("printf ok")
+        )
+    }));
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn approved_exact_tool_call_skips_safe_confirmation_gate() {
+    let root = std::env::temp_dir().join(format!(
+        "peridot-core-approved-tool-call-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let mut registry = ToolRegistry::new();
+    register_builtin_tools(&mut registry).unwrap();
+    let agent = HarnessAgent::new(
+        AgentState::new(ExecutionMode::Execute, PermissionMode::Safe),
+        ContextManager::new(),
+        registry,
+    );
+    let parameters = json!({"command": "printf ok"});
+    let mut security = SecurityConfig::default();
+    security.approved_tool_calls.push(format!(
+        "shell_exec:{}",
+        serde_json::to_string(&parameters).unwrap()
+    ));
+
+    let (result, _) = agent
+        .execute_tool_call_with_runtime(
+            ToolCall {
+                name: "shell_exec".to_string(),
+                parameters,
+            },
+            root.clone(),
+            Vec::new(),
+            HooksConfig::default(),
+            security,
+        )
+        .await
+        .unwrap();
+
+    assert!(result.success);
     std::fs::remove_dir_all(root).unwrap();
 }
 

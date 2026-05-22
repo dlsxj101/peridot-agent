@@ -29,6 +29,7 @@ export interface ApprovalResponse {
   toolName?: string;
   reason?: string;
   parameters?: unknown;
+  sessionId?: string;
 }
 
 export type TranscriptRole =
@@ -38,6 +39,7 @@ export type TranscriptRole =
   | 'status'
   | 'error'
   | 'interaction'
+  | 'thinking'
   | 'diff'
   | 'command'
   | 'approval';
@@ -69,6 +71,13 @@ export interface CommandResultView {
   truncated?: boolean;
 }
 
+export interface SlashCommandSpec {
+  name: string;
+  description: string;
+  argHint?: string;
+  category?: string;
+}
+
 export interface TranscriptItem {
   role: TranscriptRole;
   text: string;
@@ -84,6 +93,7 @@ export interface TranscriptItem {
   toolName?: string;
   reason?: string;
   parameters?: unknown;
+  approvalSessionId?: string;
   pending?: boolean;
   toolParameters?: unknown;
   toolResultSummary?: string;
@@ -179,6 +189,9 @@ export interface SidebarState {
   queue: QueuedMessage[];
   runOptions: RunOptions;
   hud: HudState;
+  slashCommands: SlashCommandSpec[];
+  branchPicker?: CommandResultView;
+  pendingApproval?: TranscriptItem;
   authBusy: boolean;
   authError?: string;
 }
@@ -201,6 +214,7 @@ export type OutboundMessage =
       toolName?: string;
       reason?: string;
       parameters?: unknown;
+      sessionId?: string;
     }
   | { type: 'openFile'; path: string; line?: number; column?: number }
   | { type: 'registerProvider'; provider: ProviderChoice; params: Record<string, string> }
@@ -211,7 +225,8 @@ export type OutboundMessage =
   | { type: 'queueAdd'; task: string }
   | { type: 'queueRemove'; id: string }
   | { type: 'queueEdit'; id: string; text: string }
-  | { type: 'queueClear' };
+  | { type: 'queueClear' }
+  | { type: 'dismissBranchPicker' };
 
 /** Messages the extension host posts back to the webview. */
 export type InboundMessage = { type: 'state'; state: SidebarState };

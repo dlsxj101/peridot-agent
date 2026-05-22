@@ -366,7 +366,8 @@ fn sticky_plan_banner(state: &TuiState) -> Vec<Line<'static>> {
 /// Returns true when the entry should be hidden in normal (non-debug) view.
 fn is_entry_hidden(state: &TuiState, entry: &TranscriptEntry) -> bool {
     match entry.kind {
-        TranscriptKind::Debug | TranscriptKind::Thinking => !state.debug_view,
+        TranscriptKind::Debug => !state.debug_view,
+        TranscriptKind::Thinking => !(state.debug_view || state.config.show_thinking),
         _ => false,
     }
 }

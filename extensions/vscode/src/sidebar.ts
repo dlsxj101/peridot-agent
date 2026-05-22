@@ -17,6 +17,7 @@ import {
   RunOptions,
   SidebarContext,
   SidebarState,
+  SlashCommandSpec,
   TranscriptItem,
   UsageSlice,
 } from './types';
@@ -55,6 +56,8 @@ interface StoredChatSession {
   running: boolean;
   transcript: TranscriptItem[];
   hud: HudState;
+  runOptions: RunOptions;
+  pendingApproval?: TranscriptItem;
 }
 
 interface PersistedSidebarSnapshot {
@@ -70,57 +73,6 @@ interface PersistedSidebarSnapshot {
 }
 
 const PERSISTENCE_KEY = 'peridot.sidebarState.v1';
-
-const EXTENSION_SLASH_COMMANDS: Array<[string, string]> = [
-  ['/plan', 'switch to plan mode'],
-  ['/execute', 'switch to execute mode'],
-  ['/goal <objective>', 'start a goal-mode run, or use pause/resume/clear/status'],
-  ['/safe', 'switch to safe permission mode'],
-  ['/auto', 'switch to auto permission mode'],
-  ['/yolo', 'switch to yolo permission mode'],
-  ['/model <name>', 'switch the active model'],
-  ['/provider <name>', 'switch the displayed provider for this session'],
-  ['/reasoning <off|low|medium|high>', 'set reasoning intensity for future runs'],
-  ['/think [off|low|medium|high]', 'shortcut for reasoning high, or disable it'],
-  ['/fast [on|off|toggle]', 'toggle fast / priority service tier'],
-  ['/note <text>', 'attach a note to the transcript'],
-  ['/info', 'show current session status'],
-  ['/committee <off|planner|full>', 'record committee mode preference'],
-  ['/cost', 'show token and cost totals'],
-  ['/compact', 'request context compaction when available'],
-  ['/context top', 'show current context usage'],
-  ['/sidepanel', 'show status summary'],
-  ['/status', 'show status summary'],
-  ['/collapse', 'toggle transcript collapse preference'],
-  ['/session save', 'mark the current session as saved'],
-  ['/plan show', 'show current plan steps'],
-  ['/diff', 'request a working-tree diff'],
-  ['/undo', 'request undo guidance'],
-  ['/lang en|ko', 'record display locale preference'],
-  ['/clear', 'clear transcript and daemon context'],
-  ['/fork <task>', 'spawn a fork-style subagent task through Peridot'],
-  ['/teammate <task>', 'spawn a teammate-style subagent task through Peridot'],
-  ['/worktree <branch> <task>', 'request worktree-isolated subagent work'],
-  ['/subagent model <name|reset>', 'set subagent model preference'],
-  ['/mcp list', 'list configured MCP servers'],
-  ['/mcp add <name> <stdio|http> <command|url>', 'register an MCP server'],
-  ['/mcp remove <name>', 'remove an MCP server'],
-  ['/mcp test <name>', 'test an MCP server'],
-  ['/todos', 'request TODO/FIXME/HACK/XXX/BUG listing'],
-  ['/rewind', 'rewind the last local exchange'],
-  ['/branch save <name>', 'snapshot the current session branch'],
-  ['/branch restore <name>', 'restore a saved branch snapshot'],
-  ['/branch list', 'list saved branch snapshots'],
-  ['/branch turn <turn-id>', 'fork the session at a previous turn'],
-  ['/branch tree', 'show saved branch tree'],
-  ['/branch switch <index>', 'switch to a saved branch limb'],
-  ['/session new [task]', 'open a new chat session'],
-  ['/session list', 'list open chat sessions'],
-  ['/session switch <id|title>', 'switch to another session'],
-  ['/session close <id|title>', 'close a chat session'],
-  ['/autofix [on|off|N]', 'record auto-fix preference'],
-  ['/help', 'show this help'],
-];
 
 export interface PreparedTask {
   clientSessionId: string;
@@ -178,6 +130,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
     };
     this.state.running = true;
     this.state.status = 'Starting daemon';
+    this.state.pendingApproval = undefined;
     this.state.transcript.push({ role: 'user', text: task });
     this.publish();
     return {
@@ -212,7 +165,8 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       this.append({ role: 'status', text: 'Event' });
       if (temporarilyLoaded) {
         this.saveActiveSession();
-        this.loadSessionIntoState(previousActive, false);
+        if (previousActive) this.loadSessionIntoState(previousActive, false);
+        else this.loadDraftSessionIntoState();
         this.publish();
       }
       return;
@@ -221,12 +175,27 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
 
     this.applyHudSideEffects(kind, event);
 
-    if (kind === 'tool_started') {
+    const approvalPayload =
+      approvalPayloadForEvent(event) ??
+      (kind === 'approval_waiting' ? this.approvalPayloadFromPendingTool() : undefined);
+
+    if (kind === 'assistant_started') {
+      this.state.status = 'Waiting for model';
+      this.state.context = { ...this.state.context, status: this.state.status, running: true };
+      this.publish();
+    } else if (kind === 'assistant_delta') {
+      const item = transcriptItemForEvent(kind, event);
+      if (item) this.append(item);
+    } else if (kind === 'assistant_finished') {
+      this.state.status = 'Running';
+      this.state.context = { ...this.state.context, status: this.state.status, running: true };
+      this.publish();
+    } else if (kind === 'tool_started') {
       this.appendToolStarted(event);
     } else if (kind === 'tool_finished') {
       this.appendToolFinished(event);
-    } else if (kind === 'approval_requested') {
-      this.appendApproval(event);
+    } else if (approvalPayload) {
+      this.appendApproval(approvalPayload, params.session_id);
     } else {
       const item = transcriptItemForEvent(kind, event);
       if (item) this.append(item);
@@ -242,7 +211,12 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       };
       this.publish();
     }
+    if (kind === 'approval_resumed' || kind === 'approval_denied') {
+      this.state.pendingApproval = undefined;
+      this.publish();
+    }
     if (isTerminalEvent(event)) {
+      this.state.pendingApproval = undefined;
       this.state.running = false;
       this.state.status = isErrorEvent(event) ? 'Failed' : 'Finished';
       this.state.context = {
@@ -254,7 +228,8 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
     }
     if (temporarilyLoaded) {
       this.saveActiveSession();
-      this.loadSessionIntoState(previousActive, false);
+      if (previousActive) this.loadSessionIntoState(previousActive, false);
+      else this.loadDraftSessionIntoState();
       this.publish();
     }
   }
@@ -283,9 +258,17 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
   }
 
   public setContext(context: SidebarContext): void {
+    const reasoningEffort = normalizeReasoning(context.reasoningEffort);
+    const currentOptions = this.state.runOptions;
     this.state.context = {
       ...this.state.context,
       ...context,
+      mode: currentOptions.mode,
+      permission: currentOptions.permission,
+      model: currentOptions.model ?? context.model ?? this.state.context.model,
+      reasoningEffort: currentOptions.reasoningEffort ?? reasoningEffort,
+      serviceTier:
+        currentOptions.serviceTier ?? (context.serviceTier as RunOptions['serviceTier'] | undefined),
     };
     this.state.running = Boolean(context.running ?? this.state.running);
     if (context.status) {
@@ -304,6 +287,11 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
     ) {
       this.state.view = 'landing';
     }
+    this.publish();
+  }
+
+  public setSlashCommands(commands: SlashCommandSpec[]): void {
+    this.state.slashCommands = commands;
     this.publish();
   }
 
@@ -345,6 +333,9 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
   }
 
   public appendCommandResult(result: CommandResultView): void {
+    if (result.kind === 'branch_picker') {
+      this.state.branchPicker = result;
+    }
     this.append({
       role: result.severity === 'error' ? 'error' : 'command',
       text: result.message ?? result.title ?? result.kind ?? 'Command',
@@ -367,21 +358,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
 
   public createNewSession(workspace?: string): void {
     this.saveActiveSession();
-    const session = this.createSession();
-    this.state.activeChatId = session.id;
-    this.state.view = 'session';
-    this.state.sessionId = undefined;
-    this.state.status = session.status;
-    this.state.running = false;
-    this.state.transcript = session.transcript;
-    this.state.hud = session.hud;
-    this.state.context = {
-      ...this.state.context,
-      ...(workspace ? { workspace } : {}),
-      status: session.status,
-      running: false,
-      problem: undefined,
-    };
+    this.loadDraftSessionIntoState(workspace);
     this.publish();
   }
 
@@ -392,6 +369,9 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
 
   private appendToolStarted(event: Record<string, unknown>): void {
     const name = stringField(event, 'name');
+    if (name === 'agent_done') {
+      return;
+    }
     if (name === 'agent_ask_user') {
       this.append({
         role: 'tool',
@@ -418,6 +398,15 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
   private appendToolFinished(event: Record<string, unknown>): void {
     const name = stringField(event, 'name');
     const summary = summarizeToolResult(event);
+    if (name === 'agent_done') {
+      this.removePendingTool(name);
+      if (summary.trim().length > 0 && !this.lastAssistantTextMatches(summary)) {
+        this.append({ role: 'assistant', text: summary });
+      } else {
+        this.publish();
+      }
+      return;
+    }
     for (let i = this.state.transcript.length - 1; i >= 0; i -= 1) {
       const item = this.state.transcript[i];
       if (item.role === 'tool' && item.pending && (item.toolName === name || !item.toolName)) {
@@ -439,10 +428,36 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
     });
   }
 
-  private appendApproval(event: Record<string, unknown>): void {
+  private removePendingTool(toolName: string): void {
+    for (let i = this.state.transcript.length - 1; i >= 0; i -= 1) {
+      const item = this.state.transcript[i];
+      if (item.role === 'tool' && item.pending && item.toolName === toolName) {
+        this.state.transcript.splice(i, 1);
+        return;
+      }
+    }
+  }
+
+  private lastAssistantTextMatches(candidate: string): boolean {
+    const normalized = candidate.trim();
+    const lastAssistant = [...this.state.transcript]
+      .reverse()
+      .find((item) => item.role === 'assistant');
+    return lastAssistant?.text.trim() === normalized;
+  }
+
+  private appendApproval(event: Record<string, unknown>, sessionId?: string): void {
     const toolName = stringField(event, 'tool_name');
-    const reason = stringField(event, 'reason');
+    const reason = pickString(event, 'reason') ?? 'Approval required';
     const parameters = event.parameters;
+    this.markToolWaitingForApproval(toolName);
+    if (this.hasPendingApproval(toolName, reason, parameters)) {
+      if (!this.state.pendingApproval) {
+        this.state.pendingApproval = this.pendingApprovalFromTranscript(toolName, reason, parameters);
+      }
+      this.publish();
+      return;
+    }
     const item: TranscriptItem = {
       role: 'approval',
       text: toolName,
@@ -450,16 +465,71 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       toolName,
       reason,
       parameters,
+      approvalSessionId: sessionId,
     };
     const path = pickString(parameters, 'path');
     if (path) {
       item.path = path;
     }
+    this.state.pendingApproval = item;
     this.append(item);
 
     if ((toolName === 'file_write' || toolName === 'file_patch') && path) {
       void this.enrichApprovalDiff(item, toolName, parameters);
     }
+  }
+
+  private approvalPayloadFromPendingTool(): Record<string, unknown> | undefined {
+    const item = [...this.state.transcript]
+      .reverse()
+      .find((entry) => entry.role === 'tool' && entry.pending);
+    if (!item?.toolName) return undefined;
+    return {
+      tool_name: item.toolName,
+      reason: 'Approval required',
+      parameters: item.toolParameters ?? {},
+    };
+  }
+
+  private markToolWaitingForApproval(toolName: string): void {
+    for (let i = this.state.transcript.length - 1; i >= 0; i -= 1) {
+      const item = this.state.transcript[i];
+      if (item.role === 'tool' && item.pending && (item.toolName === toolName || !item.toolName)) {
+        item.pending = false;
+        item.text = toolName;
+        item.detail = undefined;
+        item.toolResultSummary = 'waiting for approval';
+        return;
+      }
+    }
+  }
+
+  private hasPendingApproval(toolName: string, reason: string, parameters: unknown): boolean {
+    const serializedParameters = json(parameters);
+    const matches = (item: TranscriptItem): boolean =>
+      item.role === 'approval' &&
+      item.toolName === toolName &&
+      item.reason === reason &&
+      json(item.parameters) === serializedParameters;
+    return (
+      Boolean(this.state.pendingApproval && matches(this.state.pendingApproval)) ||
+      this.state.transcript.some(matches)
+    );
+  }
+
+  private pendingApprovalFromTranscript(
+    toolName: string,
+    reason: string,
+    parameters: unknown,
+  ): TranscriptItem | undefined {
+    const serializedParameters = json(parameters);
+    return [...this.state.transcript].reverse().find(
+      (item) =>
+        item.role === 'approval' &&
+        item.toolName === toolName &&
+        item.reason === reason &&
+        json(item.parameters) === serializedParameters,
+    );
   }
 
   private async enrichApprovalDiff(
@@ -529,15 +599,20 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       }
       case 'plan_updated': {
         const stepsRaw = Array.isArray(event.steps) ? event.steps : [];
-        const steps: PlanStepView[] = stepsRaw.map((entry) => {
+        const current = optionalNumber(event, 'current');
+        const steps: PlanStepView[] = stepsRaw.map((entry, index) => {
           if (!isRecord(entry)) return { text: stringField({ value: entry }, 'value') };
+          const explicitStatus = typeof entry.status === 'string' ? entry.status : undefined;
+          const done = booleanField(entry, 'done');
+          const status =
+            explicitStatus ??
+            (done === true ? 'done' : typeof current === 'number' && current === index ? 'in_progress' : 'pending');
           return {
-            text: stringField(entry, 'text'),
-            status: typeof entry.status === 'string' ? entry.status : undefined,
+            text: pickString(entry, 'text') ?? pickString(entry, 'label') ?? 'Untitled step',
+            status,
           };
         });
         const next: PlanSlice = { steps };
-        const current = optionalNumber(event, 'current');
         if (typeof current === 'number') next.current = current;
         this.state.hud.plan = next;
         this.publish();
@@ -604,6 +679,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
           toolName: message.toolName,
           reason: message.reason,
           parameters: message.parameters,
+          sessionId: message.sessionId,
         });
         this.resolveApproval(message.approved);
         return;
@@ -648,6 +724,10 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         this.state.queue = [];
         this.publish();
         return;
+      case 'dismissBranchPicker':
+        this.state.branchPicker = undefined;
+        this.publish();
+        return;
     }
   }
 
@@ -682,6 +762,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       item.text = approved ? 'Approval sent' : 'Approval denied';
       item.detail = item.toolName;
     }
+    this.state.pendingApproval = undefined;
     this.publish();
   }
 
@@ -699,7 +780,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
     switch (command) {
       case 'plan':
         if (rest.length === 0) {
-          this.updateRunOptions({ ...options, mode: 'plan' }, 'mode: plan');
+          await this.executeDaemonSlash(input, options);
           return;
         }
         if (rest === 'show') {
@@ -709,7 +790,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         break;
       case 'execute':
         if (rest.length === 0) {
-          this.updateRunOptions({ ...options, mode: 'execute' }, 'mode: execute');
+          await this.executeDaemonSlash(input, options);
           return;
         }
         break;
@@ -718,34 +799,32 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         return;
       case 'safe':
         if (rest.length === 0) {
-          this.updateRunOptions({ ...options, permission: 'safe' }, 'permission: safe');
+          await this.executeDaemonSlash(input, options);
           return;
         }
         break;
       case 'auto':
         if (rest.length === 0) {
-          this.updateRunOptions({ ...options, permission: 'auto' }, 'permission: auto');
+          await this.executeDaemonSlash(input, options);
           return;
         }
         break;
       case 'yolo':
         if (rest.length === 0) {
-          this.updateRunOptions({ ...options, permission: 'yolo' }, 'permission: yolo');
+          await this.executeDaemonSlash(input, options);
           return;
         }
         break;
       case 'model':
         if (rest.length > 0) {
-          this.updateRunOptions({ ...options, model: rest }, `model: ${rest}`);
+          await this.executeDaemonSlash(input, options);
           return;
         }
         this.appendError('Usage: /model <name>');
         return;
       case 'provider':
         if (rest.length > 0) {
-          this.state.context = { ...this.state.context, provider: rest };
-          this.append({ role: 'status', text: `provider: ${rest}` });
-          this.publish();
+          await this.executeDaemonSlash(input, options);
           return;
         }
         this.appendError('Usage: /provider <name>');
@@ -756,7 +835,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
           this.appendError('Usage: /reasoning <off|low|medium|high>');
           return;
         }
-        this.updateRunOptions({ ...options, reasoningEffort: effort }, `reasoning: ${effort}`);
+        await this.executeDaemonSlash(input, options);
         return;
       }
       case 'think': {
@@ -765,7 +844,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
           this.appendError('Usage: /think [off|low|medium|high]');
           return;
         }
-        this.updateRunOptions({ ...options, reasoningEffort: effort }, `reasoning: ${effort}`);
+        await this.executeDaemonSlash(input, options);
         return;
       }
       case 'fast': {
@@ -774,12 +853,12 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
           this.appendError('Usage: /fast [on|off|toggle]');
           return;
         }
-        this.updateRunOptions({ ...options, serviceTier: tier }, `service tier: ${tier}`);
+        await this.executeDaemonSlash(input, options);
         return;
       }
       case 'note':
         if (rest.length > 0) {
-          this.append({ role: 'status', text: `note: ${rest}` });
+          await this.executeDaemonSlash(input, options);
           return;
         }
         this.appendError('Usage: /note <text>');
@@ -792,7 +871,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         break;
       case 'committee':
         if (['off', 'planner', 'full'].includes(rest)) {
-          this.append({ role: 'status', text: `committee: ${rest}` });
+          await this.executeDaemonSlash(input, options);
           return;
         }
         this.appendError('Usage: /committee <off|planner|full>');
@@ -824,7 +903,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         break;
       case 'collapse':
         if (rest.length === 0) {
-          this.append({ role: 'status', text: 'collapse: compact transcript layout is active' });
+          await this.executeDaemonSlash(input, options);
           return;
         }
         break;
@@ -842,7 +921,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         break;
       case 'lang':
         if (rest === 'en' || rest === 'ko') {
-          this.append({ role: 'status', text: `language: ${rest}` });
+          await this.executeDaemonSlash(input, options);
           return;
         }
         this.appendError('Usage: /lang en|ko');
@@ -852,9 +931,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
           this.appendError('Usage: /clear');
           return;
         }
-        await this.handlers.clearSession();
-        this.clearActiveSession();
-        this.append({ role: 'status', text: 'clear: transcript + context wiped, new session' });
+        await this.executeDaemonSlash(input, options);
         return;
       case 'fork':
       case 'teammate':
@@ -873,7 +950,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         return;
       case 'subagent':
         if (rest.startsWith('model ') && rest.slice('model '.length).trim().length > 0) {
-          this.append({ role: 'status', text: `subagent model: ${rest.slice('model '.length).trim()}` });
+          await this.executeDaemonSlash(input, options);
           return;
         }
         this.appendError('Usage: /subagent model <name|reset>');
@@ -898,7 +975,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         return;
       case 'autofix':
         if (rest.length === 0 || rest === 'on' || rest === 'off' || /^\d+$/.test(rest)) {
-          this.append({ role: 'status', text: `autofix: ${rest || 'toggle'}` });
+          await this.executeDaemonSlash(input, options);
           return;
         }
         this.appendError('Usage: /autofix [on|off|N]');
@@ -908,7 +985,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         return;
       case 'help':
         if (rest.length === 0) {
-          this.append({ role: 'assistant', text: slashHelpText() });
+          this.append({ role: 'assistant', text: slashHelpText(this.state.slashCommands) });
           return;
         }
         break;
@@ -929,7 +1006,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       case 'resume':
       case 'clear':
       case 'status':
-        this.updateRunOptions(next, `goal ${rest}`);
+        await this.executeDaemonSlash(`/goal ${rest}`, next);
         return;
       default:
         this.state.runOptions = next;
@@ -1014,12 +1091,86 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         this.append({ role: 'status', text: 'clear: transcript + context wiped, new session' });
         return;
       }
+      this.applySlashCommandState(input, result, options);
       this.appendCommandResult(result);
       if (result.kind === 'start_task' && result.task) {
         await this.handlers.runTask(result.task, options);
       }
     } catch (err) {
       this.appendError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  private applySlashCommandState(
+    input: string,
+    result: CommandResultView,
+    options: RunOptions,
+  ): void {
+    const parts = input.slice(1).trim().split(/\s+/).filter(Boolean);
+    const command = parts[0] ?? '';
+    const rest = parts.slice(1).join(' ');
+    let next: RunOptions | undefined;
+    switch (command) {
+      case 'plan':
+        if (rest.length === 0) next = { ...options, mode: 'plan' };
+        break;
+      case 'execute':
+        if (rest.length === 0) next = { ...options, mode: 'execute' };
+        break;
+      case 'goal':
+        next = { ...options, mode: 'goal' };
+        break;
+      case 'safe':
+        if (rest.length === 0) next = { ...options, permission: 'safe' };
+        break;
+      case 'auto':
+        if (rest.length === 0) next = { ...options, permission: 'auto' };
+        break;
+      case 'yolo':
+        if (rest.length === 0) next = { ...options, permission: 'yolo' };
+        break;
+      case 'model':
+        if (rest.length > 0) next = { ...options, model: rest };
+        break;
+      case 'provider':
+        if (rest.length > 0) {
+          this.state.context = { ...this.state.context, provider: rest };
+        }
+        break;
+      case 'reasoning': {
+        const effort = parseReasoningEffort(rest);
+        if (effort) next = { ...options, reasoningEffort: effort };
+        break;
+      }
+      case 'think': {
+        const effort = parseThinkEffort(rest);
+        if (effort) next = { ...options, reasoningEffort: effort };
+        break;
+      }
+      case 'fast': {
+        const tier = parseFastTier(rest, options.serviceTier);
+        if (tier) next = { ...options, serviceTier: tier };
+        break;
+      }
+      default:
+        break;
+    }
+    if (next) {
+      this.state.runOptions = next;
+      this.state.context = {
+        ...this.state.context,
+        mode: next.mode,
+        permission: next.permission,
+        model: next.model ?? this.state.context.model,
+        reasoningEffort: next.reasoningEffort,
+        serviceTier: next.serviceTier,
+      };
+    }
+    if (input.startsWith('/branch turn ') || input.startsWith('/branch switch ')) {
+      this.state.branchPicker = undefined;
+    }
+    if (result.kind === 'setting' || result.kind === 'note') {
+      this.state.context = { ...this.state.context, problem: undefined };
     }
   }
 
@@ -1111,13 +1262,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       if (next) {
         this.loadSessionIntoState(next.id, false);
       } else {
-        const replacement = this.createSession();
-        this.state.activeChatId = replacement.id;
-        this.state.sessionId = undefined;
-        this.state.status = replacement.status;
-        this.state.running = false;
-        this.state.transcript = replacement.transcript;
-        this.state.hud = replacement.hud;
+        this.loadDraftSessionIntoState();
       }
     }
     this.append({ role: 'status', text: `session closed: ${session.title}` });
@@ -1151,6 +1296,8 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       running: false,
       transcript: [],
       hud: {},
+      runOptions: { ...this.state.runOptions },
+      pendingApproval: undefined,
     };
     this.nextSessionOrdinal += 1;
     this.sessions.set(id, session);
@@ -1167,6 +1314,8 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
     session.running = this.state.running;
     session.transcript = this.state.transcript;
     session.hud = this.state.hud;
+    session.runOptions = { ...this.state.runOptions };
+    session.pendingApproval = this.state.pendingApproval;
   }
 
   private restorePersistedState(): void {
@@ -1182,6 +1331,8 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         running: false,
         transcript: Array.isArray(raw.transcript) ? raw.transcript : [],
         hud: raw.hud ?? {},
+        runOptions: raw.runOptions ?? freshState().runOptions,
+        pendingApproval: raw.pendingApproval,
       };
       this.sessions.set(session.id, session);
     }
@@ -1212,6 +1363,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         ...session,
         status: session.running ? 'Idle' : session.status,
         running: false,
+        pendingApproval: session.pendingApproval,
       }),
     );
     const snapshot: PersistedSidebarSnapshot = {
@@ -1242,14 +1394,45 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
     this.state.running = session.running;
     this.state.transcript = session.transcript;
     this.state.hud = session.hud;
+    this.state.runOptions = { ...session.runOptions };
+    this.state.pendingApproval = session.pendingApproval;
     this.state.context = {
       ...this.state.context,
       status: session.status,
       running: session.running,
       problem: undefined,
+      mode: session.runOptions.mode,
+      permission: session.runOptions.permission,
+      model: session.runOptions.model ?? this.state.context.model,
+      reasoningEffort: session.runOptions.reasoningEffort,
+      serviceTier: session.runOptions.serviceTier,
     };
     this.state.view = 'session';
     if (publish) this.publish();
+  }
+
+  private loadDraftSessionIntoState(workspace?: string): void {
+    this.state.activeChatId = undefined;
+    this.state.sessionId = undefined;
+    this.state.status = 'Idle';
+    this.state.running = false;
+    this.state.transcript = [];
+    this.state.hud = {};
+    this.state.branchPicker = undefined;
+    this.state.pendingApproval = undefined;
+    this.state.runOptions = freshState().runOptions;
+    this.state.context = {
+      ...this.state.context,
+      ...(workspace ? { workspace } : {}),
+      status: 'Idle',
+      running: false,
+      problem: undefined,
+      mode: this.state.runOptions.mode,
+      permission: this.state.runOptions.permission,
+      reasoningEffort: undefined,
+      serviceTier: undefined,
+    };
+    this.state.view = 'session';
   }
 
   private refreshSessionSummaries(): void {
@@ -1272,6 +1455,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
     this.state.running = false;
     this.state.transcript = [];
     this.state.hud = {};
+    this.state.pendingApproval = undefined;
     this.state.context = { ...this.state.context, status: 'Idle', running: false };
     const session = this.activeStoredSession();
     if (session) {
@@ -1280,6 +1464,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       session.running = false;
       session.transcript = [];
       session.hud = {};
+      session.pendingApproval = undefined;
     }
     this.publish();
   }
@@ -1318,10 +1503,16 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
   }
 }
 
-function slashHelpText(): string {
+function slashHelpText(commands: SlashCommandSpec[]): string {
+  if (commands.length === 0) {
+    return 'Slash commands are loading from the Peridot daemon.';
+  }
   return [
     'Slash commands:',
-    ...EXTENSION_SLASH_COMMANDS.map(([command, description]) => `- \`${command}\` - ${description}`),
+    ...commands.map((command) => {
+      const hint = command.argHint ? ` ${command.argHint}` : '';
+      return `- \`${command.name}${hint}\` - ${command.description}`;
+    }),
   ].join('\n');
 }
 
@@ -1383,6 +1574,12 @@ function parseFastTier(
   }
 }
 
+function normalizeReasoning(
+  value: string | undefined,
+): RunOptions['reasoningEffort'] | undefined {
+  return value ? parseReasoningEffort(value) : undefined;
+}
+
 function freshState(): SidebarState {
   return {
     view: 'landing',
@@ -1398,6 +1595,7 @@ function freshState(): SidebarState {
       permission: 'auto',
     },
     hud: {} as HudState,
+    slashCommands: [],
     authBusy: false,
   };
 }
@@ -1430,8 +1628,10 @@ function transcriptItemForEvent(
       return undefined;
     case 'assistant_delta':
       return { role: 'assistant', text: stringField(event, 'delta') };
-    case 'thinking':
-      return { role: 'assistant', text: stringField(event, 'text') };
+    case 'thinking': {
+      const text = stringField(event, 'text');
+      return text.trim().length > 0 ? { role: 'thinking', text } : undefined;
+    }
     case 'ask_user_requested':
       return {
         role: 'interaction',
@@ -1451,7 +1651,7 @@ function transcriptItemForEvent(
     case 'approval_denied':
       return { role: 'error', text: 'Approval denied' };
     case 'plan_updated':
-      return { role: 'status', text: 'Plan updated' };
+      return undefined;
     case 'command_result':
       return undefined;
     case 'file_diff': {
@@ -1470,12 +1670,24 @@ function transcriptItemForEvent(
     case 'error':
       return { role: 'error', text: stringField(event, 'message') };
     case 'recovery':
-      return { role: 'error', text: stringField(event, 'message') || 'Recovery failed' };
+      return recoveryTranscriptItem(stringField(event, 'message'));
     case 'interrupted':
       return { role: 'status', text: 'Interrupted', detail: stringField(event, 'stage') };
     default:
       return { role: 'status', text: kind };
   }
+}
+
+function recoveryTranscriptItem(message: string): TranscriptItem | undefined {
+  const normalized = message.trim();
+  if (!normalized) return undefined;
+  if (normalized === 'stuck detector requested a new strategy') {
+    return { role: 'status', text: 'Trying another strategy' };
+  }
+  if (normalized.startsWith('Recovery failed')) {
+    return { role: 'error', text: normalized };
+  }
+  return { role: 'status', text: 'Recovery', detail: normalized };
 }
 
 function questionForAskUser(request: unknown): string {
@@ -1531,6 +1743,18 @@ function isApprovalWaitingEvent(event: unknown): boolean {
   );
 }
 
+function approvalPayloadForEvent(event: Record<string, unknown>): Record<string, unknown> | undefined {
+  if (approvalRecord(event)) return event;
+  if (event.kind === 'approval_waiting') {
+    return approvalRecord(event.request);
+  }
+  return undefined;
+}
+
+function approvalRecord(value: unknown): Record<string, unknown> | undefined {
+  return isRecord(value) && typeof value.tool_name === 'string' ? value : undefined;
+}
+
 function stringField(record: Record<string, unknown>, key: string): string {
   const value = record[key];
   return typeof value === 'string' ? value : json(value);
@@ -1544,6 +1768,11 @@ function numberField(record: Record<string, unknown>, key: string): number {
 function optionalNumber(record: Record<string, unknown>, key: string): number | undefined {
   const value = record[key];
   return typeof value === 'number' ? value : undefined;
+}
+
+function booleanField(record: Record<string, unknown>, key: string): boolean | undefined {
+  const value = record[key];
+  return typeof value === 'boolean' ? value : undefined;
 }
 
 function pickString(value: unknown, key: string): string | undefined {

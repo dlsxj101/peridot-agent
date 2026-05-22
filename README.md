@@ -8,15 +8,21 @@ Current version: **0.8.9**
 
 ### What's new in v0.8.9
 
-- **Editor slash commands now run through the daemon.** The VS Code panel calls
-  `session.command` for branch, MCP, compact, TODO, diff, undo, and context
-  commands, so those flows share the same project-state behavior as the TUI.
+- **Editor slash commands now share the TUI catalog and daemon semantics.** The
+  VS Code panel loads `session.command_catalog` from the daemon and calls
+  `session.command` for session controls, branch, MCP, compact, TODO, diff,
+  undo, and context commands, so the editor no longer carries a drifting local
+  command list.
 - **Extension chats survive reloads.** Open chat sessions, transcripts,
   daemon session ids, queued prompts, and run options are restored from
   workspace storage after an Extension Host reload.
 - **Command and login UI got sturdier.** Branch/MCP/TODO/context results render
-  as structured panel rows, ChatGPT OAuth exposes a visible manual login link,
-  and the VSIX package now includes an MIT license file.
+  as structured panel rows, `/branch` opens a picker UI backed by context
+  turns, ChatGPT OAuth exposes a visible manual login link, and the VSIX
+  package now includes an MIT license file.
+- **Extension dev setup is one command from Cursor/VS Code.** The bundled
+  Extension Host launch task typechecks the extension, builds and bundles the
+  release CLI, then smoke-checks `extensions/vscode/resources/peridot --version`.
 
 ### What's new in v0.8.8
 

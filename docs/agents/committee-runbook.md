@@ -1,12 +1,20 @@
 # Multi-LLM Committee Runbook
 
-This runbook designs and tracks the work that turns Peridot's single-`HarnessAgent` loop into a three-role committee — **Planner**, **Reviewer**, **Executor** — driven by independently configurable LLMs. The intent is to lift quality (catch bad diffs before they commit) and to make a long task reason in stages instead of one stream of thought.
+This runbook tracks Peridot's three-role committee mode — **Planner**,
+**Reviewer**, **Executor** — on top of the normal `HarnessAgent` loop. The
+intent is to lift quality by making long tasks reason in stages and by
+reviewing mutating turns before the run continues.
 
 ## Why now
 
-- Goal Checker is the only place in the harness today that calls a *second* model, and it only runs in goal mode. Every other turn is a single `claude-sonnet-4-6` (or whichever `models.main`) chain-of-thought.
-- M8 already wired a per-session `/provider` override; M29 exposed `config.models.{main, goal_checker}`. The harness has all the plumbing to spin a second loop on a second provider — it just doesn't yet use it.
-- The hardest bugs Peridot ships today are the ones where the agent thinks its diff is fine and the user only catches the issue on review. A Reviewer role catches them before they land instead of after.
+- Goal Checker proved the harness can call a secondary model, but it only
+  applies in goal mode. Committee mode generalizes that pattern to ordinary
+  coding sessions.
+- Per-session `/provider` and model overrides already give the executor a live
+  runtime identity. Committee mode adds planner and reviewer model slots around
+  that executor path without changing the default single-agent flow.
+- The hardest bugs are often diffs the executor thinks are done. A reviewer
+  role catches those issues while the session still has context to repair them.
 
 ## High-level shape
 
@@ -24,7 +32,7 @@ This runbook designs and tracks the work that turns Peridot's single-`HarnessAge
                           │  plan_text
                           ▼
 ┌────────────────────────────────────────────────────────────────┐
-│  Executor agent (execute mode, models.executor)                 │
+│  Executor agent (execute mode, models.main or per-session model) │
 │  - sees task + planner plan as PlanReminder context             │
 │  - normal Peridot turn loop                                     │
 └────────────────────────────────────────────────────────────────┘
@@ -49,20 +57,20 @@ Three modes of activation:
 - **planner-only**: pre-flight planner pass, then single executor loop (no per-turn reviewer).
 - **full**: planner + executor + reviewer-in-loop.
 
-Switchable per session via `/committee <mode>` slash (and by `[committee] mode = "full"` in project config).
+Switchable per session via `/committee <mode>` slash (and by `[committee]
+mode = "planner"` or `"full"` in project config).
 
 ## Surfaces in play
 
 | Concern | Today | After |
 |---|---|---|
-| Active models | `models.main` (goal_checker / compaction always mirror it) | + `models.planner`, `models.reviewer`, `models.executor` (each defaults to `models.main`) |
-| AgentRole | implicit "executor" | explicit `AgentRole::{Planner, Reviewer, Executor}` |
-| AgentRunEvent | 19 variants | + `PlannerPlanReady`, `ReviewerVerdict`, `ExecutorAction` |
-| TUI side panel | mascot · plan · subagents · budget · MCP | + committee status (which role just ran, verdict count) |
-| TranscriptKind | 11 variants | + `Reviewer` for verdict lines |
-| Slash commands | ~26 | + `/committee off|planner|full` |
-| ContextSource | User / Assistant / Tool / PlanReminder | + `ReviewerComment` |
-| CommitteeConfig | n/a | new `[committee]` section: `mode`, `planner_model`, `reviewer_model`, `executor_model`, `max_review_passes` |
+| Active models | `models.main` plus goal checker | `models.planner` and `models.reviewer` wrap the executor; executor still uses `models.main` or per-session `/model` |
+| AgentRole | default executor role | explicit `AgentRole::{Planner, Reviewer, Executor}` prompt suffixes |
+| AgentRunEvent | single-agent stream | `PlannerPlanReady`, `ReviewerVerdict`, and `CommitteeRoleUsage` |
+| TUI side panel | mascot · plan · subagents · budget · MCP | committee status, verdict counts, and per-role usage |
+| Slash commands | TUI slash catalog | `/committee off|planner|full` in the shared catalog |
+| ContextSource | User / Assistant / Tool / PlanReminder / External | `ReviewerComment` for requested changes |
+| CommitteeConfig | base project config | `[committee] mode`, `planner_model`, `reviewer_model`, `executor_model`, `max_review_passes` |
 
 ## Phase / milestone breakdown
 
@@ -89,7 +97,6 @@ Switchable per session via `/committee <mode>` slash (and by `[committee] mode =
 ### Phase 4 — `/committee` slash + status surface (M-COM4)
 - New `SlashCommand::Committee(CommitteeMode)`; parses `off`, `planner`, `full`.
 - TUI status bar appends `committee <mode>` when not Off, and side panel grows a "Committee" mini-section showing the last planner/reviewer event timestamps.
-- New `TranscriptKind::Reviewer` with its own marker (e.g. `?` — fits the five-marker rule because reviewer is conceptually a "notice / error" peer).
 - `slash_command_catalog` advertises `/committee`.
 - Tests: slash command toggles `state.config.committee.mode`; render snapshot surfaces `committee <mode>`.
 

@@ -825,6 +825,15 @@ pub struct SecurityConfig {
     /// Shell path substrings approved by the operator for destructive commands.
     #[serde(default)]
     pub approved_shell_path_scopes: Vec<String>,
+    /// Exact tool calls approved by the operator for the current config scope.
+    #[serde(default)]
+    pub approved_tool_calls: Vec<String>,
+    /// Tool names approved for the rest of the current session.
+    #[serde(default)]
+    pub approved_session_tools: Vec<String>,
+    /// Tool/path pairs approved by the operator for the current config scope.
+    #[serde(default)]
+    pub approved_tool_path_scopes: Vec<String>,
 }
 
 impl Default for SecurityConfig {
@@ -841,6 +850,9 @@ impl Default for SecurityConfig {
             ask_before_delete: default_ask_before_delete(),
             approved_shell_commands: Vec::new(),
             approved_shell_path_scopes: Vec::new(),
+            approved_tool_calls: Vec::new(),
+            approved_session_tools: Vec::new(),
+            approved_tool_path_scopes: Vec::new(),
         }
     }
 }
