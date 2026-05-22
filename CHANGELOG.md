@@ -12,6 +12,31 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 
 ---
 
+## [0.8.9 / extension 0.5.15] — 2026-05-22
+
+### Fixed — smoother editor transcript streaming
+
+The VS Code / Cursor webview now reconciles transcript rows by stable keys
+instead of replacing the whole session view during streaming and tool updates.
+Tool-only updates preserve the current transcript scroll position, while new
+user prompts and pinned streaming responses follow the bottom only when the
+user has not intentionally scrolled upward.
+
+### Changed — refined live tool and prompt presentation
+
+Running tool names, live status labels, and thinking labels use a seamless
+animated text gradient. Assistant streaming text now uses an explicit variable
+font weight reveal for newly appended characters. Approval and ask-user prompts
+render above the composer, and the context donut uses the Peridot-styled custom
+tooltip.
+
+### Migration notes
+
+- Extension package 0.5.14 → 0.5.15.
+- Workspace CLI remains 0.8.9; no CLI/API/config changes.
+
+---
+
 ## [0.8.9] — 2026-05-22
 
 ### Added — daemon-backed slash command RPC for editor clients

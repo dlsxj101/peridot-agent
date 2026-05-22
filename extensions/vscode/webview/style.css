@@ -27,7 +27,15 @@
   --peri-diff-del-fg: var(--vscode-gitDecoration-deletedResourceForeground, #dc5454);
   --peri-radius: 6px;
   --peri-radius-tight: 4px;
+  --peri-radius-sharp: 2px;
+  --peri-control-height: 26px;
+  --peri-control-height-tall: 28px;
+  --peri-composer-button-width: 42px;
+  --peri-composer-button-height: 38px;
   --peri-shadow-soft: 0 1px 0 rgba(0, 0, 0, 0.06);
+  --peri-focus-ring: 0 0 0 2px var(--peri-accent-shadow);
+  --peri-transition-focus: border-color 80ms ease, box-shadow 80ms ease;
+  --peri-transition-button: background 160ms ease, border-color 160ms ease, color 160ms ease, transform 80ms ease, box-shadow 160ms ease;
 }
 
 * {
@@ -247,12 +255,12 @@ textarea {
   border: 1px solid var(--peri-border-strong);
   border-radius: var(--peri-radius-tight);
   outline: none;
-  transition: border-color 80ms ease, box-shadow 80ms ease;
+  transition: var(--peri-transition-focus);
 }
 
 .form-input:focus {
   border-color: var(--peri-accent);
-  box-shadow: 0 0 0 2px var(--peri-accent-shadow);
+  box-shadow: var(--peri-focus-ring);
 }
 
 .primary-button {
@@ -930,7 +938,11 @@ textarea {
 @keyframes text-weight-in {
   0% {
     opacity: 0;
-    font-variation-settings: 'wght' 200;
+    font-variation-settings: 'wght' 180;
+  }
+  58% {
+    opacity: 1;
+    font-variation-settings: 'wght' 560;
   }
   100% {
     opacity: 1;
@@ -950,28 +962,30 @@ textarea {
 }
 
 .text-gradient-active {
+  display: inline-block;
   color: transparent !important;
+  -webkit-text-fill-color: transparent;
   background:
-    linear-gradient(
+    repeating-linear-gradient(
       90deg,
-      var(--peri-fg-muted) 0%,
-      var(--peri-accent-strong) 38%,
-      var(--peri-fg) 52%,
-      var(--peri-accent-strong) 66%,
-      var(--peri-fg-muted) 100%
+      var(--peri-fg-muted) 0px,
+      var(--peri-accent-strong) 54px,
+      var(--peri-fg) 72px,
+      var(--peri-accent-strong) 90px,
+      var(--peri-fg-muted) 144px
     );
-  background-size: 240% 100%;
+  background-size: 144px 100%;
   -webkit-background-clip: text;
   background-clip: text;
-  animation: text-running-gradient 1.35s linear infinite;
+  animation: text-running-gradient 2.8s linear infinite;
 }
 
 @keyframes text-running-gradient {
   0% {
-    background-position: 140% 0;
+    background-position: 0 0;
   }
   100% {
-    background-position: -140% 0;
+    background-position: -144px 0;
   }
 }
 
@@ -991,6 +1005,7 @@ textarea {
 .transcript {
   flex: 1 1 auto;
   overflow-y: auto;
+  overflow-anchor: none;
   padding: 14px 16px;
   display: flex;
   flex-direction: column;
@@ -1098,14 +1113,6 @@ textarea {
   background: transparent;
 }
 
-.msg,
-.thinking-block,
-.command-block,
-.msg-diff {
-  content-visibility: auto;
-  contain-intrinsic-size: auto 96px;
-}
-
 .msg-label {
   font-size: 10px;
   text-transform: uppercase;
@@ -1127,7 +1134,7 @@ textarea {
   display: inline-block;
   color: inherit;
   opacity: 0;
-  font-variation-settings: 'wght' 200;
+  font-variation-settings: 'wght' 180;
   animation: text-weight-in 620ms cubic-bezier(0.2, 0.7, 0.2, 1) forwards;
   animation-delay: var(--stream-delay, 0ms);
   will-change: opacity, font-variation-settings;
@@ -1584,6 +1591,11 @@ textarea {
   color: var(--peri-fg-muted);
 }
 
+.status-line-live {
+  align-self: flex-start;
+  padding: 4px 0;
+}
+
 .status-dot {
   width: 5px;
   height: 5px;
@@ -1705,68 +1717,120 @@ textarea {
   font-size: 11px;
 }
 
-.msg-prompt {
-  border-color: color-mix(in srgb, var(--vscode-notificationsInfoIcon-foreground, #5ba3ff) 35%, var(--peri-border));
-  background: var(--peri-bg-elev);
-  border-width: 1px;
-  border-style: solid;
-  border-radius: var(--peri-radius);
-  padding: 10px 12px;
-}
-
-.msg-approval {
-  border-color: color-mix(in srgb, var(--peri-warn) 45%, var(--peri-border));
-  background: color-mix(in srgb, var(--peri-warn) 6%, var(--peri-bg-elev));
-  border-width: 1px;
-  border-style: solid;
-  border-radius: var(--peri-radius);
-  padding: 10px 12px;
-}
-
-.approval-dock {
+.prompt-dock {
   flex: 0 0 auto;
   padding: 8px 16px 0;
   border-top: 1px solid var(--peri-border);
   background: var(--peri-bg-panel);
 }
 
-.approval-dock .msg-approval {
-  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.16);
+.prompt-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 10px 11px 11px;
+  border: 1px solid var(--peri-border-strong);
+  border-left-width: 3px;
+  border-radius: var(--peri-radius-sharp);
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--peri-bg-elev) 96%, var(--peri-fg) 4%),
+      var(--peri-bg-elev)
+    );
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.14);
 }
 
-.approval-reason {
+.prompt-panel-approval {
+  border-left-color: var(--peri-warn);
+}
+
+.prompt-panel-ask-user {
+  border-left-color: var(--vscode-notificationsInfoIcon-foreground, #5ba3ff);
+}
+
+.prompt-header {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 8px;
+  align-items: baseline;
+  min-width: 0;
+}
+
+.prompt-label {
+  font-size: 9.5px;
+  line-height: 1;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--peri-fg-muted);
+}
+
+.prompt-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--peri-fg);
+  font-weight: 600;
+  font-size: 12.5px;
+}
+
+.prompt-reason {
   font-size: 12px;
   color: var(--peri-fg-muted);
+  overflow-wrap: anywhere;
 }
 
 .ask-form {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 7px;
 }
 
 .choice {
   display: grid;
   grid-template-columns: auto 1fr;
-  gap: 6px;
+  gap: 7px;
   font-size: 12px;
   align-items: start;
   cursor: pointer;
-  padding: 2px 0;
+  padding: 4px 6px;
+  border: 1px solid transparent;
+  border-radius: var(--peri-radius-sharp);
+  background: color-mix(in srgb, var(--peri-bg-panel) 42%, transparent);
+}
+
+.choice:hover {
+  border-color: var(--peri-border);
+  background: var(--peri-bg-elev-soft);
 }
 
 .inline-text-input {
-  padding: 6px 8px;
+  padding: 7px 8px;
   border: 1px solid var(--peri-border-strong);
-  border-radius: var(--peri-radius-tight);
+  border-radius: var(--peri-radius-sharp);
   background: var(--vscode-input-background);
   color: var(--vscode-input-foreground);
   outline: none;
 }
 
+.prompt-panel .tool-code {
+  max-height: 140px;
+}
+
+.prompt-panel .msg-actions {
+  margin-top: 1px;
+}
+
+.prompt-panel .compact-button,
+.prompt-panel .scope-select {
+  border-radius: var(--peri-radius-sharp);
+}
+
 .inline-text-input:focus {
   border-color: var(--peri-accent);
-  box-shadow: 0 0 0 2px var(--peri-accent-shadow);
+  box-shadow: var(--peri-focus-ring);
 }
 
 .msg-actions {
@@ -2024,28 +2088,127 @@ textarea {
 
 .context-donut {
   --context-pct: 0%;
-  width: 26px;
-  height: 26px;
+  --context-color: var(--peri-accent);
+  width: 22px;
+  height: 22px;
   border-radius: 50%;
+  position: relative;
   display: grid;
   place-items: center;
-  background:
-    radial-gradient(circle at center, var(--peri-bg-panel) 53%, transparent 55%),
-    conic-gradient(var(--peri-accent) var(--context-pct), var(--peri-bg-elev) 0);
+  background: conic-gradient(var(--context-color) var(--context-pct), var(--peri-border) 0);
   border: 1px solid var(--peri-border);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--peri-fg) 5%, transparent);
   flex: 0 0 auto;
 }
 
-.context-donut.warn {
+.context-donut:focus-visible {
+  outline: none;
+  box-shadow: var(--peri-focus-ring), inset 0 0 0 1px color-mix(in srgb, var(--peri-fg) 5%, transparent);
+}
+
+.context-donut::after {
+  content: '';
+  position: absolute;
+  inset: 5px;
+  border-radius: 50%;
+  background: var(--peri-bg-panel);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--peri-border) 70%, transparent);
+}
+
+.context-donut::before {
+  content: '';
+  position: absolute;
+  top: 3px;
+  right: 4px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--context-color) 82%, white 18%);
+  z-index: 1;
+}
+
+.context-tooltip {
+  position: absolute;
+  right: -2px;
+  bottom: calc(100% + 8px);
+  z-index: 30;
+  display: grid;
+  grid-template-columns: max-content max-content;
+  grid-template-areas:
+    'label value'
+    'detail detail';
+  gap: 3px 8px;
+  min-width: 132px;
+  padding: 7px 8px;
+  border: 1px solid var(--peri-border-strong);
+  border-left: 3px solid var(--context-color);
+  border-radius: var(--peri-radius-sharp);
   background:
-    radial-gradient(circle at center, var(--peri-bg-panel) 53%, transparent 55%),
-    conic-gradient(var(--peri-warn) var(--context-pct), var(--peri-bg-elev) 0);
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--peri-bg-elev) 96%, var(--peri-fg) 4%),
+      var(--peri-bg-elev)
+    );
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.2);
+  color: var(--peri-fg);
+  opacity: 0;
+  transform: translateY(4px);
+  pointer-events: none;
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+
+.context-tooltip::after {
+  content: '';
+  position: absolute;
+  right: 8px;
+  bottom: -5px;
+  width: 8px;
+  height: 8px;
+  border-right: 1px solid var(--peri-border-strong);
+  border-bottom: 1px solid var(--peri-border-strong);
+  background: var(--peri-bg-elev);
+  transform: rotate(45deg);
+}
+
+.context-donut:hover .context-tooltip,
+.context-donut:focus-visible .context-tooltip {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.context-tooltip-label {
+  grid-area: label;
+  font-size: 9px;
+  line-height: 1;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--peri-fg-muted);
+}
+
+.context-tooltip-value {
+  grid-area: value;
+  justify-self: end;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--context-color);
+  font-family: var(--vscode-editor-font-family, ui-monospace, monospace);
+}
+
+.context-tooltip-detail {
+  grid-area: detail;
+  font-size: 11px;
+  line-height: 1.25;
+  color: var(--peri-fg-soft);
+  white-space: nowrap;
+  font-family: var(--vscode-editor-font-family, ui-monospace, monospace);
+}
+
+.context-donut.warn {
+  --context-color: var(--peri-warn);
 }
 
 .context-donut.critical {
-  background:
-    radial-gradient(circle at center, var(--peri-bg-panel) 53%, transparent 55%),
-    conic-gradient(var(--peri-error) var(--context-pct), var(--peri-bg-elev) 0);
+  --context-color: var(--peri-error);
 }
 
 /* Composer */
@@ -2084,15 +2247,15 @@ textarea {
   background-size: 4px 4px, 4px 4px;
   background-repeat: no-repeat;
   cursor: pointer;
-  transition: border-color 80ms ease, box-shadow 80ms ease;
+  transition: var(--peri-transition-focus);
 }
 
 .composer-select {
-  height: 26px;
+  height: var(--peri-control-height);
 }
 
 .scope-select {
-  height: 28px;
+  height: var(--peri-control-height-tall);
   padding: 0 26px 0 10px;
   background-position: calc(100% - 12px) 12px, calc(100% - 8px) 12px;
 }
@@ -2101,7 +2264,7 @@ textarea {
 .scope-select:focus {
   outline: none;
   border-color: var(--peri-accent);
-  box-shadow: 0 0 0 2px var(--peri-accent-shadow);
+  box-shadow: var(--peri-focus-ring);
 }
 
 .composer-select:hover:not(:disabled),
@@ -2117,7 +2280,7 @@ textarea {
 .composer-model {
   flex: 1 1 100px;
   min-width: 0;
-  height: 26px;
+  height: var(--peri-control-height);
   padding: 0 10px;
   background: var(--vscode-input-background);
   color: var(--vscode-input-foreground);
@@ -2207,7 +2370,7 @@ textarea {
 }
 
 .composer-textarea {
-  min-height: 38px;
+  min-height: var(--peri-composer-button-height);
   max-height: 180px;
   padding: 9px 12px;
   background: var(--vscode-input-background);
@@ -2218,25 +2381,25 @@ textarea {
   outline: none;
   font-size: 13px;
   line-height: 1.45;
-  transition: border-color 80ms ease, box-shadow 80ms ease;
+  transition: var(--peri-transition-focus);
 }
 
 .composer-textarea:focus {
   border-color: var(--peri-accent);
-  box-shadow: 0 0 0 2px var(--peri-accent-shadow);
+  box-shadow: var(--peri-focus-ring);
 }
 
 .composer-button {
-  width: 38px;
-  height: 38px;
+  width: var(--peri-composer-button-width);
+  height: var(--peri-composer-button-height);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: var(--peri-radius);
-  border: 1px solid transparent;
+  border-radius: var(--peri-radius-tight);
+  border: 1px solid var(--peri-border-strong);
   cursor: pointer;
   position: relative;
-  transition: background 160ms ease, color 160ms ease, transform 80ms ease;
+  transition: var(--peri-transition-button);
 }
 
 .composer-button:active {
@@ -2244,21 +2407,35 @@ textarea {
 }
 
 .composer-button.send {
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--peri-accent) 18%, var(--peri-bg-elev)),
+      color-mix(in srgb, var(--peri-accent-dim) 24%, var(--peri-bg-elev))
+    );
+  border-color: color-mix(in srgb, var(--peri-accent) 58%, var(--peri-border));
+  color: color-mix(in srgb, var(--peri-accent-strong) 72%, var(--peri-fg));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 10%, transparent);
 }
 
 .composer-button.send:hover {
-  background: var(--vscode-button-hoverBackground);
+  border-color: var(--peri-accent-strong);
+  box-shadow: var(--peri-focus-ring), inset 0 1px 0 color-mix(in srgb, white 12%, transparent);
 }
 
 .composer-button.stop {
-  background: var(--peri-error);
-  color: white;
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--peri-error) 20%, var(--peri-bg-elev)),
+      color-mix(in srgb, var(--peri-error) 30%, var(--peri-bg-elev))
+    );
+  border-color: color-mix(in srgb, var(--peri-error) 70%, var(--peri-border));
+  color: var(--peri-error);
 }
 
 .composer-button.stop:hover {
-  filter: brightness(1.1);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--peri-error) 18%, transparent);
 }
 
 .composer-button svg {

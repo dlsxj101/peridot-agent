@@ -35,10 +35,12 @@ let composerModeOverride: string | undefined;
 let composerPermissionOverride: string | undefined;
 let composerModelOverride: string | undefined;
 let transcriptPinnedToBottom = true;
-let transcriptScrollTop = 0;
 let forceTranscriptBottomOnce = false;
-let transcriptScrollRestorePending = false;
 let transcriptScrollRestoreToken = 0;
+let transcriptProgrammaticScroll = false;
+let transcriptProgrammaticScrollTimer: number | undefined;
+let transcriptUserScrollIntent = false;
+let transcriptUserScrollIntentTimer: number | undefined;
 let lastTranscriptAnimationKey = '';
 let lastTranscriptCount = 0;
 let lastComposerRunning: boolean | undefined;
@@ -48,13 +50,21 @@ interface AssistantStreamSnapshot {
 }
 const assistantTextByKey = new Map<string, AssistantStreamSnapshot>();
 let lastComposerSessionKey = '';
-let toolHistoryOpen = false;
 let slashPickerSelected = 0;
 let slashCommands: SlashCommandSpec[] = [];
 let todoExpanded = false;
 let lastTodoCurrentKey = '';
+let lastRenderedState: SidebarState | undefined;
 
 const CHATGPT_MODELS = ['gpt-5.5', 'gpt-5.5-fast', 'gpt-5.4', 'gpt-5.4-mini'];
+const APPROVAL_SCOPE_OPTIONS = [
+  ['once', 'Once'],
+  ['command', 'Command'],
+  ['path', 'Path'],
+  ['session', 'Session'],
+] as const;
+type SelectOption<Value extends string> = readonly [value: Value, label: string];
+type ApprovalScopeValue = (typeof APPROVAL_SCOPE_OPTIONS)[number][0];
 
 const markdownRenderer = new MarkdownIt({
   html: false,
@@ -99,9 +109,8 @@ function render(s: SidebarState): void {
   const modelEl = document.getElementById('composer-model') as HTMLInputElement | null;
   if (modelEl && !composerSessionChanged) composerModelOverride = modelEl.value;
   const transcriptEl = document.querySelector<HTMLElement>('.transcript');
-  if (transcriptEl && !forceTranscriptBottomOnce && !transcriptScrollRestorePending) {
-    transcriptPinnedToBottom = isTranscriptAtBottom(transcriptEl);
-    transcriptScrollTop = transcriptEl.scrollTop;
+  if (transcriptEl && !forceTranscriptBottomOnce) {
+    if (isTranscriptAtBottom(transcriptEl)) transcriptPinnedToBottom = true;
   } else if (forceTranscriptBottomOnce) {
     transcriptPinnedToBottom = true;
   }
@@ -109,7 +118,13 @@ function render(s: SidebarState): void {
   // destructive replaceChildren below.
   const focusId = (document.activeElement && (document.activeElement as HTMLElement).id) || '';
 
-  root.replaceChildren(s.view === 'landing' ? renderLanding(s) : renderSession(s));
+  const currentSession = root.firstElementChild;
+  if (s.view === 'session' && currentSession instanceof HTMLElement && currentSession.classList.contains('session')) {
+    updateSession(currentSession, s);
+  } else {
+    root.replaceChildren(s.view === 'landing' ? renderLanding(s) : renderSession(s));
+  }
+  lastRenderedState = s;
 
   const newTextarea = document.getElementById('composer-input') as HTMLTextAreaElement | null;
   if (newTextarea) newTextarea.value = composerDraft;
@@ -126,11 +141,58 @@ function isTranscriptAtBottom(node: HTMLElement): boolean {
 function pinTranscriptToBottomOnNextRender(): void {
   forceTranscriptBottomOnce = true;
   transcriptPinnedToBottom = true;
+  transcriptUserScrollIntent = false;
+  if (transcriptUserScrollIntentTimer !== undefined) {
+    window.clearTimeout(transcriptUserScrollIntentTimer);
+    transcriptUserScrollIntentTimer = undefined;
+  }
   const transcriptEl = document.querySelector<HTMLElement>('.transcript');
   if (transcriptEl) {
+    markTranscriptProgrammaticScroll();
     transcriptEl.scrollTop = transcriptEl.scrollHeight;
-    transcriptScrollTop = transcriptEl.scrollTop;
   }
+}
+
+function markTranscriptProgrammaticScroll(): void {
+  transcriptProgrammaticScroll = true;
+  if (transcriptProgrammaticScrollTimer !== undefined) {
+    window.clearTimeout(transcriptProgrammaticScrollTimer);
+  }
+  transcriptProgrammaticScrollTimer = window.setTimeout(() => {
+    transcriptProgrammaticScroll = false;
+    transcriptProgrammaticScrollTimer = undefined;
+  }, 80);
+}
+
+function noteTranscriptUserScrollIntent(): void {
+  transcriptUserScrollIntent = true;
+  if (transcriptUserScrollIntentTimer !== undefined) {
+    window.clearTimeout(transcriptUserScrollIntentTimer);
+  }
+  transcriptUserScrollIntentTimer = window.setTimeout(() => {
+    transcriptUserScrollIntent = false;
+    transcriptUserScrollIntentTimer = undefined;
+  }, 700);
+}
+
+function bindTranscriptScrollTracking(wrap: HTMLElement): void {
+  if (wrap.dataset.scrollTracking === 'true') return;
+  wrap.dataset.scrollTracking = 'true';
+  wrap.addEventListener('wheel', noteTranscriptUserScrollIntent, { passive: true });
+  wrap.addEventListener('touchmove', noteTranscriptUserScrollIntent, { passive: true });
+  wrap.addEventListener('pointerdown', noteTranscriptUserScrollIntent, { passive: true });
+  wrap.addEventListener(
+    'scroll',
+    () => {
+      const atBottom = isTranscriptAtBottom(wrap);
+      if (atBottom) {
+        transcriptPinnedToBottom = true;
+      } else if (transcriptUserScrollIntent && !transcriptProgrammaticScroll) {
+        transcriptPinnedToBottom = false;
+      }
+    },
+    { passive: true },
+  );
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -535,17 +597,68 @@ function submitButton(label: string, busy: boolean): HTMLElement {
 
 function renderSession(s: SidebarState): HTMLElement {
   const wrap = el('div', 'session');
-  wrap.append(renderHeader(s));
-  wrap.append(renderContextStrip(s.context));
-  if (s.hud.plan && s.hud.plan.steps.length > 0) wrap.append(renderTodoProgress(s.hud.plan, s.running));
-  if (hasHudData(s)) wrap.append(renderHud(s));
-  wrap.append(renderTranscript(s));
-  wrap.append(renderQueue(s));
-  if (s.branchPicker) wrap.append(renderBranchPicker(s));
-  const approval = latestPendingApproval(s);
-  if (approval) wrap.append(renderApprovalDock(approval));
-  wrap.append(renderComposer(s));
+  updateSession(wrap, s);
   return wrap;
+}
+
+function updateSession(wrap: HTMLElement, s: SidebarState): void {
+  let transcript = wrap.querySelector<HTMLElement>('.transcript');
+  if (!transcript) {
+    transcript = el('main', 'transcript');
+  }
+  const transcriptScroll = renderTranscriptInto(transcript, s);
+
+  const children: HTMLElement[] = [];
+  children.push(sessionSlot('header', renderHeader(s)));
+  children.push(sessionSlot('context', renderContextStrip(s.context)));
+  if (s.hud.plan && s.hud.plan.steps.length > 0) {
+    children.push(sessionSlot('todo', renderTodoProgress(s.hud.plan, s.running)));
+  }
+  if (hasHudData(s)) children.push(sessionSlot('hud', renderHud(s)));
+  children.push(sessionSlot('transcript', transcript));
+  children.push(sessionSlot('queue', renderQueue(s)));
+  if (s.branchPicker) children.push(sessionSlot('branch-picker', renderBranchPicker(s)));
+  const prompt = latestPendingPrompt(s);
+  if (prompt) children.push(sessionSlot('prompt', renderPromptDock(prompt)));
+  children.push(sessionSlot('composer', renderComposer(s)));
+  reconcileSessionChildren(wrap, children);
+  scheduleTranscriptScroll(transcriptScroll.wrap, transcriptScroll.mode, transcriptScroll.previousScrollTop);
+}
+
+function sessionSlot(name: string, node: HTMLElement): HTMLElement {
+  node.dataset.sessionSlot = name;
+  return node;
+}
+
+function reconcileSessionChildren(wrap: HTMLElement, nextChildren: HTMLElement[]): void {
+  const existing = new Map<string, HTMLElement>();
+  Array.from(wrap.children).forEach((child) => {
+    if (child instanceof HTMLElement && child.dataset.sessionSlot) {
+      existing.set(child.dataset.sessionSlot, child);
+    }
+  });
+  const reconciled = nextChildren.map((next) => {
+    if (next.dataset.sessionSlot === 'transcript') return next;
+    const previous = next.dataset.sessionSlot ? existing.get(next.dataset.sessionSlot) : undefined;
+    return previous && previous.outerHTML === next.outerHTML ? previous : next;
+  });
+
+  let cursor: ChildNode | null = wrap.firstChild;
+  for (const node of reconciled) {
+    if (node !== cursor) {
+      wrap.insertBefore(node, cursor);
+    }
+    cursor = node.nextSibling;
+    if (node.dataset.sessionSlot) existing.delete(node.dataset.sessionSlot);
+  }
+  for (const stale of existing.values()) {
+    stale.remove();
+  }
+  while (cursor) {
+    const next = cursor.nextSibling;
+    cursor.remove();
+    cursor = next;
+  }
 }
 
 function renderHeader(s: SidebarState): HTMLElement {
@@ -562,13 +675,6 @@ function renderHeader(s: SidebarState): HTMLElement {
   }
   const titleWrap = el('div', 'header-title-wrap');
   titleWrap.append(el('div', 'header-title', 'Peridot Agent'));
-  titleWrap.append(
-    el(
-      'div',
-      `header-status ${isAnimatedStatus(s.status) ? 'text-gradient-active' : ''}`,
-      statusLabel(s.status),
-    ),
-  );
   left.append(titleWrap);
 
   const right = el('div', 'header-actions');
@@ -779,7 +885,14 @@ function renderContextDock(s: SidebarState): HTMLElement {
   donut.style.setProperty('--context-pct', `${Math.round(pct * 100)}%`);
   if (pct >= 0.9) donut.classList.add('critical');
   else if (pct >= 0.75) donut.classList.add('warn');
-  donut.title = `Context ${exact} (${pctText})`;
+  donut.tabIndex = 0;
+  donut.setAttribute('role', 'img');
+  donut.setAttribute('aria-label', `Context ${exact} (${pctText})`);
+  const tooltip = el('span', 'context-tooltip');
+  tooltip.append(el('span', 'context-tooltip-label', 'Context'));
+  tooltip.append(el('span', 'context-tooltip-value', pctText));
+  tooltip.append(el('span', 'context-tooltip-detail', exact));
+  donut.append(tooltip);
   dock.append(donut);
   return dock;
 }
@@ -861,76 +974,252 @@ function stepMarker(status: string | undefined, current: boolean): string {
 // Transcript: chat-style with tool cards and inline diffs.
 // ──────────────────────────────────────────────────────────────────────
 
-function renderTranscript(s: SidebarState): HTMLElement {
-  const wrap = el('main', 'transcript');
+interface TranscriptScrollPlan {
+  wrap: HTMLElement;
+  mode: TranscriptScrollMode;
+  previousScrollTop: number;
+}
+
+function renderTranscriptInto(wrap: HTMLElement, s: SidebarState): TranscriptScrollPlan {
+  wrap.className = 'transcript';
   const transcriptKey = s.activeChatId ?? s.sessionId ?? 'draft';
   const sameTranscript = transcriptKey === lastTranscriptAnimationKey;
+  const activePrompt = latestPendingPrompt(s);
+  const pendingToolIndexes = pendingToolIndexSet(s.transcript);
+  const scrollMode = transcriptScrollMode(lastRenderedState, s);
+  const previousScrollTop = wrap.scrollTop;
   const animationStartIndex = forceTranscriptBottomOnce
     ? Math.max(0, s.transcript.length - 1)
     : sameTranscript
       ? lastTranscriptCount
       : s.transcript.length;
-  wrap.addEventListener(
-    'scroll',
-    () => {
-      transcriptPinnedToBottom = isTranscriptAtBottom(wrap);
-      transcriptScrollTop = wrap.scrollTop;
-    },
-    { passive: true },
-  );
+  bindTranscriptScrollTracking(wrap);
   if (!s.transcript || s.transcript.length === 0) {
-    wrap.append(renderEmptyState(s.context));
+    reconcileTranscriptChildren(wrap, [
+      keyedTranscriptNode('empty', renderEmptyState(s.context), `empty:${s.context.workspace ?? ''}`),
+    ]);
     lastTranscriptAnimationKey = transcriptKey;
     lastTranscriptCount = 0;
     transcriptScrollRestoreToken += 1;
-    transcriptScrollRestorePending = false;
     forceTranscriptBottomOnce = false;
-    return wrap;
+    return { wrap, mode: 'none', previousScrollTop };
   }
+  const nextNodes: HTMLElement[] = [];
   for (let index = 0; index < s.transcript.length; index += 1) {
     const item = s.transcript[index];
+    if (isActivePromptItem(item, activePrompt)) continue;
     if (item.role === 'tool') {
       const tools: TranscriptItem[] = [];
+      const stackStart = index;
       while (index < s.transcript.length && s.transcript[index].role === 'tool') {
         tools.push(s.transcript[index]);
         index += 1;
       }
       const stackEnd = index - 1;
       index -= 1;
-      wrap.append(
-        decorateTranscriptEntry(
-          renderToolStack(tools),
-          tools[tools.length - 1],
-          stackEnd >= animationStartIndex,
+      nextNodes.push(
+        keyedTranscriptNode(
+          toolStackKey(transcriptKey, tools, stackStart),
+          decorateTranscriptEntry(
+            renderToolStack(tools, stackStart, pendingToolIndexes),
+            representativeToolItem(tools, stackStart, pendingToolIndexes),
+            stackEnd >= animationStartIndex,
+          ),
+          toolStackSignature(tools),
         ),
       );
     } else {
-      wrap.append(
-        decorateTranscriptEntry(
-          renderItem(item, `${transcriptKey}:${index}`),
-          item,
-          index >= animationStartIndex,
+      nextNodes.push(
+        keyedTranscriptNode(
+          transcriptItemKey(transcriptKey, item, index),
+          decorateTranscriptEntry(
+            renderItem(item, `${transcriptKey}:${index}`),
+            item,
+            index >= animationStartIndex,
+          ),
+          transcriptItemSignature(item),
         ),
       );
     }
   }
+  const liveStatus = renderLiveStatus(s);
+  if (liveStatus) {
+    nextNodes.push(keyedTranscriptNode('live-status', liveStatus, `live:${s.status}`));
+  }
+  reconcileTranscriptChildren(wrap, nextNodes);
   lastTranscriptAnimationKey = transcriptKey;
   lastTranscriptCount = s.transcript.length;
+  return { wrap, mode: scrollMode, previousScrollTop };
+}
+
+type TranscriptScrollMode = 'none' | 'preserve' | 'bottom';
+
+function scheduleTranscriptScroll(
+  wrap: HTMLElement,
+  mode: TranscriptScrollMode,
+  previousScrollTop: number,
+): void {
   const restoreToken = ++transcriptScrollRestoreToken;
-  transcriptScrollRestorePending = true;
+  applyTranscriptScroll(wrap, mode, previousScrollTop);
   requestAnimationFrame(() => {
     if (!wrap.isConnected || restoreToken !== transcriptScrollRestoreToken) return;
-    if (forceTranscriptBottomOnce || transcriptPinnedToBottom) {
-      wrap.scrollTop = wrap.scrollHeight;
-    } else {
-      const maxScrollTop = Math.max(0, wrap.scrollHeight - wrap.clientHeight);
-      wrap.scrollTop = Math.min(transcriptScrollTop, maxScrollTop);
-    }
-    forceTranscriptBottomOnce = false;
-    transcriptScrollRestorePending = false;
-    transcriptScrollTop = wrap.scrollTop;
+    applyTranscriptScroll(wrap, mode, previousScrollTop);
+    requestAnimationFrame(() => {
+      if (!wrap.isConnected || restoreToken !== transcriptScrollRestoreToken) return;
+      applyTranscriptScroll(wrap, mode, previousScrollTop);
+      forceTranscriptBottomOnce = false;
+    });
   });
-  return wrap;
+}
+
+function applyTranscriptScroll(
+  wrap: HTMLElement,
+  mode: TranscriptScrollMode,
+  previousScrollTop: number,
+): void {
+  if (mode === 'none') return;
+  markTranscriptProgrammaticScroll();
+  if (mode === 'bottom') {
+    wrap.scrollTop = wrap.scrollHeight;
+  } else {
+    const maxScrollTop = Math.max(0, wrap.scrollHeight - wrap.clientHeight);
+    wrap.scrollTop = Math.min(previousScrollTop, maxScrollTop);
+  }
+}
+
+function transcriptScrollMode(
+  previous: SidebarState | undefined,
+  next: SidebarState,
+): TranscriptScrollMode {
+  if (forceTranscriptBottomOnce) return 'bottom';
+  if (isToolOnlyTranscriptChange(previous, next)) return 'preserve';
+  return transcriptPinnedToBottom ? 'bottom' : 'preserve';
+}
+
+function isToolOnlyTranscriptChange(
+  previous: SidebarState | undefined,
+  next: SidebarState,
+): boolean {
+  if (!previous) return false;
+  if ((previous.activeChatId ?? previous.sessionId) !== (next.activeChatId ?? next.sessionId)) {
+    return false;
+  }
+  const previousWithoutTools = previous.transcript.filter((item) => item.role !== 'tool');
+  const nextWithoutTools = next.transcript.filter((item) => item.role !== 'tool');
+  return json(previousWithoutTools) === json(nextWithoutTools);
+}
+
+function renderLiveStatus(s: SidebarState): HTMLElement | undefined {
+  if (!isAnimatedStatus(s.status)) return undefined;
+  const node = el('div', 'status-line status-line-live');
+  node.append(el('span', 'status-text text-gradient-active', statusLabel(s.status)));
+  return node;
+}
+
+function keyedTranscriptNode(key: string, node: HTMLElement, signature: string): HTMLElement {
+  node.dataset.transcriptKey = key;
+  node.dataset.renderSignature = signature;
+  return node;
+}
+
+function transcriptItemKey(transcriptKey: string, item: TranscriptItem, index: number): string {
+  const stablePart =
+    item.requestId ??
+    item.toolName ??
+    item.path ??
+    item.commandResult?.kind ??
+    '';
+  return `${transcriptKey}:${index}:${item.role}:${stablePart}`;
+}
+
+function toolStackKey(transcriptKey: string, items: TranscriptItem[], startIndex: number): string {
+  const first = items[0];
+  const stablePart = first?.toolName ?? first?.text ?? '';
+  return `${transcriptKey}:${startIndex}:tool-stack:${stablePart}`;
+}
+
+function representativeToolItem(
+  items: TranscriptItem[],
+  startIndex: number,
+  pendingIndexes: ReadonlySet<number>,
+): TranscriptItem {
+  for (let offset = items.length - 1; offset >= 0; offset -= 1) {
+    if (items[offset]?.pending || pendingIndexes.has(startIndex + offset)) {
+      return items[offset];
+    }
+  }
+  return items[items.length - 1];
+}
+
+function toolStackSignature(items: TranscriptItem[]): string {
+  return json(items.map(transcriptItemSignature));
+}
+
+function transcriptItemSignature(item: TranscriptItem): string {
+  return json({
+    role: item.role,
+    text: item.text,
+    detail: item.detail,
+    commandResult: item.commandResult,
+    requestId: item.requestId,
+    request: item.request,
+    path: item.path,
+    line: item.line,
+    column: item.column,
+    before: item.before,
+    after: item.after,
+    toolName: item.toolName,
+    reason: item.reason,
+    parameters: item.parameters,
+    approvalSessionId: item.approvalSessionId,
+    pending: item.pending,
+    toolParameters: item.toolParameters,
+    toolResultSummary: item.toolResultSummary,
+  });
+}
+
+function reconcileTranscriptChildren(wrap: HTMLElement, nextNodes: HTMLElement[]): void {
+  const reusable = new Map<string, HTMLElement>();
+  Array.from(wrap.children).forEach((child) => {
+    if (child instanceof HTMLElement && child.dataset.transcriptKey) {
+      reusable.set(child.dataset.transcriptKey, child);
+    }
+  });
+
+  let cursor: ChildNode | null = wrap.firstChild;
+  for (const next of nextNodes) {
+    const key = next.dataset.transcriptKey;
+    const previous = key ? reusable.get(key) : undefined;
+    if (previous instanceof HTMLDetailsElement && next instanceof HTMLDetailsElement) {
+      next.open = previous.open;
+    }
+    const node =
+      previous && previous.dataset.renderSignature === next.dataset.renderSignature
+        ? previous
+        : next;
+    if (node !== cursor) {
+      wrap.insertBefore(node, cursor);
+    }
+    cursor = node.nextSibling;
+    if (key) reusable.delete(key);
+  }
+
+  for (const stale of reusable.values()) {
+    stale.remove();
+  }
+  while (cursor) {
+    const next = cursor.nextSibling;
+    cursor.remove();
+    cursor = next;
+  }
+}
+
+function pendingToolIndexSet(items: TranscriptItem[]): ReadonlySet<number> {
+  const indexes = new Set<number>();
+  items.forEach((item, index) => {
+    if (item.role === 'tool' && item.pending) indexes.add(index);
+  });
+  return indexes;
 }
 
 function decorateTranscriptEntry(
@@ -1167,46 +1456,51 @@ function renderToolBlock(item: TranscriptItem): HTMLElement {
   return renderToolStack([item]);
 }
 
-function renderToolStack(items: TranscriptItem[]): HTMLElement {
-  const latest = items[items.length - 1];
-  const details = el('details', `tool-stack ${latest.pending ? 'tool-stack-running' : ''}`);
-  details.open = toolHistoryOpen;
+function renderToolStack(
+  items: TranscriptItem[],
+  startIndex = 0,
+  pendingIndexes: ReadonlySet<number> = new Set(),
+): HTMLElement {
+  let activeOffset = -1;
+  for (let offset = items.length - 1; offset >= 0; offset -= 1) {
+    if (items[offset]?.pending || pendingIndexes.has(startIndex + offset)) {
+      activeOffset = offset;
+      break;
+    }
+  }
+  const active = activeOffset >= 0 ? items[activeOffset] : undefined;
+  const latest = active ?? items[items.length - 1];
+  const isRunning = Boolean(active);
+  const details = el('details', `tool-stack ${isRunning ? 'tool-stack-running' : ''}`);
   details.addEventListener('toggle', () => {
-    toolHistoryOpen = details.open;
     if (details.open) {
-      ensureToolHistoryRendered(details, items);
+      ensureToolHistoryRendered(details, items, startIndex, pendingIndexes);
     }
   });
   const summary = el('summary', 'tool-summary');
   const name = el(
     'span',
-    `tool-name ${latest.pending ? 'text-gradient-active' : ''}`,
+    `tool-name ${isRunning ? 'text-gradient-active' : ''}`,
     latest.toolName || latest.text,
   );
-  const result = el('span', 'tool-result', compactMiddle(toolSummaryText(latest), 180));
-  const status = el(
-    'span',
-    `tool-status${latest.pending ? ' tool-status-running' : ' tool-status-done'}`,
-    latest.pending ? 'running' : 'done',
-  );
-  const toggle = el('span', 'tool-toggle', items.length > 1 ? `${items.length}` : '');
+  const toggle = el('span', 'tool-toggle');
   summary.append(toggle, name);
-  if (latest.path) {
-    summary.append(renderFilePathButton(latest.path, 'tool-path', latest.line, latest.column));
-  }
-  summary.append(result, status);
   details.append(summary);
-
-  if (details.open) {
-    ensureToolHistoryRendered(details, items);
-  }
+  ensureToolHistoryRendered(details, items, startIndex, pendingIndexes);
   return details;
 }
 
-function ensureToolHistoryRendered(details: HTMLElement, items: TranscriptItem[]): void {
+function ensureToolHistoryRendered(
+  details: HTMLElement,
+  items: TranscriptItem[],
+  startIndex = 0,
+  pendingIndexes: ReadonlySet<number> = new Set(),
+): void {
   if (details.querySelector('.tool-history')) return;
   const history = el('div', 'tool-history');
-  items.forEach((item) => history.append(renderToolDetail(item)));
+  items.forEach((item, offset) => {
+    history.append(renderToolDetail(item, item.pending || pendingIndexes.has(startIndex + offset)));
+  });
   details.append(history);
 }
 
@@ -1223,23 +1517,12 @@ function renderThinkingBlock(item: TranscriptItem): HTMLElement {
   return details;
 }
 
-function compactMiddle(text: string, maxLength: number): string {
-  if (text.length <= maxLength) return text;
-  const keep = Math.max(20, Math.floor((maxLength - 1) / 2));
-  return `${text.slice(0, keep)}…${text.slice(-keep)}`;
-}
-
-function toolSummaryText(item: TranscriptItem): string {
-  if (item.toolResultSummary) return item.toolResultSummary;
-  if (item.detail) return item.detail;
-  if (item.pending) return 'running';
-  return item.text;
-}
-
-function renderToolDetail(item: TranscriptItem): HTMLElement {
+function renderToolDetail(item: TranscriptItem, isActive = false): HTMLElement {
   const wrap = el('div', 'tool-detail-item');
   const header = el('div', 'tool-detail-header');
-  header.append(el('span', 'tool-detail-name', item.toolName || item.text));
+  header.append(
+    el('span', `tool-detail-name ${isActive ? 'text-gradient-active' : ''}`, item.toolName || item.text),
+  );
   if (item.path) {
     header.append(renderFilePathButton(item.path, 'tool-detail-path', item.line, item.column));
   }
@@ -1276,6 +1559,56 @@ function renderFilePathButton(
   return button;
 }
 
+function actionRow(...children: HTMLElement[]): HTMLElement {
+  const row = el('div', 'msg-actions');
+  row.append(...children);
+  return row;
+}
+
+function actionButton(
+  variant: 'primary' | 'secondary',
+  label: string,
+  onClick: () => void,
+): HTMLButtonElement {
+  const button = el(
+    'button',
+    `${variant === 'primary' ? 'primary-button' : 'secondary-button'} compact-button`,
+    label,
+  ) as HTMLButtonElement;
+  button.type = 'button';
+  button.addEventListener('click', onClick);
+  return button;
+}
+
+function selectControl<Value extends string>(
+  className: string,
+  title: string,
+  options: readonly SelectOption<Value>[],
+  current: Value,
+  id?: string,
+): HTMLSelectElement {
+  const select = document.createElement('select');
+  select.className = className;
+  if (id) select.id = id;
+  select.title = title;
+  appendSelectOptions(select, options, current);
+  return select;
+}
+
+function appendSelectOptions<Value extends string>(
+  select: HTMLSelectElement,
+  options: readonly SelectOption<Value>[],
+  current: Value,
+): void {
+  for (const [value, label] of options) {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = label;
+    if (current === value) option.selected = true;
+    select.append(option);
+  }
+}
+
 function renderStatusLine(item: TranscriptItem): HTMLElement {
   const wrap = el('div', 'status-line');
   wrap.append(el('span', 'status-dot'));
@@ -1292,18 +1625,14 @@ function renderErrorLine(item: TranscriptItem): HTMLElement {
 }
 
 function renderAskUserBubble(item: TranscriptItem): HTMLElement {
-  const wrap = el('section', 'msg msg-prompt');
-  wrap.append(el('div', 'msg-label', 'Peridot asks'));
-  wrap.append(el('div', 'msg-body', item.text));
+  const wrap = renderPromptPanel('ask-user', 'Input requested', item.text);
   wrap.append(renderAskUserForm(item));
   return wrap;
 }
 
 function renderApprovalBubble(item: TranscriptItem): HTMLElement {
-  const wrap = el('section', 'msg msg-approval');
-  wrap.append(el('div', 'msg-label', 'Approval requested'));
-  wrap.append(el('div', 'msg-body', item.toolName || item.text));
-  if (item.reason) wrap.append(el('div', 'approval-reason', item.reason));
+  const wrap = renderPromptPanel('approval', 'Approval requested', item.toolName || item.text);
+  if (item.reason) wrap.append(el('div', 'prompt-reason', item.reason));
 
   if (typeof item.before === 'string' || typeof item.after === 'string') {
     wrap.append(renderUnifiedDiff(item.before ?? '', item.after ?? '', item.path));
@@ -1321,50 +1650,36 @@ function renderApprovalBubble(item: TranscriptItem): HTMLElement {
     wrap.append(pre);
   }
 
-  const scope = document.createElement('select');
-  scope.className = 'scope-select';
-  scope.title = 'Approval scope';
-  for (const [value, label] of [
-    ['once', 'Once'],
-    ['command', 'Command'],
-    ['path', 'Path'],
-    ['session', 'Session'],
-  ] as const) {
-    const option = document.createElement('option');
-    option.value = value;
-    option.textContent = label;
-    scope.append(option);
-  }
+  const scope = selectControl(
+    'scope-select',
+    'Approval scope',
+    APPROVAL_SCOPE_OPTIONS,
+    'once',
+  );
 
-  const actions = el('div', 'msg-actions');
-  const approve = el('button', 'primary-button compact-button', 'Approve');
-  approve.type = 'button';
-  approve.addEventListener('click', () => {
+  const approve = actionButton('primary', 'Approve', () => {
     vscode.postMessage({
       type: 'approvalRespond',
       approved: true,
-      scope: scope.value as 'once' | 'session' | 'command' | 'path',
+      scope: scope.value as ApprovalScopeValue,
       toolName: item.toolName,
       reason: item.reason,
       parameters: item.parameters,
       sessionId: item.approvalSessionId,
     });
   });
-  const deny = el('button', 'secondary-button compact-button', 'Deny');
-  deny.type = 'button';
-  deny.addEventListener('click', () => {
+  const deny = actionButton('secondary', 'Deny', () => {
     vscode.postMessage({
       type: 'approvalRespond',
       approved: false,
-      scope: scope.value as 'once' | 'session' | 'command' | 'path',
+      scope: scope.value as ApprovalScopeValue,
       toolName: item.toolName,
       reason: item.reason,
       parameters: item.parameters,
       sessionId: item.approvalSessionId,
     });
   });
-  actions.append(scope, approve, deny);
-  wrap.append(actions);
+  wrap.append(actionRow(scope, approve, deny));
   return wrap;
 }
 
@@ -1372,9 +1687,43 @@ function latestPendingApproval(s: SidebarState): TranscriptItem | undefined {
   return s.pendingApproval ?? [...s.transcript].reverse().find((item) => item.role === 'approval');
 }
 
-function renderApprovalDock(item: TranscriptItem): HTMLElement {
-  const wrap = el('div', 'approval-dock');
-  wrap.append(renderApprovalBubble(item));
+function latestPendingInteraction(s: SidebarState): TranscriptItem | undefined {
+  return [...s.transcript]
+    .reverse()
+    .find((item) => item.role === 'interaction' && Boolean(item.requestId));
+}
+
+function latestPendingPrompt(s: SidebarState): TranscriptItem | undefined {
+  return latestPendingApproval(s) ?? latestPendingInteraction(s);
+}
+
+function isActivePromptItem(item: TranscriptItem, active: TranscriptItem | undefined): boolean {
+  if (!active) return false;
+  if (item === active) return true;
+  if (item.role !== active.role) return false;
+  if (item.role === 'interaction') return Boolean(item.requestId && item.requestId === active.requestId);
+  if (item.role === 'approval') {
+    return (
+      item.toolName === active.toolName &&
+      item.reason === active.reason &&
+      json(item.parameters) === json(active.parameters)
+    );
+  }
+  return false;
+}
+
+function renderPromptDock(item: TranscriptItem): HTMLElement {
+  const wrap = el('div', 'prompt-dock');
+  wrap.append(item.role === 'approval' ? renderApprovalBubble(item) : renderAskUserBubble(item));
+  return wrap;
+}
+
+function renderPromptPanel(kind: 'approval' | 'ask-user', label: string, title: string): HTMLElement {
+  const wrap = el('section', `prompt-panel prompt-panel-${kind}`);
+  const header = el('div', 'prompt-header');
+  header.append(el('span', 'prompt-label', label));
+  header.append(el('span', 'prompt-title', title));
+  wrap.append(header);
   return wrap;
 }
 
@@ -1430,13 +1779,8 @@ function renderAskUserForm(item: TranscriptItem): HTMLElement {
     });
   }
 
-  const actions = el('div', 'msg-actions');
-  const send = el('button', 'primary-button compact-button', 'Send');
-  send.type = 'button';
-  send.addEventListener('click', sendAnswer);
-  const cancel = el('button', 'secondary-button compact-button', 'Cancel');
-  cancel.type = 'button';
-  cancel.addEventListener('click', () => {
+  const send = actionButton('primary', 'Send', sendAnswer);
+  const cancel = actionButton('secondary', 'Cancel', () => {
     if (!item.requestId) return;
     vscode.postMessage({
       type: 'askUserRespond',
@@ -1444,8 +1788,7 @@ function renderAskUserForm(item: TranscriptItem): HTMLElement {
       answer: { kind: 'cancelled' },
     });
   });
-  actions.append(send, cancel);
-  wrap.append(actions);
+  wrap.append(actionRow(send, cancel));
   return wrap;
 
   function sendAnswer(): void {
@@ -1865,42 +2208,32 @@ function slashExactSelectionIsRunnable(input: string): boolean {
 
 function modeSelect(opts: RunOptions): HTMLSelectElement {
   const current = composerModeOverride ?? opts.mode;
-  const select = document.createElement('select');
-  select.className = 'composer-select';
-  select.id = 'composer-mode';
-  select.title = 'Execution mode';
-  for (const [value, label] of [
-    ['execute', 'Execute'],
-    ['plan', 'Plan'],
-    ['goal', 'Goal'],
-  ] as const) {
-    const option = document.createElement('option');
-    option.value = value;
-    option.textContent = label;
-    if (current === value) option.selected = true;
-    select.append(option);
-  }
-  return select;
+  return selectControl(
+    'composer-select',
+    'Execution mode',
+    [
+      ['execute', 'Execute'],
+      ['plan', 'Plan'],
+      ['goal', 'Goal'],
+    ] as const,
+    current,
+    'composer-mode',
+  );
 }
 
 function permissionSelect(opts: RunOptions): HTMLSelectElement {
   const current = composerPermissionOverride ?? opts.permission;
-  const select = document.createElement('select');
-  select.className = 'composer-select';
-  select.id = 'composer-permission';
-  select.title = 'Permission';
-  for (const [value, label] of [
-    ['auto', 'Auto'],
-    ['safe', 'Safe'],
-    ['yolo', 'Yolo'],
-  ] as const) {
-    const option = document.createElement('option');
-    option.value = value;
-    option.textContent = label;
-    if (current === value) option.selected = true;
-    select.append(option);
-  }
-  return select;
+  return selectControl(
+    'composer-select',
+    'Permission',
+    [
+      ['auto', 'Auto'],
+      ['safe', 'Safe'],
+      ['yolo', 'Yolo'],
+    ] as const,
+    current,
+    'composer-permission',
+  );
 }
 
 function modelControl(s: SidebarState): HTMLInputElement | HTMLSelectElement {
@@ -1913,18 +2246,13 @@ function modelControl(s: SidebarState): HTMLInputElement | HTMLSelectElement {
 function chatGptModelSelect(s: SidebarState): HTMLSelectElement {
   const configured = composerModelOverride ?? s.runOptions.model ?? s.context.model ?? 'gpt-5.5';
   const current = CHATGPT_MODELS.includes(configured) ? configured : 'gpt-5.5';
-  const select = document.createElement('select');
-  select.className = 'composer-select composer-model composer-model-select';
-  select.id = 'composer-model';
-  select.title = 'ChatGPT model';
-  for (const model of CHATGPT_MODELS) {
-    const option = document.createElement('option');
-    option.value = model;
-    option.textContent = model;
-    if (current === model) option.selected = true;
-    select.append(option);
-  }
-  return select;
+  return selectControl(
+    'composer-select composer-model composer-model-select',
+    'ChatGPT model',
+    CHATGPT_MODELS.map((model) => [model, model] as const),
+    current,
+    'composer-model',
+  );
 }
 
 function modelInput(opts: RunOptions, provider?: string): HTMLInputElement {

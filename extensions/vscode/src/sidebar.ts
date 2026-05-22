@@ -194,6 +194,14 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       this.appendToolStarted(event);
     } else if (kind === 'tool_finished') {
       this.appendToolFinished(event);
+    } else if (kind === 'error' || kind === 'recovery') {
+      const markedFailed = this.markLatestPendingToolFailed(stringField(event, 'message'));
+      const item = transcriptItemForEvent(kind, event);
+      if (item) {
+        this.append(item);
+      } else if (markedFailed) {
+        this.publish();
+      }
     } else if (approvalPayload) {
       this.appendApproval(approvalPayload, params.session_id);
     } else {
@@ -436,6 +444,19 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         return;
       }
     }
+  }
+
+  private markLatestPendingToolFailed(message: string): boolean {
+    for (let i = this.state.transcript.length - 1; i >= 0; i -= 1) {
+      const item = this.state.transcript[i];
+      if (item.role === 'tool' && item.pending) {
+        item.pending = false;
+        item.toolResultSummary = compactToolFailureSummary(message);
+        item.detail = undefined;
+        return true;
+      }
+    }
+    return false;
   }
 
   private lastAssistantTextMatches(candidate: string): boolean {
@@ -1695,6 +1716,17 @@ function questionForAskUser(request: unknown): string {
     return request.question;
   }
   return 'Peridot needs your input';
+}
+
+function compactToolFailureSummary(message: string): string {
+  const normalized = message.trim();
+  if (!normalized) return 'failed';
+  const toolErrorIndex = normalized.toLowerCase().indexOf('tool error:');
+  if (toolErrorIndex >= 0) {
+    return normalized.slice(toolErrorIndex);
+  }
+  const firstLine = normalized.split(/\r?\n/, 1)[0]?.trim();
+  return firstLine ? `failed: ${firstLine}` : 'failed';
 }
 
 function compactAskUserToolDetail(value: unknown): string {
