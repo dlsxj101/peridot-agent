@@ -8,19 +8,19 @@
 use std::collections::{BTreeMap, HashMap};
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex as StdMutex};
 
 use anyhow::Result;
 use async_trait::async_trait;
 use peridot_common::{
     AskUserAnswer, AskUserRequest, CancelToken, ExecutionMode, McpTransport, PeridotConfig,
-    PermissionMode, ReasoningEffort,
+    PermissionMode, ReasoningEffort, ToolCall,
 };
 use peridot_context::{BranchJournal, ContextEntry, ContextSource, estimate_tokens_for_text};
 use peridot_core::{
-    AgentRunEvent, AutoFixAction, SlashCommand, StopReason, SubagentModelChange,
-    parse_slash_command,
+    AgentRunEvent, AutoFixAction, SlashCommand, SlashStateDelta, StopReason, SubagentModelChange,
+    parse_slash_command, slash_state_delta,
 };
 use peridot_git::GitManager;
 use peridot_tools::AskUserPort;
@@ -34,6 +34,7 @@ use crate::commands::{
     AuthProvider, read_managed_env_var, read_stored_api_key, read_stored_openai_oauth_credentials,
 };
 use crate::run_loop::{AgentTaskOptions, MessageBusHookup, run_task_with_events};
+use crate::session_router::{RouterMessageBus, SessionHandle, SessionRouter, WorkspaceIsolation};
 
 /// Shared daemon state cloned into per-session tasks.
 #[derive(Clone)]
@@ -42,6 +43,7 @@ struct DaemonState {
     next_session_id: Arc<Mutex<u64>>,
     next_interaction_id: Arc<std::sync::atomic::AtomicU64>,
     ask_user_pending: Arc<std::sync::Mutex<HashMap<String, oneshot::Sender<AskUserAnswer>>>>,
+    router: Arc<StdMutex<SessionRouter>>,
     project_root: Arc<PathBuf>,
     out: mpsc::UnboundedSender<String>,
     run_config: Arc<PeridotConfig>,
@@ -60,6 +62,7 @@ impl DaemonState {
             next_session_id: Arc::new(Mutex::new(1)),
             next_interaction_id: Arc::new(std::sync::atomic::AtomicU64::new(1)),
             ask_user_pending: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            router: Arc::new(StdMutex::new(SessionRouter::new())),
             project_root: Arc::new(project_root),
             out,
             run_config: Arc::new(run_config),
@@ -229,6 +232,10 @@ async fn shutdown_sessions(state: &DaemonState) {
             task.abort();
         }
     }
+    *state
+        .router
+        .lock()
+        .expect("daemon session router mutex poisoned") = SessionRouter::new();
 }
 
 async fn dispatch_line(state: &DaemonState, line: &str) -> Result<bool> {
@@ -482,7 +489,8 @@ async fn handle_session_start(state: &DaemonState, id: Value, params: Option<Val
                     state,
                     id,
                     -32602,
-                    "params.reasoning_effort must be one of off, low, medium, or high".to_string(),
+                    "params.reasoning_effort must be one of off, low, medium, high, or xhigh"
+                        .to_string(),
                 )?;
                 return Ok(());
             }
@@ -566,6 +574,15 @@ async fn handle_session_start(state: &DaemonState, id: Value, params: Option<Val
             waiting_approval: None,
         },
     );
+    state
+        .router
+        .lock()
+        .expect("daemon session router mutex poisoned")
+        .register(SessionHandle::new(
+            session_id.clone(),
+            state.project_root.as_ref().clone(),
+            WorkspaceIsolation::Shared,
+        ));
     emit_response(state, id, serde_json::json!({ "session_id": session_id }))?;
     let _ = start_tx.send(());
     Ok(())
@@ -613,7 +630,7 @@ async fn run_session_task(
         Some(compact_request),
         context_snapshot_path,
         Some(ask_user_port),
-        MessageBusHookup::None,
+        daemon_message_bus(&state, &session_id),
         move |event: AgentRunEvent| {
             if matches!(
                 &event,
@@ -692,7 +709,20 @@ async fn run_session_task(
     }
 
     state.sessions.lock().await.remove(&session_id);
+    state
+        .router
+        .lock()
+        .expect("daemon session router mutex poisoned")
+        .close(&session_id);
     clear_pending_ask_user_for_session(&state, &session_id);
+}
+
+fn daemon_message_bus(state: &DaemonState, session_id: &str) -> MessageBusHookup {
+    let bus = RouterMessageBus::new(state.router.clone()).with_current_session(session_id);
+    Some((
+        Arc::new(bus) as Arc<dyn peridot_tools::AgentMessageBus>,
+        session_id.to_string(),
+    ))
 }
 
 struct DaemonAskUserPort {
@@ -755,6 +785,11 @@ async fn handle_session_cancel(
         if let Some(task) = entry.task {
             task.abort();
         }
+        state
+            .router
+            .lock()
+            .expect("daemon session router mutex poisoned")
+            .close(session_id);
         clear_pending_ask_user_for_session(state, session_id);
         true
     } else {
@@ -846,89 +881,70 @@ async fn execute_session_command(
     raw_command: &str,
     command: SlashCommand,
 ) -> Result<Value, String> {
+    let current_service_tier = session_service_tier(state, session_id).await;
+    let state_delta = slash_state_delta(&command, current_service_tier.as_deref());
+    apply_session_state_delta(state, session_id, &state_delta).await;
     match command {
-        SlashCommand::Plan => {
-            update_session_spec(state, session_id, |spec| spec.mode = ExecutionMode::Plan).await;
-            Ok(command_result("setting", "Mode", "mode: plan", "info"))
-        }
-        SlashCommand::Execute => {
-            update_session_spec(state, session_id, |spec| spec.mode = ExecutionMode::Execute).await;
-            Ok(command_result("setting", "Mode", "mode: execute", "info"))
-        }
-        SlashCommand::Safe => {
-            update_session_spec(state, session_id, |spec| {
-                spec.permission = PermissionMode::Safe
-            })
-            .await;
-            Ok(command_result(
-                "setting",
-                "Permission",
-                "permission: safe",
-                "info",
-            ))
-        }
-        SlashCommand::Auto => {
-            update_session_spec(state, session_id, |spec| {
-                spec.permission = PermissionMode::Auto
-            })
-            .await;
-            Ok(command_result(
-                "setting",
-                "Permission",
-                "permission: auto",
-                "info",
-            ))
-        }
-        SlashCommand::Yolo => {
-            update_session_spec(state, session_id, |spec| {
-                spec.permission = PermissionMode::Yolo
-            })
-            .await;
-            Ok(command_result(
-                "setting",
-                "Permission",
-                "permission: yolo",
-                "info",
-            ))
-        }
-        SlashCommand::Model(model) => {
-            update_session_spec(state, session_id, |spec| spec.model = Some(model.clone())).await;
-            Ok(command_result(
-                "setting",
-                "Model",
-                &format!("model: {model}"),
-                "info",
-            ))
-        }
-        SlashCommand::Provider(provider) => Ok(command_result(
+        SlashCommand::Plan => Ok(command_result_with_state_delta(
+            "setting",
+            "Mode",
+            "mode: plan",
+            "info",
+            &state_delta,
+        )),
+        SlashCommand::Execute => Ok(command_result_with_state_delta(
+            "setting",
+            "Mode",
+            "mode: execute",
+            "info",
+            &state_delta,
+        )),
+        SlashCommand::Safe => Ok(command_result_with_state_delta(
+            "setting",
+            "Permission",
+            "permission: safe",
+            "info",
+            &state_delta,
+        )),
+        SlashCommand::Auto => Ok(command_result_with_state_delta(
+            "setting",
+            "Permission",
+            "permission: auto",
+            "info",
+            &state_delta,
+        )),
+        SlashCommand::Yolo => Ok(command_result_with_state_delta(
+            "setting",
+            "Permission",
+            "permission: yolo",
+            "info",
+            &state_delta,
+        )),
+        SlashCommand::Model(model) => Ok(command_result_with_state_delta(
+            "setting",
+            "Model",
+            &format!("model: {model}"),
+            "info",
+            &state_delta,
+        )),
+        SlashCommand::Provider(provider) => Ok(command_result_with_state_delta(
             "setting",
             "Provider",
             &format!("provider: {provider}"),
             "info",
+            &state_delta,
         )),
-        SlashCommand::Reasoning(effort) => {
-            update_session_spec(state, session_id, |spec| {
-                spec.reasoning_effort = Some(effort)
-            })
-            .await;
-            Ok(command_result(
-                "setting",
-                "Reasoning",
-                &format!("reasoning: {effort}"),
-                "info",
-            ))
-        }
-        SlashCommand::Fast(value) => {
-            let enabled = value.unwrap_or(true);
-            update_session_spec(state, session_id, |spec| {
-                spec.service_tier = Some(if enabled {
-                    Some("fast".to_string())
-                } else {
-                    None
-                });
-            })
-            .await;
-            Ok(command_result(
+        SlashCommand::Reasoning(effort) => Ok(command_result_with_state_delta(
+            "setting",
+            "Reasoning",
+            &format!("reasoning: {effort}"),
+            "info",
+            &state_delta,
+        )),
+        SlashCommand::Fast(_value) => {
+            let tier = state_delta.service_tier.clone().unwrap_or(None);
+            let enabled = tier.as_deref() == Some("fast");
+            Ok(command_result_with_state_delta(
                 "setting",
                 "Service Tier",
                 if enabled {
@@ -937,20 +953,28 @@ async fn execute_session_command(
                     "service tier: standard"
                 },
                 "info",
+                &state_delta,
             ))
         }
-        SlashCommand::Committee(mode) => Ok(command_result(
+        SlashCommand::Committee(mode) => Ok(command_result_with_state_delta(
             "setting",
             "Committee",
             &format!("committee: {mode:?}"),
             "info",
+            &state_delta,
         )),
         SlashCommand::SubagentModel(change) => {
             let message = match change {
                 SubagentModelChange::Set(model) => format!("subagent model: {model}"),
                 SubagentModelChange::Reset => "subagent model: reset".to_string(),
             };
-            Ok(command_result("setting", "Subagent", &message, "info"))
+            Ok(command_result_with_state_delta(
+                "setting",
+                "Subagent",
+                &message,
+                "info",
+                &state_delta,
+            ))
         }
         SlashCommand::AutoFix(action) => {
             let message = match action {
@@ -966,11 +990,12 @@ async fn execute_session_command(
             &format!("note: {note}"),
             "info",
         )),
-        SlashCommand::Lang(locale) => Ok(command_result(
+        SlashCommand::Lang(locale) => Ok(command_result_with_state_delta(
             "setting",
             "Language",
             &format!("language: {locale:?}"),
             "info",
+            &state_delta,
         )),
         SlashCommand::Help => Ok(serde_json::json!({
             "kind": "help",
@@ -1002,14 +1027,17 @@ async fn execute_session_command(
         | SlashCommand::GoalPause
         | SlashCommand::GoalResume
         | SlashCommand::GoalClear
-        | SlashCommand::GoalStatus => Ok(serde_json::json!({
-            "kind": "client_action",
-            "action": "local",
-            "title": "Handled by Extension",
-            "message": format!("{raw_command}: handled by the extension UI"),
-            "severity": "info",
-            "command": raw_command,
-        })),
+        | SlashCommand::GoalStatus => Ok(with_state_delta(
+            serde_json::json!({
+                "kind": "client_action",
+                "action": "local",
+                "title": "Handled by Extension",
+                "message": format!("{raw_command}: handled by the extension UI"),
+                "severity": "info",
+                "command": raw_command,
+            }),
+            &state_delta,
+        )),
         SlashCommand::Fork(task) => Ok(start_task_result("fork", task)),
         SlashCommand::Teammate(task) => {
             Ok(start_task_result("teammate", format!("/teammate {task}")))
@@ -1049,6 +1077,19 @@ async fn execute_session_command(
     }
 }
 
+async fn session_service_tier(state: &DaemonState, session_id: Option<&str>) -> Option<String> {
+    if let Some(session_id) = session_id
+        && let Some(entry) = state.sessions.lock().await.get(session_id)
+    {
+        return match entry.spec.service_tier.as_ref() {
+            Some(Some(tier)) => Some(tier.clone()),
+            Some(None) => None,
+            None => state.run_template.service_tier.clone(),
+        };
+    }
+    state.run_template.service_tier.clone()
+}
+
 async fn update_session_spec<F>(state: &DaemonState, session_id: Option<&str>, update: F)
 where
     F: FnOnce(&mut SessionRunSpec),
@@ -1061,6 +1102,34 @@ where
     }
 }
 
+async fn apply_session_state_delta(
+    state: &DaemonState,
+    session_id: Option<&str>,
+    delta: &SlashStateDelta,
+) {
+    if delta.is_empty() {
+        return;
+    }
+    update_session_spec(state, session_id, |spec| {
+        if let Some(mode) = delta.mode {
+            spec.mode = mode;
+        }
+        if let Some(permission) = delta.permission {
+            spec.permission = permission;
+        }
+        if let Some(model) = delta.model.as_ref() {
+            spec.model = Some(model.clone());
+        }
+        if let Some(reasoning_effort) = delta.reasoning_effort {
+            spec.reasoning_effort = Some(reasoning_effort);
+        }
+        if let Some(service_tier) = delta.service_tier.as_ref() {
+            spec.service_tier = Some(service_tier.clone());
+        }
+    })
+    .await;
+}
+
 fn command_result(kind: &str, title: &str, message: &str, severity: &str) -> Value {
     serde_json::json!({
         "kind": kind,
@@ -1068,6 +1137,26 @@ fn command_result(kind: &str, title: &str, message: &str, severity: &str) -> Val
         "message": message,
         "severity": severity,
     })
+}
+
+fn command_result_with_state_delta(
+    kind: &str,
+    title: &str,
+    message: &str,
+    severity: &str,
+    delta: &SlashStateDelta,
+) -> Value {
+    with_state_delta(command_result(kind, title, message, severity), delta)
+}
+
+fn with_state_delta(mut result: Value, delta: &SlashStateDelta) -> Value {
+    if !delta.is_empty()
+        && let Some(object) = result.as_object_mut()
+        && let Ok(value) = serde_json::to_value(delta)
+    {
+        object.insert("state_delta".to_string(), value);
+    }
+    result
 }
 
 fn start_task_result(label: &str, task: String) -> Value {
@@ -1183,7 +1272,20 @@ async fn handle_approval_respond(
     };
 
     if !approved {
-        let removed = state.sessions.lock().await.remove(session_id).is_some();
+        let removed = if let Some(entry) = state.sessions.lock().await.remove(session_id) {
+            entry.cancel.cancel();
+            if let Some(task) = entry.task {
+                task.abort();
+            }
+            state
+                .router
+                .lock()
+                .expect("daemon session router mutex poisoned")
+                .close(session_id);
+            true
+        } else {
+            false
+        };
         clear_pending_ask_user_for_session(state, session_id);
         emit_event(
             state,
@@ -1205,7 +1307,7 @@ async fn handle_approval_respond(
         return Ok(());
     }
 
-    let (spec, cancel_for_task, compact_request) = {
+    let (spec, cancel_for_task, compact_request, parameters_overridden) = {
         let mut sessions = state.sessions.lock().await;
         let Some(entry) = sessions.get_mut(session_id) else {
             emit_response(
@@ -1233,15 +1335,35 @@ async fn handle_approval_respond(
             )?;
             return Ok(());
         };
+        let snapshot = match approval_snapshot_from_response(&snapshot, &params) {
+            Ok(snapshot) => snapshot,
+            Err(message) => {
+                emit_error(state, id, -32602, message)?;
+                return Ok(());
+            }
+        };
+        let parameters_overridden = params.get("parameters").is_some();
         let grant = approval_grant_from_snapshot(&snapshot, scope);
         entry.approval_grants.push(grant);
         entry.waiting_approval = None;
         let cancel = CancelToken::new();
         let compact_request = entry.compact_request.clone();
         entry.cancel = cancel.clone();
+        if let Some(handle) = state
+            .router
+            .lock()
+            .expect("daemon session router mutex poisoned")
+            .get_mut(session_id)
+        {
+            handle.cancel = cancel.clone();
+        }
         let spec = entry.spec.clone();
-        (spec, cancel, compact_request)
+        (spec, cancel, compact_request, parameters_overridden)
     };
+
+    if parameters_overridden {
+        let _ = rewrite_pending_resume_parameters(state, session_id, &params["parameters"]);
+    }
 
     let state_for_task = state.clone();
     let session_id_for_task = session_id.to_string();
@@ -1265,6 +1387,7 @@ async fn handle_approval_respond(
         serde_json::json!({
             "kind": "approval_resumed",
             "scope": approval_scope_label(scope),
+            "parameters_overridden": parameters_overridden,
         }),
     );
     emit_response(
@@ -1274,6 +1397,7 @@ async fn handle_approval_respond(
             "accepted": true,
             "resumed": true,
             "session_id": session_id,
+            "parameters_overridden": parameters_overridden,
         }),
     )
 }
@@ -1332,6 +1456,54 @@ fn approval_grant_from_snapshot(
             .and_then(Value::as_str)
             .map(str::to_string),
     }
+}
+
+fn approval_snapshot_from_response(
+    snapshot: &ApprovalRequestSnapshot,
+    params: &serde_json::Map<String, Value>,
+) -> Result<ApprovalRequestSnapshot, String> {
+    if let Some(tool_name) = params.get("tool_name").and_then(Value::as_str)
+        && tool_name != snapshot.tool_name
+    {
+        return Err(format!(
+            "params.tool_name `{tool_name}` does not match pending approval `{}`",
+            snapshot.tool_name
+        ));
+    }
+    if let Some(reason) = params.get("reason").and_then(Value::as_str)
+        && reason != snapshot.reason
+    {
+        return Err("params.reason does not match the pending approval reason".to_string());
+    }
+    let mut next = snapshot.clone();
+    if let Some(parameters) = params.get("parameters") {
+        next.parameters = parameters.clone();
+    }
+    Ok(next)
+}
+
+fn rewrite_pending_resume_parameters(
+    state: &DaemonState,
+    session_id: &str,
+    parameters: &Value,
+) -> bool {
+    let path = context_snapshot_path(state, session_id)
+        .parent()
+        .map(|parent| parent.join("pending_resume.bin"));
+    let Some(path) = path else {
+        return false;
+    };
+    let Ok(bytes) = std::fs::read(&path) else {
+        return false;
+    };
+    let Ok(mut call) = serde_json::from_slice::<ToolCall>(&bytes) else {
+        return false;
+    };
+    call.parameters = parameters.clone();
+    serde_json::to_vec(&call)
+        .ok()
+        .and_then(|bytes| std::fs::write(&path, bytes).ok())
+        .is_some()
 }
 
 fn apply_approval_grant_to_config(config: &mut PeridotConfig, grant: &ApprovalGrant) {
@@ -2613,6 +2785,138 @@ mod tests {
         assert_eq!(out[0]["id"], 7);
         assert_eq!(out[0]["result"]["cancelled"], false);
         assert_eq!(out[0]["result"]["session_id"], "missing");
+    }
+
+    #[tokio::test]
+    async fn fast_toggle_uses_current_session_tier() {
+        let (tx, _rx) = mpsc::unbounded_channel::<String>();
+        let root = test_project("fast-toggle");
+        let state = DaemonState::new(
+            root.clone(),
+            PeridotConfig::default(),
+            test_options(None),
+            tx,
+        );
+        let session_id = "session-fast";
+        state.sessions.lock().await.insert(
+            session_id.to_string(),
+            SessionEntry {
+                cancel: CancelToken::new(),
+                compact_request: Arc::new(AtomicBool::new(false)),
+                task: None,
+                spec: SessionRunSpec {
+                    task: "work".to_string(),
+                    mode: ExecutionMode::Execute,
+                    permission: PermissionMode::Auto,
+                    model: None,
+                    reasoning_effort: None,
+                    service_tier: None,
+                },
+                approval_grants: Vec::new(),
+                waiting_approval: None,
+            },
+        );
+
+        let first = execute_session_command(
+            &state,
+            Some(session_id),
+            "/fast toggle",
+            SlashCommand::Fast(None),
+        )
+        .await
+        .unwrap();
+        assert_eq!(first["message"], "service tier: fast");
+        assert_eq!(first["state_delta"]["service_tier"], "fast");
+        assert_eq!(
+            state
+                .sessions
+                .lock()
+                .await
+                .get(session_id)
+                .unwrap()
+                .spec
+                .service_tier,
+            Some(Some("fast".to_string()))
+        );
+
+        let second = execute_session_command(
+            &state,
+            Some(session_id),
+            "/fast toggle",
+            SlashCommand::Fast(None),
+        )
+        .await
+        .unwrap();
+        assert_eq!(second["message"], "service tier: standard");
+        assert!(second["state_delta"]["service_tier"].is_null());
+        assert_eq!(
+            state
+                .sessions
+                .lock()
+                .await
+                .get(session_id)
+                .unwrap()
+                .spec
+                .service_tier,
+            Some(None)
+        );
+
+        shutdown_sessions(&state).await;
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn approval_response_parameters_override_snapshot_and_resume_sidecar() {
+        let (tx, _rx) = mpsc::unbounded_channel::<String>();
+        let root = test_project("approval-override");
+        let state = DaemonState::new(
+            root.clone(),
+            PeridotConfig::default(),
+            test_options(None),
+            tx,
+        );
+        let session_id = "session-approval";
+        let sidecar = context_snapshot_path(&state, session_id)
+            .parent()
+            .unwrap()
+            .join("pending_resume.bin");
+        std::fs::create_dir_all(sidecar.parent().unwrap()).unwrap();
+        std::fs::write(
+            &sidecar,
+            serde_json::to_vec(&ToolCall::new(
+                "file_patch",
+                serde_json::json!({"path":"src/lib.rs","old_text":"a","new_text":"b"}),
+            ))
+            .unwrap(),
+        )
+        .unwrap();
+        let snapshot = ApprovalRequestSnapshot {
+            tool_name: "file_patch".to_string(),
+            reason: "file_patch requires explicit user approval".to_string(),
+            parameters: serde_json::json!({"path":"src/lib.rs","old_text":"a","new_text":"b"}),
+        };
+        let params = serde_json::json!({
+            "session_id": session_id,
+            "approved": true,
+            "scope": "once",
+            "tool_name": "file_patch",
+            "reason": "file_patch requires explicit user approval",
+            "parameters": {"path":"src/lib.rs","old_text":"a","new_text":"partial"}
+        });
+        let params = params.as_object().unwrap();
+
+        let overridden = approval_snapshot_from_response(&snapshot, params).unwrap();
+        assert_eq!(overridden.parameters["new_text"], "partial");
+        assert!(rewrite_pending_resume_parameters(
+            &state,
+            session_id,
+            &overridden.parameters
+        ));
+
+        let bytes = std::fs::read(sidecar).unwrap();
+        let call: ToolCall = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(call.parameters["new_text"], "partial");
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[tokio::test]

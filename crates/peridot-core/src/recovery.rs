@@ -147,6 +147,69 @@ pub(crate) fn recovery_message(error: &PeriError) -> String {
         .replace("{error}", &error.to_string())
 }
 
+pub(crate) fn recovery_analysis_message(error: &PeriError) -> String {
+    let classification = classify_error(error);
+    let raw = error.to_string();
+    let mut message = format!(
+        "[recovery analysis]\n\
+error_class: {classification}\n\
+raw_error: {raw}\n\
+The next model turn must analyze this error before choosing another tool. \
+Do not repeat the same tool with identical arguments unless the analysis explains why the environment changed."
+    );
+    match classification {
+        "not_found" => {
+            message.push_str(
+                "\nlikely_meaning: The path, symbol, or command target is stale or misspelled.\n\
+recommended_next_step: Use file_search, file_list, workspace_symbols, or a narrower parent directory to locate the actual path before another file_read.",
+            );
+            if let Some(path) = extract_missing_path(&raw) {
+                message.push_str(&format!(
+                    "\nfailed_path: {path}\n\
+path_hint: Search for the basename or list the nearest existing parent instead of retrying this exact path."
+                ));
+            }
+        }
+        "timeout" => {
+            message.push_str(
+                "\nlikely_meaning: The command exceeded the configured timeout or stopped making progress.\n\
+recommended_next_step: Retry only with a bounded, more diagnostic command, or inspect partial state with read-only tools.",
+            );
+        }
+        "permission" => {
+            message.push_str(
+                "\nlikely_meaning: Policy or user intent blocked the action.\n\
+recommended_next_step: Choose a read-only alternative or ask the user for a narrower approval scope.",
+            );
+        }
+        "api_error" => {
+            message.push_str(
+                "\nlikely_meaning: Provider/API protocol or transport failed.\n\
+recommended_next_step: Preserve tool-call pairing, avoid producing orphaned tool output, and retry only after changing the request shape or stopping with a clear explanation.",
+            );
+        }
+        _ => {
+            message.push_str(
+                "\nrecommended_next_step: Identify the root cause from raw_error, state the alternate strategy in one sentence, then choose a different tool or arguments.",
+            );
+        }
+    }
+    message
+}
+
+fn extract_missing_path(error: &str) -> Option<String> {
+    let marker = "failed to read ";
+    let start = error.find(marker)? + marker.len();
+    let rest = &error[start..];
+    let end = rest
+        .find(": No such file")
+        .or_else(|| rest.find(": no such file"))
+        .or_else(|| rest.find(" (os error 2)"))
+        .unwrap_or(rest.len());
+    let path = rest[..end].trim();
+    (!path.is_empty()).then(|| path.to_string())
+}
+
 /// Deterministically picks a recovery-message template index from the
 /// error's text hash so identical failures keep the same phrasing within a
 /// run (stuck-detector signatures stay stable) while different failures
@@ -388,5 +451,18 @@ mod tests {
             message.contains("Do NOT retry"),
             "path boundary should also get the deny directive: {message}"
         );
+    }
+
+    #[test]
+    fn recovery_analysis_for_missing_file_points_to_search() {
+        let err = PeriError::Tool(
+            "failed to read /tmp/project/src/missing.rs: No such file or directory (os error 2)"
+                .to_string(),
+        );
+        let message = recovery_analysis_message(&err);
+        assert!(message.contains("error_class: not_found"));
+        assert!(message.contains("file_search"));
+        assert!(message.contains("failed_path: /tmp/project/src/missing.rs"));
+        assert!(message.contains("Do not repeat"));
     }
 }

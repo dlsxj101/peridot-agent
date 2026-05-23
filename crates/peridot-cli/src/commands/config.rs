@@ -208,6 +208,13 @@ pub(super) fn merge_project_config(
         if defaults.contains_key("budget_warning_pct") {
             config.defaults.budget_warning_pct = project_config.defaults.budget_warning_pct;
         }
+        if defaults.contains_key("auto_verify_after_mutation") {
+            config.defaults.auto_verify_after_mutation =
+                project_config.defaults.auto_verify_after_mutation;
+        }
+        if defaults.contains_key("auto_grade_on_done") {
+            config.defaults.auto_grade_on_done = project_config.defaults.auto_grade_on_done;
+        }
     }
     if let Some(security) = raw_config.get("security").and_then(toml::Value::as_table) {
         if security.contains_key("sandbox") {
@@ -218,6 +225,20 @@ pub(super) fn merge_project_config(
         }
         if security.contains_key("docker_network") {
             config.security.docker_network = project_config.security.docker_network;
+        }
+        if security.contains_key("docker_read_only_rootfs") {
+            config.security.docker_read_only_rootfs =
+                project_config.security.docker_read_only_rootfs;
+        }
+        if security.contains_key("shell_command_timeout_seconds") {
+            config.security.shell_command_timeout_seconds =
+                project_config.security.shell_command_timeout_seconds;
+        }
+        if security.contains_key("docker_memory_limit") {
+            config.security.docker_memory_limit = project_config.security.docker_memory_limit;
+        }
+        if security.contains_key("shell_dry_run") {
+            config.security.shell_dry_run = project_config.security.shell_dry_run;
         }
         if security.contains_key("ask_before_install") {
             config.security.ask_before_install = project_config.security.ask_before_install;
@@ -585,7 +606,14 @@ pub(crate) fn set_config_key(config: &mut PeridotConfig, key: &str, value: &str)
                 .parse()
                 .with_context(|| "api.max_retries must be an integer")?;
         }
+        "api.cache_ttl" => config.api.cache_ttl = value.to_string(),
         "models.main" => config.models.main = value.to_string(),
+        "models.reasoning_effort" => {
+            config.models.reasoning_effort = peridot_common::ReasoningEffort::parse(value)
+                .with_context(
+                    || "models.reasoning_effort must be one of off, low, medium, high, or xhigh",
+                )?;
+        }
         "models.service_tier" => config.models.service_tier = parse_service_tier(value)?,
         "models.goal_checker" | "models.compaction" => {
             // These roles deliberately track `models.main` so a single
@@ -611,21 +639,173 @@ pub(crate) fn set_config_key(config: &mut PeridotConfig, key: &str, value: &str)
                 .parse()
                 .with_context(|| "defaults.budget_usd must be a decimal number")?;
         }
+        "defaults.budget_warning_pct" => {
+            config.defaults.budget_warning_pct = value
+                .parse()
+                .with_context(|| "defaults.budget_warning_pct must be an integer")?;
+        }
+        "defaults.auto_verify_after_mutation" => {
+            config.defaults.auto_verify_after_mutation =
+                parse_bool_value("defaults.auto_verify_after_mutation", value)?;
+        }
+        "defaults.auto_grade_on_done" => {
+            config.defaults.auto_grade_on_done =
+                parse_bool_value("defaults.auto_grade_on_done", value)?;
+        }
+        "context.budget_tokens" => {
+            config.context.budget_tokens = value
+                .parse()
+                .with_context(|| "context.budget_tokens must be an integer")?;
+        }
+        "context.compaction_threshold" => {
+            config.context.compaction_threshold = value
+                .parse()
+                .with_context(|| "context.compaction_threshold must be an integer")?;
+        }
+        "context.hard_limit" => {
+            config.context.hard_limit = value
+                .parse()
+                .with_context(|| "context.hard_limit must be an integer")?;
+        }
+        "context.offload_threshold_chars" => {
+            config.context.offload_threshold_chars = value
+                .parse()
+                .with_context(|| "context.offload_threshold_chars must be an integer")?;
+        }
+        "context.observation_max_chars" => {
+            config.context.observation_max_chars = value
+                .parse()
+                .with_context(|| "context.observation_max_chars must be an integer")?;
+        }
+        "context.thinking" => config.context.thinking = value.to_string(),
+        "memory.session_history" => {
+            config.memory.session_history = parse_bool_value("memory.session_history", value)?;
+        }
+        "memory.auto_skills" => {
+            config.memory.auto_skills = parse_bool_value("memory.auto_skills", value)?;
+        }
+        "memory.skills_review" => {
+            config.memory.skills_review = parse_bool_value("memory.skills_review", value)?;
+        }
+        "memory.max_sessions_stored" => {
+            config.memory.max_sessions_stored = value
+                .parse()
+                .with_context(|| "memory.max_sessions_stored must be an integer")?;
+        }
+        "memory.curator_model" => config.memory.curator_model = parse_optional_string(value),
+        "memory.auto_skill_reflection" => {
+            config.memory.auto_skill_reflection =
+                parse_bool_value("memory.auto_skill_reflection", value)?;
+        }
+        "memory.ngram_min_count" => {
+            config.memory.ngram_min_count = value
+                .parse()
+                .with_context(|| "memory.ngram_min_count must be an integer")?;
+        }
+        "memory.ngram_max_length" => {
+            config.memory.ngram_max_length = value
+                .parse()
+                .with_context(|| "memory.ngram_max_length must be an integer")?;
+        }
+        "memory.ngram_batch_cap" => {
+            config.memory.ngram_batch_cap = value
+                .parse()
+                .with_context(|| "memory.ngram_batch_cap must be an integer")?;
+        }
+        "tui.theme" => config.tui.theme = value.to_string(),
+        "tui.language" => {
+            config.tui.language = value
+                .parse::<peridot_common::Locale>()
+                .map_err(|err| anyhow::anyhow!("tui.language {err}"))?;
+        }
+        "tui.show_thinking" => {
+            config.tui.show_thinking = parse_bool_value("tui.show_thinking", value)?;
+        }
+        "tui.show_token_count" => {
+            config.tui.show_token_count = parse_bool_value("tui.show_token_count", value)?;
+        }
+        "tui.show_cost" => config.tui.show_cost = parse_bool_value("tui.show_cost", value)?,
+        "tui.show_cache_rate" => {
+            config.tui.show_cache_rate = parse_bool_value("tui.show_cache_rate", value)?;
+        }
+        "tui.show_subagent_panel" => {
+            config.tui.show_subagent_panel = parse_bool_value("tui.show_subagent_panel", value)?;
+        }
+        "tui.stream_speed" => config.tui.stream_speed = value.to_string(),
+        "tui.show_mascot" => {
+            config.tui.show_mascot = parse_bool_value("tui.show_mascot", value)?;
+        }
         "security.sandbox" => config.security.sandbox = parse_sandbox_mode(value)?,
+        "security.docker_image" => config.security.docker_image = value.to_string(),
+        "security.docker_network" => {
+            config.security.docker_network = parse_bool_value("security.docker_network", value)?;
+        }
+        "security.docker_read_only_rootfs" => {
+            config.security.docker_read_only_rootfs =
+                parse_bool_value("security.docker_read_only_rootfs", value)?;
+        }
+        "security.shell_command_timeout_seconds" => {
+            config.security.shell_command_timeout_seconds = value
+                .parse()
+                .with_context(|| "security.shell_command_timeout_seconds must be an integer")?;
+        }
+        "security.docker_memory_limit" => config.security.docker_memory_limit = value.to_string(),
+        "security.shell_dry_run" => {
+            config.security.shell_dry_run = parse_bool_value("security.shell_dry_run", value)?;
+        }
+        "security.ask_before_install" => {
+            config.security.ask_before_install =
+                parse_bool_value("security.ask_before_install", value)?;
+        }
+        "security.ask_before_delete" => {
+            config.security.ask_before_delete =
+                parse_bool_value("security.ask_before_delete", value)?;
+        }
         "git.auto_commit" => config.git.auto_commit = parse_bool_value("git.auto_commit", value)?,
         "git.auto_branch" => config.git.auto_branch = parse_bool_value("git.auto_branch", value)?,
         "git.branch_prefix" => config.git.branch_prefix = value.to_string(),
+        "git.commit_frequency" => config.git.commit_frequency = value.to_string(),
+        "git.commit_message_style" => config.git.commit_message_style = value.to_string(),
         "updates.auto_check" => {
             config.updates.auto_check = parse_bool_value("updates.auto_check", value)?;
         }
+        "updates.auto_check_interval" => config.updates.auto_check_interval = value.to_string(),
         "updates.auto_install" => {
             config.updates.auto_install = parse_bool_value("updates.auto_install", value)?;
         }
+        "hooks.timeout_seconds" => {
+            config.hooks.timeout_seconds = value
+                .parse()
+                .with_context(|| "hooks.timeout_seconds must be an integer")?;
+        }
+        "subagents.default_model" => config.subagents.default_model = parse_optional_string(value),
+        "auto_fix.enabled" => {
+            config.auto_fix.enabled = parse_bool_value("auto_fix.enabled", value)?;
+        }
+        "auto_fix.max_attempts" => {
+            config.auto_fix.max_attempts = value
+                .parse()
+                .with_context(|| "auto_fix.max_attempts must be an integer")?;
+        }
         _ => anyhow::bail!(
-            "unsupported config key `{key}`; supported examples: auth.primary, api.base_url, models.main, models.service_tier, defaults.mode"
+            "unsupported config key `{key}`; supported examples: auth.primary, api.base_url, models.main, models.reasoning_effort, defaults.mode, context.budget_tokens, memory.auto_skills, tui.theme"
         ),
     }
     Ok(())
+}
+
+fn parse_optional_string(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty()
+        || matches!(
+            trimmed.to_ascii_lowercase().as_str(),
+            "none" | "null" | "reset" | "default"
+        )
+    {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
 }
 
 fn parse_service_tier(value: &str) -> Result<Option<String>> {

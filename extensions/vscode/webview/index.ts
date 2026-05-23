@@ -1,4 +1,5 @@
 import './style.css';
+import autoAnimate from '@formkit/auto-animate';
 import MarkdownIt from 'markdown-it';
 import type {
   InboundMessage,
@@ -55,6 +56,7 @@ let slashCommands: SlashCommandSpec[] = [];
 let todoExpanded = false;
 let lastTodoCurrentKey = '';
 let lastRenderedState: SidebarState | undefined;
+const toolNameSwapAnimations = new WeakMap<HTMLElement, Animation[]>();
 
 const CHATGPT_MODELS = ['gpt-5.5', 'gpt-5.5-fast', 'gpt-5.4', 'gpt-5.4-mini'];
 const APPROVAL_SCOPE_OPTIONS = [
@@ -193,6 +195,15 @@ function bindTranscriptScrollTracking(wrap: HTMLElement): void {
     },
     { passive: true },
   );
+}
+
+function bindToolHistoryMotion(wrap: HTMLElement): void {
+  if (wrap.dataset.motionBound === 'true') return;
+  wrap.dataset.motionBound = 'true';
+  autoAnimate(wrap, {
+    duration: 160,
+    easing: 'cubic-bezier(0.2, 0.75, 0.2, 1)',
+  });
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -689,14 +700,6 @@ function renderHeader(s: SidebarState): HTMLElement {
   return header;
 }
 
-function isAnimatedStatus(status: string): boolean {
-  return ['Waiting for model', 'Starting daemon', 'Running'].includes(status);
-}
-
-function statusLabel(status: string): string {
-  return status === 'Waiting for model' ? 'Preparing response' : status;
-}
-
 function renderSessionMenu(s: SidebarState): HTMLElement {
   const active = s.sessions.find((session) => session.active);
   const details = el('details', 'session-menu');
@@ -735,7 +738,7 @@ function renderSessionMenu(s: SidebarState): HTMLElement {
     marker.textContent = session.active ? '✓' : session.running ? '●' : '';
     const text = el('span', 'session-menu-text');
     text.append(el('span', 'session-menu-title', session.title));
-    text.append(el('span', 'session-menu-subtitle', session.running ? 'Running' : session.status));
+    text.append(el('span', 'session-menu-subtitle', session.running ? 'In progress' : session.status));
     item.append(marker, text);
     item.addEventListener('click', () => {
       composerDraft = '';
@@ -882,12 +885,30 @@ function renderContextDock(s: SidebarState): HTMLElement {
   const pctText = `${Math.round(pct * 100)}%`;
   const exact = `${context.tokensUsed.toLocaleString()} / ${context.threshold.toLocaleString()} tokens`;
   const donut = el('div', 'context-donut');
-  donut.style.setProperty('--context-pct', `${Math.round(pct * 100)}%`);
+  const circumference = 62.832;
+  donut.style.setProperty('--context-dash', `${(circumference * pct).toFixed(2)}`);
+  donut.style.setProperty('--context-circ', `${circumference}`);
   if (pct >= 0.9) donut.classList.add('critical');
   else if (pct >= 0.75) donut.classList.add('warn');
   donut.tabIndex = 0;
   donut.setAttribute('role', 'img');
   donut.setAttribute('aria-label', `Context ${exact} (${pctText})`);
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('class', 'context-ring');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('aria-hidden', 'true');
+  const track = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+  track.setAttribute('class', 'context-ring-track');
+  track.setAttribute('cx', '12');
+  track.setAttribute('cy', '12');
+  track.setAttribute('r', '10');
+  const value = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+  value.setAttribute('class', 'context-ring-value');
+  value.setAttribute('cx', '12');
+  value.setAttribute('cy', '12');
+  value.setAttribute('r', '10');
+  svg.append(track, value);
+  donut.append(svg);
   const tooltip = el('span', 'context-tooltip');
   tooltip.append(el('span', 'context-tooltip-label', 'Context'));
   tooltip.append(el('span', 'context-tooltip-value', pctText));
@@ -1019,7 +1040,7 @@ function renderTranscriptInto(wrap: HTMLElement, s: SidebarState): TranscriptScr
       index -= 1;
       nextNodes.push(
         keyedTranscriptNode(
-          toolStackKey(transcriptKey, tools, stackStart),
+          toolStackKey(transcriptKey, stackStart),
           decorateTranscriptEntry(
             renderToolStack(tools, stackStart, pendingToolIndexes),
             representativeToolItem(tools, stackStart, pendingToolIndexes),
@@ -1041,10 +1062,6 @@ function renderTranscriptInto(wrap: HTMLElement, s: SidebarState): TranscriptScr
         ),
       );
     }
-  }
-  const liveStatus = renderLiveStatus(s);
-  if (liveStatus) {
-    nextNodes.push(keyedTranscriptNode('live-status', liveStatus, `live:${s.status}`));
   }
   reconcileTranscriptChildren(wrap, nextNodes);
   lastTranscriptAnimationKey = transcriptKey;
@@ -1109,13 +1126,6 @@ function isToolOnlyTranscriptChange(
   return json(previousWithoutTools) === json(nextWithoutTools);
 }
 
-function renderLiveStatus(s: SidebarState): HTMLElement | undefined {
-  if (!isAnimatedStatus(s.status)) return undefined;
-  const node = el('div', 'status-line status-line-live');
-  node.append(el('span', 'status-text text-gradient-active', statusLabel(s.status)));
-  return node;
-}
-
 function keyedTranscriptNode(key: string, node: HTMLElement, signature: string): HTMLElement {
   node.dataset.transcriptKey = key;
   node.dataset.renderSignature = signature;
@@ -1132,10 +1142,8 @@ function transcriptItemKey(transcriptKey: string, item: TranscriptItem, index: n
   return `${transcriptKey}:${index}:${item.role}:${stablePart}`;
 }
 
-function toolStackKey(transcriptKey: string, items: TranscriptItem[], startIndex: number): string {
-  const first = items[0];
-  const stablePart = first?.toolName ?? first?.text ?? '';
-  return `${transcriptKey}:${startIndex}:tool-stack:${stablePart}`;
+function toolStackKey(transcriptKey: string, startIndex: number): string {
+  return `${transcriptKey}:${startIndex}:tool-stack`;
 }
 
 function representativeToolItem(
@@ -1193,10 +1201,7 @@ function reconcileTranscriptChildren(wrap: HTMLElement, nextNodes: HTMLElement[]
     if (previous instanceof HTMLDetailsElement && next instanceof HTMLDetailsElement) {
       next.open = previous.open;
     }
-    const node =
-      previous && previous.dataset.renderSignature === next.dataset.renderSignature
-        ? previous
-        : next;
+    const node = reconcileTranscriptNode(previous, next);
     if (node !== cursor) {
       wrap.insertBefore(node, cursor);
     }
@@ -1212,6 +1217,193 @@ function reconcileTranscriptChildren(wrap: HTMLElement, nextNodes: HTMLElement[]
     cursor.remove();
     cursor = next;
   }
+}
+
+function reconcileTranscriptNode(previous: HTMLElement | undefined, next: HTMLElement): HTMLElement {
+  if (!previous) return next;
+  if (previous.dataset.renderSignature === next.dataset.renderSignature) return previous;
+  if (previous.matches('details.tool-stack') && next.matches('details.tool-stack')) {
+    return updateToolStackNode(previous as HTMLDetailsElement, next as HTMLDetailsElement);
+  }
+  if (
+    (previous.matches('.msg-assistant') && next.matches('.msg-assistant')) ||
+    (previous.matches('.msg-user') && next.matches('.msg-user'))
+  ) {
+    return updateMessageNode(previous, next);
+  }
+  return next;
+}
+
+function updateToolStackNode(previous: HTMLDetailsElement, next: HTMLDetailsElement): HTMLElement {
+  const wasOpen = previous.open;
+  previous.className = stableTranscriptClassName(next);
+  previous.dataset.renderSignature = next.dataset.renderSignature ?? '';
+  previous.open = wasOpen;
+
+  const previousSummary = previous.querySelector<HTMLElement>(':scope > .tool-summary');
+  const nextSummary = next.querySelector<HTMLElement>(':scope > .tool-summary');
+  if (!previousSummary || !nextSummary) return next;
+  previousSummary.className = nextSummary.className;
+
+  const previousToggle = previousSummary.querySelector<HTMLElement>('.tool-toggle');
+  const nextToggle = nextSummary.querySelector<HTMLElement>('.tool-toggle');
+  if (previousToggle && nextToggle) {
+    previousToggle.className = nextToggle.className;
+    previousToggle.innerHTML = nextToggle.innerHTML;
+  }
+
+  const previousName = previousSummary.querySelector<HTMLElement>('.tool-name');
+  const nextName = nextSummary.querySelector<HTMLElement>('.tool-name');
+  if (previousName && nextName) {
+    updateToolName(previousName, nextName);
+  }
+
+  const nextHistory = next.querySelector<HTMLElement>(':scope > .tool-history');
+  const previousHistory = previous.querySelector<HTMLElement>(':scope > .tool-history');
+  if (nextHistory) {
+    bindToolHistoryMotion(nextHistory);
+    if (previousHistory) {
+      reconcileToolHistory(previousHistory, nextHistory);
+    } else {
+      previous.append(nextHistory);
+    }
+  } else {
+    previousHistory?.remove();
+  }
+  return previous;
+}
+
+function reconcileToolHistory(previousHistory: HTMLElement, nextHistory: HTMLElement): void {
+  previousHistory.className = nextHistory.className;
+  bindToolHistoryMotion(previousHistory);
+
+  const reusable = new Map<string, HTMLElement>();
+  Array.from(previousHistory.children).forEach((child) => {
+    if (child instanceof HTMLElement && child.dataset.toolDetailKey) {
+      reusable.set(child.dataset.toolDetailKey, child);
+    }
+  });
+
+  let cursor: ChildNode | null = previousHistory.firstChild;
+  Array.from(nextHistory.children).forEach((nextChild) => {
+    if (!(nextChild instanceof HTMLElement)) return;
+    const key = nextChild.dataset.toolDetailKey;
+    const previousChild = key ? reusable.get(key) : undefined;
+    const node = previousChild ? updateToolDetailNode(previousChild, nextChild) : nextChild;
+    if (node !== cursor) {
+      previousHistory.insertBefore(node, cursor);
+    }
+    cursor = node.nextSibling;
+    if (key) reusable.delete(key);
+  });
+
+  for (const stale of reusable.values()) {
+    stale.remove();
+  }
+  while (cursor) {
+    const next = cursor.nextSibling;
+    cursor.remove();
+    cursor = next;
+  }
+}
+
+function updateToolDetailNode(previous: HTMLElement, next: HTMLElement): HTMLElement {
+  if (previous.dataset.renderSignature === next.dataset.renderSignature) return previous;
+  previous.className = next.className;
+  previous.dataset.renderSignature = next.dataset.renderSignature ?? '';
+  previous.replaceChildren(...Array.from(next.childNodes));
+  return previous;
+}
+
+function updateToolName(previousName: HTMLElement, nextName: HTMLElement): void {
+  const previousText = previousName.textContent ?? '';
+  const nextText = nextName.textContent ?? '';
+  cancelToolNameSwap(previousName);
+  previousName.className = nextName.className;
+  if (previousText === nextText) return;
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (reduceMotion) {
+    previousName.textContent = nextText;
+    return;
+  }
+  const swapId = String(Number(previousName.dataset.swapId ?? '0') + 1);
+  previousName.dataset.swapId = swapId;
+  const outAnimation = previousName.animate(
+    [
+      { opacity: 1, transform: 'translateY(0)' },
+      { opacity: 0, transform: 'translateY(-7px)' },
+    ],
+    { duration: 110, easing: 'cubic-bezier(0.4, 0, 1, 1)' },
+  );
+  toolNameSwapAnimations.set(previousName, [outAnimation]);
+  outAnimation.finished
+    .catch(() => undefined)
+    .finally(() => {
+      if (previousName.dataset.swapId !== swapId) return;
+      previousName.style.opacity = '0';
+      previousName.style.transform = 'translateY(8px)';
+      outAnimation.cancel();
+      previousName.textContent = nextText;
+      previousName.className = nextName.className;
+      const inAnimation = previousName.animate(
+        [
+          { opacity: 0, transform: 'translateY(8px)' },
+          { opacity: 1, transform: 'translateY(0)' },
+        ],
+        { duration: 190, easing: 'cubic-bezier(0.16, 1, 0.3, 1)' },
+      );
+      toolNameSwapAnimations.set(previousName, [inAnimation]);
+      inAnimation.finished
+        .catch(() => undefined)
+        .finally(() => {
+          if (previousName.dataset.swapId === swapId) {
+            inAnimation.cancel();
+            previousName.style.opacity = '';
+            previousName.style.transform = '';
+            toolNameSwapAnimations.delete(previousName);
+          }
+        });
+    });
+}
+
+function cancelToolNameSwap(name: HTMLElement): void {
+  if (!toolNameSwapAnimations.has(name)) return;
+  name.dataset.swapId = String(Number(name.dataset.swapId ?? '0') + 1);
+  toolNameSwapAnimations.get(name)?.forEach((animation) => animation.cancel());
+  toolNameSwapAnimations.delete(name);
+  name.style.opacity = '';
+  name.style.transform = '';
+}
+
+function updateMessageNode(previous: HTMLElement, next: HTMLElement): HTMLElement {
+  previous.className = stableTranscriptClassName(next);
+  previous.dataset.renderSignature = next.dataset.renderSignature ?? '';
+  const previousBody = previous.querySelector<HTMLElement>('.msg-body');
+  const nextBody = next.querySelector<HTMLElement>('.msg-body');
+  if (
+    previousBody &&
+    nextBody &&
+    previousBody.innerHTML !== nextBody.innerHTML
+  ) {
+    previousBody.replaceWith(nextBody);
+  }
+  const previousCopy = previous.querySelector<HTMLElement>('.copy-button');
+  const nextCopy = next.querySelector<HTMLElement>('.copy-button');
+  if (
+    previousCopy &&
+    nextCopy &&
+    previousCopy.outerHTML !== nextCopy.outerHTML
+  ) {
+    previousCopy.replaceWith(nextCopy);
+  }
+  return previous;
+}
+
+function stableTranscriptClassName(node: HTMLElement): string {
+  return node.className
+    .split(/\s+/)
+    .filter((className) => className.length > 0 && !className.startsWith('bubble-enter'))
+    .join(' ');
 }
 
 function pendingToolIndexSet(items: TranscriptItem[]): ReadonlySet<number> {
@@ -1498,10 +1690,18 @@ function ensureToolHistoryRendered(
 ): void {
   if (details.querySelector('.tool-history')) return;
   const history = el('div', 'tool-history');
+  bindToolHistoryMotion(history);
   items.forEach((item, offset) => {
-    history.append(renderToolDetail(item, item.pending || pendingIndexes.has(startIndex + offset)));
+    const detail = renderToolDetail(item, item.pending || pendingIndexes.has(startIndex + offset));
+    detail.dataset.toolDetailKey = toolDetailKey(startIndex, offset);
+    detail.dataset.renderSignature = transcriptItemSignature(item);
+    history.append(detail);
   });
   details.append(history);
+}
+
+function toolDetailKey(startIndex: number, offset: number): string {
+  return `tool-detail:${startIndex + offset}`;
 }
 
 function renderThinkingBlock(item: TranscriptItem): HTMLElement {
@@ -1509,7 +1709,7 @@ function renderThinkingBlock(item: TranscriptItem): HTMLElement {
   const summary = el('summary', 'thinking-summary');
   const label = el('span', 'thinking-label text-gradient-active', 'Thinking');
   const state = el('span', 'thinking-state', 'reasoning trace');
-  summary.append(el('span', 'thinking-pulse'), label, state);
+  summary.append(label, state);
   details.append(summary);
   const body = el('pre', 'thinking-body');
   body.textContent = item.text;
@@ -2050,12 +2250,12 @@ function renderComposer(s: SidebarState): HTMLElement {
     if (isSlashPickerOpen(slashPicker)) {
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault();
-        const matches = filteredSlashCommands(textarea.value);
-        if (matches.length > 0) {
+        const itemCount = slashPickerItemCount(textarea.value);
+        if (itemCount > 0) {
           slashPickerSelected = Math.max(
             0,
             Math.min(
-              matches.length - 1,
+              itemCount - 1,
               slashPickerSelected + (event.key === 'ArrowDown' ? 1 : -1),
             ),
           );
@@ -2147,7 +2347,24 @@ function filteredSlashCommands(input: string): SlashCommandSpec[] {
   });
 }
 
+interface SlashArgumentContext {
+  command: SlashCommandSpec;
+  options: string[];
+}
+
+function slashPickerItemCount(input: string): number {
+  const argumentContext = slashArgumentContext(input);
+  if (argumentContext) return argumentContext.options.length;
+  return filteredSlashCommands(input).length;
+}
+
 function updateSlashPicker(textarea: HTMLTextAreaElement, picker: HTMLElement): void {
+  const argumentContext = slashArgumentContext(textarea.value);
+  if (argumentContext) {
+    renderSlashArgumentOptions(textarea, picker, argumentContext);
+    return;
+  }
+
   const matches = filteredSlashCommands(textarea.value);
   if (matches.length === 0) {
     slashPickerSelected = 0;
@@ -2179,15 +2396,71 @@ function updateSlashPicker(textarea: HTMLTextAreaElement, picker: HTMLElement): 
   });
 }
 
+function renderSlashArgumentOptions(
+  textarea: HTMLTextAreaElement,
+  picker: HTMLElement,
+  context: SlashArgumentContext,
+): void {
+  if (context.options.length === 0) {
+    slashPickerSelected = 0;
+    picker.classList.add('hidden');
+    picker.replaceChildren();
+    return;
+  }
+  slashPickerSelected = Math.min(slashPickerSelected, context.options.length - 1);
+  picker.classList.remove('hidden');
+  picker.replaceChildren();
+  const start = Math.min(
+    Math.max(0, slashPickerSelected - 5),
+    Math.max(0, context.options.length - 6),
+  );
+  context.options.slice(start, start + 6).forEach((option, offset) => {
+    const index = start + offset;
+    const row = el('button', `slash-option${index === slashPickerSelected ? ' selected' : ''}`);
+    row.type = 'button';
+    row.addEventListener('mousedown', (event) => {
+      event.preventDefault();
+      slashPickerSelected = index;
+      acceptSlashSelection(textarea, picker);
+    });
+    row.append(el('span', 'slash-name', option));
+    row.append(el('span', 'slash-description', context.command.name));
+    picker.append(row);
+  });
+}
+
 function isSlashPickerOpen(picker: HTMLElement): boolean {
   return !picker.classList.contains('hidden');
 }
 
 function acceptSlashSelection(textarea: HTMLTextAreaElement, picker: HTMLElement): void {
+  const argumentContext = slashArgumentContext(textarea.value);
+  if (argumentContext) {
+    const optionIndex = Math.min(slashPickerSelected, argumentContext.options.length - 1);
+    const option = argumentContext.options[optionIndex];
+    if (!option) return;
+    textarea.value = `${argumentContext.command.name} ${option}`;
+    textarea.selectionStart = textarea.value.length;
+    textarea.selectionEnd = textarea.value.length;
+    composerDraft = textarea.value;
+    autoresize(textarea);
+    picker.classList.add('hidden');
+    picker.replaceChildren();
+    textarea.focus();
+    return;
+  }
+
   const matches = filteredSlashCommands(textarea.value);
   const command = matches[slashPickerSelected];
   if (!command) return;
-  textarea.value = command.argHint ? `${command.name} ${command.argHint}` : command.name;
+  const hasFiniteArgumentOptions = slashArgumentOptions(command).length > 0;
+  textarea.value =
+    hasFiniteArgumentOptions
+      ? `${command.name} `
+      : command.argHint
+        ? `${command.name} ${command.argHint}`
+        : command.name;
+  if (hasFiniteArgumentOptions) slashPickerSelected = 0;
   textarea.selectionStart = textarea.value.length;
   textarea.selectionEnd = textarea.value.length;
   composerDraft = textarea.value;
@@ -2197,12 +2470,56 @@ function acceptSlashSelection(textarea: HTMLTextAreaElement, picker: HTMLElement
 }
 
 function slashExactSelectionIsRunnable(input: string): boolean {
+  if (slashArgumentContext(input)) return false;
   const matches = filteredSlashCommands(input);
   const command = matches[slashPickerSelected];
   if (!command) return false;
   return (
     input.trim() === command.name &&
     (!command.argHint || command.argHint.startsWith('['))
+  );
+}
+
+function slashArgumentContext(input: string): SlashArgumentContext | undefined {
+  const query = input;
+  if (!query.startsWith('/') || query.includes('\n')) return undefined;
+  const command = [...slashCommands]
+    .sort((a, b) => b.name.length - a.name.length)
+    .find(
+      (candidate) =>
+        !(query === candidate.name && candidate.argHint?.trim().startsWith('[')) &&
+        (query === candidate.name || query.startsWith(`${candidate.name} `)),
+    );
+  if (!command) return undefined;
+  const options = slashArgumentOptions(command);
+  if (options.length === 0) return undefined;
+  const rest = query.slice(command.name.length).trim().toLowerCase();
+  if (rest && options.some((option) => option.toLowerCase() === rest)) return undefined;
+  const filtered = rest
+    ? options.filter((option) => option.toLowerCase().startsWith(rest))
+    : options;
+  return { command, options: filtered };
+}
+
+function slashArgumentOptions(command: SlashCommandSpec): string[] {
+  const hint = command.argHint?.trim();
+  if (!hint) return [];
+  const opensChoiceList =
+    (hint.startsWith('<') && hint.endsWith('>')) ||
+    (hint.startsWith('[') && hint.endsWith(']'));
+  if (!opensChoiceList) return [];
+  const body = hint.slice(1, -1);
+  if (!body.includes('|') || /\s/.test(body)) return [];
+  return body
+    .split('|')
+    .map((option) => option.trim())
+    .filter((option) => option.length > 0 && !isPlaceholderSlashOption(option));
+}
+
+function isPlaceholderSlashOption(option: string): boolean {
+  if (option.includes('<') || option.includes('>')) return true;
+  return new Set(['branch', 'command', 'id', 'index', 'name', 'objective', 'task', 'text', 'title', 'url']).has(
+    option.toLowerCase(),
   );
 }
 

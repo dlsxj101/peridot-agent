@@ -354,7 +354,7 @@ impl Tool for AgentDelegateTool {
                 "model_tier": {
                     "type": "string",
                     "enum": ["haiku", "main", "opus"],
-                    "description": "Cost/capability tier for the subagent"
+                    "description": "Compatibility tier label; omit this to inherit the parent run's main model"
                 }
             },
             "required": ["prompt"],
@@ -365,8 +365,16 @@ impl Tool for AgentDelegateTool {
     async fn execute(&self, params: Value, ctx: &ToolContext) -> PeriResult<ToolResult> {
         let prompt = required_str(&params, "prompt")?.to_string();
         let (kind, model_tier) = subagent_selection(&params, &prompt)?;
+        let delegated_prompt = match ctx.parent_context_packet.as_deref() {
+            Some(packet) if !packet.trim().is_empty() => format!(
+                "{packet}\n\n[delegated task]\n{prompt}\n\n\
+Return concise findings as claims with evidence paths/line ranges or evidence ids. \
+Mark uncertainty explicitly. Do not treat the parent packet itself as proof."
+            ),
+            _ => prompt.clone(),
+        };
         let task = SubAgentTask {
-            prompt: prompt.clone(),
+            prompt: delegated_prompt,
             kind: kind.clone(),
             model_tier: Some(model_tier),
         };

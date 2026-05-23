@@ -3,11 +3,11 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use peridot_agents::SubAgent;
+use peridot_agents::{ModelTier, SubAgent, SubAgentKind, SubAgentTask};
 use peridot_common::{
     AgentPhase, ExecutionMode, PeriError, PeriResult, SecurityConfig, ToolCall, ToolResult,
 };
-use peridot_context::{ContextEntry, ContextManager, ContextSource};
+use peridot_context::{ContextEntry, ContextManager, ContextSource, EvidenceLedger, EvidenceRef};
 use peridot_llm::{
     CompletionRequest, LlmProvider, ToolChoice, ToolDefinition, ToolInvocation, Usage,
 };
@@ -23,8 +23,9 @@ use crate::permissions::ensure_tool_allowed;
 use crate::prompt::{read_plan_reminder, system_prompt_for_role};
 use crate::recovery::{
     StuckAction, StuckDetector, budget_exceeded_message, budget_warning_message, classify_error,
-    format_reminder_message, recovery_message, run_budget_warning_hook, run_context_compacted_hook,
-    run_error_event_hooks, run_recovery_event_hook, should_emit_budget_warning,
+    format_reminder_message, recovery_analysis_message, recovery_message, run_budget_warning_hook,
+    run_context_compacted_hook, run_error_event_hooks, run_recovery_event_hook,
+    should_emit_budget_warning,
 };
 use crate::requests::{
     AgentRunEvent, AgentRunRequest, AgentRunSummary, AgentTurnOutcome, AgentTurnRequest,
@@ -353,6 +354,10 @@ impl HarnessAgent {
         }
         if let Some(bus) = self.message_bus.clone() {
             ctx = ctx.with_message_bus(bus);
+        }
+        let parent_packet = self.context.subagent_mission_packet(5_000);
+        if !parent_packet.trim().is_empty() {
+            ctx = ctx.with_parent_context_packet(parent_packet);
         }
         let runner = HookRunner::new(&project_root, ctx.hooks.clone());
         let mut variables = tool_hook_variables(&call.name, &call.parameters);
@@ -703,13 +708,21 @@ impl HarnessAgent {
                 // well-formed.
                 let failure_result =
                     peridot_common::ToolResult::failure(format!("tool failed: {err}"));
-                let observation = serde_json::to_string(&failure_result).map_err(|serr| {
+                let (observation_result, evidence_ref) = tool_result_for_context_observation(
+                    &request.project_root,
+                    &tool_name,
+                    &tool_parameters,
+                    &failure_result,
+                );
+                let observation = serde_json::to_string(&observation_result).map_err(|serr| {
                     PeriError::Parse(format!("failed to serialize tool failure: {serr}"))
                 })?;
-                self.context.append(
-                    ContextEntry::trusted(ContextSource::Tool, observation)
-                        .with_tool_call_id(tool_call_id),
-                );
+                let mut entry = ContextEntry::trusted(ContextSource::Tool, observation)
+                    .with_tool_call_id(tool_call_id);
+                if let Some(evidence) = evidence_ref {
+                    entry = entry.with_evidence_ref(evidence);
+                }
+                self.context.append(entry);
                 return Err(err);
             }
         };
@@ -733,11 +746,20 @@ impl HarnessAgent {
         // entry as untrusted and offload-eligible; here we want the provider to
         // receive it through the native tool message channel instead, so the
         // model sees its own past action and result without re-running them.
-        let observation = serde_json::to_string(&tool_result)
-            .map_err(|err| PeriError::Parse(format!("failed to serialize tool result: {err}")))?;
-        self.context.append(
-            ContextEntry::trusted(ContextSource::Tool, observation).with_tool_call_id(tool_call_id),
+        let (observation_result, evidence_ref) = tool_result_for_context_observation(
+            &request.project_root,
+            &tool_name,
+            &tool_parameters,
+            &tool_result,
         );
+        let observation = serde_json::to_string(&observation_result)
+            .map_err(|err| PeriError::Parse(format!("failed to serialize tool result: {err}")))?;
+        let mut entry =
+            ContextEntry::trusted(ContextSource::Tool, observation).with_tool_call_id(tool_call_id);
+        if let Some(evidence) = evidence_ref {
+            entry = entry.with_evidence_ref(evidence);
+        }
+        self.context.append(entry);
 
         if tool_name == "agent_done" && tool_result.success {
             self.state.phase = AgentPhase::Done;
@@ -847,12 +869,62 @@ impl HarnessAgent {
                 }
             }
         }
+        if should_prefetch_codebase_survey(self.state.mode, &request.task)
+            && let Some(runner) = self.subagent_runner.clone()
+        {
+            let prompt = codebase_survey_prompt(&request.task, &self.context);
+            events(AgentRunEvent::ToolStarted {
+                name: "agent_delegate".to_string(),
+                parameters: serde_json::json!({
+                    "kind": "fork",
+                    "model_tier": "main",
+                    "prompt": "codebase survey prefetch",
+                }),
+            });
+            match runner
+                .run(SubAgentTask {
+                    prompt,
+                    kind: SubAgentKind::Fork,
+                    model_tier: Some(ModelTier::Main),
+                })
+                .await
+            {
+                Ok(result) => {
+                    let output = serde_json::json!(result);
+                    let tool_result =
+                        ToolResult::success("codebase survey subagent finished", output.clone());
+                    events(AgentRunEvent::ToolFinished {
+                        name: "agent_delegate".to_string(),
+                        result: tool_result,
+                    });
+                    self.context.append(ContextEntry::trusted(
+                        ContextSource::PlanReminder,
+                        format!(
+                            "[codebase survey sub-agent]\n{}\n\nUse this as orientation only. Re-read exact files or evidence refs before making final claims.",
+                            build_subagent_review(&output)
+                        ),
+                    ));
+                }
+                Err(err) => {
+                    events(AgentRunEvent::Recovery {
+                        message: format!("codebase survey subagent failed: {err}"),
+                    });
+                    self.context.append(ContextEntry::trusted(
+                        ContextSource::PlanReminder,
+                        format!(
+                            "[codebase survey sub-agent] Failed before the main turn: {err}. Continue with direct file_search/file_read, and avoid broad full-repo reads."
+                        ),
+                    ));
+                }
+            }
+        }
         let mut outcomes = Vec::new();
         let mut total_usage = Usage::default();
         let mut stuck_detector = StuckDetector::new(3);
         let mut budget_warning_sent = false;
         let mut consecutive_parse_failures = 0usize;
         let mut error_recovery_attempts = 0usize;
+        let mut last_error_recovery_signature: Option<String> = None;
         // Auto-fix loop state. Tracks the current failing verifier by
         // a compact signature so the model can tell "same failure,
         // same attempted fix" apart from a new failure uncovered by
@@ -918,6 +990,8 @@ impl HarnessAgent {
             {
                 Ok(outcome) => {
                     consecutive_parse_failures = 0;
+                    error_recovery_attempts = 0;
+                    last_error_recovery_signature = None;
                     outcome
                 }
                 Err(err) => {
@@ -962,10 +1036,20 @@ impl HarnessAgent {
                     }
                     self.context.append(ContextEntry::trusted(
                         ContextSource::PlanReminder,
-                        recovery_message(&err),
+                        format!(
+                            "{}\n\n{}",
+                            recovery_message(&err),
+                            recovery_analysis_message(&err)
+                        ),
                     ));
                     let recovery_signature = err.to_string();
-                    error_recovery_attempts += 1;
+                    if last_error_recovery_signature.as_deref() == Some(recovery_signature.as_str())
+                    {
+                        error_recovery_attempts += 1;
+                    } else {
+                        last_error_recovery_signature = Some(recovery_signature.clone());
+                        error_recovery_attempts = 1;
+                    }
                     events(AgentRunEvent::Recovery {
                         message: recovery_signature.clone(),
                     });
@@ -1567,6 +1651,79 @@ pub(crate) struct FileCheckpoint {
     pub(crate) previous_content: Option<String>,
 }
 
+const TOOL_OBSERVATION_INLINE_LIMIT: usize = 12_000;
+
+fn tool_result_for_context_observation(
+    project_root: &Path,
+    tool_name: &str,
+    parameters: &serde_json::Value,
+    result: &ToolResult,
+) -> (ToolResult, Option<EvidenceRef>) {
+    let raw_result_value = serde_json::to_value(result).unwrap_or_else(|_| {
+        serde_json::json!({
+            "success": result.success,
+            "summary": result.summary,
+            "output": result.output,
+        })
+    });
+    let evidence_ref = EvidenceLedger::new(project_root)
+        .record_tool_result(tool_name, parameters, &raw_result_value, &result.summary)
+        .ok();
+    let Some(evidence) = evidence_ref.clone() else {
+        return (result.clone(), None);
+    };
+    let raw_len = serde_json::to_string(&raw_result_value)
+        .map(|text| text.len())
+        .unwrap_or_default();
+    let evidence_json = serde_json::json!({
+        "id": evidence.id.clone(),
+        "kind": evidence.kind.clone(),
+        "path": evidence.path.clone(),
+        "bytes": evidence.bytes,
+        "digest": evidence.digest.clone(),
+        "summary": evidence.summary.clone(),
+    });
+    if raw_len <= TOOL_OBSERVATION_INLINE_LIMIT {
+        let original_output = result.output.clone();
+        let mut output = result.output.clone();
+        match &mut output {
+            serde_json::Value::Object(map) => {
+                map.insert("_peridot_evidence".to_string(), evidence_json);
+            }
+            _ => {
+                output = serde_json::json!({
+                    "value": original_output,
+                    "_peridot_evidence": evidence_json,
+                });
+            }
+        }
+        return (
+            ToolResult {
+                success: result.success,
+                summary: result.summary.clone(),
+                output,
+            },
+            evidence_ref,
+        );
+    }
+    (
+        ToolResult {
+            success: result.success,
+            summary: format!(
+                "{} (raw output stored as evidence {}; call evidence_read to inspect exact content)",
+                result.summary, evidence.id
+            ),
+            output: serde_json::json!({
+                "compressed": true,
+                "reason": "tool output exceeded live context inline limit",
+                "inline_limit_chars": TOOL_OBSERVATION_INLINE_LIMIT,
+                "evidence": evidence_json,
+            }),
+        },
+        evidence_ref,
+    )
+}
+
 fn write_file_checkpoint(
     project_root: &std::path::Path,
     tool_name: &str,
@@ -1628,6 +1785,53 @@ fn write_file_checkpoint(
         absolute_path: path,
         previous_content,
     }))
+}
+
+fn should_prefetch_codebase_survey(mode: ExecutionMode, task: &str) -> bool {
+    if mode == ExecutionMode::Plan {
+        return false;
+    }
+    let lower = task.to_ascii_lowercase();
+    let broad_english = [
+        "read the project",
+        "analyze the project",
+        "understand the codebase",
+        "codebase",
+        "entire repo",
+        "whole repo",
+        "find bugs",
+        "bug audit",
+        "systematically",
+        "architecture",
+    ];
+    let broad_korean = [
+        "프로젝트를 읽",
+        "프로젝트를 분석",
+        "코드베이스",
+        "전체 구조",
+        "체계적으로",
+        "버그가 존재",
+        "어떤 프로젝트",
+        "기능을 추가",
+    ];
+    broad_english.iter().any(|needle| lower.contains(needle))
+        || broad_korean.iter().any(|needle| task.contains(needle))
+}
+
+fn codebase_survey_prompt(task: &str, context: &ContextManager) -> String {
+    format!(
+        "{}\n\n[codebase survey task]\n\
+The parent received this broad request:\n{task}\n\n\
+Survey the repository with cheap read-only tools. Do not edit files. Do not read every document in full. \
+Build a compact map of likely relevant crates/modules, current UX surfaces, and risk points. \
+Return only:\n\
+1. Project summary in 5 bullets.\n\
+2. Relevant files/symbols with path:line evidence where you directly inspected them.\n\
+3. Potential bug/risk list with evidence or explicit uncertainty.\n\
+4. Next reads the parent should perform before answering.\n\n\
+Treat summaries and filenames as hypotheses unless you inspected exact source.",
+        context.subagent_mission_packet(4_000)
+    )
 }
 
 /// Builds the `[sub-agent review]` directive injected after a

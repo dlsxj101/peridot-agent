@@ -178,13 +178,13 @@ impl SubAgentPolicy {
     pub fn select(&self, prompt: &str) -> (SubAgentKind, ModelTier) {
         let lower = prompt.to_lowercase();
         if contains_any(&lower, &["test", "format", "lint", "doc", "search"]) {
-            return (SubAgentKind::Fork, ModelTier::Haiku);
+            return (SubAgentKind::Fork, ModelTier::Main);
         }
         if contains_any(
             &lower,
             &["architecture", "security", "audit", "performance", "design"],
         ) {
-            return (SubAgentKind::Teammate, ModelTier::Opus);
+            return (SubAgentKind::Teammate, ModelTier::Main);
         }
         if contains_any(
             &lower,
@@ -277,12 +277,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn selects_lightweight_fork_for_tests() {
+    fn selects_fork_for_tests_on_main_model() {
         let policy = SubAgentPolicy;
 
         assert_eq!(
             policy.select("write tests for parser"),
-            (SubAgentKind::Fork, ModelTier::Haiku)
+            (SubAgentKind::Fork, ModelTier::Main)
         );
     }
 
@@ -292,7 +292,7 @@ mod tests {
 
         assert_eq!(
             policy.select("security audit the permission model"),
-            (SubAgentKind::Teammate, ModelTier::Opus)
+            (SubAgentKind::Teammate, ModelTier::Main)
         );
     }
 

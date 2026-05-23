@@ -4,7 +4,7 @@
 
 export type Mode = 'execute' | 'plan' | 'goal';
 export type Permission = 'auto' | 'safe' | 'yolo';
-export type ReasoningEffort = 'off' | 'low' | 'medium' | 'high';
+export type ReasoningEffort = 'off' | 'low' | 'medium' | 'high' | 'xhigh';
 export type ServiceTier = 'standard' | 'fast';
 
 export interface RunOptions {
@@ -56,6 +56,22 @@ export interface CommandResultItem {
   transport?: string;
 }
 
+export interface SlashStateDeltaView {
+  mode?: Mode;
+  permission?: Permission;
+  model?: string;
+  provider?: string;
+  reasoning_effort?: ReasoningEffort | string;
+  reasoningEffort?: ReasoningEffort | string;
+  service_tier?: ServiceTier | string | null;
+  serviceTier?: ServiceTier | string | null;
+  committee_mode?: string;
+  committeeMode?: string;
+  locale?: string;
+  subagent_default_model?: string | null;
+  subagentDefaultModel?: string | null;
+}
+
 export interface CommandResultView {
   kind?: string;
   title?: string;
@@ -69,6 +85,8 @@ export interface CommandResultView {
   items?: CommandResultItem[];
   source_totals?: Record<string, number>;
   truncated?: boolean;
+  state_delta?: SlashStateDeltaView;
+  stateDelta?: SlashStateDeltaView;
 }
 
 export interface SlashCommandSpec {

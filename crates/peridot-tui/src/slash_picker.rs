@@ -82,8 +82,8 @@ pub fn slash_command_catalog() -> &'static [SlashCommandSpec] {
         },
         SlashCommandSpec {
             name: "/committee",
-            description: "toggle multi-LLM committee mode (off|planner|full)",
-            arg_hint: Some("<mode>"),
+            description: "toggle multi-LLM committee mode",
+            arg_hint: Some("<off|planner|full>"),
             category: "session",
         },
         SlashCommandSpec {
@@ -143,7 +143,7 @@ pub fn slash_command_catalog() -> &'static [SlashCommandSpec] {
         SlashCommandSpec {
             name: "/lang",
             description: "switch display locale",
-            arg_hint: Some("en|ko"),
+            arg_hint: Some("<en|ko>"),
             category: "tui",
         },
         SlashCommandSpec {
@@ -184,8 +184,8 @@ pub fn slash_command_catalog() -> &'static [SlashCommandSpec] {
         },
         SlashCommandSpec {
             name: "/reasoning",
-            description: "set reasoning intensity (off / low / medium / high)",
-            arg_hint: Some("<off|low|medium|high>"),
+            description: "set reasoning intensity",
+            arg_hint: Some("<off|low|medium|high|xhigh>"),
             category: "session",
         },
         SlashCommandSpec {
@@ -197,7 +197,7 @@ pub fn slash_command_catalog() -> &'static [SlashCommandSpec] {
         SlashCommandSpec {
             name: "/think",
             description: "shortcut for /reasoning high (use `/think off` to disable)",
-            arg_hint: Some("[off]"),
+            arg_hint: Some("[off|low|medium|high|xhigh]"),
             category: "session",
         },
         SlashCommandSpec {
@@ -299,6 +299,14 @@ pub fn slash_command_catalog() -> &'static [SlashCommandSpec] {
     ]
 }
 
+/// Finite argument options for a command such as `<off|low>` or `[on|off]`.
+pub(crate) struct SlashArgumentContext {
+    /// Command whose first argument is being selected.
+    pub spec: &'static SlashCommandSpec,
+    /// Filtered options matching the current typed argument prefix.
+    pub options: Vec<&'static str>,
+}
+
 /// Filters the catalog by prefix. Empty query returns the whole catalog.
 pub fn filtered_specs(query: &str) -> Vec<&'static SlashCommandSpec> {
     let needle = query.trim().trim_start_matches('/').to_ascii_lowercase();
@@ -308,17 +316,106 @@ pub fn filtered_specs(query: &str) -> Vec<&'static SlashCommandSpec> {
     slash_command_catalog()
         .iter()
         .filter(|spec| {
-            spec.name
-                .trim_start_matches('/')
-                .to_ascii_lowercase()
-                .starts_with(&needle)
+            let name = spec.name.trim_start_matches('/').to_ascii_lowercase();
+            let description = spec.description.to_ascii_lowercase();
+            name.starts_with(&needle)
+                || name.contains(&format!(" {needle}"))
+                || description.contains(&needle)
         })
         .collect()
+}
+
+/// Returns finite argument options from an arg hint, excluding placeholder arms.
+pub(crate) fn finite_argument_options(spec: &SlashCommandSpec) -> Vec<&'static str> {
+    let Some(hint) = spec.arg_hint.map(str::trim) else {
+        return Vec::new();
+    };
+    let opens_choice_list = (hint.starts_with('<') && hint.ends_with('>'))
+        || (hint.starts_with('[') && hint.ends_with(']'));
+    if !opens_choice_list {
+        return Vec::new();
+    }
+    let body = &hint[1..hint.len().saturating_sub(1)];
+    if !body.contains('|') || body.chars().any(char::is_whitespace) {
+        return Vec::new();
+    }
+    body.split('|')
+        .map(str::trim)
+        .filter(|option| !option.is_empty() && !is_placeholder_option(option))
+        .collect()
+}
+
+/// Returns the active finite-argument picker, if the input is inside one.
+pub(crate) fn slash_argument_context(query: &str) -> Option<SlashArgumentContext> {
+    if !query.starts_with('/') || query.contains('\n') {
+        return None;
+    }
+    let spec = slash_command_catalog()
+        .iter()
+        .filter(|spec| !finite_argument_options(spec).is_empty())
+        .filter(|spec| {
+            let exact_optional = query == spec.name && finite_argument_hint_is_optional(spec);
+            !exact_optional && (query == spec.name || query.starts_with(&format!("{} ", spec.name)))
+        })
+        .max_by_key(|spec| spec.name.len())?;
+    let options = finite_argument_options(spec);
+    let rest = query[spec.name.len()..].trim().to_ascii_lowercase();
+    if !rest.is_empty()
+        && options
+            .iter()
+            .any(|option| option.eq_ignore_ascii_case(&rest))
+    {
+        return None;
+    }
+    let options = if rest.is_empty() {
+        options
+    } else {
+        options
+            .into_iter()
+            .filter(|option| option.to_ascii_lowercase().starts_with(&rest))
+            .collect()
+    };
+    if options.is_empty() {
+        return None;
+    }
+    Some(SlashArgumentContext { spec, options })
+}
+
+/// Number of rows the slash picker would render for this query.
+pub(crate) fn picker_len(query: &str) -> usize {
+    slash_argument_context(query)
+        .map(|context| context.options.len())
+        .unwrap_or_else(|| filtered_specs(query).len())
 }
 
 /// Returns the first match for `query`, if any.
 pub fn first_match(query: &str) -> Option<&'static SlashCommandSpec> {
     filtered_specs(query).into_iter().next()
+}
+
+fn is_placeholder_option(option: &str) -> bool {
+    if option.contains('<') || option.contains('>') {
+        return true;
+    }
+    matches!(
+        option.to_ascii_lowercase().as_str(),
+        "branch"
+            | "command"
+            | "id"
+            | "index"
+            | "name"
+            | "objective"
+            | "task"
+            | "text"
+            | "title"
+            | "url"
+    )
+}
+
+fn finite_argument_hint_is_optional(spec: &SlashCommandSpec) -> bool {
+    spec.arg_hint
+        .map(str::trim)
+        .is_some_and(|hint| hint.starts_with('['))
 }
 
 #[cfg(test)]
@@ -335,6 +432,42 @@ mod tests {
         let matches = filtered_specs("/go");
         assert!(matches.iter().any(|spec| spec.name == "/goal"));
         assert!(!matches.iter().any(|spec| spec.name == "/plan"));
+    }
+
+    #[test]
+    fn search_matches_descriptions_and_subcommand_words() {
+        assert!(
+            filtered_specs("/locale")
+                .iter()
+                .any(|spec| spec.name == "/lang")
+        );
+        assert!(
+            filtered_specs("/switch")
+                .iter()
+                .any(|spec| spec.name == "/session switch")
+        );
+    }
+
+    #[test]
+    fn finite_argument_context_filters_real_options() {
+        let context = slash_argument_context("/reasoning ").expect("reasoning options");
+        assert_eq!(context.spec.name, "/reasoning");
+        assert_eq!(
+            context.options,
+            vec!["off", "low", "medium", "high", "xhigh"]
+        );
+
+        let context = slash_argument_context("/reasoning x").expect("filtered option");
+        assert_eq!(context.options, vec!["xhigh"]);
+        assert!(slash_argument_context("/reasoning xhigh").is_none());
+
+        let context = slash_argument_context("/autofix ").expect("autofix options");
+        assert_eq!(context.options, vec!["on", "off"]);
+        assert!(slash_argument_context("/autofix").is_none());
+
+        let context = slash_argument_context("/subagent model ").expect("reset option");
+        assert_eq!(context.spec.name, "/subagent model");
+        assert_eq!(context.options, vec!["reset"]);
     }
 
     #[test]

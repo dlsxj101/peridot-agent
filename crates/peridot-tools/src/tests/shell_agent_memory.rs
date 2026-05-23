@@ -4,8 +4,8 @@ use crate::tools::shell::{
     reject_hard_blocked_command,
 };
 use crate::{
-    AgentAskUserTool, AgentDelegateTool, AgentMemorySearchTool, AskUserPort, FileWriteTool,
-    ShellExecTool, Tool, ToolContext, ToolRegistry, register_builtin_tools,
+    AgentAskUserTool, AgentDelegateTool, AgentMemorySearchTool, AskUserPort, EvidenceReadTool,
+    FileWriteTool, ShellExecTool, Tool, ToolContext, ToolRegistry, register_builtin_tools,
 };
 use async_trait::async_trait;
 use peridot_common::{
@@ -729,5 +729,26 @@ async fn shell_exec_timeout_kills_long_running_command() {
         elapsed < std::time::Duration::from_secs(4),
         "timeout should fire well before the 5s sleep; got {elapsed:?}"
     );
+    fs::remove_dir_all(&root).ok();
+}
+
+#[tokio::test]
+async fn evidence_read_returns_bounded_slice() {
+    let root = std::env::temp_dir().join(format!("peridot-tools-evidence-{}", std::process::id()));
+    fs::remove_dir_all(&root).ok();
+    let evidence_dir = root.join(".peridot/evidence");
+    fs::create_dir_all(&evidence_dir).unwrap();
+    fs::write(evidence_dir.join("abc-123.json"), "0123456789abcdef").unwrap();
+    let ctx = ToolContext::new(&root, PermissionMode::Auto);
+    let result = EvidenceReadTool
+        .execute(
+            serde_json::json!({"id": "abc-123", "offset": 4, "max_chars": 6}),
+            &ctx,
+        )
+        .await
+        .unwrap();
+    assert!(result.success);
+    assert_eq!(result.output["content"], "456789");
+    assert_eq!(result.output["truncated"], true);
     fs::remove_dir_all(&root).ok();
 }

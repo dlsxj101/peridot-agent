@@ -13,8 +13,8 @@ pub use agent::{
     AgentScratchpadTool,
 };
 pub use file::{
-    FileListTool, FileOutlineTool, FilePatchTool, FileReadTool, FileSearchTool, FileWriteTool,
-    SymbolSearchTool, WorkspaceSymbolsTool,
+    EvidenceReadTool, FileListTool, FileOutlineTool, FilePatchTool, FileReadTool, FileSearchTool,
+    FileWriteTool, SymbolSearchTool, WorkspaceSymbolsTool,
 };
 pub use git::{
     GhPrCreateTool, GhPrMergeTool, GhPrStatusTool, GitBranchTool, GitCommitTool, GitDiffTool,
@@ -33,6 +33,7 @@ use crate::ToolRegistry;
 /// Registers the initial built-in tools required by the engine loop.
 pub fn register_builtin_tools(registry: &mut ToolRegistry) -> PeriResult<()> {
     registry.register(ShellExecTool)?;
+    registry.register(EvidenceReadTool)?;
     registry.register(FileReadTool)?;
     registry.register(FileWriteTool)?;
     registry.register(FilePatchTool)?;

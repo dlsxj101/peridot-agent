@@ -1,13 +1,15 @@
 //! Append-only conversation context management.
 
-use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::{collections::HashSet, fs};
 
 use peridot_common::{PeriError, PeriResult, ReasoningEffort};
 use peridot_llm::{
     CompletionRequest, LlmMessage, LlmProvider, MessageRole, ToolChoice, ToolInvocation,
 };
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 /// Source category for a context entry.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -67,6 +69,12 @@ pub struct ContextEntry {
     /// failure to remember, etc.
     #[serde(default)]
     pub pinned: bool,
+    /// Recoverable compression pointers for facts or tool outputs that were
+    /// offloaded from the live model context. The model sees a compact pointer
+    /// in the entry content, while the harness keeps the raw bytes under
+    /// `.peridot/evidence/`.
+    #[serde(default)]
+    pub evidence_refs: Vec<EvidenceRef>,
 }
 
 impl ContextEntry {
@@ -81,6 +89,7 @@ impl ContextEntry {
             turn_id: 0,
             parent_turn_id: None,
             pinned: false,
+            evidence_refs: Vec::new(),
         }
     }
 
@@ -95,6 +104,7 @@ impl ContextEntry {
             turn_id: 0,
             parent_turn_id: None,
             pinned: false,
+            evidence_refs: Vec::new(),
         }
     }
 
@@ -113,6 +123,7 @@ impl ContextEntry {
             turn_id: 0,
             parent_turn_id: None,
             pinned: false,
+            evidence_refs: Vec::new(),
         }
     }
 
@@ -130,6 +141,187 @@ impl ContextEntry {
         self.pinned = true;
         self
     }
+
+    /// Attaches one recoverable evidence pointer to this entry.
+    pub fn with_evidence_ref(mut self, evidence: EvidenceRef) -> Self {
+        self.evidence_refs.push(evidence);
+        self
+    }
+
+    /// Attaches recoverable evidence pointers to this entry.
+    pub fn with_evidence_refs(mut self, evidence: impl IntoIterator<Item = EvidenceRef>) -> Self {
+        self.evidence_refs.extend(evidence);
+        self
+    }
+}
+
+/// Pointer to raw evidence stored outside the live LLM context.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct EvidenceRef {
+    /// Stable id used by `evidence_read`.
+    pub id: String,
+    /// Evidence category, for example `tool_result`.
+    pub kind: String,
+    /// Short human-readable summary.
+    pub summary: String,
+    /// Approximate byte length of the stored raw payload.
+    pub bytes: usize,
+    /// Lightweight deterministic digest of the raw payload.
+    pub digest: String,
+    /// Project-relative path of the stored evidence file.
+    pub path: String,
+}
+
+/// Raw evidence record persisted under `.peridot/evidence/`.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct EvidenceRecord {
+    /// Evidence pointer metadata.
+    pub reference: EvidenceRef,
+    /// Unix timestamp in seconds.
+    pub created_unix: u64,
+    /// Name of the tool that produced this record, when applicable.
+    #[serde(default)]
+    pub tool_name: Option<String>,
+    /// Tool parameters that produced this record, when applicable.
+    #[serde(default)]
+    pub parameters: Option<Value>,
+    /// Full raw payload.
+    pub payload: Value,
+}
+
+/// Append-only project-local evidence ledger.
+#[derive(Clone, Debug)]
+pub struct EvidenceLedger {
+    root: PathBuf,
+}
+
+impl EvidenceLedger {
+    /// Creates a ledger rooted at `<project_root>/.peridot/evidence`.
+    pub fn new(project_root: impl Into<PathBuf>) -> Self {
+        Self {
+            root: project_root.into().join(".peridot").join("evidence"),
+        }
+    }
+
+    /// Returns the on-disk root used by this ledger.
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    /// Persists one tool result and returns a recoverable pointer.
+    pub fn record_tool_result(
+        &self,
+        tool_name: &str,
+        parameters: &Value,
+        result: &Value,
+        summary: &str,
+    ) -> PeriResult<EvidenceRef> {
+        let payload = serde_json::json!({
+            "tool_name": tool_name,
+            "parameters": parameters,
+            "result": result,
+        });
+        self.record(
+            "tool_result",
+            Some(tool_name),
+            Some(parameters.clone()),
+            payload,
+            summary,
+        )
+    }
+
+    /// Persists a raw payload and returns a recoverable pointer.
+    pub fn record(
+        &self,
+        kind: &str,
+        tool_name: Option<&str>,
+        parameters: Option<Value>,
+        payload: Value,
+        summary: &str,
+    ) -> PeriResult<EvidenceRef> {
+        fs::create_dir_all(&self.root).map_err(|err| {
+            PeriError::Tool(format!(
+                "failed to create evidence ledger {}: {err}",
+                self.root.display()
+            ))
+        })?;
+        let payload_bytes = serde_json::to_vec(&payload)
+            .map_err(|err| PeriError::Parse(format!("failed to serialize evidence: {err}")))?;
+        let digest = stable_digest(&payload_bytes);
+        let created_unix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_secs())
+            .unwrap_or_default();
+        let safe_tool = tool_name
+            .unwrap_or(kind)
+            .chars()
+            .map(|ch| {
+                if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                    ch
+                } else {
+                    '-'
+                }
+            })
+            .collect::<String>();
+        let id = format!("{created_unix}-{safe_tool}-{digest}");
+        let path = format!(".peridot/evidence/{id}.json");
+        let reference = EvidenceRef {
+            id: id.clone(),
+            kind: kind.to_string(),
+            summary: compact_fragment(summary, 240),
+            bytes: payload_bytes.len(),
+            digest,
+            path: path.clone(),
+        };
+        let record = EvidenceRecord {
+            reference: reference.clone(),
+            created_unix,
+            tool_name: tool_name.map(str::to_string),
+            parameters,
+            payload,
+        };
+        let record_path = self.root.join(format!("{id}.json"));
+        let record_bytes = serde_json::to_vec_pretty(&record).map_err(|err| {
+            PeriError::Parse(format!("failed to serialize evidence record: {err}"))
+        })?;
+        fs::write(&record_path, record_bytes).map_err(|err| {
+            PeriError::Tool(format!(
+                "failed to write evidence record {}: {err}",
+                record_path.display()
+            ))
+        })?;
+        let index_path = self.root.join("index.ndjson");
+        let mut index = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&index_path)
+            .map_err(|err| {
+                PeriError::Tool(format!(
+                    "failed to open evidence index {}: {err}",
+                    index_path.display()
+                ))
+            })?;
+        serde_json::to_writer(&mut index, &reference).map_err(|err| {
+            PeriError::Parse(format!("failed to serialize evidence index: {err}"))
+        })?;
+        index.write_all(b"\n").map_err(|err| {
+            PeriError::Tool(format!(
+                "failed to write evidence index {}: {err}",
+                index_path.display()
+            ))
+        })?;
+        Ok(reference)
+    }
+}
+
+fn stable_digest(bytes: &[u8]) -> String {
+    // FNV-1a 64-bit: tiny, deterministic, and good enough for evidence ids.
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("{hash:016x}")
 }
 
 /// One abandoned limb in the conversation DAG. Created when the operator
@@ -530,6 +722,95 @@ impl ContextManager {
         &self.entries
     }
 
+    /// Builds a bounded parent-context packet for delegated subagents.
+    ///
+    /// This is intentionally not the full transcript. It carries the latest
+    /// substantive user task, pinned reminders, recent plan/recovery notes, and
+    /// recoverable evidence pointers so child agents inherit intent without
+    /// flooding their fresh context window.
+    pub fn subagent_mission_packet(&self, max_chars: usize) -> String {
+        let latest_user = self
+            .entries
+            .iter()
+            .rev()
+            .find(|entry| {
+                entry.source == ContextSource::User && is_substantive_user_task(&entry.content)
+            })
+            .or_else(|| {
+                self.entries
+                    .iter()
+                    .rev()
+                    .find(|entry| entry.source == ContextSource::User)
+            })
+            .map(|entry| compact_fragment(&entry.content, 800));
+        let pinned = self
+            .entries
+            .iter()
+            .filter(|entry| entry.pinned)
+            .rev()
+            .take(6)
+            .map(|entry| format!("- {}", compact_fragment(&entry.content, 500)))
+            .collect::<Vec<_>>();
+        let recent_notes = self
+            .entries
+            .iter()
+            .rev()
+            .filter(|entry| {
+                matches!(
+                    entry.source,
+                    ContextSource::PlanReminder | ContextSource::ReviewerComment
+                )
+            })
+            .take(6)
+            .map(|entry| format!("- {}", compact_fragment(&entry.content, 500)))
+            .collect::<Vec<_>>();
+        let evidence = self
+            .entries
+            .iter()
+            .rev()
+            .flat_map(|entry| entry.evidence_refs.iter())
+            .take(12)
+            .map(|evidence| {
+                format!(
+                    "- {} {} bytes={} path={} summary={}",
+                    evidence.kind, evidence.id, evidence.bytes, evidence.path, evidence.summary
+                )
+            })
+            .collect::<Vec<_>>();
+
+        let mut packet = String::from(
+            "[parent context packet]\n\
+Use this as intent and evidence index, not as proof. Re-read exact files or call evidence_read before making load-bearing claims.\n",
+        );
+        if let Some(user) = latest_user {
+            packet.push_str("\nLatest user objective:\n");
+            packet.push_str(&user);
+            packet.push('\n');
+        }
+        if !pinned.is_empty() {
+            packet.push_str("\nPinned context:\n");
+            packet.push_str(&pinned.into_iter().rev().collect::<Vec<_>>().join("\n"));
+            packet.push('\n');
+        }
+        if !recent_notes.is_empty() {
+            packet.push_str("\nRecent plan/recovery notes:\n");
+            packet.push_str(
+                &recent_notes
+                    .into_iter()
+                    .rev()
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            );
+            packet.push('\n');
+        }
+        if !evidence.is_empty() {
+            packet.push_str("\nRecoverable evidence refs:\n");
+            packet.push_str(&evidence.into_iter().rev().collect::<Vec<_>>().join("\n"));
+            packet.push('\n');
+        }
+        compact_fragment(&packet, max_chars)
+    }
+
     /// Returns a deep copy of the current entries, suitable for serialising as
     /// a session snapshot.
     pub fn snapshot_entries(&self) -> Vec<ContextEntry> {
@@ -588,7 +869,10 @@ impl ContextManager {
     }
 
     fn compact_tier1(&mut self) {
-        let keep_from = self.entries.len().saturating_sub(COMPACTION_KEEP_TAIL);
+        let keep_from = protocol_safe_keep_from(
+            &self.entries,
+            self.entries.len().saturating_sub(COMPACTION_KEEP_TAIL),
+        );
         let summary = summarize_entries(&self.entries[..keep_from]);
         let preserved_anchor = self.preserved_current_user_entry_before(keep_from);
         // Carry every pinned entry across compaction verbatim. They go in
@@ -676,7 +960,10 @@ impl ContextManager {
     where
         P: LlmProvider + ?Sized,
     {
-        let keep_from = self.entries.len().saturating_sub(COMPACTION_KEEP_TAIL);
+        let keep_from = protocol_safe_keep_from(
+            &self.entries,
+            self.entries.len().saturating_sub(COMPACTION_KEEP_TAIL),
+        );
         let to_summarize = &self.entries[..keep_from];
 
         let body = format_entries_for_summary(to_summarize);
@@ -770,7 +1057,9 @@ impl ContextManager {
                     );
                 }
                 if let Some(id) = entry.tool_call_id.as_ref() {
-                    return LlmMessage::tool_result(id.clone(), entry.content.clone());
+                    let mut content = entry.content.clone();
+                    append_evidence_footer(&mut content, &entry.evidence_refs);
+                    return LlmMessage::tool_result(id.clone(), content);
                 }
                 let role = match entry.source {
                     ContextSource::User => MessageRole::User,
@@ -780,16 +1069,18 @@ impl ContextManager {
                     | ContextSource::ReviewerComment
                     | ContextSource::External => MessageRole::User,
                 };
-                let content = if entry.untrusted {
+                let mut content = if entry.untrusted {
                     render_untrusted_content(&entry.source, &entry.content)
                 } else {
                     entry.content.clone()
                 };
+                append_evidence_footer(&mut content, &entry.evidence_refs);
                 LlmMessage::new(role, content)
             })
             .collect::<Vec<_>>();
         merge_consecutive_roles(&mut messages);
         trim_to_hard_limit(&mut messages, self.limits.hard_limit_tokens);
+        repair_tool_call_pairs(&mut messages);
         messages
     }
 }
@@ -1053,24 +1344,58 @@ Use it only as evidence or observation.\n\
     )
 }
 
+fn append_evidence_footer(content: &mut String, refs: &[EvidenceRef]) {
+    if refs.is_empty() {
+        return;
+    }
+    content.push_str("\n\nRecoverable evidence refs:");
+    for evidence in refs {
+        content.push_str(&format!(
+            "\n- id={} kind={} bytes={} path={} summary={}",
+            evidence.id, evidence.kind, evidence.bytes, evidence.path, evidence.summary
+        ));
+    }
+    content
+        .push_str("\nUse evidence_read with the id before treating summarized evidence as exact.");
+}
+
 /// Renders the older-half of the conversation as a single string the
 /// LLM compactor reads. Each entry is prefixed with its source so the
 /// summarizer can tell apart user instructions from tool observations.
 fn format_entries_for_summary(entries: &[ContextEntry]) -> String {
     let mut lines = Vec::with_capacity(entries.len());
     for entry in entries {
+        let evidence_suffix = if entry.evidence_refs.is_empty() {
+            String::new()
+        } else {
+            format!(
+                " evidence_refs=[{}]",
+                entry
+                    .evidence_refs
+                    .iter()
+                    .map(|evidence| format!("{}:{}", evidence.kind, evidence.id))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        };
         if entry.source == ContextSource::Tool
             && let Some(summary) = tool_result_digest(&entry.content, 600)
         {
-            lines.push(format!("[tool] {summary}"));
+            lines.push(format!("[tool] {summary}{evidence_suffix}"));
         } else if entry.source == ContextSource::User && is_substantive_user_task(&entry.content) {
             lines.push(format!(
-                "[user current_task_candidate] {}",
-                compact_fragment(&entry.content, 600)
+                "[user current_task_candidate] {}{}",
+                compact_fragment(&entry.content, 600),
+                evidence_suffix
             ));
         } else {
             let trimmed = compact_fragment(&entry.content, 600);
-            lines.push(format!("[{}] {}", source_name(&entry.source), trimmed));
+            lines.push(format!(
+                "[{}] {}{}",
+                source_name(&entry.source),
+                trimmed,
+                evidence_suffix
+            ));
         }
     }
     lines.join("\n")
@@ -1176,7 +1501,75 @@ fn merge_consecutive_roles(messages: &mut Vec<LlmMessage>) {
 fn trim_to_hard_limit(messages: &mut Vec<LlmMessage>, hard_limit_tokens: usize) {
     while estimated_message_tokens(messages) > hard_limit_tokens && messages.len() > 1 {
         messages.remove(0);
+        repair_tool_call_pairs(messages);
     }
+}
+
+fn protocol_safe_keep_from(entries: &[ContextEntry], requested_start: usize) -> usize {
+    let mut start = requested_start.min(entries.len());
+    let mut available_calls = HashSet::new();
+    for entry in entries.iter().skip(start) {
+        if entry.source == ContextSource::Assistant {
+            for call in &entry.tool_calls {
+                available_calls.insert(call.id.clone());
+            }
+        }
+    }
+
+    for entry in entries.iter().skip(start) {
+        let Some(tool_call_id) = entry.tool_call_id.as_ref() else {
+            continue;
+        };
+        if available_calls.contains(tool_call_id) {
+            continue;
+        }
+        if let Some(call_index) = entries[..start].iter().rposition(|candidate| {
+            candidate.source == ContextSource::Assistant
+                && candidate
+                    .tool_calls
+                    .iter()
+                    .any(|call| call.id == *tool_call_id)
+        }) {
+            start = start.min(call_index);
+            available_calls.insert(tool_call_id.clone());
+        }
+    }
+
+    start
+}
+
+fn repair_tool_call_pairs(messages: &mut Vec<LlmMessage>) {
+    let output_ids = messages
+        .iter()
+        .filter_map(|message| message.tool_call_id.clone())
+        .collect::<HashSet<_>>();
+
+    for message in messages.iter_mut() {
+        if message.role == MessageRole::Assistant && !message.tool_calls.is_empty() {
+            message
+                .tool_calls
+                .retain(|call| output_ids.contains(&call.id));
+        }
+    }
+    messages.retain(|message| {
+        !(message.role == MessageRole::Assistant
+            && message.content.trim().is_empty()
+            && message.tool_calls.is_empty())
+    });
+
+    let mut seen_calls = HashSet::new();
+    messages.retain(|message| {
+        if message.role == MessageRole::Assistant {
+            for call in &message.tool_calls {
+                seen_calls.insert(call.id.clone());
+            }
+            return true;
+        }
+        if let Some(tool_call_id) = message.tool_call_id.as_ref() {
+            return seen_calls.remove(tool_call_id);
+        }
+        true
+    });
 }
 
 fn estimated_message_tokens(messages: &[LlmMessage]) -> usize {
@@ -1898,6 +2291,105 @@ mod tests {
         assert_eq!(entry.turn_id, 0);
         assert!(entry.parent_turn_id.is_none());
         assert!(entry.tool_calls.is_empty());
+    }
+
+    #[test]
+    fn protocol_safe_keep_from_preserves_tool_call_pair_boundary() {
+        let assistant = ContextEntry::assistant_with_tool_calls(
+            "",
+            vec![ToolInvocation {
+                id: "call_1".to_string(),
+                name: "file_read".to_string(),
+                arguments: serde_json::json!({"path": "README.md"}),
+            }],
+        );
+        let output = ContextEntry::trusted(ContextSource::Tool, "ok").with_tool_call_id("call_1");
+        let entries = vec![
+            ContextEntry::trusted(ContextSource::User, "old"),
+            assistant,
+            output,
+            ContextEntry::trusted(ContextSource::User, "tail 1"),
+            ContextEntry::trusted(ContextSource::Assistant, "tail 2"),
+            ContextEntry::trusted(ContextSource::User, "tail 3"),
+            ContextEntry::trusted(ContextSource::Assistant, "tail 4"),
+            ContextEntry::trusted(ContextSource::User, "tail 5"),
+        ];
+
+        assert_eq!(protocol_safe_keep_from(&entries, 2), 1);
+    }
+
+    #[test]
+    fn hard_trim_drops_orphaned_tool_output() {
+        let mut messages = vec![
+            LlmMessage::assistant_with_tool_calls(
+                "",
+                vec![ToolInvocation {
+                    id: "call_1".to_string(),
+                    name: "file_read".to_string(),
+                    arguments: serde_json::json!({"path": "README.md"}),
+                }],
+            ),
+            LlmMessage::tool_result("call_1", "result text"),
+            LlmMessage::new(MessageRole::User, "continue please"),
+        ];
+
+        trim_to_hard_limit(&mut messages, 1);
+
+        assert!(
+            messages
+                .iter()
+                .all(|message| message.tool_call_id.is_none()),
+            "orphaned tool output should be dropped: {messages:?}"
+        );
+        assert!(
+            messages.iter().all(|message| message.tool_calls.is_empty()),
+            "unanswered assistant tool calls should be dropped: {messages:?}"
+        );
+    }
+
+    #[test]
+    fn evidence_ledger_writes_recoverable_tool_record() {
+        let root =
+            std::env::temp_dir().join(format!("peridot-context-evidence-{}", std::process::id()));
+        fs::remove_dir_all(&root).ok();
+        fs::create_dir_all(&root).unwrap();
+        let ledger = EvidenceLedger::new(&root);
+        let evidence = ledger
+            .record_tool_result(
+                "file_read",
+                &serde_json::json!({"path": "src/lib.rs"}),
+                &serde_json::json!({"success": true, "output": "hello"}),
+                "read src/lib.rs",
+            )
+            .unwrap();
+        assert_eq!(evidence.kind, "tool_result");
+        assert!(evidence.path.starts_with(".peridot/evidence/"));
+        let record_path = root.join(&evidence.path);
+        let record = fs::read_to_string(record_path).unwrap();
+        assert!(record.contains("\"file_read\""));
+        assert!(root.join(".peridot/evidence/index.ndjson").exists());
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn evidence_refs_are_visible_in_model_messages() {
+        let evidence = EvidenceRef {
+            id: "evidence-1".to_string(),
+            kind: "tool_result".to_string(),
+            summary: "large stdout".to_string(),
+            bytes: 42,
+            digest: "abc".to_string(),
+            path: ".peridot/evidence/evidence-1.json".to_string(),
+        };
+        let mut manager = ContextManager::new();
+        manager.append(
+            ContextEntry::trusted(ContextSource::Tool, "compressed output")
+                .with_evidence_ref(evidence),
+        );
+        let messages = manager.to_messages();
+        assert!(messages[0].content.contains("Recoverable evidence refs"));
+        assert!(messages[0].content.contains("evidence_read"));
+        assert!(messages[0].content.contains("evidence-1"));
     }
 
     #[test]

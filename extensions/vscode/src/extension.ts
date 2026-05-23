@@ -56,16 +56,25 @@ interface ActiveRun {
   daemon: PeridotDaemon;
   clientSessionId: string;
   sessionId?: string;
-  disposeNotification: () => void;
-  disposeExit: () => void;
 }
 
-let activeRun: ActiveRun | undefined;
+interface WorkspaceRun {
+  folder: string;
+  daemon: PeridotDaemon;
+  disposeNotification: () => void;
+  disposeExit: () => void;
+  activeRuns: Map<string, ActiveRun>;
+}
+
+let workspaceRun: WorkspaceRun | undefined;
 let statusCache: StatusCache<DaemonStatusResult> | undefined;
 let cachedFolder: string | undefined;
 
 const OPENAI_OAUTH_DEFAULT_MODEL = 'gpt-5.5';
 const OPENAI_OAUTH_BASE_URL = 'https://chatgpt.com/backend-api/codex';
+const CLAUDE_API_BASE_URL = 'https://api.anthropic.com';
+const OPENAI_API_BASE_URL = 'https://api.openai.com';
+const OPENROUTER_API_BASE_URL = 'https://openrouter.ai/api';
 
 export function activate(context: vscode.ExtensionContext) {
   const output = vscode.window.createOutputChannel('Peridot');
@@ -76,7 +85,7 @@ export function activate(context: vscode.ExtensionContext) {
     runSlashCommand: async (command: string, options: RunOptions): Promise<CommandResultView> =>
       runSlashCommand(command, output, sidebar, options),
     cancelTask: async (): Promise<void> => cancelTask(output, sidebar),
-    clearSession: async (): Promise<void> => clearExtensionSession(output),
+    clearSession: async (): Promise<void> => clearExtensionSession(output, sidebar),
     loginOpenAi: async (): Promise<void> => loginOpenAi(output, sidebar),
     refreshStatus: async (): Promise<void> => refreshStatus(output, sidebar, { force: true }),
     respondAskUser: async (requestId: string, answer: AskUserAnswer): Promise<void> =>
@@ -176,9 +185,87 @@ export function activate(context: vscode.ExtensionContext) {
 }
 
 export async function deactivate() {
-  if (activeRun) {
-    await finishActiveRun();
+  if (workspaceRun) {
+    await finishWorkspaceRun();
   }
+}
+
+async function ensureWorkspaceRun(
+  folder: string,
+  output: vscode.OutputChannel,
+  sidebar: PeridotSidebarProvider,
+): Promise<WorkspaceRun> {
+  if (workspaceRun && workspaceRun.folder === folder) {
+    return workspaceRun;
+  }
+  if (workspaceRun) {
+    await finishWorkspaceRun(output);
+  }
+  const daemon = await PeridotDaemon.spawn(folder);
+  const run: WorkspaceRun = {
+    folder,
+    daemon,
+    activeRuns: new Map(),
+    disposeNotification: () => undefined,
+    disposeExit: () => undefined,
+  };
+  run.disposeNotification = daemon.onNotification((notification) => {
+    void handleDaemonNotification(notification, output, sidebar);
+  });
+  run.disposeExit = daemon.onExit((exit) => {
+    output.appendLine(
+      `[peridot] daemon exited: code=${exit.code ?? 'null'} signal=${exit.signal ?? 'null'}`,
+    );
+    const failedRuns = Array.from(run.activeRuns.values());
+    if (workspaceRun?.daemon === daemon) {
+      workspaceRun = undefined;
+    }
+    disposeWorkspaceRun(run);
+    for (const active of failedRuns) {
+      sidebar.markSessionFailed(active.clientSessionId, 'Daemon exited before the session finished.');
+    }
+    void refreshStatus(output, sidebar, { force: true });
+  });
+  workspaceRun = run;
+  return run;
+}
+
+function activeRunCount(): number {
+  return workspaceRun?.activeRuns.size ?? 0;
+}
+
+function currentActiveRun(sidebar: PeridotSidebarProvider): ActiveRun | undefined {
+  if (!workspaceRun) return undefined;
+  const clientSessionId = sidebar.currentClientSessionId();
+  if (clientSessionId) {
+    const byClient = workspaceRun.activeRuns.get(clientSessionId);
+    if (byClient) return byClient;
+  }
+  const daemonSessionId = sidebar.currentDaemonSessionId();
+  return daemonSessionId ? runForDaemonSession(daemonSessionId) : undefined;
+}
+
+function singleActiveRun(): ActiveRun | undefined {
+  if (!workspaceRun || workspaceRun.activeRuns.size !== 1) return undefined;
+  return workspaceRun.activeRuns.values().next().value as ActiveRun | undefined;
+}
+
+function runForDaemonSession(sessionId: string | undefined): ActiveRun | undefined {
+  if (!workspaceRun || !sessionId) return undefined;
+  return Array.from(workspaceRun.activeRuns.values()).find((run) => run.sessionId === sessionId);
+}
+
+function runForAskUserRequest(requestId: string): ActiveRun | undefined {
+  const marker = ':ask-user:';
+  const index = requestId.indexOf(marker);
+  return index > 0 ? runForDaemonSession(requestId.slice(0, index)) : singleActiveRun();
+}
+
+function runForApproval(
+  decision: ApprovalResponse,
+  sidebar: PeridotSidebarProvider,
+): ActiveRun | undefined {
+  return runForDaemonSession(decision.sessionId) ?? currentActiveRun(sidebar) ?? singleActiveRun();
 }
 
 async function runTask(
@@ -187,9 +274,10 @@ async function runTask(
   sidebar: PeridotSidebarProvider,
   options: RunOptions = { mode: 'execute', permission: 'auto' },
 ): Promise<void> {
-  if (activeRun) {
+  const currentClientSessionId = sidebar.currentClientSessionId();
+  if (currentClientSessionId && workspaceRun?.activeRuns.has(currentClientSessionId)) {
     await vscode.window.showWarningMessage(
-      'Peridot is already running a task. Cancel or wait for it to finish first.',
+      'This Peridot session is already running. Switch to a new session to start another task.',
     );
     return;
   }
@@ -216,35 +304,15 @@ async function runTask(
   output.appendLine(`[peridot] starting daemon for ${folder}`);
   const prepared = sidebar.prepareForTask(trimmedTask, folder);
 
-  let daemon: PeridotDaemon | undefined;
-  let disposeNotification: (() => void) | undefined;
-  let disposeExit: (() => void) | undefined;
   try {
-    const spawned = await PeridotDaemon.spawn(folder);
-    daemon = spawned;
-    disposeNotification = daemon.onNotification((notification) => {
-      void handleDaemonNotification(notification, output, sidebar, prepared.clientSessionId);
-    });
-    disposeExit = daemon.onExit((exit) => {
-      output.appendLine(
-        `[peridot] daemon exited: code=${exit.code ?? 'null'} signal=${
-          exit.signal ?? 'null'
-        }`,
-      );
-      if (activeRun?.daemon === spawned) {
-        sidebar.appendError('Daemon exited before the session finished.');
-      }
-      clearActiveRun(spawned);
-    });
+    const workspace = await ensureWorkspaceRun(folder, output, sidebar);
     const run: ActiveRun = {
-      daemon,
+      daemon: workspace.daemon,
       clientSessionId: prepared.clientSessionId,
-      disposeNotification,
-      disposeExit,
     };
-    activeRun = run;
+    workspace.activeRuns.set(prepared.clientSessionId, run);
 
-    const result = (await daemon.send('session.start', {
+    const result = (await workspace.daemon.send('session.start', {
       task: trimmedTask,
       mode: options.mode,
       permission: options.permission,
@@ -255,15 +323,11 @@ async function runTask(
     })) as SessionStartResult;
     run.sessionId = result.session_id;
     output.appendLine(`[peridot] session started: ${result.session_id}`);
-    sidebar.setSession(result.session_id);
+    sidebar.setSessionFor(prepared.clientSessionId, result.session_id);
     void refreshStatus(output, sidebar, { force: true });
   } catch (err) {
-    disposeNotification?.();
-    disposeExit?.();
-    if (daemon) {
-      await daemon.shutdown();
-    }
-    activeRun = undefined;
+    workspaceRun?.activeRuns.delete(prepared.clientSessionId);
+    await shutdownWorkspaceDaemonIfIdle(output);
     const message = err instanceof Error ? err.message : String(err);
     output.appendLine(`[peridot] failed: ${message}`);
     sidebar.appendError(message);
@@ -281,14 +345,19 @@ async function runSlashCommand(
   if (!folder) {
     throw new Error('Open a workspace folder before running Peridot commands.');
   }
-  const sessionId = activeRun?.sessionId ?? sidebar.currentDaemonSessionId();
+  const liveRun = currentActiveRun(sidebar);
+  const sessionId = liveRun?.sessionId ?? sidebar.currentDaemonSessionId();
   const params = {
     command,
     ...(sessionId ? { session_id: sessionId } : {}),
   };
-  if (activeRun?.daemon) {
+  if (liveRun?.daemon) {
     output.appendLine(`[peridot] session.command ${command}`);
-    return asCommandResult(await activeRun.daemon.send('session.command', params));
+    return asCommandResult(await liveRun.daemon.send('session.command', params));
+  }
+  if (workspaceRun?.daemon) {
+    output.appendLine(`[peridot] session.command (workspace) ${command}`);
+    return asCommandResult(await workspaceRun.daemon.send('session.command', params));
   }
 
   output.appendLine(`[peridot] session.command (spawn) ${command}`);
@@ -326,7 +395,7 @@ async function refreshStatus(
     sidebar.setContext({
       status: 'No workspace',
       problem: 'Open a workspace folder to run Peridot.',
-      running: Boolean(activeRun),
+      running: activeRunCount() > 0,
     });
     return;
   }
@@ -363,17 +432,17 @@ async function refreshStatus(
       authConfigured: Boolean(result.auth?.configured),
       authMethod: result.auth?.method,
       authSource: result.auth?.source,
-      status: activeRun ? 'Running' : 'Idle',
-      running: Boolean(activeRun),
+      status: activeRunCount() > 0 ? 'Running' : 'Idle',
+      running: activeRunCount() > 0,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     output.appendLine(`[peridot] status failed: ${message}`);
     sidebar.setContext({
       workspace: folder,
-      status: activeRun ? 'Running' : 'Needs attention',
+      status: activeRunCount() > 0 ? 'Running' : 'Needs attention',
       problem: message,
-      running: Boolean(activeRun),
+      running: activeRunCount() > 0,
     });
   }
 }
@@ -382,9 +451,9 @@ async function fetchSlashCatalog(
   folder: string,
   output: vscode.OutputChannel,
 ): Promise<SlashCommandSpec[]> {
-  if (activeRun?.daemon) {
+  if (workspaceRun?.daemon) {
     return normalizeSlashCatalog(
-      (await activeRun.daemon.send('session.command_catalog')) as SlashCommandCatalogResult,
+      (await workspaceRun.daemon.send('session.command_catalog')) as SlashCommandCatalogResult,
     );
   }
   output.appendLine(`[peridot] slash catalog fetch (spawn) for ${folder}`);
@@ -416,8 +485,8 @@ async function fetchStatus(
 ): Promise<DaemonStatusResult> {
   // Reuse the long-lived daemon when a session is active so we don't
   // double-spawn just to read context.
-  if (activeRun?.daemon) {
-    return (await activeRun.daemon.send('peridot.status')) as DaemonStatusResult;
+  if (workspaceRun?.daemon) {
+    return (await workspaceRun.daemon.send('peridot.status')) as DaemonStatusResult;
   }
   output.appendLine(`[peridot] status fetch (spawn) for ${folder}`);
   const daemon = await PeridotDaemon.spawn(folder);
@@ -436,7 +505,7 @@ async function loginOpenAi(
   output: vscode.OutputChannel,
   sidebar: PeridotSidebarProvider,
 ): Promise<void> {
-  if (activeRun) {
+  if (activeRunCount() > 0) {
     await vscode.window.showWarningMessage(
       'Cancel or wait for the current Peridot task before logging in.',
     );
@@ -604,15 +673,15 @@ async function cancelTask(
   output: vscode.OutputChannel,
   sidebar?: PeridotSidebarProvider,
 ): Promise<void> {
-  if (!activeRun) {
+  const run = sidebar ? currentActiveRun(sidebar) : singleActiveRun();
+  if (!run) {
     await vscode.window.showInformationMessage('Peridot is not running a task.');
     return;
   }
-  const run = activeRun;
   const sessionId = run.sessionId;
   if (!sessionId) {
     output.appendLine('[peridot] cancelling daemon before session id was assigned');
-    await finishActiveRun(output);
+    await finishRunByClient(run.clientSessionId, output);
     sidebar?.markIdle('Cancelled');
     return;
   }
@@ -626,7 +695,7 @@ async function cancelTask(
     if (result.cancelled) {
       sidebar?.appendSystem('Cancelled');
       sidebar?.markIdle('Cancelled');
-      await finishActiveRun(output);
+      await finishRunByClient(run.clientSessionId, output);
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -641,14 +710,15 @@ async function respondAskUser(
   output: vscode.OutputChannel,
   sidebar: PeridotSidebarProvider,
 ): Promise<void> {
-  if (!activeRun) {
+  const run = runForAskUserRequest(requestId);
+  if (!run) {
     const message = 'No active Peridot run can receive this response.';
     sidebar.appendError(message);
     await vscode.window.showWarningMessage(message);
     return;
   }
   try {
-    const result = (await activeRun.daemon.send('interaction.respond', {
+    const result = (await run.daemon.send('interaction.respond', {
       request_id: requestId,
       answer,
     })) as { accepted?: boolean; request_id?: string };
@@ -672,15 +742,16 @@ async function respondApproval(
   output: vscode.OutputChannel,
   sidebar: PeridotSidebarProvider,
 ): Promise<void> {
-  const sessionId = decision.sessionId ?? activeRun?.sessionId;
-  if (!sessionId || !activeRun?.daemon) {
+  const run = runForApproval(decision, sidebar);
+  const sessionId = decision.sessionId ?? run?.sessionId;
+  if (!sessionId || !run?.daemon) {
     const message = 'No active Peridot run can receive this approval decision.';
     sidebar.appendError(message);
     await vscode.window.showWarningMessage(message);
     return;
   }
   try {
-    const result = (await activeRun.daemon.send('approval.respond', {
+    const result = (await run.daemon.send('approval.respond', {
       session_id: sessionId,
       approved: decision.approved,
       scope: decision.scope,
@@ -698,7 +769,7 @@ async function respondApproval(
       return;
     }
     if (!decision.approved) {
-      await finishActiveRun(output);
+      await finishRunBySession(sessionId, output);
       void refreshStatus(output, sidebar, { force: true });
     }
   } catch (err) {
@@ -714,7 +785,7 @@ async function registerProvider(
   output: vscode.OutputChannel,
   sidebar: PeridotSidebarProvider,
 ): Promise<void> {
-  if (activeRun) {
+  if (activeRunCount() > 0) {
     await vscode.window.showWarningMessage(
       'Cancel or wait for the current Peridot task before switching providers.',
     );
@@ -763,7 +834,7 @@ async function registerProvider(
         // default is in place.
         await runProcess(
           binary,
-          ['config', 'set', 'api.base_url', 'https://api.openai.com'],
+          ['config', 'set', 'api.base_url', CLAUDE_API_BASE_URL],
           folder,
           output,
         );
@@ -795,7 +866,7 @@ async function registerProvider(
         );
         await runProcess(
           binary,
-          ['config', 'set', 'api.base_url', 'https://openrouter.ai/api'],
+          ['config', 'set', 'api.base_url', OPENAI_API_BASE_URL],
           folder,
           output,
         );
@@ -827,7 +898,7 @@ async function registerProvider(
         );
         await runProcess(
           binary,
-          ['config', 'set', 'api.base_url', 'https://api.anthropic.com'],
+          ['config', 'set', 'api.base_url', OPENROUTER_API_BASE_URL],
           folder,
           output,
         );
@@ -938,23 +1009,26 @@ async function openWorkspaceFile(
   }
 }
 
-async function clearExtensionSession(output: vscode.OutputChannel): Promise<void> {
-  if (activeRun?.sessionId) {
+async function clearExtensionSession(
+  output: vscode.OutputChannel,
+  sidebar: PeridotSidebarProvider,
+): Promise<void> {
+  const current = currentActiveRun(sidebar) ?? singleActiveRun();
+  if (current?.sessionId) {
     try {
-      await activeRun.daemon.send('session.cancel', { session_id: activeRun.sessionId });
+      await current.daemon.send('session.cancel', { session_id: current.sessionId });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       output.appendLine(`[peridot] clear cancel failed: ${message}`);
     }
+    await finishRunByClient(current.clientSessionId, output);
   }
-  await finishActiveRun(output);
 }
 
 async function handleDaemonNotification(
   notification: RpcNotification,
   output: vscode.OutputChannel,
   sidebar: PeridotSidebarProvider,
-  clientSessionId?: string,
 ): Promise<void> {
   if (notification.method !== 'event') {
     output.appendLine(
@@ -970,6 +1044,7 @@ async function handleDaemonNotification(
   const sessionId = params.session_id ?? 'unknown-session';
   const event = params.event;
   output.appendLine(formatEvent(sessionId, event));
+  const clientSessionId = runForDaemonSession(sessionId)?.clientSessionId;
   sidebar.appendNotificationFor(clientSessionId, params);
   const planDocumentPath = planDocumentPathFromEvent(event);
   if (planDocumentPath) {
@@ -980,7 +1055,7 @@ async function handleDaemonNotification(
   }
 
   if (isTerminalEvent(event)) {
-    await finishActiveRun(output);
+    await finishRunBySession(sessionId, output);
     void refreshStatus(output, sidebar, { force: true });
     drainQueue(output, sidebar);
   }
@@ -999,13 +1074,12 @@ function drainQueue(output: vscode.OutputChannel, sidebar: PeridotSidebarProvide
   }, 50);
 }
 
-async function finishActiveRun(output?: vscode.OutputChannel): Promise<void> {
-  const run = activeRun;
-  if (!run) {
-    return;
-  }
-  activeRun = undefined;
-  disposeRun(run);
+async function finishWorkspaceRun(output?: vscode.OutputChannel): Promise<void> {
+  const run = workspaceRun;
+  if (!run) return;
+  workspaceRun = undefined;
+  run.activeRuns.clear();
+  disposeWorkspaceRun(run);
   try {
     await run.daemon.shutdown();
   } catch (err) {
@@ -1014,16 +1088,30 @@ async function finishActiveRun(output?: vscode.OutputChannel): Promise<void> {
   }
 }
 
-function clearActiveRun(daemon: PeridotDaemon): void {
-  const run = activeRun;
-  if (!run || run.daemon !== daemon) {
-    return;
-  }
-  activeRun = undefined;
-  disposeRun(run);
+async function finishRunByClient(
+  clientSessionId: string,
+  output?: vscode.OutputChannel,
+): Promise<void> {
+  if (!workspaceRun) return;
+  workspaceRun.activeRuns.delete(clientSessionId);
+  await shutdownWorkspaceDaemonIfIdle(output);
 }
 
-function disposeRun(run: ActiveRun): void {
+async function finishRunBySession(
+  sessionId: string,
+  output?: vscode.OutputChannel,
+): Promise<void> {
+  const run = runForDaemonSession(sessionId);
+  if (!run) return;
+  await finishRunByClient(run.clientSessionId, output);
+}
+
+async function shutdownWorkspaceDaemonIfIdle(output?: vscode.OutputChannel): Promise<void> {
+  if (!workspaceRun || workspaceRun.activeRuns.size > 0) return;
+  await finishWorkspaceRun(output);
+}
+
+function disposeWorkspaceRun(run: WorkspaceRun): void {
   run.disposeNotification();
   run.disposeExit();
 }

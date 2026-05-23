@@ -307,7 +307,7 @@ pub enum TuiRuntimeEvent {
     /// registry.
     AskUserRequested {
         /// Correlation id echoed back when the panel resolves.
-        request_id: u64,
+        request_id: String,
         /// Structured ask-user request.
         request: AskUserRequest,
     },
@@ -740,7 +740,7 @@ pub struct TuiState {
     pub goal_started_at_unix: Option<u64>,
     /// Runtime reasoning-intensity dial applied to outgoing model requests.
     /// Initialised from `config.models.reasoning_effort`; mutated via the
-    /// `/reasoning <off|low|medium|high>` slash command. Persisted so a
+    /// `/reasoning <off|low|medium|high|xhigh>` slash command. Persisted so a
     /// resumed session keeps the operator's preference.
     #[serde(default)]
     pub reasoning_effort: peridot_common::ReasoningEffort,
@@ -909,7 +909,7 @@ pub enum TuiEventOutcome {
     /// registry so the in-flight tool call can resume.
     AskUserResolved {
         /// Correlation id originally supplied with `open_ask_user_with_id`.
-        request_id: u64,
+        request_id: String,
         /// Structured answer. `AskUserAnswer::Cancelled` when the
         /// operator dismissed the panel without picking.
         answer: AskUserAnswer,
@@ -1417,20 +1417,20 @@ impl TuiState {
     /// operator adds arguments that no catalog entry can match, the picker
     /// closes naturally and Enter submits the command text.
     pub fn refresh_slash_picker(&mut self) {
-        let query = self.input.trim_end().to_string();
+        let query = self.input.clone();
         if !query.starts_with('/') || query.contains('\n') {
             self.slash_picker = None;
             return;
         }
-        let matches = crate::filtered_specs(&query);
-        if matches.is_empty() {
+        let len = crate::slash_picker::picker_len(&query);
+        if len == 0 {
             self.slash_picker = None;
             return;
         }
         match self.slash_picker.as_mut() {
             Some(picker) => {
                 picker.query = query;
-                picker.selected = picker.selected.min(matches.len().saturating_sub(1));
+                picker.selected = picker.selected.min(len.saturating_sub(1));
             }
             None => {
                 self.slash_picker = Some(SlashPicker { query, selected: 0 });
@@ -1443,13 +1443,13 @@ impl TuiState {
         let Some(picker) = self.slash_picker.as_mut() else {
             return;
         };
-        let matches = crate::filtered_specs(&picker.query);
-        if matches.is_empty() {
+        let len = crate::slash_picker::picker_len(&picker.query);
+        if len == 0 {
             picker.selected = 0;
             return;
         }
-        let current = picker.selected.min(matches.len() - 1) as isize;
-        picker.selected = (current + delta).clamp(0, matches.len() as isize - 1) as usize;
+        let current = picker.selected.min(len - 1) as isize;
+        picker.selected = (current + delta).clamp(0, len as isize - 1) as usize;
     }
 
     /// Completes the current input from the highlighted slash command.
@@ -1457,11 +1457,28 @@ impl TuiState {
         let Some(picker) = self.slash_picker.as_ref() else {
             return;
         };
-        let matches = crate::filtered_specs(&picker.query);
+        let query = picker.query.clone();
+        let selected = picker.selected;
+        if let Some(context) = crate::slash_picker::slash_argument_context(&query) {
+            let Some(option) = context
+                .options
+                .get(selected.min(context.options.len().saturating_sub(1)))
+            else {
+                return;
+            };
+            self.input = format!("{} {option}", context.spec.name);
+            self.input_cursor = self.input.chars().count();
+            self.refresh_input_pickers();
+            return;
+        }
+
+        let matches = crate::filtered_specs(&query);
         let Some(spec) = matches.get(picker.selected) else {
             return;
         };
-        self.input = if let Some(arg) = spec.arg_hint {
+        self.input = if !crate::slash_picker::finite_argument_options(spec).is_empty() {
+            format!("{} ", spec.name)
+        } else if let Some(arg) = spec.arg_hint {
             format!("{} {arg}", spec.name)
         } else {
             spec.name.to_string()
@@ -1475,6 +1492,9 @@ impl TuiState {
         let Some(picker) = self.slash_picker.as_ref() else {
             return false;
         };
+        if crate::slash_picker::slash_argument_context(&picker.query).is_some() {
+            return false;
+        }
         let matches = crate::filtered_specs(&picker.query);
         let Some(spec) = matches.get(picker.selected) else {
             return false;
@@ -1864,7 +1884,11 @@ impl TuiState {
     /// The panel records the id and surfaces it back through
     /// `TuiEventOutcome::AskUserResolved` when the operator commits, so
     /// the CLI can fulfil the matching oneshot.
-    pub fn open_ask_user_with_id(&mut self, request_id: u64, request: AskUserRequest) {
+    pub fn open_ask_user_with_id(
+        &mut self,
+        request_id: impl Into<String>,
+        request: AskUserRequest,
+    ) {
         self.ask_user = Some(AskUserPanel::from_request(request).with_request_id(request_id));
     }
 

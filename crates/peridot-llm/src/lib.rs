@@ -584,6 +584,22 @@ mod tests {
     }
 
     #[test]
+    fn openai_payloads_forward_xhigh_reasoning_effort() {
+        let mut request = request(vec![LlmMessage::new(MessageRole::User, "solve hard bug")]);
+        request.model = "gpt-5.5".to_string();
+        request.reasoning_effort = peridot_common::ReasoningEffort::XHigh;
+
+        assert_eq!(
+            openai_stream_payload(&request)["reasoning"]["effort"],
+            "xhigh"
+        );
+        assert_eq!(
+            openai_codex_payload(&request)["reasoning"]["effort"],
+            "xhigh"
+        );
+    }
+
+    #[test]
     fn openai_codex_oauth_payload_snapshot_covers_responses_tool_linkage() {
         let assistant = LlmMessage::assistant_with_tool_calls(
             "Reading.",

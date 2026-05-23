@@ -146,13 +146,33 @@ fn config_set_updates_known_keys() {
     set_config_key(&mut config, "models.service_tier", "fast").unwrap();
     set_config_key(&mut config, "api.base_url", "https://openrouter.ai/api").unwrap();
     set_config_key(&mut config, "defaults.max_turns", "3").unwrap();
+    set_config_key(&mut config, "models.reasoning_effort", "xhigh").unwrap();
+    set_config_key(&mut config, "context.observation_max_chars", "12000").unwrap();
+    set_config_key(&mut config, "memory.auto_skill_reflection", "false").unwrap();
+    set_config_key(&mut config, "tui.language", "ko").unwrap();
+    set_config_key(&mut config, "security.shell_dry_run", "true").unwrap();
+    set_config_key(&mut config, "subagents.default_model", "gpt-5.4-mini").unwrap();
+    set_config_key(&mut config, "auto_fix.enabled", "true").unwrap();
     set_config_key(&mut config, "git.auto_commit", "true").unwrap();
 
     assert_eq!(config.auth.primary, "openrouter-api");
     assert_eq!(config.models.main, "openai/gpt-4o-mini");
+    assert_eq!(
+        config.models.reasoning_effort,
+        peridot_common::ReasoningEffort::XHigh
+    );
     assert_eq!(config.models.service_tier.as_deref(), Some("fast"));
     assert_eq!(config.api.base_url, "https://openrouter.ai/api");
     assert_eq!(config.defaults.max_turns, 3);
+    assert_eq!(config.context.observation_max_chars, 12_000);
+    assert!(!config.memory.auto_skill_reflection);
+    assert_eq!(config.tui.language, peridot_common::Locale::Ko);
+    assert!(config.security.shell_dry_run);
+    assert_eq!(
+        config.subagents.default_model.as_deref(),
+        Some("gpt-5.4-mini")
+    );
+    assert!(config.auto_fix.enabled);
     assert!(config.git.auto_commit);
     assert!(set_config_key(&mut config, "unknown.key", "value").is_err());
     set_config_key(&mut config, "models.service_tier", "standard").unwrap();

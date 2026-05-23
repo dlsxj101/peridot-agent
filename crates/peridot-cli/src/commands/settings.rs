@@ -218,15 +218,23 @@ pub(crate) fn settings_registry(config: &PeridotConfig) -> Vec<SettingItem> {
         group: "Models".into(),
         label: "Reasoning effort".into(),
         help: Some(
-            "How hard the model thinks: off / low / medium / high (cost grows with depth).".into(),
+            "How hard the model thinks: off / low / medium / high / xhigh (cost grows with depth)."
+                .into(),
         ),
         value: SettingValue::Choice {
-            options: vec!["off".into(), "low".into(), "medium".into(), "high".into()],
+            options: vec![
+                "off".into(),
+                "low".into(),
+                "medium".into(),
+                "high".into(),
+                "xhigh".into(),
+            ],
             selected: match config.models.reasoning_effort {
                 ReasoningEffort::Off => 0,
                 ReasoningEffort::Low => 1,
                 ReasoningEffort::Medium => 2,
                 ReasoningEffort::High => 3,
+                ReasoningEffort::XHigh => 4,
             },
         },
     });

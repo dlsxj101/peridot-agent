@@ -40,8 +40,8 @@ pub struct AskUserPanel {
     /// opened through a `TuiRuntimeEvent::AskUserRequested`. Carries
     /// the matching `AskUserPort` request through the panel and back to
     /// the CLI on resolution.
-    #[serde(default)]
-    pub request_id: Option<u64>,
+    #[serde(default, deserialize_with = "deserialize_optional_request_id")]
+    pub request_id: Option<String>,
     /// Kind of the underlying ask-user request (single_select /
     /// multi_select / free_form). Recorded so resolution can build the
     /// right `AskUserAnswer` variant without inspecting choices.
@@ -332,8 +332,8 @@ impl AskUserPanel {
 
     /// Attaches a correlation id from the CLI side so resolution events
     /// can be matched against the originating `AskUserPort` request.
-    pub fn with_request_id(mut self, request_id: u64) -> Self {
-        self.request_id = Some(request_id);
+    pub fn with_request_id(mut self, request_id: impl Into<String>) -> Self {
+        self.request_id = Some(request_id.into());
         self
     }
 
@@ -440,6 +440,19 @@ impl AskUserPanel {
         self.explain_index = None;
         self.showing_explanation = false;
     }
+}
+
+fn deserialize_optional_request_id<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    Ok(match value {
+        Some(serde_json::Value::String(value)) => Some(value),
+        Some(serde_json::Value::Number(value)) => Some(value.to_string()),
+        Some(serde_json::Value::Null) | None => None,
+        _ => None,
+    })
 }
 
 pub(super) fn ask_user_choices_with_controls(mut options: Vec<String>) -> Vec<String> {

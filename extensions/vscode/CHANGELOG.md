@@ -1,5 +1,28 @@
 # Peridot Agent — Extension Changelog
 
+## [0.5.16] — 2026-05-23
+
+### Added — multi-run parity and canonical slash state
+
+- Running daemon tasks are tracked per chat session instead of through one
+  global extension-host active run, so the sidebar's multi-session UI matches
+  daemon execution state more closely.
+- Slash commands with finite options now receive canonical state deltas from
+  the daemon/core parser instead of being re-parsed locally in the sidebar.
+- Daemon-backed `/reasoning`, `/think`, `/fast`, `/committee`, `/lang`,
+  `/autofix`, provider, mode, permission, and subagent model changes keep the
+  UI run options in sync with daemon session specs.
+
+### Fixed — transcript and tool-call polish
+
+- Tool-call rows keep stable keys and collapsed one-line tool lists animate
+  when the visible tool summary changes, without forcing a full transcript
+  replacement.
+- Tool names render the animated gradient on the glyphs themselves, with a
+  seamless repeat and reduced-motion fallback.
+- The context indicator shows only the donut ring, without the extra circular
+  wrapper.
+
 ## [0.5.14] — 2026-05-22
 
 ### Added — daemon slash command parity and persistent sessions

@@ -111,6 +111,10 @@ pub struct ToolContext {
     /// parent or child session. None on single-session runs or in tests
     /// — the tool returns a polite noop in that case.
     pub message_bus: Option<Arc<dyn AgentMessageBus>>,
+    /// Bounded context packet prepared by the parent harness for delegated
+    /// subagents. It carries user intent, recent decisions, and evidence refs
+    /// without replaying the full transcript.
+    pub parent_context_packet: Option<String>,
 }
 
 impl std::fmt::Debug for ToolContext {
@@ -134,6 +138,10 @@ impl std::fmt::Debug for ToolContext {
                     .as_ref()
                     .map(|_| "Arc<dyn AgentMessageBus>"),
             )
+            .field(
+                "parent_context_packet",
+                &self.parent_context_packet.as_ref().map(|_| "String"),
+            )
             .finish()
     }
 }
@@ -151,6 +159,7 @@ impl ToolContext {
             runner: None,
             ask_user_port: None,
             message_bus: None,
+            parent_context_packet: None,
         }
     }
 
@@ -204,6 +213,12 @@ impl ToolContext {
     /// sessions; otherwise the tool returns a noop result with a hint.
     pub fn with_message_bus(mut self, bus: Arc<dyn AgentMessageBus>) -> Self {
         self.message_bus = Some(bus);
+        self
+    }
+
+    /// Attaches a bounded parent context packet for subagent delegation.
+    pub fn with_parent_context_packet(mut self, packet: impl Into<String>) -> Self {
+        self.parent_context_packet = Some(packet.into());
         self
     }
 }

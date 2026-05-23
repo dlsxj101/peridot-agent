@@ -1591,6 +1591,77 @@ fn tab_autocompletes_slash_command_prefix() {
 }
 
 #[test]
+fn slash_picker_selects_finite_argument_options() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    for character in "/rea".chars() {
+        handle_key_event(
+            &mut state,
+            KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE),
+        );
+    }
+    handle_key_event(&mut state, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    assert_eq!(state.input, "/reasoning ");
+
+    handle_key_event(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    handle_key_event(
+        &mut state,
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+    );
+    assert_eq!(state.input, "/reasoning low");
+    assert!(state.slash_picker.is_none());
+
+    handle_key_event(
+        &mut state,
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+    );
+    assert_eq!(state.input, "");
+    assert_eq!(state.reasoning_effort, peridot_common::ReasoningEffort::Low);
+}
+
+#[test]
+fn optional_finite_slash_can_submit_or_open_options() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    for character in "/fast".chars() {
+        handle_key_event(
+            &mut state,
+            KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE),
+        );
+    }
+    handle_key_event(
+        &mut state,
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+    );
+    assert_eq!(state.service_tier.as_deref(), Some("fast"));
+
+    for character in "/fast".chars() {
+        handle_key_event(
+            &mut state,
+            KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE),
+        );
+    }
+    handle_key_event(&mut state, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    assert_eq!(state.input, "/fast ");
+    handle_key_event(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    handle_key_event(
+        &mut state,
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+    );
+    assert_eq!(state.input, "/fast off");
+}
+
+#[test]
 fn arrow_keys_select_slash_command_completion() {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 

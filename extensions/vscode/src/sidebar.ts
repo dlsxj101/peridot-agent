@@ -18,6 +18,7 @@ import {
   SidebarContext,
   SidebarState,
   SlashCommandSpec,
+  SlashStateDeltaView,
   TranscriptItem,
   UsageSlice,
 } from './types';
@@ -140,11 +141,29 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
   }
 
   public setSession(sessionId: string): void {
+    const clientSessionId = this.state.activeChatId;
+    if (clientSessionId) {
+      this.setSessionFor(clientSessionId, sessionId);
+    }
+  }
+
+  public setSessionFor(clientSessionId: string, sessionId: string): void {
+    const previousActive = this.state.activeChatId;
+    const temporarilyLoaded = clientSessionId !== previousActive && this.sessions.has(clientSessionId);
+    if (temporarilyLoaded) {
+      this.saveActiveSession();
+      this.loadSessionIntoState(clientSessionId, false);
+    }
     this.state.sessionId = sessionId;
     this.state.status = `Running ${sessionId}`;
     this.state.context = { ...this.state.context, status: 'Running', running: true };
     const session = this.activeStoredSession();
     if (session) session.daemonSessionId = sessionId;
+    if (temporarilyLoaded) {
+      this.saveActiveSession();
+      if (previousActive) this.loadSessionIntoState(previousActive, false);
+      else this.loadDraftSessionIntoState();
+    }
     this.publish();
   }
 
@@ -338,6 +357,36 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
 
   public currentDaemonSessionId(): string | undefined {
     return this.state.sessionId;
+  }
+
+  public currentClientSessionId(): string | undefined {
+    return this.state.activeChatId;
+  }
+
+  public markSessionFailed(clientSessionId: string, message: string): void {
+    const previousActive = this.state.activeChatId;
+    const temporarilyLoaded = clientSessionId !== previousActive && this.sessions.has(clientSessionId);
+    if (temporarilyLoaded) {
+      this.saveActiveSession();
+      this.loadSessionIntoState(clientSessionId, false);
+    }
+    if (temporarilyLoaded) {
+      this.state.running = false;
+      this.state.status = 'Failed';
+      this.state.context = {
+        ...this.state.context,
+        status: 'Failed',
+        problem: message,
+        running: false,
+      };
+      this.state.transcript.push({ role: 'error', text: message });
+      this.saveActiveSession();
+      if (previousActive) this.loadSessionIntoState(previousActive, false);
+      else this.loadDraftSessionIntoState();
+      this.publish();
+    } else {
+      this.appendError(message);
+    }
   }
 
   public appendCommandResult(result: CommandResultView): void {
@@ -798,223 +847,16 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
   private async handleSlashCommand(input: string, options: RunOptions): Promise<void> {
     const [command, ...restParts] = input.slice(1).trim().split(/\s+/);
     const rest = restParts.join(' ').trim();
-    switch (command) {
-      case 'plan':
-        if (rest.length === 0) {
-          await this.executeDaemonSlash(input, options);
-          return;
-        }
-        if (rest === 'show') {
-          this.showPlan();
-          return;
-        }
-        break;
-      case 'execute':
-        if (rest.length === 0) {
-          await this.executeDaemonSlash(input, options);
-          return;
-        }
-        break;
-      case 'goal':
-        await this.handleGoalSlash(rest, options);
-        return;
-      case 'safe':
-        if (rest.length === 0) {
-          await this.executeDaemonSlash(input, options);
-          return;
-        }
-        break;
-      case 'auto':
-        if (rest.length === 0) {
-          await this.executeDaemonSlash(input, options);
-          return;
-        }
-        break;
-      case 'yolo':
-        if (rest.length === 0) {
-          await this.executeDaemonSlash(input, options);
-          return;
-        }
-        break;
-      case 'model':
-        if (rest.length > 0) {
-          await this.executeDaemonSlash(input, options);
-          return;
-        }
-        this.appendError('Usage: /model <name>');
-        return;
-      case 'provider':
-        if (rest.length > 0) {
-          await this.executeDaemonSlash(input, options);
-          return;
-        }
-        this.appendError('Usage: /provider <name>');
-        return;
-      case 'reasoning': {
-        const effort = parseReasoningEffort(rest);
-        if (!effort) {
-          this.appendError('Usage: /reasoning <off|low|medium|high>');
-          return;
-        }
-        await this.executeDaemonSlash(input, options);
-        return;
-      }
-      case 'think': {
-        const effort = parseThinkEffort(rest);
-        if (!effort) {
-          this.appendError('Usage: /think [off|low|medium|high]');
-          return;
-        }
-        await this.executeDaemonSlash(input, options);
-        return;
-      }
-      case 'fast': {
-        const tier = parseFastTier(rest, options.serviceTier);
-        if (!tier) {
-          this.appendError('Usage: /fast [on|off|toggle]');
-          return;
-        }
-        await this.executeDaemonSlash(input, options);
-        return;
-      }
-      case 'note':
-        if (rest.length > 0) {
-          await this.executeDaemonSlash(input, options);
-          return;
-        }
-        this.appendError('Usage: /note <text>');
-        return;
-      case 'info':
-        if (rest.length === 0) {
-          this.showInfo();
-          return;
-        }
-        break;
-      case 'committee':
-        if (['off', 'planner', 'full'].includes(rest)) {
-          await this.executeDaemonSlash(input, options);
-          return;
-        }
-        this.appendError('Usage: /committee <off|planner|full>');
-        return;
-      case 'cost':
-        if (rest.length === 0) {
-          this.showCost();
-          return;
-        }
-        break;
-      case 'compact':
-        if (rest.length === 0) {
-          await this.executeDaemonSlash(input, options);
-          return;
-        }
-        break;
-      case 'context':
-        if (rest === 'top' || rest.length === 0) {
-          await this.executeDaemonSlash(input, options);
-          return;
-        }
-        break;
-      case 'sidepanel':
-      case 'status':
-        if (rest.length === 0) {
-          this.showInfo();
-          return;
-        }
-        break;
-      case 'collapse':
-        if (rest.length === 0) {
-          await this.executeDaemonSlash(input, options);
-          return;
-        }
-        break;
-      case 'diff':
-        if (rest.length === 0) {
-          await this.executeDaemonSlash(input, options);
-          return;
-        }
-        break;
-      case 'undo':
-        if (rest.length === 0) {
-          await this.executeDaemonSlash(input, options);
-          return;
-        }
-        break;
-      case 'lang':
-        if (rest === 'en' || rest === 'ko') {
-          await this.executeDaemonSlash(input, options);
-          return;
-        }
-        this.appendError('Usage: /lang en|ko');
-        return;
-      case 'clear':
-        if (rest.length > 0) {
-          this.appendError('Usage: /clear');
-          return;
-        }
-        await this.executeDaemonSlash(input, options);
-        return;
-      case 'fork':
-      case 'teammate':
-        if (rest.length > 0) {
-          await this.executeDaemonSlash(input, options);
-          return;
-        }
-        this.appendError(`Usage: /${command} <task>`);
-        return;
-      case 'worktree':
-        if (rest.length > 0) {
-          await this.executeDaemonSlash(input, options);
-          return;
-        }
-        this.appendError('Usage: /worktree <branch> <task>');
-        return;
-      case 'subagent':
-        if (rest.startsWith('model ') && rest.slice('model '.length).trim().length > 0) {
-          await this.executeDaemonSlash(input, options);
-          return;
-        }
-        this.appendError('Usage: /subagent model <name|reset>');
-        return;
-      case 'mcp':
-        await this.executeDaemonSlash(input, options);
-        return;
-      case 'todos':
-        if (rest.length === 0) {
-          await this.executeDaemonSlash(input, options);
-          return;
-        }
-        break;
-      case 'rewind':
-        if (rest.length === 0) {
-          this.rewindLastExchange();
-          return;
-        }
-        break;
-      case 'branch':
-        await this.executeDaemonSlash(input, options);
-        return;
-      case 'autofix':
-        if (rest.length === 0 || rest === 'on' || rest === 'off' || /^\d+$/.test(rest)) {
-          await this.executeDaemonSlash(input, options);
-          return;
-        }
-        this.appendError('Usage: /autofix [on|off|N]');
-        return;
-      case 'session':
-        await this.handleSessionSlash(rest, options);
-        return;
-      case 'help':
-        if (rest.length === 0) {
-          this.append({ role: 'assistant', text: slashHelpText(this.state.slashCommands) });
-          return;
-        }
-        break;
-      default:
-        break;
+
+    if (command === 'goal' && rest.length === 0) {
+      this.updateRunOptions({ ...options, mode: 'goal' }, 'mode: goal');
+      return;
     }
-    this.appendError(`Unknown command: /${command}`);
-    this.append({ role: 'status', text: 'Type /help for available commands' });
+    if (command === 'help' && rest.length === 0) {
+      this.append({ role: 'assistant', text: slashHelpText(this.state.slashCommands) });
+      return;
+    }
+    await this.executeDaemonSlash(input, options);
   }
 
   private async handleGoalSlash(rest: string, options: RunOptions): Promise<void> {
@@ -1024,10 +866,16 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         this.updateRunOptions(next, 'mode: goal');
         return;
       case 'pause':
+        this.append({ role: 'status', text: 'goal: paused' });
+        return;
       case 'resume':
+        this.append({ role: 'status', text: 'goal: resumed' });
+        return;
       case 'clear':
+        this.append({ role: 'status', text: 'goal: cleared' });
+        return;
       case 'status':
-        await this.executeDaemonSlash(`/goal ${rest}`, next);
+        this.append({ role: 'status', text: 'goal: status is tracked by the running agent' });
         return;
       default:
         this.state.runOptions = next;
@@ -1113,12 +961,56 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         return;
       }
       this.applySlashCommandState(input, result, options);
+      if (result.action === 'local' && (await this.handleLocalClientAction(input, options))) {
+        return;
+      }
       this.appendCommandResult(result);
       if (result.kind === 'start_task' && result.task) {
-        await this.handlers.runTask(result.task, options);
+        await this.handlers.runTask(result.task, this.state.runOptions);
       }
     } catch (err) {
       this.appendError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  private async handleLocalClientAction(input: string, options: RunOptions): Promise<boolean> {
+    const [command, ...restParts] = input.slice(1).trim().split(/\s+/);
+    const rest = restParts.join(' ').trim();
+    switch (command) {
+      case 'plan':
+        if (rest === 'show') {
+          this.showPlan();
+          return true;
+        }
+        return false;
+      case 'cost':
+        if (rest.length === 0) {
+          this.showCost();
+          return true;
+        }
+        return false;
+      case 'info':
+      case 'sidepanel':
+      case 'status':
+        if (rest.length === 0) {
+          this.showInfo();
+          return true;
+        }
+        return false;
+      case 'rewind':
+        if (rest.length === 0) {
+          this.rewindLastExchange();
+          return true;
+        }
+        return false;
+      case 'session':
+        await this.handleSessionSlash(rest, options);
+        return true;
+      case 'goal':
+        await this.handleGoalSlash(rest, options);
+        return true;
+      default:
+        return false;
     }
   }
 
@@ -1127,55 +1019,8 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
     result: CommandResultView,
     options: RunOptions,
   ): void {
-    const parts = input.slice(1).trim().split(/\s+/).filter(Boolean);
-    const command = parts[0] ?? '';
-    const rest = parts.slice(1).join(' ');
-    let next: RunOptions | undefined;
-    switch (command) {
-      case 'plan':
-        if (rest.length === 0) next = { ...options, mode: 'plan' };
-        break;
-      case 'execute':
-        if (rest.length === 0) next = { ...options, mode: 'execute' };
-        break;
-      case 'goal':
-        next = { ...options, mode: 'goal' };
-        break;
-      case 'safe':
-        if (rest.length === 0) next = { ...options, permission: 'safe' };
-        break;
-      case 'auto':
-        if (rest.length === 0) next = { ...options, permission: 'auto' };
-        break;
-      case 'yolo':
-        if (rest.length === 0) next = { ...options, permission: 'yolo' };
-        break;
-      case 'model':
-        if (rest.length > 0) next = { ...options, model: rest };
-        break;
-      case 'provider':
-        if (rest.length > 0) {
-          this.state.context = { ...this.state.context, provider: rest };
-        }
-        break;
-      case 'reasoning': {
-        const effort = parseReasoningEffort(rest);
-        if (effort) next = { ...options, reasoningEffort: effort };
-        break;
-      }
-      case 'think': {
-        const effort = parseThinkEffort(rest);
-        if (effort) next = { ...options, reasoningEffort: effort };
-        break;
-      }
-      case 'fast': {
-        const tier = parseFastTier(rest, options.serviceTier);
-        if (tier) next = { ...options, serviceTier: tier };
-        break;
-      }
-      default:
-        break;
-    }
+    const delta = result.state_delta ?? result.stateDelta;
+    const next = delta ? applyRunOptionDelta(options, delta) : undefined;
     if (next) {
       this.state.runOptions = next;
       this.state.context = {
@@ -1186,6 +1031,9 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         reasoningEffort: next.reasoningEffort,
         serviceTier: next.serviceTier,
       };
+    }
+    if (delta?.provider) {
+      this.state.context = { ...this.state.context, provider: delta.provider };
     }
     if (input.startsWith('/branch turn ') || input.startsWith('/branch switch ')) {
       this.state.branchPicker = undefined;
@@ -1557,39 +1405,11 @@ function parseReasoningEffort(value: string): RunOptions['reasoningEffort'] | un
     case 'max':
     case 'maximum':
       return 'high';
-    default:
-      return undefined;
-  }
-}
-
-function parseThinkEffort(value: string): RunOptions['reasoningEffort'] | undefined {
-  const trimmed = value.trim().toLowerCase();
-  if (!trimmed || trimmed === 'hard' || trimmed === 'harder' || trimmed === 'more') {
-    return 'high';
-  }
-  if (trimmed === 'stop' || trimmed === 'less') {
-    return 'off';
-  }
-  return parseReasoningEffort(trimmed);
-}
-
-function parseFastTier(
-  value: string,
-  current: RunOptions['serviceTier'],
-): RunOptions['serviceTier'] | undefined {
-  switch (value.trim().toLowerCase()) {
-    case '':
-    case 'on':
-    case 'fast':
-    case 'priority':
-      return 'fast';
-    case 'off':
-    case 'standard':
-    case 'default':
-    case 'none':
-      return 'standard';
-    case 'toggle':
-      return current === 'fast' ? 'standard' : 'fast';
+    case 'xhigh':
+    case 'x-high':
+    case 'extra-high':
+    case 'extra_high':
+      return 'xhigh';
     default:
       return undefined;
   }
@@ -1599,6 +1419,85 @@ function normalizeReasoning(
   value: string | undefined,
 ): RunOptions['reasoningEffort'] | undefined {
   return value ? parseReasoningEffort(value) : undefined;
+}
+
+function applyRunOptionDelta(
+  options: RunOptions,
+  delta: SlashStateDeltaView,
+): RunOptions | undefined {
+  let next: RunOptions | undefined;
+  const update = (): RunOptions => {
+    next ??= { ...options };
+    return next;
+  };
+
+  if (isMode(delta.mode)) {
+    update().mode = delta.mode;
+  }
+  if (isPermission(delta.permission)) {
+    update().permission = delta.permission;
+  }
+  if (typeof delta.model === 'string' && delta.model.length > 0) {
+    update().model = delta.model;
+  }
+
+  const reasoningValue = delta.reasoning_effort ?? delta.reasoningEffort;
+  const reasoning =
+    typeof reasoningValue === 'string' ? parseReasoningEffort(reasoningValue) : undefined;
+  if (reasoning) {
+    update().reasoningEffort = reasoning;
+  }
+
+  const serviceTierValue = pickDeltaValue(delta, 'service_tier', 'serviceTier');
+  const serviceTier = normalizeServiceTier(serviceTierValue);
+  if (serviceTier) {
+    update().serviceTier = serviceTier;
+  }
+
+  return next;
+}
+
+function pickDeltaValue<T extends object>(
+  delta: T,
+  snakeKey: keyof T,
+  camelKey: keyof T,
+): unknown {
+  if (Object.prototype.hasOwnProperty.call(delta, snakeKey)) {
+    return delta[snakeKey];
+  }
+  if (Object.prototype.hasOwnProperty.call(delta, camelKey)) {
+    return delta[camelKey];
+  }
+  return undefined;
+}
+
+function normalizeServiceTier(value: unknown): RunOptions['serviceTier'] | undefined {
+  if (value === null) {
+    return 'standard';
+  }
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+  switch (value.trim().toLowerCase()) {
+    case 'fast':
+    case 'priority':
+      return 'fast';
+    case 'standard':
+    case 'default':
+    case 'none':
+    case 'off':
+      return 'standard';
+    default:
+      return undefined;
+  }
+}
+
+function isMode(value: unknown): value is RunOptions['mode'] {
+  return value === 'execute' || value === 'plan' || value === 'goal';
+}
+
+function isPermission(value: unknown): value is RunOptions['permission'] {
+  return value === 'auto' || value === 'safe' || value === 'yolo';
 }
 
 function freshState(): SidebarState {

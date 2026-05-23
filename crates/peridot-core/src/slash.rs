@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use peridot_common::{CommitteeMode, Locale, ReasoningEffort};
+use peridot_common::{CommitteeMode, ExecutionMode, Locale, PermissionMode, ReasoningEffort};
 use serde::{Deserialize, Serialize};
 
 /// Slash commands supported by Peridot's interactive surfaces.
@@ -148,6 +148,117 @@ pub enum SlashCommand {
     /// `/autofix` — toggle or configure the auto-fix loop.
     /// `on` / `off` enables or disables; a bare number sets max attempts.
     AutoFix(AutoFixAction),
+}
+
+/// Canonical state mutation implied by a slash command.
+///
+/// Front-ends should derive run-option changes from this value instead of
+/// re-parsing command strings locally. Commands that only render local UI
+/// or enqueue host actions return an empty delta.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct SlashStateDelta {
+    /// Execution mode override.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mode: Option<ExecutionMode>,
+    /// Permission mode override.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub permission: Option<PermissionMode>,
+    /// Main model override.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// Provider override.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    /// Reasoning effort override.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<ReasoningEffort>,
+    /// Service tier override. `Some(None)` means reset to standard/default.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service_tier: Option<Option<String>>,
+    /// Committee mode override.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub committee_mode: Option<CommitteeMode>,
+    /// Locale override.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub locale: Option<Locale>,
+    /// Subagent default model override. `Some(None)` means reset/inherit.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subagent_default_model: Option<Option<String>>,
+}
+
+impl SlashStateDelta {
+    /// Returns true when the delta contains no state changes.
+    pub fn is_empty(&self) -> bool {
+        self == &Self::default()
+    }
+}
+
+/// Computes the canonical state delta for `command`.
+pub fn slash_state_delta(
+    command: &SlashCommand,
+    current_service_tier: Option<&str>,
+) -> SlashStateDelta {
+    match command {
+        SlashCommand::Plan => SlashStateDelta {
+            mode: Some(ExecutionMode::Plan),
+            ..SlashStateDelta::default()
+        },
+        SlashCommand::Execute => SlashStateDelta {
+            mode: Some(ExecutionMode::Execute),
+            ..SlashStateDelta::default()
+        },
+        SlashCommand::GoalStart(_) => SlashStateDelta {
+            mode: Some(ExecutionMode::Goal),
+            ..SlashStateDelta::default()
+        },
+        SlashCommand::Safe => SlashStateDelta {
+            permission: Some(PermissionMode::Safe),
+            ..SlashStateDelta::default()
+        },
+        SlashCommand::Auto => SlashStateDelta {
+            permission: Some(PermissionMode::Auto),
+            ..SlashStateDelta::default()
+        },
+        SlashCommand::Yolo => SlashStateDelta {
+            permission: Some(PermissionMode::Yolo),
+            ..SlashStateDelta::default()
+        },
+        SlashCommand::Model(model) => SlashStateDelta {
+            model: Some(model.clone()),
+            ..SlashStateDelta::default()
+        },
+        SlashCommand::Provider(provider) => SlashStateDelta {
+            provider: Some(provider.clone()),
+            ..SlashStateDelta::default()
+        },
+        SlashCommand::Reasoning(effort) => SlashStateDelta {
+            reasoning_effort: Some(*effort),
+            ..SlashStateDelta::default()
+        },
+        SlashCommand::Fast(change) => {
+            let enabled = change.unwrap_or_else(|| current_service_tier != Some("fast"));
+            SlashStateDelta {
+                service_tier: Some(enabled.then(|| "fast".to_string())),
+                ..SlashStateDelta::default()
+            }
+        }
+        SlashCommand::Committee(mode) => SlashStateDelta {
+            committee_mode: Some(*mode),
+            ..SlashStateDelta::default()
+        },
+        SlashCommand::Lang(locale) => SlashStateDelta {
+            locale: Some(*locale),
+            ..SlashStateDelta::default()
+        },
+        SlashCommand::SubagentModel(change) => SlashStateDelta {
+            subagent_default_model: Some(match change {
+                SubagentModelChange::Set(model) => Some(model.clone()),
+                SubagentModelChange::Reset => None,
+            }),
+            ..SlashStateDelta::default()
+        },
+        _ => SlashStateDelta::default(),
+    }
 }
 
 /// Payload for `/autofix`.
@@ -421,6 +532,30 @@ mod tests {
         assert_eq!(
             parse_slash_command("/autofix 5"),
             Some(SlashCommand::AutoFix(AutoFixAction::MaxAttempts(5)))
+        );
+    }
+
+    #[test]
+    fn parses_xhigh_reasoning_aliases() {
+        assert_eq!(
+            parse_slash_command("/reasoning xhigh"),
+            Some(SlashCommand::Reasoning(ReasoningEffort::XHigh))
+        );
+        assert_eq!(
+            parse_slash_command("/think x-high"),
+            Some(SlashCommand::Reasoning(ReasoningEffort::XHigh))
+        );
+    }
+
+    #[test]
+    fn computes_fast_toggle_from_current_tier() {
+        assert_eq!(
+            slash_state_delta(&SlashCommand::Fast(None), None).service_tier,
+            Some(Some("fast".to_string()))
+        );
+        assert_eq!(
+            slash_state_delta(&SlashCommand::Fast(None), Some("fast")).service_tier,
+            Some(None)
         );
     }
 }

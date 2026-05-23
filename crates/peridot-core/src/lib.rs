@@ -29,6 +29,9 @@ pub use requests::{
     FileDiffPayload, McpStatusUpdate, PlanStepUpdate, ReviewerVerdict, StopReason,
 };
 pub use role::AgentRole;
-pub use slash::{AutoFixAction, SlashCommand, SubagentModelChange, parse_slash_command};
+pub use slash::{
+    AutoFixAction, SlashCommand, SlashStateDelta, SubagentModelChange, parse_slash_command,
+    slash_state_delta,
+};
 pub use state::AgentState;
 pub use usage::accumulate_usage;

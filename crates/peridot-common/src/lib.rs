@@ -420,9 +420,9 @@ impl Default for AutoFixConfig {
 
 /// Provider-neutral reasoning intensity dial. Maps to: Anthropic
 /// `thinking: { type: enabled, budget_tokens }` with budget scaled by tier
-/// (Low ≈ 1k, Medium ≈ 4k, High ≈ 16k tokens); OpenAI
-/// `reasoning: { effort: "low|medium|high" }` (gpt-5, o-series); Codex
-/// app-server forwards via the RPC envelope and handles the per-model
+/// (Low ≈ 1k, Medium ≈ 4k, High ≈ 16k, XHigh ≈ 32k tokens); OpenAI
+/// `reasoning: { effort: "low|medium|high|xhigh" }` (gpt-5, o-series);
+/// Codex app-server forwards via the RPC envelope and handles the per-model
 /// mapping. Models without a reasoning channel simply ignore the field.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -436,10 +436,12 @@ pub enum ReasoningEffort {
     Medium,
     /// Maximum reasoning budget; expensive but most thorough.
     High,
+    /// Extra-high reasoning budget for models that expose a deeper tier.
+    XHigh,
 }
 
 impl ReasoningEffort {
-    /// Parses a case-insensitive string (`off|low|medium|high`) used by the
+    /// Parses a case-insensitive string (`off|low|medium|high|xhigh`) used by the
     /// `/reasoning` slash command and toml deserialisation when the user
     /// types a value by hand. Returns `None` for unrecognised input so
     /// callers can surface a helpful error.
@@ -449,6 +451,7 @@ impl ReasoningEffort {
             "low" | "min" | "minimal" => Some(Self::Low),
             "medium" | "med" | "default" | "true" => Some(Self::Medium),
             "high" | "max" | "maximum" => Some(Self::High),
+            "xhigh" | "x-high" | "extra-high" | "extra_high" => Some(Self::XHigh),
             _ => None,
         }
     }
@@ -462,6 +465,7 @@ impl ReasoningEffort {
             Self::Low => Some(1_024),
             Self::Medium => Some(4_096),
             Self::High => Some(16_384),
+            Self::XHigh => Some(32_768),
         }
     }
 
@@ -473,6 +477,7 @@ impl ReasoningEffort {
             Self::Low => Some("low"),
             Self::Medium => Some("medium"),
             Self::High => Some("high"),
+            Self::XHigh => Some("xhigh"),
         }
     }
 }
@@ -484,6 +489,7 @@ impl std::fmt::Display for ReasoningEffort {
             Self::Low => "low",
             Self::Medium => "medium",
             Self::High => "high",
+            Self::XHigh => "xhigh",
         })
     }
 }
@@ -912,7 +918,7 @@ pub struct ModelsConfig {
     /// Cheap chat models ignore this; o-series / gpt-5 / Anthropic extended
     /// thinking models translate it to their native reasoning controls.
     /// Defaults to `Off` so cost stays predictable; opt in via toml or the
-    /// `/reasoning <off|low|medium|high>` slash command.
+    /// `/reasoning <off|low|medium|high|xhigh>` slash command.
     #[serde(default)]
     pub reasoning_effort: ReasoningEffort,
     /// Optional provider service tier. `fast` maps to the provider's
@@ -1399,6 +1405,24 @@ mod tests {
         .unwrap();
 
         assert_eq!(config.mcp[0].timeout_seconds, 5);
+    }
+
+    #[test]
+    fn xhigh_reasoning_maps_to_provider_labels() {
+        assert_eq!(
+            ReasoningEffort::parse("xhigh"),
+            Some(ReasoningEffort::XHigh)
+        );
+        assert_eq!(
+            ReasoningEffort::parse("x-high"),
+            Some(ReasoningEffort::XHigh)
+        );
+        assert_eq!(ReasoningEffort::XHigh.openai_effort_label(), Some("xhigh"));
+        assert_eq!(
+            ReasoningEffort::XHigh.anthropic_budget_tokens(),
+            Some(32_768)
+        );
+        assert_eq!(ReasoningEffort::XHigh.to_string(), "xhigh");
     }
 
     #[test]

@@ -59,7 +59,13 @@ impl Tool for ShellExecTool {
                 }),
             ));
         }
-        let output = spawn_and_wait_interruptible(prepared, ctx, command)?;
+        let ctx_for_block = ctx.clone();
+        let label = command.to_string();
+        let output = tokio::task::spawn_blocking(move || {
+            spawn_and_wait_interruptible(prepared, &ctx_for_block, &label)
+        })
+        .await
+        .map_err(|err| PeriError::Tool(format!("shell worker failed: {err}")))??;
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
         let summary = if output.status.success() {

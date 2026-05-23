@@ -889,7 +889,9 @@ async fn main() -> Result<()> {
 /// cancels the panel. Wrapped in a plain `std::sync::Mutex` because the
 /// critical sections are O(1) HashMap ops with no `.await` inside.
 type AskUserPending = std::sync::Arc<
-    std::sync::Mutex<std::collections::HashMap<u64, tokio::sync::oneshot::Sender<AskUserAnswer>>>,
+    std::sync::Mutex<
+        std::collections::HashMap<String, tokio::sync::oneshot::Sender<AskUserAnswer>>,
+    >,
 >;
 
 /// `AskUserPort` implementation that ferries questions through the TUI
@@ -907,17 +909,18 @@ impl AskUserPort for TuiAskUserPort {
         let request_id = self
             .next_id
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let request_id = format!("{}:ask-user:{request_id}", self.session_id);
         let (tx, rx) = tokio::sync::oneshot::channel();
         {
             let mut pending = self.pending.lock().unwrap();
-            pending.insert(request_id, tx);
+            pending.insert(request_id.clone(), tx);
         }
         if self
             .event_tx
             .send((
                 self.session_id.clone(),
                 TuiRuntimeEvent::AskUserRequested {
-                    request_id,
+                    request_id: request_id.clone(),
                     request,
                 },
             ))
@@ -936,7 +939,7 @@ impl AskUserPort for TuiAskUserPort {
 /// Resolves the pending `agent_ask_user` request matching `request_id`
 /// by sending `answer` through its registered oneshot. No-ops when the
 /// id is unknown (e.g., the agent already cancelled the run).
-fn resolve_ask_user(pending: &AskUserPending, request_id: u64, answer: AskUserAnswer) {
+fn resolve_ask_user(pending: &AskUserPending, request_id: String, answer: AskUserAnswer) {
     let sender = pending.lock().unwrap().remove(&request_id);
     if let Some(sender) = sender {
         let _ = sender.send(answer);

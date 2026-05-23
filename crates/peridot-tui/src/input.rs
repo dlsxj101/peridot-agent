@@ -79,7 +79,7 @@ pub fn run_interactive_with_events<F>(
         Option<serde_json::Value>,
         &mut TuiState,
     ),
-    mut on_ask_user_resolved: impl FnMut(u64, AskUserAnswer, &mut TuiState),
+    mut on_ask_user_resolved: impl FnMut(String, AskUserAnswer, &mut TuiState),
     mut on_interrupt: impl FnMut(&mut TuiState),
     mut on_session_command: impl FnMut(SessionCommandEvent, &mut TuiState),
     mut on_persist: impl FnMut(&mut TuiState),
@@ -529,7 +529,7 @@ pub(super) fn handle_ask_user_key_event(state: &mut TuiState, key: KeyEvent) -> 
     };
     match key.code {
         KeyCode::Esc => {
-            let request_id = panel.request_id;
+            let request_id = panel.request_id.clone();
             state.ask_user = None;
             // When the panel is tied to an `AskUserPort` request, surface
             // the cancel so the CLI can fall back to the synthesised
@@ -601,7 +601,7 @@ pub(super) fn handle_ask_user_key_event(state: &mut TuiState, key: KeyEvent) -> 
             }
             let question = panel.question.clone();
             let answer_text = panel.selected_answer();
-            let request_id = panel.request_id;
+            let request_id = panel.request_id.clone();
             let structured = panel.structured_answer();
             state.ask_user = None;
             state.push_transcript_entry(
@@ -779,21 +779,62 @@ where
     on_submit(task, state);
 }
 
+fn apply_slash_state_delta(state: &mut TuiState, delta: &peridot_core::SlashStateDelta) {
+    if let Some(mode) = delta.mode {
+        state.header.mode = mode;
+    }
+    if let Some(permission) = delta.permission {
+        state.header.permission = permission;
+    }
+    if let Some(model) = delta.model.as_ref() {
+        state.header.model = model.clone();
+    }
+    if let Some(provider) = delta.provider.as_ref() {
+        state.header.provider = Some(provider.clone());
+    }
+    if let Some(reasoning_effort) = delta.reasoning_effort {
+        state.reasoning_effort = reasoning_effort;
+    }
+    if let Some(service_tier) = delta.service_tier.as_ref() {
+        state.service_tier = service_tier.clone();
+    }
+    if let Some(committee_mode) = delta.committee_mode {
+        state.committee_mode = committee_mode;
+    }
+    if let Some(locale) = delta.locale {
+        state.config.language = locale;
+    }
+    if let Some(subagent_default_model) = delta.subagent_default_model.as_ref() {
+        state.subagent_default_model = subagent_default_model.clone();
+    }
+}
+
 pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
+    let previous_model = state.header.model.clone();
+    let previous_provider = state.header.provider.clone();
+    let previous_committee_mode = state.committee_mode;
+    let previous_subagent_model = state.subagent_default_model.clone();
+    let previous_reasoning_effort = state.reasoning_effort;
+    let previous_service_tier = state
+        .service_tier
+        .clone()
+        .unwrap_or_else(|| "standard".to_string());
+    let delta = peridot_core::slash_state_delta(&command, state.service_tier.as_deref());
+    if let Some(mode) = delta.mode {
+        record_mode_switch(state, mode);
+    }
+    if let Some(permission) = delta.permission {
+        record_permission_switch(state, permission);
+    }
+    apply_slash_state_delta(state, &delta);
     match command {
         SlashCommand::Plan => {
-            record_mode_switch(state, ExecutionMode::Plan);
-            state.header.mode = ExecutionMode::Plan;
             state.push_transcript_entry(TranscriptKind::Notice, "mode: plan");
         }
         SlashCommand::Execute => {
-            record_mode_switch(state, ExecutionMode::Execute);
-            state.header.mode = ExecutionMode::Execute;
             state.push_transcript_entry(TranscriptKind::Notice, "mode: execute");
         }
         SlashCommand::GoalStart(goal) => {
-            record_mode_switch(state, ExecutionMode::Goal);
-            state.header.mode = ExecutionMode::Goal;
             state.goal_status = Some(GoalStatus::Running);
             state.goal_text = Some(goal.clone());
             state.goal_started_at_unix = Some(
@@ -837,18 +878,12 @@ pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
             ));
         }
         SlashCommand::Safe => {
-            record_permission_switch(state, PermissionMode::Safe);
-            state.header.permission = PermissionMode::Safe;
             state.push_transcript("permission: safe");
         }
         SlashCommand::Auto => {
-            record_permission_switch(state, PermissionMode::Auto);
-            state.header.permission = PermissionMode::Auto;
             state.push_transcript("permission: auto");
         }
         SlashCommand::Yolo => {
-            record_permission_switch(state, PermissionMode::Yolo);
-            state.header.permission = PermissionMode::Yolo;
             state.push_transcript("permission: yolo");
         }
         SlashCommand::Clear => {
@@ -925,13 +960,10 @@ pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
             }
         }
         SlashCommand::Model(model) => {
-            let from = state.header.model.clone();
-            state.header.model = model.clone();
-            state.push_transcript(format!("model: {from} -> {model}"));
+            state.push_transcript(format!("model: {previous_model} -> {model}"));
         }
         SlashCommand::Provider(provider) => {
-            let from = state.header.provider.clone().unwrap_or_default();
-            state.header.provider = Some(provider.clone());
+            let from = previous_provider.unwrap_or_default();
             if from.is_empty() {
                 state.push_transcript(format!("provider: {provider}"));
             } else {
@@ -939,9 +971,7 @@ pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
             }
         }
         SlashCommand::Committee(mode) => {
-            let from = state.committee_mode;
-            state.committee_mode = mode;
-            state.push_transcript(format!("committee: {from} -> {mode}"));
+            state.push_transcript(format!("committee: {previous_committee_mode} -> {mode}"));
         }
         SlashCommand::Note(text) => {
             let body = text.trim();
@@ -991,7 +1021,6 @@ pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
             state.push_pending_session_command(SessionCommandEvent::ContextTop);
         }
         SlashCommand::Lang(locale) => {
-            state.config.language = locale;
             state.push_transcript(format!("lang: {locale}"));
         }
         SlashCommand::Compact => {
@@ -1090,39 +1119,29 @@ pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
         }
         SlashCommand::SubagentModel(change) => match change {
             peridot_core::SubagentModelChange::Set(name) => {
-                let from = state
-                    .subagent_default_model
+                let from = previous_subagent_model
                     .clone()
                     .unwrap_or_else(|| "<inherit caller>".to_string());
-                state.subagent_default_model = Some(name.clone());
                 state.push_transcript(format!("subagent model: {from} -> {name}"));
             }
             peridot_core::SubagentModelChange::Reset => {
-                let from = state
-                    .subagent_default_model
+                let from = previous_subagent_model
                     .clone()
                     .unwrap_or_else(|| "<inherit caller>".to_string());
-                state.subagent_default_model = None;
                 state.push_transcript(format!("subagent model: {from} -> <inherit caller>"));
             }
         },
         SlashCommand::Reasoning(effort) => {
-            let from = state.reasoning_effort;
-            state.reasoning_effort = effort;
-            state.push_transcript(format!("reasoning: {from} -> {effort}"));
+            state.push_transcript(format!(
+                "reasoning: {previous_reasoning_effort} -> {effort}"
+            ));
         }
-        SlashCommand::Fast(change) => {
-            let from = state
-                .service_tier
-                .clone()
-                .unwrap_or_else(|| "standard".to_string());
-            let enabled = change.unwrap_or_else(|| state.service_tier.as_deref() != Some("fast"));
-            state.service_tier = enabled.then(|| "fast".to_string());
+        SlashCommand::Fast(_change) => {
             let to = state
                 .service_tier
                 .clone()
                 .unwrap_or_else(|| "standard".to_string());
-            state.push_transcript(format!("fast: {from} -> {to}"));
+            state.push_transcript(format!("fast: {previous_service_tier} -> {to}"));
         }
         SlashCommand::McpList => {
             state.push_transcript("mcp: listing servers from config.toml…");

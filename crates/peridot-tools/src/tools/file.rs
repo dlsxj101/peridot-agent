@@ -11,6 +11,106 @@ use crate::{Tool, ToolContext};
 
 const MAX_SYMBOL_FILE_BYTES: u64 = 1_000_000;
 
+/// Built-in evidence ledger reader.
+#[derive(Clone, Debug)]
+pub struct EvidenceReadTool;
+
+#[async_trait]
+impl Tool for EvidenceReadTool {
+    fn name(&self) -> &str {
+        "evidence_read"
+    }
+
+    fn group(&self) -> ToolGroup {
+        ToolGroup::File
+    }
+
+    fn description(&self) -> &str {
+        "Read a raw evidence ledger record by id, optionally returning a character slice"
+    }
+
+    fn parameters_schema(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "description": "Evidence id from a recoverable evidence ref"
+                },
+                "offset": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Character offset to start reading from"
+                },
+                "max_chars": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 20000,
+                    "description": "Maximum characters to return"
+                }
+            },
+            "required": ["id"],
+            "additionalProperties": false,
+        })
+    }
+
+    async fn execute(&self, params: Value, ctx: &ToolContext) -> PeriResult<ToolResult> {
+        let id = required_str(&params, "id")?;
+        if !id
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+        {
+            return Err(PeriError::Tool(format!("invalid evidence id: {id}")));
+        }
+        let offset = params
+            .get("offset")
+            .and_then(Value::as_u64)
+            .unwrap_or(0)
+            .min(usize::MAX as u64) as usize;
+        let max_chars = params
+            .get("max_chars")
+            .and_then(Value::as_u64)
+            .unwrap_or(12_000)
+            .clamp(1, 20_000) as usize;
+        let path = ctx
+            .project_root
+            .join(".peridot")
+            .join("evidence")
+            .join(format!("{id}.json"));
+        let path = ensure_within_project(&ctx.project_root, &path)?;
+        let content = fs::read_to_string(&path)
+            .map_err(|err| PeriError::Tool(format!("failed to read {}: {err}", path.display())))?;
+        let total_chars = content.chars().count();
+        let slice = content
+            .chars()
+            .skip(offset)
+            .take(max_chars)
+            .collect::<String>();
+        let end = (offset + slice.chars().count()).min(total_chars);
+        let relative = path
+            .strip_prefix(&ctx.project_root)
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        Ok(ToolResult::success(
+            format!("read evidence {id} chars {offset}..{end} of {total_chars}"),
+            serde_json::json!({
+                "id": id,
+                "path": relative,
+                "offset": offset,
+                "end": end,
+                "total_chars": total_chars,
+                "truncated": end < total_chars,
+                "content": slice,
+            }),
+        ))
+    }
+
+    fn permission_level(&self) -> PermissionLevel {
+        PermissionLevel::Read
+    }
+}
+
 #[derive(Clone, Debug)]
 struct DecodedText {
     content: String,

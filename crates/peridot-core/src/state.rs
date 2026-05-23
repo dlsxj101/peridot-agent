@@ -1,7 +1,7 @@
 use peridot_common::{AgentPhase, ExecutionMode, PermissionMode};
 use serde::{Deserialize, Serialize};
 
-use crate::SlashCommand;
+use crate::{SlashCommand, slash_state_delta};
 
 /// Current runtime state of the harness agent.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -36,17 +36,23 @@ impl AgentState {
 
     /// Applies a parsed slash command to this state when it affects mode or permission.
     pub fn apply_slash_command(&mut self, command: &SlashCommand) {
+        let delta = slash_state_delta(command, None);
+        if let Some(mode) = delta.mode {
+            self.mode = mode;
+        }
+        if let Some(permission) = delta.permission {
+            self.permission = permission;
+        }
         match command {
-            SlashCommand::Plan => self.mode = ExecutionMode::Plan,
-            SlashCommand::Execute => self.mode = ExecutionMode::Execute,
             SlashCommand::GoalStart(goal) => {
-                self.mode = ExecutionMode::Goal;
                 self.goal = Some(goal.clone());
             }
-            SlashCommand::Safe => self.permission = PermissionMode::Safe,
-            SlashCommand::Auto => self.permission = PermissionMode::Auto,
-            SlashCommand::Yolo => self.permission = PermissionMode::Yolo,
-            SlashCommand::GoalPause
+            SlashCommand::Plan
+            | SlashCommand::Execute
+            | SlashCommand::Safe
+            | SlashCommand::Auto
+            | SlashCommand::Yolo
+            | SlashCommand::GoalPause
             | SlashCommand::GoalResume
             | SlashCommand::GoalClear
             | SlashCommand::GoalStatus

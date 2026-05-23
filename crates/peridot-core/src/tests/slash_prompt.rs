@@ -131,6 +131,10 @@ fn every_mode_prompt_contains_grounding_rules() {
             "{mode:?} prompt missing citation directive"
         );
         assert!(
+            prompt.contains("base each substantive claim on direct evidence"),
+            "{mode:?} prompt missing evidence-basis directive"
+        );
+        assert!(
             prompt.contains("Do not soften speculation"),
             "{mode:?} prompt missing anti-speculation directive"
         );

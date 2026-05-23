@@ -12,6 +12,43 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 
 ---
 
+## [0.8.10 / extension 0.5.16] — 2026-05-23
+
+### Added — evidence-backed answers and bounded codebase surveys
+
+Tool outputs can now be offloaded into the recoverable evidence ledger, with
+`evidence_read` available when exact stdout, stderr, file contents, or long
+search results are needed later. Broad project-analysis prompts also trigger a
+bounded survey subagent before the main turn, keeping the primary context from
+being flooded by full-repository reads while still requiring exact evidence
+checks before final claims.
+
+### Changed — main-model subagents and canonical slash state
+
+Subagents now inherit the caller's main model tier by default, including the
+same reasoning effort as the parent run. Slash command state changes are
+centralized in the core `SlashStateDelta` contract and consumed by the daemon,
+TUI, and VS Code extension, reducing drift for mode, permission, reasoning,
+fast tier, provider, language, committee, and subagent-model commands.
+
+### Fixed — daemon/editor parity and transcript stability
+
+Daemon sessions now use the same router-backed `agent_message` bus as the TUI
+path, approval response parameters are preserved when resuming a pending tool,
+and ask-user / approval request ids are aligned across surfaces. The VS Code
+extension now tracks concurrent daemon runs per session, applies daemon slash
+results instead of locally re-parsing finite options, and keeps tool-list and
+tool-name animations stable without redrawing the whole transcript on every
+tool update.
+
+### Migration notes
+
+- Workspace 0.8.9 → 0.8.10.
+- Extension package 0.5.15 → 0.5.16.
+- No manual config migration is required.
+
+---
+
 ## [0.8.9 / extension 0.5.15] — 2026-05-22
 
 ### Fixed — smoother editor transcript streaming

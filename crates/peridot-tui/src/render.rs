@@ -1649,6 +1649,65 @@ fn render_slash_picker(frame: &mut Frame<'_>, state: &TuiState, input_area: Rect
     if state.menu.is_some() || state.approval.is_some() || state.ask_user.is_some() {
         return;
     }
+    if let Some(context) = crate::slash_picker::slash_argument_context(&picker.query) {
+        let selected = picker.selected.min(context.options.len().saturating_sub(1));
+        let visible_limit = 6usize;
+        let start = selected
+            .saturating_sub(visible_limit.saturating_sub(1))
+            .min(context.options.len().saturating_sub(visible_limit));
+        let lines: Vec<Line<'static>> = context
+            .options
+            .iter()
+            .enumerate()
+            .skip(start)
+            .take(visible_limit)
+            .map(|(idx, option)| {
+                let is_selected = idx == selected;
+                let marker = if is_selected { "\u{25B8}" } else { " " };
+                let label_style = if is_selected {
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(Color::Cyan)
+                };
+                let desc_style = if is_selected {
+                    Style::default().fg(Color::Gray)
+                } else {
+                    Style::default()
+                        .fg(Color::DarkGray)
+                        .add_modifier(Modifier::DIM)
+                };
+                Line::from(vec![
+                    Span::styled(format!("{marker} "), label_style),
+                    Span::styled((*option).to_string(), label_style),
+                    Span::raw("  "),
+                    Span::styled(context.spec.name.to_string(), desc_style),
+                ])
+            })
+            .collect();
+        let height = (lines.len() as u16).min(6).saturating_add(2);
+        let width = input_area.width;
+        if input_area.y < height {
+            return;
+        }
+        let area = Rect {
+            x: input_area.x,
+            y: input_area.y.saturating_sub(height),
+            width,
+            height,
+        };
+        frame.render_widget(
+            Paragraph::new(lines).block(
+                Block::default()
+                    .title(format!("options: {}", context.spec.name))
+                    .borders(Borders::ALL),
+            ),
+            area,
+        );
+        return;
+    }
+
     let suggestions = filtered_specs(&picker.query);
     if suggestions.is_empty() {
         return;
