@@ -514,27 +514,39 @@ fn daemon_responds_to_version_echo_and_shutdown() {
     let stdout = child.stdout.take().unwrap();
     let mut reader = BufReader::new(stdout);
 
+    // The daemon emits a `peridot.handshake` notification (no `id`)
+    // before any request response — see `AGENT_RUN_EVENT_SCHEMA_VERSION`
+    // wiring. This helper skips notifications and yields the next
+    // JSON-RPC response so the test stays robust as more startup
+    // notifications appear later (e.g. mcp-status updates).
+    fn read_next_response(reader: &mut BufReader<std::process::ChildStdout>) -> serde_json::Value {
+        loop {
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            let parsed: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+            if !parsed["id"].is_null() {
+                return parsed;
+            }
+        }
+    }
+
     // 1. peridot.version
     writeln!(
         stdin,
         r#"{{"jsonrpc":"2.0","id":1,"method":"peridot.version"}}"#
     )
     .unwrap();
-    let mut line = String::new();
-    reader.read_line(&mut line).unwrap();
-    let parsed: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+    let parsed = read_next_response(&mut reader);
     assert_eq!(parsed["id"], 1);
     assert!(parsed["result"]["version"].is_string());
 
     // 2. peridot.echo
-    line.clear();
     writeln!(
         stdin,
         r#"{{"jsonrpc":"2.0","id":2,"method":"peridot.echo","params":{{"text":"hi"}}}}"#
     )
     .unwrap();
-    reader.read_line(&mut line).unwrap();
-    let parsed: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+    let parsed = read_next_response(&mut reader);
     assert_eq!(parsed["id"], 2);
     assert_eq!(parsed["result"]["echo"], "hi");
 
