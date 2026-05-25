@@ -108,7 +108,7 @@ pub(super) async fn query_latest_release() -> Result<LatestRelease> {
     let Some((owner, name)) = github_owner_repo(&repo) else {
         anyhow::bail!("repository is not a GitHub URL: {repo}");
     };
-    let url = format!("https://api.github.com/repos/{owner}/{name}/releases/latest");
+    let url = format!("https://api.github.com/repos/{owner}/{name}/releases?per_page=30");
     let response = reqwest::Client::new()
         .get(&url)
         .header("user-agent", "peridot-agent")
@@ -118,9 +118,11 @@ pub(super) async fn query_latest_release() -> Result<LatestRelease> {
     let status = response.status();
     let body = response.text().await?;
     if !status.is_success() {
-        anyhow::bail!("GitHub latest release query returned {status}: {body}");
+        anyhow::bail!("GitHub releases query returned {status}: {body}");
     }
-    let value = serde_json::from_str::<Value>(&body)?;
+    let releases = serde_json::from_str::<Value>(&body)?;
+    let value = latest_cli_release(&releases)
+        .with_context(|| "no stable CLI release found in GitHub releases")?;
     let latest = value
         .get("tag_name")
         .and_then(Value::as_str)
@@ -139,6 +141,34 @@ pub(super) async fn query_latest_release() -> Result<LatestRelease> {
         html_url,
         update_available,
     })
+}
+
+pub(super) fn latest_cli_release(releases: &Value) -> Option<Value> {
+    releases.as_array()?.iter().find_map(|release| {
+        let tag = release.get("tag_name")?.as_str()?;
+        let draft = release
+            .get("draft")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let prerelease = release
+            .get("prerelease")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        if draft || prerelease || !is_cli_release_tag(tag) {
+            return None;
+        }
+        Some(release.clone())
+    })
+}
+
+fn is_cli_release_tag(tag: &str) -> bool {
+    let Some(version) = tag.strip_prefix('v') else {
+        return false;
+    };
+    version
+        .as_bytes()
+        .first()
+        .is_some_and(|byte| byte.is_ascii_digit())
 }
 
 pub(super) fn update_check_due(interval: &str) -> bool {

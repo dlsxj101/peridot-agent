@@ -93,6 +93,15 @@ impl Tool for WebSearchTool {
     fn permission_level(&self) -> PermissionLevel {
         PermissionLevel::Read
     }
+
+    fn risk_class(&self) -> peridot_common::RiskClass {
+        // Reads only, but reaches the public internet — risk surface is
+        // data exfiltration / supply-chain via redirects, not local
+        // mutation. Class it as external network so policies can opt
+        // network-touching tools into prompt-on-use regardless of read
+        // semantics.
+        peridot_common::RiskClass::ExternalNetwork
+    }
 }
 
 /// `web_fetch` — HTTP GET a URL and return stripped readable text.
@@ -146,6 +155,10 @@ impl Tool for WebFetchTool {
 
     fn permission_level(&self) -> PermissionLevel {
         PermissionLevel::Read
+    }
+
+    fn risk_class(&self) -> peridot_common::RiskClass {
+        peridot_common::RiskClass::ExternalNetwork
     }
 }
 

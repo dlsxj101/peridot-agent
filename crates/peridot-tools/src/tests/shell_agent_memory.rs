@@ -1,7 +1,7 @@
 use crate::tools::agent::search_memory_layer;
 use crate::tools::shell::{
     docker_shell_args, enforce_shell_approval_policy, firejail_shell_args,
-    reject_hard_blocked_command,
+    reject_hard_blocked_command, spawn_and_wait_interruptible,
 };
 use crate::{
     AgentAskUserTool, AgentDelegateTool, AgentMemorySearchTool, AskUserPort, EvidenceReadTool,
@@ -729,6 +729,29 @@ async fn shell_exec_timeout_kills_long_running_command() {
         elapsed < std::time::Duration::from_secs(4),
         "timeout should fire well before the 5s sleep; got {elapsed:?}"
     );
+    fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+#[cfg(unix)]
+fn shell_exec_interruptible_wait_drains_large_output() {
+    let root =
+        std::env::temp_dir().join(format!("peridot-tools-large-output-{}", std::process::id()));
+    fs::create_dir_all(&root).unwrap();
+    let ctx = ToolContext::new(&root, PermissionMode::Auto).with_security(SecurityConfig {
+        shell_command_timeout_seconds: 10,
+        ..SecurityConfig::default()
+    });
+    let mut command = std::process::Command::new("sh");
+    command
+        .arg("-c")
+        .arg("i=0; while [ \"$i\" -lt 200000 ]; do printf 'line %s\\n' \"$i\"; i=$((i + 1)); done")
+        .current_dir(&root);
+
+    let output = spawn_and_wait_interruptible(command, &ctx, "large-output").unwrap();
+
+    assert!(output.status.success());
+    assert!(output.stdout.len() > 1_000_000);
     fs::remove_dir_all(&root).ok();
 }
 

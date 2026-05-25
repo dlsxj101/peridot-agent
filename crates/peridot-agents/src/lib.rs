@@ -31,6 +31,30 @@ pub struct SubAgentTask {
     pub model_tier: Option<ModelTier>,
 }
 
+/// Lightweight reference to a piece of evidence the subagent produced
+/// or consumed — a file path with optional line range or a digest of an
+/// external response. Parents are expected to *re-verify* these
+/// references (read the file at the cited lines, re-hash the response)
+/// before treating the subagent's claims as ground truth.
+///
+/// Wire-compatible with the `EvidenceRef` type in `peridot-context` —
+/// we re-declare a tiny serialisable shape here to avoid a runtime
+/// dependency cycle (peridot-agents -> peridot-context -> peridot-agents).
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SubAgentEvidenceRef {
+    /// Stable category for the evidence, e.g. `"file"`, `"url"`,
+    /// `"command_output"`.
+    pub kind: String,
+    /// Free-text identifier — file path, URL, command line, etc. The
+    /// parent uses this to look the evidence up locally.
+    pub id: String,
+    /// Optional line range or digest summary. Parents can match these
+    /// against their own [`peridot_context::EvidenceLedger`] to confirm
+    /// they actually inspected the cited region.
+    #[serde(default)]
+    pub summary: Option<String>,
+}
+
 /// Result returned by a subagent.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct SubAgentResult {
@@ -51,6 +75,17 @@ pub struct SubAgentResult {
     /// summary text.
     #[serde(default)]
     pub diff: String,
+    /// References to evidence the subagent inspected or produced. The
+    /// parent is expected to re-read at least one entry before trusting
+    /// the subagent's summary; the [`crate::SubAgentReviewPolicy`] in
+    /// peridot-core downgrades the result to an untrusted summary entry
+    /// when this is empty, instead of injecting it as a trusted plan
+    /// reminder.
+    ///
+    /// Optional for wire compatibility with older runners that did not
+    /// populate it; empty (`[]`) deserialises cleanly.
+    #[serde(default)]
+    pub evidence_refs: Vec<SubAgentEvidenceRef>,
 }
 
 /// Trait implemented by subagent runners.
@@ -110,6 +145,11 @@ impl SubAgent for LocalSubAgentRunner {
                 kind: SubAgentKind::Fork,
                 workspace: Some(self.project_root.clone()),
                 diff: String::new(),
+                // Workspace-prep paths don't produce evidence — that
+                // happens later, inside the inner-agent run if one is
+                // scheduled. Leave empty so the parent's review policy
+                // can decide how to treat the orientation-only output.
+                evidence_refs: Vec::new(),
             }),
             SubAgentKind::Worktree => {
                 let plan =
@@ -127,6 +167,7 @@ impl SubAgent for LocalSubAgentRunner {
                     kind: SubAgentKind::Worktree,
                     workspace: Some(plan.path),
                     diff: String::new(),
+                    evidence_refs: Vec::new(),
                 })
             }
             SubAgentKind::Teammate => {
@@ -151,6 +192,7 @@ impl SubAgent for LocalSubAgentRunner {
                     kind: SubAgentKind::Teammate,
                     workspace: Some(plan.path),
                     diff: String::new(),
+                    evidence_refs: Vec::new(),
                 })
             }
         }

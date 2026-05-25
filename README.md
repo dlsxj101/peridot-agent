@@ -4,7 +4,54 @@ Peridot Agent is a Rust CLI/TUI autonomous coding agent with multi-session orche
 
 ## Status
 
-Current version: **0.8.9**
+Current version: **0.8.11**
+
+### What's new in v0.8.11
+
+- **VS Code settings page.** A new `Peridot: Open Settings` command (and
+  a gear icon in the sidebar title bar) opens a form-style editor in
+  the editor area, backed by the daemon's new `settings.list` /
+  `settings.save` JSON-RPC methods. The same curated registry feeds
+  both the TUI's `peridot setting` screen and the VS Code form, with
+  Korean translations via a setting-level i18n table and a `surfaces`
+  filter that hides TUI-only knobs from the webview. New sessions
+  started after a save pick up the new values automatically.
+- **Auto-skills are now invokable as slash commands.** Typing
+  `/<skill-name>` (kebab-case) in the VS Code sidebar resolves
+  against the project's auto-skill store and loads the body into
+  context for the next turn — Hermes-style `/skill-name args`
+  invocation without needing to register each skill manually.
+- **Auto-skill bodies are LLM-rewritten.** Sessions that earn an
+  auto-skill (5+ tools, error recovery, `agent_ask_user`, or 3+
+  distinct tools) now get a proper Markdown SKILL with YAML
+  frontmatter (`name`, `description`, `version`, `tags`) plus
+  `When to Use / Procedure / Pitfalls / Verification` sections.
+  Falls back to the legacy template when no provider is wired or
+  the LLM output doesn't parse as a SKILL.md.
+- **Curator snapshot + pin.** Before the LLM Curator's
+  `keep / patch / consolidate / archive` pass runs, the skills
+  directory is copied to `.peridot/skills/.snapshots/<unix>/` so a
+  botched consolidate can be rolled back. Operators can `pin` a
+  skill (`set_skill_pinned`) to shield it from automated archival.
+- **Harness-optimized defaults.** `auto_verify_after_mutation`,
+  `auto_grade_on_done`, `auto_fix.enabled`, and
+  `committee.use_llm_complexity_gate` now default to `true` so a
+  fresh install runs the full safety/recovery loop without manual
+  TOML edits. Existing configs are unchanged.
+- **`peridot setup` auto-detects credentials.** Fresh setup checks
+  `~/.peridot/auth/{openai-oauth,claude-api,openai-api}.json` plus
+  `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` env vars and writes a
+  matching `[auth].primary` + `[models].main`. ChatGPT-only users no
+  longer hit "model not supported by Codex" on the first run.
+- **Onboarding paper cuts fixed.** Typing `peridot init` now hints
+  `"Did you mean \`peridot setup\`?"`; new files can be created in
+  nested directories that don't exist yet; `--headless` streams
+  `AgentRunEvent` JSON-lines on stderr so CI / automation actually
+  see what happened.
+- **Daemon schema-version handshake.** Daemon emits
+  `peridot.handshake` with `schema_version` + `daemon_version` as
+  the very first line; VS Code surfaces an explicit warning on
+  mismatch instead of silently breaking on shape drift.
 
 ### What's new in v0.8.9
 

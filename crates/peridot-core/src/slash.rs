@@ -6,6 +6,23 @@ use serde::{Deserialize, Serialize};
 /// Slash commands supported by Peridot's interactive surfaces.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum SlashCommand {
+    /// Invoke a stored auto-skill by its kebab-case name (Hermes-style
+    /// `/skill-name [args]`). The dispatcher looks up the skill body
+    /// in the project's `MemoryStore` and injects it as a
+    /// `PlanReminder` context entry; if no such skill exists, the
+    /// dispatcher surfaces a "skill not found" message. The slash
+    /// parser turns *any* otherwise-unknown kebab-case command into
+    /// this variant, so typos and unrecognised commands now hit the
+    /// skill store lookup before being rejected.
+    Skill {
+        /// Skill name without the leading slash — the
+        /// `store.search_skills` query key.
+        name: String,
+        /// Free-form trailing text after the skill name. Passed
+        /// through to the dispatcher so commands like `/ship-daily
+        /// --dry` keep their arguments.
+        args: String,
+    },
     /// Switch to plan mode.
     Plan,
     /// Switch to execute mode.
@@ -74,6 +91,15 @@ pub enum SlashCommand {
     SessionSwitch(String),
     /// Close a session by id or 1-based index.
     SessionClose(String),
+    /// Delete a session by id or 1-based index.
+    SessionDelete(String),
+    /// Rename a session.
+    SessionRename {
+        /// Session id, title, or index to rename.
+        target: String,
+        /// New display title.
+        title: String,
+    },
     /// List all known sessions in the transcript.
     SessionList,
     /// Override the default model used when spawning sub-agents. `reset`
@@ -354,6 +380,28 @@ pub fn parse_slash_command(input: &str) -> Option<SlashCommand> {
                 Some(SlashCommand::SessionClose(target.to_string()))
             }
         }
+        "session" if rest.starts_with("delete") => {
+            let target = rest.strip_prefix("delete").unwrap_or("").trim();
+            if target.is_empty() {
+                None
+            } else {
+                Some(SlashCommand::SessionDelete(target.to_string()))
+            }
+        }
+        "session" if rest.starts_with("rename") => {
+            let payload = rest.strip_prefix("rename").unwrap_or("").trim();
+            let mut parts = payload.splitn(2, char::is_whitespace);
+            let target = parts.next().unwrap_or("").trim();
+            let title = parts.next().unwrap_or("").trim();
+            if target.is_empty() || title.is_empty() {
+                None
+            } else {
+                Some(SlashCommand::SessionRename {
+                    target: target.to_string(),
+                    title: title.to_string(),
+                })
+            }
+        }
         "plan" if rest == "show" => Some(SlashCommand::PlanShow),
         "goal" => match rest {
             "pause" => Some(SlashCommand::GoalPause),
@@ -472,13 +520,100 @@ pub fn parse_slash_command(input: &str) -> Option<SlashCommand> {
             }
             _ => None,
         },
+        // Fall-through: any otherwise-unrecognised command whose name
+        // looks like a kebab-case identifier (lowercase letters /
+        // digits / hyphens, starting with a letter, length >= 2) is
+        // treated as a stored-skill invocation. The dispatcher decides
+        // whether such a skill actually exists; the parser only
+        // commits to the *shape*. Typed garbage like `/!@#` still
+        // returns `None` so the existing "invalid slash" path
+        // continues to handle malformed input.
+        other if looks_like_skill_name(other) => Some(SlashCommand::Skill {
+            name: other.to_string(),
+            args: rest.to_string(),
+        }),
         _ => None,
     }
+}
+
+/// Returns true when `name` looks like a kebab-case skill identifier.
+/// Required because the parser uses it as the fallback gate — only
+/// strings that match this shape can be routed to skill lookup. Live
+/// kebab-case examples from `save_auto_skill`:
+/// `auto-fix-parser-tests`, `auto-add-cli-flag`.
+fn looks_like_skill_name(s: &str) -> bool {
+    if s.len() < 2 {
+        return false;
+    }
+    let mut chars = s.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !first.is_ascii_lowercase() {
+        return false;
+    }
+    s.chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        && !s.ends_with('-')
+        && !s.contains("--")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn looks_like_skill_name_accepts_kebab_case() {
+        assert!(looks_like_skill_name("auto-fix-parser"));
+        assert!(looks_like_skill_name("ship-daily"));
+        assert!(looks_like_skill_name("a1"));
+    }
+
+    #[test]
+    fn looks_like_skill_name_rejects_invalid_shapes() {
+        assert!(!looks_like_skill_name("")); // empty
+        assert!(!looks_like_skill_name("x")); // too short
+        assert!(!looks_like_skill_name("X-foo")); // uppercase
+        assert!(!looks_like_skill_name("foo_bar")); // underscore
+        assert!(!looks_like_skill_name("foo--bar")); // double dash
+        assert!(!looks_like_skill_name("trailing-")); // trailing dash
+        assert!(!looks_like_skill_name("9foo")); // leading digit
+    }
+
+    #[test]
+    fn parse_unknown_kebab_command_resolves_to_skill() {
+        let cmd = parse_slash_command("/ship-daily").unwrap();
+        assert!(matches!(cmd, SlashCommand::Skill { ref name, ref args }
+            if name == "ship-daily" && args.is_empty()));
+    }
+
+    #[test]
+    fn parse_unknown_kebab_with_args_preserves_args() {
+        let cmd = parse_slash_command("/ship-daily --dry").unwrap();
+        let SlashCommand::Skill { name, args } = cmd else {
+            panic!("expected Skill variant");
+        };
+        assert_eq!(name, "ship-daily");
+        assert_eq!(args, "--dry");
+    }
+
+    #[test]
+    fn parse_built_in_takes_priority_over_skill_lookup() {
+        // `/help` is a built-in; it must NOT be returned as
+        // Skill { name: "help" } even though the name technically
+        // satisfies `looks_like_skill_name`.
+        let cmd = parse_slash_command("/help").unwrap();
+        assert!(matches!(cmd, SlashCommand::Help));
+    }
+
+    #[test]
+    fn parse_malformed_garbage_still_returns_none() {
+        // Non-skill-shaped strings must keep returning None so the
+        // existing "invalid slash command" error path still fires.
+        assert!(parse_slash_command("/Foo").is_none());
+        assert!(parse_slash_command("/!@#").is_none());
+        assert!(parse_slash_command("/").is_none());
+    }
 
     #[test]
     fn parses_branch_turn_with_valid_id() {
@@ -517,6 +652,22 @@ mod tests {
     #[test]
     fn rejects_branch_switch_with_non_numeric() {
         assert_eq!(parse_slash_command("/branch switch abc"), None);
+    }
+
+    #[test]
+    fn parses_session_delete_and_rename() {
+        assert_eq!(
+            parse_slash_command("/session delete s1"),
+            Some(SlashCommand::SessionDelete("s1".to_string()))
+        );
+        assert_eq!(
+            parse_slash_command("/session rename s1 release prep"),
+            Some(SlashCommand::SessionRename {
+                target: "s1".to_string(),
+                title: "release prep".to_string(),
+            })
+        );
+        assert_eq!(parse_slash_command("/session rename s1"), None);
     }
 
     #[test]

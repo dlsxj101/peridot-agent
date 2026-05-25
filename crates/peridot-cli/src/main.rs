@@ -92,6 +92,15 @@ struct Cli {
     #[arg(long, global = true)]
     headless: bool,
 
+    /// Emit one JSON line per `AgentRunEvent` on stderr (newline-
+    /// delimited JSON). Useful for CI pipelines and automated QA — see
+    /// `--headless`, which implicitly enables this so the script user
+    /// gets *some* observability instead of a silent run. Stdout
+    /// remains reserved for the final summary so existing pipes keep
+    /// working.
+    #[arg(long, global = true)]
+    ndjson_events: bool,
+
     /// Output format for scriptable commands.
     #[arg(long, value_enum, default_value_t = OutputFormat::Text, global = true)]
     output: OutputFormat,
@@ -124,9 +133,98 @@ struct Cli {
     command: Option<Command>,
 }
 
+/// Returns a suggested real subcommand when the operator typed a
+/// well-known typo as the freeform task argument. The map is
+/// intentionally small — only commands that are *commonly confused*
+/// with what people type out of habit from other CLIs. False positives
+/// here mean blocking a legit task, so we err toward "only catch the
+/// obvious ones."
+///
+/// Caller passes `(has_subcommand, task_text)` so this stays a pure
+/// function and unit tests don't need to fabricate a `Cli` (which
+/// would require clap parsing). Returns `None` whenever the hint
+/// should NOT fire — caller treats `None` as "carry on, valid input."
+fn unknown_subcommand_hint(cli: &Cli) -> Option<&'static str> {
+    suggest_subcommand_for_typo(cli.command.is_some(), cli.task.as_deref())
+}
+
+fn suggest_subcommand_for_typo(has_subcommand: bool, task: Option<&str>) -> Option<&'static str> {
+    if has_subcommand {
+        return None;
+    }
+    let raw = task?;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() || trimmed.contains(char::is_whitespace) {
+        return None;
+    }
+    match trimmed.to_ascii_lowercase().as_str() {
+        "init" | "initialize" | "initialise" => Some("setup"),
+        "status" => Some("doctor"),
+        "start" => Some("run"),
+        "config" | "configure" | "settings" => Some("setting"),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod subcommand_hint_tests {
+    use super::suggest_subcommand_for_typo as suggest;
+
+    #[test]
+    fn maps_common_typos_to_real_subcommands() {
+        assert_eq!(suggest(false, Some("init")), Some("setup"));
+        assert_eq!(suggest(false, Some("INIT")), Some("setup"));
+        assert_eq!(suggest(false, Some("initialize")), Some("setup"));
+        assert_eq!(suggest(false, Some("status")), Some("doctor"));
+        assert_eq!(suggest(false, Some("start")), Some("run"));
+        assert_eq!(suggest(false, Some("config")), Some("setting"));
+        assert_eq!(suggest(false, Some("settings")), Some("setting"));
+    }
+
+    #[test]
+    fn no_suggestion_when_subcommand_present() {
+        // `peridot setup` shouldn't trigger the hint just because the
+        // task arg also happened to be empty.
+        assert_eq!(suggest(true, None), None);
+        assert_eq!(suggest(true, Some("init")), None);
+    }
+
+    #[test]
+    fn no_suggestion_for_multiword_task() {
+        // `peridot "init the database for users"` is a legitimate task
+        // — don't hijack it.
+        assert_eq!(suggest(false, Some("init the database")), None);
+        assert_eq!(suggest(false, Some("status of the system")), None);
+    }
+
+    #[test]
+    fn no_suggestion_for_unknown_tokens() {
+        // Random user task — must run as a task, no hint.
+        assert_eq!(suggest(false, Some("refactor")), None);
+        assert_eq!(suggest(false, Some("fix")), None);
+        assert_eq!(suggest(false, None), None);
+    }
+
+    #[test]
+    fn ignores_whitespace_padding() {
+        // Shell quoting may leave trailing space — still match.
+        assert_eq!(suggest(false, Some("  init  ")), Some("setup"));
+    }
+}
+
 impl Cli {
     fn effective_headless(&self) -> bool {
         self.headless || env_truthy("PERIDOT_HEADLESS")
+    }
+
+    /// Decide whether to stream JSONL events to stderr. Explicit
+    /// `--ndjson-events`, the `PERIDOT_NDJSON_EVENTS=1` env var, or
+    /// `--headless` (which would otherwise be silent) all turn it on.
+    /// `--headless` defaulting to ndjson means existing automation
+    /// scripts that already pass `--headless` get observability for
+    /// free — no flag-day breakage.
+    fn effective_ndjson_events(&self) -> bool {
+        self.ndjson_events || env_truthy("PERIDOT_NDJSON_EVENTS") || self.effective_headless()
     }
 
     fn starts_agent_session(&self) -> bool {
@@ -347,6 +445,26 @@ impl From<CliPermission> for PermissionMode {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+
+    // Guard against a common onboarding paper cut: typing `peridot init`
+    // (or `status`, `start`) when the actual subcommand is `setup` /
+    // `doctor` / `run`. Without this check, clap accepts the typo as
+    // the freeform task argument, peridot fires up the LLM to "do" a
+    // task literally named "init", and burns turns until the model
+    // gives up. Catching it here means a near-zero-cost error instead.
+    if let Some(suggestion) = unknown_subcommand_hint(&cli) {
+        eprintln!(
+            "error: `{task}` looks like a misspelled subcommand. \
+             Did you mean `peridot {suggestion}`?\n\
+             \n\
+             If you really wanted to run that text as a task, use:\n  \
+                 peridot run \"{task}\"",
+            task = cli.task.as_deref().unwrap_or(""),
+            suggestion = suggestion,
+        );
+        std::process::exit(2);
+    }
+
     let project_root = cli.project.clone().unwrap_or(std::env::current_dir()?);
     if cli.starts_agent_session() {
         maybe_run_first_launch_wizard(
@@ -946,7 +1064,13 @@ fn resolve_ask_user(pending: &AskUserPending, request_id: String, answer: AskUse
     }
 }
 
-async fn generate_session_title(
+/// Generate a short LLM-authored title for a coding session.
+///
+/// Uses the configured main model with reasoning disabled, so this is a single
+/// cheap completion call — no thinking, no tools. Returns `None` if the
+/// provider fails or returns an empty string; callers (TUI, daemon RPC) treat
+/// `None` as "fall back to a default placeholder."
+pub(crate) async fn generate_session_title(
     config: &PeridotConfig,
     project_root: &Path,
     task: &str,
@@ -1163,7 +1287,7 @@ fn apply_session_command(
                 state.push_error(format!("session: no session matching '{target}'"));
             }
         }
-        SessionCommandEvent::SessionClose(target) => {
+        SessionCommandEvent::SessionClose(target) | SessionCommandEvent::SessionDelete(target) => {
             let resolved = resolve_session_id(state, &target);
             if let Some(id) = resolved {
                 let (removed, worktree_cleanup) = {
@@ -1209,6 +1333,24 @@ fn apply_session_command(
                 } else {
                     state.push_error(format!("session: nothing to close for '{target}'"));
                 }
+            } else {
+                state.push_error(format!("session: no session matching '{target}'"));
+            }
+        }
+        SessionCommandEvent::SessionRename { target, title } => {
+            let title = title.trim().to_string();
+            if title.is_empty() {
+                state.push_error("session: title cannot be empty".to_string());
+                return;
+            }
+            let resolved = resolve_session_id(state, &target);
+            if let Some(id) = resolved {
+                if let Some(item) = state.sessions.iter_mut().find(|item| item.id == id) {
+                    item.title = title.clone();
+                    item.title_generated = true;
+                }
+                rename_persisted_session(project_template, &id, &title);
+                state.push_transcript(format!("session: renamed {id} to {title}"));
             } else {
                 state.push_error(format!("session: no session matching '{target}'"));
             }
@@ -1556,6 +1698,7 @@ fn source_label(source: &peridot_context::ContextSource) -> &'static str {
         peridot_context::ContextSource::PlanReminder => "plan",
         peridot_context::ContextSource::ReviewerComment => "review",
         peridot_context::ContextSource::External => "external",
+        peridot_context::ContextSource::SubAgentSummary => "subagent",
     }
 }
 
@@ -2617,12 +2760,21 @@ fn hydrate_persisted_sessions(
             continue;
         }
         if !state.sessions.iter().any(|item| item.id == record.id) {
-            let title = record
-                .last_task
-                .as_deref()
-                .filter(|task| !task.trim().is_empty())
-                .or_else(|| (!record.summary.trim().is_empty()).then_some(record.summary.as_str()))
-                .unwrap_or(record.id.as_str());
+            let title = if record.summary.trim().is_empty() {
+                record
+                    .last_task
+                    .as_deref()
+                    .filter(|task| !task.trim().is_empty())
+                    .unwrap_or(record.id.as_str())
+            } else {
+                record.summary.as_str()
+            }
+            .trim();
+            let title = if title.is_empty() {
+                record.id.as_str()
+            } else {
+                title
+            };
             let mut item = SessionDirectoryItem::new(&record.id, title);
             item.status = agent_status_from_lifecycle(record.status);
             item.tokens = record.total_tokens;
@@ -2660,6 +2812,33 @@ fn delete_persisted_session(project_root: &Path, id: &str) {
     let _ = memory.delete_session(id);
     let sessions_root = project_root.join(".peridot").join("sessions");
     let _ = peridot_memory::remove_session_dir(&sessions_root, id);
+}
+
+fn rename_persisted_session(project_root: &Path, id: &str, title: &str) {
+    let memory = MemoryStore::new(project_root.join(".peridot/memory.db"));
+    let _ = memory.save_session(&SessionSummary {
+        id: id.to_string(),
+        summary: title.to_string(),
+    });
+    if let Ok(Some(mut record)) = memory.get_session_record(id) {
+        record.summary = title.to_string();
+        record.updated_at_unix = unix_timestamp();
+        let _ = memory.save_session_record(&record);
+    }
+    let sessions_root = project_root.join(".peridot").join("sessions");
+    if let Ok(Some(bytes)) = peridot_memory::load_session_blob(&sessions_root, id, "tui_state.json")
+        && let Ok(mut state) = serde_json::from_slice::<TuiState>(&bytes)
+    {
+        for item in &mut state.sessions {
+            if item.id == id {
+                item.title = title.to_string();
+                item.title_generated = true;
+            }
+        }
+        if let Ok(serialized) = serde_json::to_vec(&state) {
+            let _ = save_session_blob(&sessions_root, id, "tui_state.json", &serialized);
+        }
+    }
 }
 
 /// Downgrades any session record still marked `Running` to `Suspended` on
@@ -2851,9 +3030,11 @@ fn tui_runtime_event_from_agent(event: AgentRunEvent) -> TuiRuntimeEvent {
         AgentRunEvent::AssistantDelta { delta } => TuiRuntimeEvent::AssistantDelta { delta },
         AgentRunEvent::AssistantFinished { .. } => TuiRuntimeEvent::AssistantFinished,
         AgentRunEvent::Thinking { text } => TuiRuntimeEvent::Thinking { text },
-        AgentRunEvent::ToolStarted { name, parameters } => {
-            TuiRuntimeEvent::ToolStarted { name, parameters }
-        }
+        AgentRunEvent::ToolStarted {
+            name,
+            parameters,
+            risk_class: _,
+        } => TuiRuntimeEvent::ToolStarted { name, parameters },
         AgentRunEvent::ToolFinished { name, result } => TuiRuntimeEvent::ToolFinished {
             name,
             success: result.success,
@@ -2900,6 +3081,16 @@ fn tui_runtime_event_from_agent(event: AgentRunEvent) -> TuiRuntimeEvent {
             passed,
         },
         AgentRunEvent::Recovery { message } => TuiRuntimeEvent::Recovery { message },
+        AgentRunEvent::PhaseChanged { from, to, reason } => TuiRuntimeEvent::PhaseChanged {
+            from: format!("{from:?}").to_ascii_lowercase(),
+            to: format!("{to:?}").to_ascii_lowercase(),
+            reason,
+        },
+        AgentRunEvent::ContextCompacted { compacted } => TuiRuntimeEvent::ContextCompacted {
+            narrative: compacted.narrative,
+            files_read_count: compacted.files_read.len(),
+            untrusted_count: compacted.untrusted_inputs.len(),
+        },
         AgentRunEvent::Finished { summary } => TuiRuntimeEvent::Finished {
             success: summary.stopped_reason == StopReason::Done,
             stop_reason: format!("{:?}", summary.stopped_reason),

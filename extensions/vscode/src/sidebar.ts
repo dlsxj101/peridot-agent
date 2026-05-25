@@ -40,8 +40,16 @@ export interface SidebarHandlers {
   refreshStatus: () => Promise<void>;
   respondAskUser: (requestId: string, answer: AskUserAnswer) => Promise<void>;
   respondApproval: (decision: ApprovalResponse) => Promise<void>;
-  openFile: (relativePath: string, line?: number, column?: number) => Promise<void>;
+  openFile: (relativePath: string, line?: number, column?: number, projectRoot?: string) => Promise<void>;
   registerProvider: (provider: ProviderChoice, params: Record<string, string>) => Promise<void>;
+  deleteSession: (clientSessionId: string, daemonSessionId?: string) => Promise<void>;
+  copyText: (text: string) => Promise<void>;
+  /**
+   * Ask the daemon to LLM-generate a short title for a session from its first
+   * task. Resolves to `null` if the provider call fails or returns empty — the
+   * sidebar then surfaces `"No title"` rather than the raw truncated task.
+   */
+  generateSessionTitle: (task: string) => Promise<string | null>;
 }
 
 interface DaemonEventParams {
@@ -59,6 +67,12 @@ interface StoredChatSession {
   hud: HudState;
   runOptions: RunOptions;
   pendingApproval?: TranscriptItem;
+  /**
+   * True once the user has manually renamed this session (via the
+   * session-menu rename action or `/session rename`). The async LLM
+   * title-generation path must not overwrite a user-chosen title.
+   */
+  userRenamed?: boolean;
 }
 
 interface PersistedSidebarSnapshot {
@@ -87,6 +101,9 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
   private state: SidebarState = freshState();
   private sessions = new Map<string, StoredChatSession>();
   private nextSessionOrdinal = 1;
+  private streamCoalesceTimer: ReturnType<typeof setTimeout> | undefined;
+  private streamCoalescePending = false;
+  private persistTimer: ReturnType<typeof setTimeout> | undefined;
 
   public constructor(
     private readonly extensionUri: vscode.Uri,
@@ -118,8 +135,22 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
   public prepareForTask(task: string, workspace: string): PreparedTask {
     const session = this.ensureActiveSession();
     const continueSessionId = session.daemonSessionId;
-    if (session.title.startsWith('New session')) {
+    // Placeholder title: show the truncated task immediately so the user gets
+    // visual feedback before the async LLM title call resolves. The real
+    // title (or `"No title"` on failure) lands later via `applyGeneratedTitle`.
+    if (session.title.startsWith('New session') && !session.userRenamed) {
       session.title = taskTitle(task);
+      // Kick off LLM title generation in the background. We don't await —
+      // session.start latency must not depend on a title round-trip.
+      const targetId = session.id;
+      void this.handlers
+        .generateSessionTitle(task)
+        .then((title) => this.applyGeneratedTitle(targetId, title))
+        .catch((err: unknown) => {
+          const message = err instanceof Error ? err.message : String(err);
+          console.warn('[peridot] session.generate_title failed:', message);
+          this.applyGeneratedTitle(targetId, null);
+        });
     }
     this.state.view = 'session';
     this.state.context = {
@@ -221,6 +252,45 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       } else if (markedFailed) {
         this.publish();
       }
+    } else if (kind === 'phase_changed') {
+      // PR1-A: central AgentPhase transition event. Surface as a
+      // lightweight status entry in the transcript — but only for
+      // *meaningful* transitions. The routine
+      // `Executing ↔ Verifying ↔ Planning` cycle that fires multiple
+      // times per turn is noise to most users; we keep transitions
+      // that involve a notable phase (Recovering, Delegating, Done)
+      // so the operator still sees when something abnormal happens.
+      // Routine transitions remain visible in the underlying ndjson
+      // event stream for tooling that wants every signal.
+      const from = stringField(event, 'from') ?? 'unknown';
+      const to = stringField(event, 'to') ?? 'unknown';
+      const reason = stringField(event, 'reason') ?? '';
+      if (isNotablePhaseTransition(from, to)) {
+        this.append({
+          role: 'status',
+          text: `Phase: ${from} → ${to}`,
+          detail: reason || undefined,
+        });
+      }
+    } else if (kind === 'context_compacted') {
+      // B.6: structured CompactedContext snapshot. The harness still
+      // injects the legacy prose PlanReminder for backward compat;
+      // here we surface the structured counts so the user sees that
+      // compaction fired with a one-line "compact: X files read, Y
+      // untrusted" status entry.
+      const compacted = isRecord(event.compacted) ? event.compacted : {};
+      const filesRead = Array.isArray(compacted.files_read) ? compacted.files_read.length : 0;
+      const untrusted = Array.isArray(compacted.untrusted_inputs)
+        ? compacted.untrusted_inputs.length
+        : 0;
+      const narrative =
+        typeof compacted.narrative === 'string' ? compacted.narrative.trim() : '';
+      const summary = `Context compacted (${filesRead} files read, ${untrusted} untrusted)`;
+      this.append({
+        role: 'status',
+        text: summary,
+        detail: narrative || undefined,
+      });
     } else if (approvalPayload) {
       this.appendApproval(approvalPayload, params.session_id);
     } else {
@@ -252,6 +322,9 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         running: false,
       };
       this.publish();
+      // Session ended — flush any throttled persistence immediately so the
+      // final transcript is safely written to disk.
+      this.flushPersist();
     }
     if (temporarilyLoaded) {
       this.saveActiveSession();
@@ -424,11 +497,61 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
     this.loadSessionIntoState(id, true);
   }
 
+  public renameSession(id: string, title: string): boolean {
+    const nextTitle = title.trim();
+    const session = this.sessions.get(id);
+    if (!session || nextTitle.length === 0) return false;
+    session.title = nextTitle;
+    // Mark as user-chosen so the async LLM title-generation handler doesn't
+    // overwrite it on a later turn.
+    session.userRenamed = true;
+    this.publish();
+    return true;
+  }
+
+  /**
+   * Apply an LLM-generated title to the session. Only takes effect if the
+   * user has not manually renamed the session in the meantime — that
+   * invariant is the whole point of the `userRenamed` flag.
+   *
+   * Called by the extension after `session.generate_title` resolves. Pass
+   * `null` to indicate the LLM call failed; the session title falls back to
+   * `"No title"`, but again only if the user hasn't taken over the name.
+   */
+  public applyGeneratedTitle(clientSessionId: string, title: string | null): void {
+    const session = this.sessions.get(clientSessionId);
+    if (!session) return;
+    if (session.userRenamed) return;
+    const cleaned = title?.trim();
+    session.title = cleaned && cleaned.length > 0 ? cleaned : 'No title';
+    this.publish();
+  }
+
+  public deleteSession(id: string): boolean {
+    const session = this.sessions.get(id);
+    if (!session) return false;
+    const wasActive = session.id === this.state.activeChatId;
+    this.sessions.delete(session.id);
+    if (wasActive) {
+      const next = this.sessions.values().next().value as StoredChatSession | undefined;
+      if (next) {
+        this.loadSessionIntoState(next.id, false);
+      } else {
+        this.loadDraftSessionIntoState(this.state.context.workspace);
+      }
+    }
+    this.publish();
+    return true;
+  }
+
   private appendToolStarted(event: Record<string, unknown>): void {
     const name = stringField(event, 'name');
     if (name === 'agent_done') {
       return;
     }
+    // `risk_class` is optional on the wire — older daemons (pre-#7) omit it.
+    // The webview chip renderer treats `undefined` as "no chip".
+    const riskClass = stringField(event, 'risk_class') || undefined;
     if (name === 'agent_ask_user') {
       this.append({
         role: 'tool',
@@ -436,6 +559,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         detail: compactAskUserToolDetail(event.parameters),
         toolName: name,
         pending: true,
+        riskClass,
       });
       return;
     }
@@ -449,6 +573,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       column: pickNumber(event.parameters, 'column'),
       toolParameters: event.parameters,
       pending: true,
+      riskClass,
     });
   }
 
@@ -754,7 +879,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         this.resolveApproval(message.approved);
         return;
       case 'openFile':
-        await this.handlers.openFile(message.path, message.line, message.column);
+        await this.handlers.openFile(message.path, message.line, message.column, this.state.context.workspace);
         return;
       case 'registerProvider':
         await this.handlers.registerProvider(message.provider, message.params);
@@ -773,6 +898,24 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         return;
       case 'selectSession':
         this.selectSession(message.id);
+        return;
+      case 'renameSession':
+        if (!this.renameSession(message.id, message.title)) {
+          this.appendError('Could not rename that session.');
+        }
+        return;
+      case 'deleteSession': {
+        const session = this.sessions.get(message.id);
+        if (!session) {
+          this.appendError('Could not find that session.');
+          return;
+        }
+        await this.handlers.deleteSession(session.id, session.daemonSessionId);
+        this.deleteSession(session.id);
+        return;
+      }
+      case 'copyText':
+        await this.handlers.copyText(message.text);
         return;
       case 'queueAdd':
         if (message.task.trim().length > 0) {
@@ -807,11 +950,29 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
     }
     const last = this.state.transcript[this.state.transcript.length - 1];
     if (item.role === 'assistant' && last?.role === 'assistant') {
+      // Streaming delta: accumulate text in memory immediately.
       last.text += item.text;
+      // Leading-edge + trailing-edge throttle. The first delta after a quiet
+      // period publishes *immediately* so the user sees the first tokens with
+      // no perceptible latency. Subsequent deltas within the 32ms window are
+      // coalesced and emitted together on the trailing edge — that's enough
+      // for ~30 fps streaming, which feels smooth without burning serialization
+      // CPU on every token.
+      if (this.streamCoalesceTimer === undefined) {
+        this.publishStreaming();
+        this.streamCoalesceTimer = setTimeout(() => {
+          const hadPending = this.streamCoalescePending;
+          this.streamCoalesceTimer = undefined;
+          this.streamCoalescePending = false;
+          if (hadPending) this.publishStreaming();
+        }, 32);
+      } else {
+        this.streamCoalescePending = true;
+      }
     } else {
       this.state.transcript.push(item);
+      this.publish();
     }
-    this.publish();
   }
 
   private resolveInteraction(requestId: string, detail: string): void {
@@ -836,12 +997,54 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
     this.publish();
   }
 
+  /** Full publish: cancels any pending streaming coalesce, refreshes session
+   *  list, schedules (or flushes) persistence, and posts state to the webview. */
   private publish(): void {
+    // Cancel any pending coalesced streaming publish — this full publish
+    // supersedes it.
+    if (this.streamCoalesceTimer !== undefined) {
+      clearTimeout(this.streamCoalesceTimer);
+      this.streamCoalesceTimer = undefined;
+    }
+    this.streamCoalescePending = false;
     this.saveActiveSession();
     this.refreshSessionSummaries();
-    this.persistState();
+    // Persist immediately for decisive events (session end, user actions).
+    // During high-frequency streaming the streaming path uses schedulePersist.
+    this.schedulePersist();
+    this.postState();
+  }
+
+  /** Lightweight publish for streaming deltas: skips session-list rebuild
+   *  (unchanged during streaming) and uses throttled persistence. */
+  private publishStreaming(): void {
+    this.saveActiveSession();
+    this.schedulePersist();
+    this.postState();
+  }
+
+  private postState(): void {
     const message: InboundMessage = { type: 'state', state: this.state };
     this.view?.webview.postMessage(message);
+  }
+
+  /** Throttled persistence — writes full state to Memento (SQLite) at most
+   *  once every 2 seconds so disk I/O doesn't block the event loop. */
+  private schedulePersist(): void {
+    if (this.persistTimer !== undefined) return; // already scheduled
+    this.persistTimer = setTimeout(() => {
+      this.persistTimer = undefined;
+      this.persistState();
+    }, 2000);
+  }
+
+  /** Flush any pending persistence immediately (call on session end). */
+  private flushPersist(): void {
+    if (this.persistTimer !== undefined) {
+      clearTimeout(this.persistTimer);
+      this.persistTimer = undefined;
+    }
+    this.persistState();
   }
 
   private async handleSlashCommand(input: string, options: RunOptions): Promise<void> {
@@ -930,9 +1133,33 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         }
         return;
       }
+      case 'delete': {
+        const session =
+          tail.length > 0
+            ? this.findSession(tail)
+            : this.activeStoredSession();
+        if (!session) {
+          this.appendError('Usage: /session delete <id|title>');
+          return;
+        }
+        await this.handlers.deleteSession(session.id, session.daemonSessionId);
+        this.deleteSession(session.id);
+        return;
+      }
+      case 'rename': {
+        const [target, ...titleParts] = tailParts;
+        const title = titleParts.join(' ').trim();
+        const session = this.findSession(target ?? '');
+        if (!session || title.length === 0) {
+          this.appendError('Usage: /session rename <id|title> <new title>');
+          return;
+        }
+        this.renameSession(session.id, title);
+        return;
+      }
       default:
         this.appendError(
-          'Usage: /session new [task] | /session list | /session switch <id|title> | /session close <id|title> | /session save',
+          'Usage: /session new [task] | /session list | /session switch <id|title> | /session close <id|title> | /session delete <id|title> | /session rename <id|title> <new title> | /session save',
         );
         return;
     }
@@ -1372,6 +1599,23 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
   }
 }
 
+/**
+ * Decide whether a `phase_changed` event is worth surfacing in the
+ * transcript. The harness rotates through Planning → Executing →
+ * Verifying many times per turn (verify-after-mutation, post-tool
+ * validation, etc.), which floods the chat with low-signal "Phase:"
+ * lines. Notable transitions — entering or leaving recovery,
+ * delegating to a sub-agent, or hitting the terminal Done state —
+ * stay visible because they signal something the user might want to
+ * act on. Phase strings come in as enum debug formatting like
+ * "Recovering" / "RECOVERING" depending on the upstream emitter, so
+ * the comparison is case-insensitive.
+ */
+function isNotablePhaseTransition(from: string, to: string): boolean {
+  const notable = new Set(['recovering', 'delegating', 'done']);
+  return notable.has(from.toLowerCase()) || notable.has(to.toLowerCase());
+}
+
 function slashHelpText(commands: SlashCommandSpec[]): string {
   if (commands.length === 0) {
     return 'Slash commands are loading from the Peridot daemon.';
@@ -1757,6 +2001,15 @@ function queueId(): string {
   return `q-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
 }
 
+/**
+ * Build a short placeholder title from the user's first task.
+ *
+ * This is *only* used as an immediate visual placeholder while
+ * `session.generate_title` runs in the background. The final title is set by
+ * `applyGeneratedTitle` — either the LLM's reply or `"No title"` if that
+ * call fails. Do not treat this truncation as the final fallback; that's
+ * `"No title"`, per the documented session-title contract.
+ */
 function taskTitle(task: string): string {
   const title = task.replace(/\s+/g, ' ').trim();
   return title.length > 42 ? `${title.slice(0, 39)}...` : title || 'New session';

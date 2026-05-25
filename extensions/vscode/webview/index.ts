@@ -13,7 +13,7 @@ import type {
   TranscriptItem,
 } from '../src/types';
 import { diffStats, renderUnifiedDiff } from './diff';
-import { el, formatTokens, formatUsd, highlightLite, isRecord, json } from './util';
+import { el, formatTokens, highlightLite, isRecord, json } from './util';
 
 declare function acquireVsCodeApi(): {
   postMessage(msg: OutboundMessage): void;
@@ -38,13 +38,13 @@ let composerModelOverride: string | undefined;
 let transcriptPinnedToBottom = true;
 let forceTranscriptBottomOnce = false;
 let transcriptScrollRestoreToken = 0;
-let transcriptProgrammaticScroll = false;
-let transcriptProgrammaticScrollTimer: number | undefined;
-let transcriptUserScrollIntent = false;
-let transcriptUserScrollIntentTimer: number | undefined;
 let lastTranscriptAnimationKey = '';
 let lastTranscriptCount = 0;
 let lastComposerRunning: boolean | undefined;
+let editingSessionId: string | undefined;
+let editingSessionDraft = '';
+let deletingSessionId: string | undefined;
+let sessionMenuOpen = false;
 interface AssistantStreamSnapshot {
   markdown: string;
   visibleText: string;
@@ -56,7 +56,7 @@ let slashCommands: SlashCommandSpec[] = [];
 let todoExpanded = false;
 let lastTodoCurrentKey = '';
 let lastRenderedState: SidebarState | undefined;
-const toolNameSwapAnimations = new WeakMap<HTMLElement, Animation[]>();
+const toolNameSwapTimers = new WeakMap<HTMLElement, number>();
 
 const CHATGPT_MODELS = ['gpt-5.5', 'gpt-5.5-fast', 'gpt-5.4', 'gpt-5.4-mini'];
 const APPROVAL_SCOPE_OPTIONS = [
@@ -89,6 +89,20 @@ window.addEventListener('message', (event: MessageEvent<InboundMessage>) => {
   }
 });
 vscode.postMessage({ type: 'ready' });
+
+// Close session menu when clicking outside it
+document.addEventListener('click', (event) => {
+  if (!sessionMenuOpen) return;
+  const menu = document.querySelector('.session-menu');
+  if (menu && !menu.contains(event.target as Node)) {
+    editingSessionId = undefined;
+    editingSessionDraft = '';
+    deletingSessionId = undefined;
+    sessionMenuOpen = false;
+    if (menu instanceof HTMLDetailsElement) menu.open = false;
+    if (state) render(state);
+  }
+});
 
 function render(s: SidebarState): void {
   slashCommands = s.slashCommands;
@@ -143,55 +157,33 @@ function isTranscriptAtBottom(node: HTMLElement): boolean {
 function pinTranscriptToBottomOnNextRender(): void {
   forceTranscriptBottomOnce = true;
   transcriptPinnedToBottom = true;
-  transcriptUserScrollIntent = false;
-  if (transcriptUserScrollIntentTimer !== undefined) {
-    window.clearTimeout(transcriptUserScrollIntentTimer);
-    transcriptUserScrollIntentTimer = undefined;
-  }
   const transcriptEl = document.querySelector<HTMLElement>('.transcript');
   if (transcriptEl) {
-    markTranscriptProgrammaticScroll();
     transcriptEl.scrollTop = transcriptEl.scrollHeight;
   }
-}
-
-function markTranscriptProgrammaticScroll(): void {
-  transcriptProgrammaticScroll = true;
-  if (transcriptProgrammaticScrollTimer !== undefined) {
-    window.clearTimeout(transcriptProgrammaticScrollTimer);
-  }
-  transcriptProgrammaticScrollTimer = window.setTimeout(() => {
-    transcriptProgrammaticScroll = false;
-    transcriptProgrammaticScrollTimer = undefined;
-  }, 80);
-}
-
-function noteTranscriptUserScrollIntent(): void {
-  transcriptUserScrollIntent = true;
-  if (transcriptUserScrollIntentTimer !== undefined) {
-    window.clearTimeout(transcriptUserScrollIntentTimer);
-  }
-  transcriptUserScrollIntentTimer = window.setTimeout(() => {
-    transcriptUserScrollIntent = false;
-    transcriptUserScrollIntentTimer = undefined;
-  }, 700);
 }
 
 function bindTranscriptScrollTracking(wrap: HTMLElement): void {
   if (wrap.dataset.scrollTracking === 'true') return;
   wrap.dataset.scrollTracking = 'true';
-  wrap.addEventListener('wheel', noteTranscriptUserScrollIntent, { passive: true });
-  wrap.addEventListener('touchmove', noteTranscriptUserScrollIntent, { passive: true });
-  wrap.addEventListener('pointerdown', noteTranscriptUserScrollIntent, { passive: true });
+  // Cline-style scroll lock. Two rules, that's it:
+  //   - User wheels up → unpin.
+  //   - Scroll reaches bottom (by any means) → re-pin.
+  // The wheel handler fires synchronously on user input, so we don't need to
+  // disambiguate user vs. programmatic motion in the scroll event — by the
+  // time the scroll event arrives, pinned is already false if the user wanted
+  // to scroll up.
+  wrap.addEventListener(
+    'wheel',
+    (event: WheelEvent) => {
+      if (event.deltaY < 0) transcriptPinnedToBottom = false;
+    },
+    { passive: true },
+  );
   wrap.addEventListener(
     'scroll',
     () => {
-      const atBottom = isTranscriptAtBottom(wrap);
-      if (atBottom) {
-        transcriptPinnedToBottom = true;
-      } else if (transcriptUserScrollIntent && !transcriptProgrammaticScroll) {
-        transcriptPinnedToBottom = false;
-      }
+      if (isTranscriptAtBottom(wrap)) transcriptPinnedToBottom = true;
     },
     { passive: true },
   );
@@ -625,7 +617,7 @@ function updateSession(wrap: HTMLElement, s: SidebarState): void {
   if (s.hud.plan && s.hud.plan.steps.length > 0) {
     children.push(sessionSlot('todo', renderTodoProgress(s.hud.plan, s.running)));
   }
-  if (hasHudData(s)) children.push(sessionSlot('hud', renderHud(s)));
+  // HUD (token/cost meters) intentionally omitted — low utility in sidebar.
   children.push(sessionSlot('transcript', transcript));
   children.push(sessionSlot('queue', renderQueue(s)));
   if (s.branchPicker) children.push(sessionSlot('branch-picker', renderBranchPicker(s)));
@@ -709,6 +701,10 @@ function renderSessionMenu(s: SidebarState): HTMLElement {
   summary.append(el('span', 'session-menu-current', active?.title ?? 'New session'));
   summary.append(el('span', 'session-menu-chevron', ''));
   details.append(summary);
+  details.open = sessionMenuOpen;
+  details.addEventListener('toggle', () => {
+    sessionMenuOpen = details.open;
+  });
 
   const menu = el('div', 'session-menu-list');
   const newButton = el('button', 'session-menu-item session-menu-new');
@@ -731,24 +727,132 @@ function renderSessionMenu(s: SidebarState): HTMLElement {
   }
 
   for (const session of s.sessions) {
-    const item = el('button', `session-menu-item ${session.active ? 'active' : ''}`);
-    item.type = 'button';
-    item.disabled = session.active;
+    const row = el('div', `session-menu-row ${session.active ? 'active' : ''}`);
+    const isEditing = editingSessionId === session.id;
+    const item = isEditing
+      ? el('div', `session-menu-item editing ${session.active ? 'active' : ''}`)
+      : el('button', `session-menu-item ${session.active ? 'active' : ''}`);
+    if (item instanceof HTMLButtonElement) {
+      item.type = 'button';
+      item.disabled = session.active;
+    }
     const marker = el('span', `session-menu-marker ${session.running ? 'running' : ''}`);
     marker.textContent = session.active ? '✓' : session.running ? '●' : '';
     const text = el('span', 'session-menu-text');
-    text.append(el('span', 'session-menu-title', session.title));
+    if (isEditing) {
+      const input = document.createElement('input');
+      input.className = 'session-menu-rename-input';
+      input.value = editingSessionDraft || session.title;
+      input.setAttribute('aria-label', `New title for ${session.title}`);
+      input.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      });
+      input.addEventListener('input', () => {
+        editingSessionDraft = input.value;
+      });
+      input.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          event.stopPropagation();
+          commitSessionRename(session.id, input.value);
+        } else if (event.key === 'Escape') {
+          event.preventDefault();
+          event.stopPropagation();
+          cancelSessionRename();
+        }
+      });
+      text.append(input);
+      window.setTimeout(() => {
+        input.focus();
+        input.select();
+      }, 0);
+    } else {
+      text.append(el('span', 'session-menu-title', session.title));
+    }
     text.append(el('span', 'session-menu-subtitle', session.running ? 'In progress' : session.status));
     item.append(marker, text);
     item.addEventListener('click', () => {
+      if (isEditing) return;
       composerDraft = '';
       vscode.postMessage({ type: 'selectSession', id: session.id });
     });
-    menu.append(item);
+    const actions = el('span', 'session-menu-actions');
+    if (isEditing) {
+      const save = sessionMenuAction('check', `Save ${session.title}`, () =>
+        commitSessionRename(session.id, editingSessionDraft || session.title),
+      );
+      const cancel = sessionMenuAction('remove', 'Cancel rename', cancelSessionRename);
+      actions.append(save, cancel);
+      actions.classList.add('editing');
+    } else if (deletingSessionId === session.id) {
+      const confirm = sessionMenuAction('check', 'Confirm delete', () => {
+        deletingSessionId = undefined;
+        editingSessionId = undefined;
+        editingSessionDraft = '';
+        vscode.postMessage({ type: 'deleteSession', id: session.id });
+      });
+      confirm.classList.add('session-menu-confirm-delete');
+      const cancelDel = sessionMenuAction('remove', 'Cancel delete', () => {
+        deletingSessionId = undefined;
+        render(state ?? s);
+      });
+      const confirmLabel = el('span', 'session-menu-confirm-label', 'Delete?');
+      actions.append(confirmLabel, confirm, cancelDel);
+      actions.classList.add('confirming');
+    } else {
+      const rename = sessionMenuAction('edit', `Rename ${session.title}`, () => {
+        editingSessionId = session.id;
+        editingSessionDraft = session.title;
+        deletingSessionId = undefined;
+        sessionMenuOpen = true;
+        render(state ?? s);
+      });
+      const remove = sessionMenuAction('trash', `Delete ${session.title}`, () => {
+        deletingSessionId = session.id;
+        sessionMenuOpen = true;
+        render(state ?? s);
+      });
+      remove.classList.add('session-menu-delete');
+      actions.append(rename, remove);
+    }
+    row.append(item, actions);
+    menu.append(row);
   }
 
   details.append(menu);
   return details;
+}
+
+function sessionMenuAction(kind: string, label: string, onClick: () => void): HTMLElement {
+  const button = el('button', 'session-menu-action');
+  button.type = 'button';
+  button.title = label;
+  button.setAttribute('aria-label', label);
+  button.innerHTML = iconSvg(kind);
+  button.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    onClick();
+  });
+  return button;
+}
+
+function commitSessionRename(id: string, title: string): void {
+  const trimmed = title.trim();
+  if (!trimmed) return;
+  editingSessionId = undefined;
+  editingSessionDraft = '';
+  sessionMenuOpen = true;
+  vscode.postMessage({ type: 'renameSession', id, title: trimmed });
+}
+
+function cancelSessionRename(): void {
+  editingSessionId = undefined;
+  editingSessionDraft = '';
+  deletingSessionId = undefined;
+  sessionMenuOpen = true;
+  if (state) render(state);
 }
 
 function iconButton(kind: string, label: string, onClick: () => void): HTMLElement {
@@ -783,6 +887,8 @@ function iconSvg(kind: string): string {
       return `<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l3 3L13 4"/></svg>`;
     case 'edit':
       return `<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 13l1-3 7-7 2 2-7 7-3 1z"/></svg>`;
+    case 'trash':
+      return `<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4h10"/><path d="M6 4V2.8h4V4"/><path d="M5 6l.4 7h5.2L11 6"/><path d="M7 7.5v3.5M9 7.5v3.5"/></svg>`;
     default:
       return '';
   }
@@ -829,53 +935,7 @@ function pill(text: string, variant: string): HTMLElement {
   return span;
 }
 
-function hasHudData(s: SidebarState): boolean {
-  return Boolean(s.hud.usage || s.hud.budget || s.hud.committee);
-}
 
-function renderHud(s: SidebarState): HTMLElement {
-  const hud = el('div', 'hud');
-  const hudState = s.hud;
-
-  const meters = el('div', 'hud-meters');
-
-  if (hudState.usage) {
-    const u = hudState.usage;
-    meters.append(
-      meter(
-        'Tokens',
-        `${formatTokens(u.inputTokens)} in · ${formatTokens(u.outputTokens)} out`,
-        formatUsd(u.costUsd),
-      ),
-    );
-  }
-  if (hudState.budget) {
-    const b = hudState.budget;
-    const cost =
-      typeof b.costLimit === 'number'
-        ? `${formatUsd(b.costUsed)} / ${formatUsd(b.costLimit)}`
-        : formatUsd(b.costUsed);
-    const turns =
-      typeof b.turnsLimit === 'number'
-        ? `${b.turnsUsed}/${b.turnsLimit} turns`
-        : `${b.turnsUsed} turns`;
-    meters.append(meter('Budget', cost, turns));
-  }
-  if (hudState.committee) {
-    for (const [role, slice] of Object.entries(hudState.committee)) {
-      meters.append(
-        meter(
-          role.charAt(0).toUpperCase() + role.slice(1),
-          formatUsd(slice.costUsd),
-          `${formatTokens(slice.tokens)} tok`,
-        ),
-      );
-    }
-  }
-  hud.append(meters);
-
-  return hud;
-}
 
 function renderContextDock(s: SidebarState): HTMLElement {
   const context = s.hud.context;
@@ -918,13 +978,6 @@ function renderContextDock(s: SidebarState): HTMLElement {
   return dock;
 }
 
-function meter(label: string, primary: string, secondary: string): HTMLElement {
-  const wrap = el('div', 'meter');
-  wrap.append(el('span', 'meter-label', label));
-  wrap.append(el('span', 'meter-primary', primary));
-  wrap.append(el('span', 'meter-secondary', secondary));
-  return wrap;
-}
 
 function renderTodoProgress(plan: PlanSlice, running: boolean): HTMLElement {
   const currentIndex = activePlanIndex(plan);
@@ -1077,31 +1130,38 @@ function scheduleTranscriptScroll(
   previousScrollTop: number,
 ): void {
   const restoreToken = ++transcriptScrollRestoreToken;
-  applyTranscriptScroll(wrap, mode, previousScrollTop);
+  if (mode === 'preserve') {
+    // 'preserve': restore scroll once immediately after reconciliation.
+    // Do NOT mark as programmatic — user scroll intent must remain respected.
+    // Do NOT repeat on rAFs — that would fight user scrolling.
+    const maxScrollTop = Math.max(0, wrap.scrollHeight - wrap.clientHeight);
+    wrap.scrollTop = Math.min(previousScrollTop, maxScrollTop);
+    forceTranscriptBottomOnce = false;
+    return;
+  }
+  applyScrollToBottom(wrap);
+  // Consume the one-shot pin flag now — it was honored on the synchronous
+  // applyScrollToBottom above. Subsequent rAF follow-ups must check the
+  // *current* pin state so the user can interrupt by scrolling up mid-chain.
+  forceTranscriptBottomOnce = false;
+  // Follow-up rAFs catch late layout shifts (e.g., images loading, fonts
+  // settling). Only re-apply if the transcript is still pinned; if the user
+  // scrolled up between rAFs the scroll handler has already set
+  // transcriptPinnedToBottom=false and we must NOT yank them back to bottom.
   requestAnimationFrame(() => {
     if (!wrap.isConnected || restoreToken !== transcriptScrollRestoreToken) return;
-    applyTranscriptScroll(wrap, mode, previousScrollTop);
+    if (!transcriptPinnedToBottom) return;
+    applyScrollToBottom(wrap);
     requestAnimationFrame(() => {
       if (!wrap.isConnected || restoreToken !== transcriptScrollRestoreToken) return;
-      applyTranscriptScroll(wrap, mode, previousScrollTop);
-      forceTranscriptBottomOnce = false;
+      if (!transcriptPinnedToBottom) return;
+      applyScrollToBottom(wrap);
     });
   });
 }
 
-function applyTranscriptScroll(
-  wrap: HTMLElement,
-  mode: TranscriptScrollMode,
-  previousScrollTop: number,
-): void {
-  if (mode === 'none') return;
-  markTranscriptProgrammaticScroll();
-  if (mode === 'bottom') {
-    wrap.scrollTop = wrap.scrollHeight;
-  } else {
-    const maxScrollTop = Math.max(0, wrap.scrollHeight - wrap.clientHeight);
-    wrap.scrollTop = Math.min(previousScrollTop, maxScrollTop);
-  }
+function applyScrollToBottom(wrap: HTMLElement): void {
+  wrap.scrollTop = wrap.scrollHeight;
 }
 
 function transcriptScrollMode(
@@ -1257,6 +1317,7 @@ function updateToolStackNode(previous: HTMLDetailsElement, next: HTMLDetailsElem
   if (previousName && nextName) {
     updateToolName(previousName, nextName);
   }
+  updateToolSummarySnippet(previousSummary, nextSummary);
 
   const nextHistory = next.querySelector<HTMLElement>(':scope > .tool-history');
   const previousHistory = previous.querySelector<HTMLElement>(':scope > .tool-history');
@@ -1307,6 +1368,22 @@ function reconcileToolHistory(previousHistory: HTMLElement, nextHistory: HTMLEle
   }
 }
 
+function updateToolSummarySnippet(previousSummary: HTMLElement, nextSummary: HTMLElement): void {
+  const previousSnippet = previousSummary.querySelector<HTMLElement>('.tool-summary-snippet');
+  const nextSnippet = nextSummary.querySelector<HTMLElement>('.tool-summary-snippet');
+  if (!nextSnippet) {
+    previousSnippet?.remove();
+    return;
+  }
+  if (!previousSnippet) {
+    previousSummary.append(nextSnippet);
+    return;
+  }
+  previousSnippet.className = nextSnippet.className;
+  previousSnippet.textContent = nextSnippet.textContent;
+  previousSnippet.title = nextSnippet.title;
+}
+
 function updateToolDetailNode(previous: HTMLElement, next: HTMLElement): HTMLElement {
   if (previous.dataset.renderSignature === next.dataset.renderSignature) return previous;
   previous.className = next.className;
@@ -1321,58 +1398,48 @@ function updateToolName(previousName: HTMLElement, nextName: HTMLElement): void 
   cancelToolNameSwap(previousName);
   previousName.className = nextName.className;
   if (previousText === nextText) return;
-  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  if (reduceMotion) {
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
     previousName.textContent = nextText;
     return;
   }
   const swapId = String(Number(previousName.dataset.swapId ?? '0') + 1);
   previousName.dataset.swapId = swapId;
-  const outAnimation = previousName.animate(
-    [
-      { opacity: 1, transform: 'translateY(0)' },
-      { opacity: 0, transform: 'translateY(-7px)' },
-    ],
-    { duration: 110, easing: 'cubic-bezier(0.4, 0, 1, 1)' },
-  );
-  toolNameSwapAnimations.set(previousName, [outAnimation]);
-  outAnimation.finished
-    .catch(() => undefined)
-    .finally(() => {
+
+  // Phase 1: fade out via CSS transition
+  previousName.classList.add('tool-name-swap-out');
+
+  const outTimer = window.setTimeout(() => {
+    if (previousName.dataset.swapId !== swapId) return;
+
+    // Phase 2: swap text while invisible, prepare fade-in start position
+    previousName.classList.remove('tool-name-swap-out');
+    previousName.textContent = nextText;
+    previousName.className = nextName.className;
+    previousName.classList.add('tool-name-swap-in');
+
+    // Phase 3: next frame — remove swap-in class so CSS transition fades in
+    requestAnimationFrame(() => {
       if (previousName.dataset.swapId !== swapId) return;
-      previousName.style.opacity = '0';
-      previousName.style.transform = 'translateY(8px)';
-      outAnimation.cancel();
-      previousName.textContent = nextText;
-      previousName.className = nextName.className;
-      const inAnimation = previousName.animate(
-        [
-          { opacity: 0, transform: 'translateY(8px)' },
-          { opacity: 1, transform: 'translateY(0)' },
-        ],
-        { duration: 190, easing: 'cubic-bezier(0.16, 1, 0.3, 1)' },
-      );
-      toolNameSwapAnimations.set(previousName, [inAnimation]);
-      inAnimation.finished
-        .catch(() => undefined)
-        .finally(() => {
-          if (previousName.dataset.swapId === swapId) {
-            inAnimation.cancel();
-            previousName.style.opacity = '';
-            previousName.style.transform = '';
-            toolNameSwapAnimations.delete(previousName);
-          }
-        });
+      previousName.classList.remove('tool-name-swap-in');
     });
+
+    const doneTimer = window.setTimeout(() => {
+      if (previousName.dataset.swapId !== swapId) return;
+      toolNameSwapTimers.delete(previousName);
+    }, 200);
+    toolNameSwapTimers.set(previousName, doneTimer);
+  }, 120);
+  toolNameSwapTimers.set(previousName, outTimer);
 }
 
 function cancelToolNameSwap(name: HTMLElement): void {
-  if (!toolNameSwapAnimations.has(name)) return;
+  const timer = toolNameSwapTimers.get(name);
+  if (timer !== undefined) {
+    window.clearTimeout(timer);
+    toolNameSwapTimers.delete(name);
+  }
   name.dataset.swapId = String(Number(name.dataset.swapId ?? '0') + 1);
-  toolNameSwapAnimations.get(name)?.forEach((animation) => animation.cancel());
-  toolNameSwapAnimations.delete(name);
-  name.style.opacity = '';
-  name.style.transform = '';
+  name.classList.remove('tool-name-swap-out', 'tool-name-swap-in');
 }
 
 function updateMessageNode(previous: HTMLElement, next: HTMLElement): HTMLElement {
@@ -1380,23 +1447,61 @@ function updateMessageNode(previous: HTMLElement, next: HTMLElement): HTMLElemen
   previous.dataset.renderSignature = next.dataset.renderSignature ?? '';
   const previousBody = previous.querySelector<HTMLElement>('.msg-body');
   const nextBody = next.querySelector<HTMLElement>('.msg-body');
-  if (
-    previousBody &&
-    nextBody &&
-    previousBody.innerHTML !== nextBody.innerHTML
-  ) {
-    previousBody.replaceWith(nextBody);
+  if (previousBody && nextBody && previousBody.innerHTML !== nextBody.innerHTML) {
+    reconcileMarkdownBody(previousBody, nextBody);
   }
   const previousCopy = previous.querySelector<HTMLElement>('.copy-button');
   const nextCopy = next.querySelector<HTMLElement>('.copy-button');
-  if (
-    previousCopy &&
-    nextCopy &&
-    previousCopy.outerHTML !== nextCopy.outerHTML
-  ) {
+  if (previousCopy && nextCopy) {
     previousCopy.replaceWith(nextCopy);
   }
   return previous;
+}
+
+/**
+ * Reconcile the rendered markdown body in place during streaming.
+ *
+ * The naive approach (`previousBody.innerHTML = nextBody.innerHTML`) blows
+ * away every DOM child on every delta. That produces a visible flash on
+ * each render — the entire bubble's contents are replaced ~30 times per
+ * second. It also wipes any in-flight CSS animation that was running on
+ * descendants.
+ *
+ * Instead we do child-by-child diff:
+ *   - Children whose tag + class match are updated in-place by re-assigning
+ *     their innerHTML (cheap — only the leaf paragraph at the streaming tail
+ *     actually changes content most of the time).
+ *   - Structural changes (different tag/class) are replaced wholesale.
+ *   - New children at the end are appended; surplus children are removed.
+ *
+ * Net effect: every other block in the response remains the same DOM node
+ * across renders, so there's nothing to repaint except the actively-growing
+ * leaf. This is the "smooth Claude Desktop / Codex" feel.
+ */
+function reconcileMarkdownBody(previous: HTMLElement, next: HTMLElement): void {
+  previous.className = next.className;
+  const prevChildren = Array.from(previous.children) as HTMLElement[];
+  const nextChildren = Array.from(next.children) as HTMLElement[];
+  const sharedLen = Math.min(prevChildren.length, nextChildren.length);
+  for (let i = 0; i < sharedLen; i++) {
+    const p = prevChildren[i];
+    const n = nextChildren[i];
+    if (p.tagName !== n.tagName || p.className !== n.className) {
+      p.replaceWith(n);
+      continue;
+    }
+    if (p.innerHTML !== n.innerHTML) {
+      p.innerHTML = n.innerHTML;
+    }
+  }
+  for (let i = sharedLen; i < nextChildren.length; i++) {
+    previous.appendChild(nextChildren[i]);
+  }
+  for (let i = prevChildren.length - 1; i >= sharedLen; i--) {
+    prevChildren[i].remove();
+  }
+  // Re-run link/table/path post-processing on the updated tree. Cheap idempotent ops.
+  postProcessMarkdownBody(previous);
 }
 
 function stableTranscriptClassName(node: HTMLElement): string {
@@ -1421,7 +1526,16 @@ function decorateTranscriptEntry(
 ): HTMLElement {
   if (!shouldAnimate) return node;
   node.classList.add('bubble-enter', `bubble-enter-${animationKindForItem(item)}`);
+  scheduleBubbleEnterCleanup(node);
   return node;
+}
+
+function scheduleBubbleEnterCleanup(node: HTMLElement): void {
+  const cleanup = (): void => {
+    node.className = stableTranscriptClassName(node);
+  };
+  node.addEventListener('animationend', cleanup, { once: true });
+  window.setTimeout(cleanup, 360);
 }
 
 function animationKindForItem(item: TranscriptItem): string {
@@ -1526,17 +1640,8 @@ function renderAssistantBubble(item: TranscriptItem, itemKey?: string): HTMLElem
   const wrap = el('section', 'msg msg-assistant');
   wrap.append(el('div', 'msg-label', 'Peridot'));
   const streamKey = itemKey ?? `assistant:${item.text.length}`;
-  const previous = assistantTextByKey.get(streamKey);
   const body = renderMarkdownBody(item.text);
-  const visibleText = body.textContent ?? '';
-  const textGrew =
-    previous !== undefined &&
-    item.text.length > previous.markdown.length &&
-    item.text.startsWith(previous.markdown);
-  if (textGrew) {
-    animateVisibleTextSuffix(body, commonPrefixLength(previous.visibleText, visibleText));
-  }
-  assistantTextByKey.set(streamKey, { markdown: item.text, visibleText });
+  assistantTextByKey.set(streamKey, { markdown: item.text, visibleText: body.textContent ?? '' });
   wrap.append(body);
   const copy = el('button', 'copy-button', '');
   copy.type = 'button';
@@ -1565,83 +1670,119 @@ async function markCopied(button: HTMLElement, text: string): Promise<void> {
 }
 
 async function copyText(text: string): Promise<void> {
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(text);
-    return;
-  }
-  const textarea = document.createElement('textarea');
-  textarea.value = text;
-  textarea.style.position = 'fixed';
-  textarea.style.left = '-9999px';
-  document.body.append(textarea);
-  textarea.select();
-  document.execCommand('copy');
-  textarea.remove();
+  vscode.postMessage({ type: 'copyText', text: String(text) });
 }
 
 function renderMarkdownBody(markdown: string): HTMLElement {
   const body = el('div', 'msg-body markdown-body');
   body.innerHTML = markdownRenderer.render(markdown);
+  postProcessMarkdownBody(body);
+  return body;
+}
+
+function postProcessMarkdownBody(body: HTMLElement): void {
   body.querySelectorAll('a[href]').forEach((link) => {
     link.setAttribute('target', '_blank');
     link.setAttribute('rel', 'noreferrer noopener');
   });
   body.querySelectorAll('table').forEach((table) => {
+    if (table.parentElement?.classList.contains('md-table-wrap')) return;
     const wrap = el('div', 'md-table-wrap');
     table.replaceWith(wrap);
     wrap.append(table);
   });
-  return body;
+  linkifyFilePaths(body);
 }
 
-function commonPrefixLength(left: string, right: string): number {
-  const max = Math.min(left.length, right.length);
-  let index = 0;
-  while (index < max && left.charCodeAt(index) === right.charCodeAt(index)) {
-    index += 1;
-  }
-  return index;
-}
+// Match file paths like `src/foo.rs:10`, `src/foo.rs:10-20`, `src/foo.rs`
+// inside inline code (backtick) or parentheses. Heuristic: must contain `/`
+// and end with a recognised source extension, optionally followed by `:line`
+// or `:line-line`.
+const FILE_PATH_RE =
+  /(?:^|(?<=[\s(`]))([a-zA-Z0-9_./-]+\/[a-zA-Z0-9_.-]+\.(?:rs|ts|tsx|js|jsx|json|toml|yaml|yml|py|go|java|c|cpp|h|hpp|css|html|md|sh|sql|proto|graphql|svelte|vue))(?::(\d+)(?:-(\d+))?)?(?=$|[\s)`,;.])/g;
 
-function animateVisibleTextSuffix(rootEl: HTMLElement, startOffset: number): void {
-  const walker = document.createTreeWalker(rootEl, NodeFilter.SHOW_TEXT);
-  const textNodes: Text[] = [];
+function linkifyFilePaths(root: HTMLElement): void {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const targets: { node: Text; matches: RegExpMatchArray[] }[] = [];
   while (walker.nextNode()) {
     const node = walker.currentNode as Text;
-    if (!node.nodeValue || isAnimationSkippedTextNode(node)) continue;
-    textNodes.push(node);
+    if (!node.nodeValue) continue;
+    // Skip if already inside a link or code block
+    if (node.parentElement?.closest('a, pre')) continue;
+    const matches = [...node.nodeValue.matchAll(FILE_PATH_RE)];
+    if (matches.length > 0) targets.push({ node, matches });
   }
-
-  let offset = 0;
-  let delayIndex = 0;
-  for (const node of textNodes) {
+  for (const { node, matches } of targets) {
     const text = node.nodeValue ?? '';
-    const nodeStart = offset;
-    const nodeEnd = nodeStart + text.length;
-    offset = nodeEnd;
-    if (nodeEnd <= startOffset) continue;
-
-    const splitIndex = Math.max(0, startOffset - nodeStart);
-    const before = text.slice(0, splitIndex);
-    const suffix = text.slice(splitIndex);
     const fragment = document.createDocumentFragment();
-    if (before) fragment.append(document.createTextNode(before));
-    for (const char of Array.from(suffix)) {
-      const span = document.createElement('span');
-      span.className = 'stream-weight-char';
-      span.textContent = char;
-      span.style.setProperty('--stream-delay', `${Math.min(delayIndex, 24) * 18}ms`);
-      if (/\s/.test(char)) span.classList.add('stream-weight-space');
-      fragment.append(span);
-      delayIndex += 1;
+    let cursor = 0;
+    for (const match of matches) {
+      const matchStart = match.index ?? 0;
+      const fullMatch = match[0];
+      const path = match[1];
+      const lineStr = match[2];
+      const line = lineStr ? Number(lineStr) : undefined;
+      if (matchStart > cursor) {
+        fragment.append(document.createTextNode(text.slice(cursor, matchStart)));
+      }
+      const link = document.createElement('button');
+      link.className = 'link-button file-link inline-file-link';
+      link.type = 'button';
+      link.textContent = fullMatch;
+      link.title = line ? `Open ${path}:${line}` : `Open ${path}`;
+      link.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        vscode.postMessage({ type: 'openFile', path, line });
+      });
+      fragment.append(link);
+      cursor = matchStart + fullMatch.length;
+    }
+    if (cursor < text.length) {
+      fragment.append(document.createTextNode(text.slice(cursor)));
     }
     node.replaceWith(fragment);
   }
 }
 
-function isAnimationSkippedTextNode(node: Text): boolean {
-  const parent = node.parentElement;
-  return Boolean(parent?.closest('pre, code, .tool-code, .command-code'));
+/** Short chip label for a tool risk class. Keeps the chip narrow even on
+ *  cramped sidebars; the hover tooltip on the chip shows the full label. */
+function riskChipLabel(riskClass: string): string {
+  switch (riskClass) {
+    case 'read_only':
+      return 'R';
+    case 'local_write':
+      return 'W';
+    case 'build_or_test':
+      return 'B';
+    case 'external_network':
+      return 'N';
+    case 'destructive':
+      return '!';
+    case 'secret_adjacent':
+      return 'S';
+    default:
+      return '?';
+  }
+}
+
+function toolSnippetText(item: TranscriptItem): string | undefined {
+  if (item.path) return item.path;
+  if (!item.toolParameters || typeof item.toolParameters !== 'object') return undefined;
+  const params = item.toolParameters as Record<string, unknown>;
+  const path = params.path ?? params.file_path ?? params.target_file;
+  if (typeof path === 'string') return path;
+  const command = params.command ?? params.cmd;
+  if (typeof command === 'string') {
+    const trimmed = command.trim();
+    return trimmed.length > 80 ? trimmed.slice(0, 77) + '...' : trimmed;
+  }
+  const query = params.query ?? params.pattern ?? params.search ?? params.url;
+  if (typeof query === 'string') {
+    const trimmed = query.trim();
+    return trimmed.length > 80 ? trimmed.slice(0, 77) + '...' : trimmed;
+  }
+  return undefined;
 }
 
 function renderToolBlock(item: TranscriptItem): HTMLElement {
@@ -1677,6 +1818,22 @@ function renderToolStack(
   );
   const toggle = el('span', 'tool-toggle');
   summary.append(toggle, name);
+  // Risk-class chip — surfaces the tool's potential harm class so the
+  // user can tell at a glance "this is a destructive shell call" vs "this
+  // is just a read." Class strings match the Rust `RiskClass::label()`
+  // values; missing means the daemon didn't send one and we render no chip.
+  const riskClass = latest.riskClass;
+  if (riskClass) {
+    const chip = el('span', `risk-chip risk-chip-${riskClass}`, riskChipLabel(riskClass));
+    chip.title = `Risk class: ${riskClass.replace(/_/g, ' ')}`;
+    summary.append(chip);
+  }
+  const snippet = toolSnippetText(latest);
+  if (snippet) {
+    const snippetEl = el('span', 'tool-summary-snippet', snippet);
+    snippetEl.title = snippet;
+    summary.append(snippetEl);
+  }
   details.append(summary);
   ensureToolHistoryRendered(details, items, startIndex, pendingIndexes);
   return details;

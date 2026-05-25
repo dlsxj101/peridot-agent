@@ -208,6 +208,12 @@ impl SubAgent for InnerLoopSubAgent {
             kind: prep.kind,
             workspace: Some(workspace),
             diff,
+            // Evidence-ref protocol (PR 13): future inner-loop work
+            // will harvest `EvidenceLedger` entries from the sub-run's
+            // context manager here. For now leave empty so the parent's
+            // review policy can choose how to treat the result — the
+            // captured `diff` already provides the primary review surface.
+            evidence_refs: Vec::new(),
         })
     }
 }

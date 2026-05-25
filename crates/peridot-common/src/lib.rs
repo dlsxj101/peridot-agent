@@ -186,6 +186,54 @@ pub enum PermissionLevel {
     System,
 }
 
+/// Finer-grained risk classification used to surface "why does this need
+/// approval?" reasoning in the UI and to drive class-based approval
+/// policies in [`SecurityConfig`].
+///
+/// [`PermissionLevel`] (above) is coarse and was designed for tool-allowlist
+/// checks. `RiskClass` is the orthogonal axis: what kind of *harm* the
+/// tool could cause if mis-invoked. The UI uses this to colour-code tool
+/// chips; the daemon uses it to decide whether a given class auto-approves
+/// in the current security mode.
+///
+/// Ordering is meaningful: higher discriminants are riskier, and policies
+/// can compare with `>=` to opt every class above a threshold into a
+/// stricter rule (e.g., "always prompt for >= Destructive").
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RiskClass {
+    /// Read-only file or repository access. Cannot mutate state.
+    ReadOnly,
+    /// Writes scoped to the workspace (file_patch, file_write).
+    LocalWrite,
+    /// Build / test / lint commands. Read code, run compilers, no
+    /// network. Side effects limited to caches and build artifacts.
+    BuildOrTest,
+    /// External network access (web_fetch, MCP HTTP servers, package
+    /// install). Risk: data exfiltration, supply chain.
+    ExternalNetwork,
+    /// Workspace operations that can permanently destroy local state
+    /// (rm -rf, git reset --hard, git push --force).
+    Destructive,
+    /// Touches secrets, environment, or auth surfaces (env vars,
+    /// credential files, config edits). Risk: credential leak.
+    SecretAdjacent,
+}
+
+impl RiskClass {
+    /// Stable short string used in event payloads / UI labels.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::ReadOnly => "read_only",
+            Self::LocalWrite => "local_write",
+            Self::BuildOrTest => "build_or_test",
+            Self::ExternalNetwork => "external_network",
+            Self::Destructive => "destructive",
+            Self::SecretAdjacent => "secret_adjacent",
+        }
+    }
+}
+
 /// A model-requested tool call.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ToolCall {
@@ -369,6 +417,26 @@ pub struct PeridotConfig {
     /// Auto-fix loop settings (verify-after-mutation behaviour).
     #[serde(default)]
     pub auto_fix: AutoFixConfig,
+    /// Cross-surface UI preferences (currently just locale). Decoupled
+    /// from `[tui]` so the value can drive both the terminal UI and the
+    /// VS Code extension without implying TUI semantics. `language` is
+    /// `Option` because `None` means "fall back to `tui.language`",
+    /// which preserves backwards compatibility with configs written
+    /// before this section existed.
+    #[serde(default)]
+    pub ui: UiConfig,
+}
+
+impl PeridotConfig {
+    /// Resolve the user's chosen interface locale, preferring the new
+    /// `[ui].language` knob and falling back to the legacy
+    /// `[tui].language` value. Centralised so every surface (TUI
+    /// settings screen, VS Code webview, future API) reads the same
+    /// effective value without each having to re-implement the
+    /// migration logic.
+    pub fn effective_language(&self) -> Locale {
+        self.ui.language.unwrap_or(self.tui.language)
+    }
 }
 
 /// Defaults applied when the main agent spawns a sub-agent via
@@ -399,8 +467,16 @@ pub struct AutoFixConfig {
     /// list means "use the built-in `verify_build` tool only" (the default).
     #[serde(default)]
     pub commands: Vec<String>,
-    /// Whether auto-fix is enabled by default when a session starts.
-    #[serde(default)]
+    /// Whether the auto-fix loop is enabled when a session starts.
+    /// On by default so a failed `verify_*` doesn't immediately stop
+    /// the agent — instead, the policy injects the failure as a
+    /// recovery reminder and the loop retries up to `max_attempts`
+    /// times. Operators can disable it explicitly to enforce hard
+    /// failures (CI-style runs, etc).
+    ///
+    /// Pairs with the serde-default helper so partial TOMLs that
+    /// don't mention this knob still get the autonomous behaviour.
+    #[serde(default = "default_true")]
     pub enabled: bool,
 }
 
@@ -413,7 +489,7 @@ impl Default for AutoFixConfig {
         Self {
             max_attempts: default_auto_fix_max_attempts(),
             commands: Vec::new(),
-            enabled: false,
+            enabled: true,
         }
     }
 }
@@ -569,8 +645,12 @@ pub struct CommitteeConfig {
     /// `complex` or `architectural`. Replaces the brittle char-count
     /// heuristic with a model verdict. Off by default to avoid the
     /// extra round trip; turn on when the operator wants the planner
-    /// to fire selectively without manual tuning.
-    #[serde(default)]
+    /// to fire selectively without manual tuning. On by default — a
+    /// fast complexity classification with the main model is cheap
+    /// (cap-output prompt) and prevents the planner from firing on
+    /// trivial chat-y tasks. Operators with a free-tier subscription
+    /// can flip this off to skip even the gate call.
+    #[serde(default = "default_true")]
     pub use_llm_complexity_gate: bool,
 }
 
@@ -583,7 +663,7 @@ impl Default for CommitteeConfig {
             executor_model: String::new(),
             max_review_passes: default_max_review_passes(),
             min_task_chars: 0,
-            use_llm_complexity_gate: false,
+            use_llm_complexity_gate: true,
         }
     }
 }
@@ -673,6 +753,24 @@ impl Default for TuiConfig {
             show_mascot: true,
         }
     }
+}
+
+/// Cross-surface UI preferences. Today this only holds the locale that
+/// drives label translation in both the TUI settings screen and the VS
+/// Code settings webview, but it's its own struct so adding e.g. a
+/// theme override or a font size later doesn't force a TOML schema
+/// change. `language: Option<Locale>` (rather than a defaulted enum)
+/// lets `None` mean "use the legacy `[tui].language` value" — the
+/// `PeridotConfig::effective_language` helper performs the lookup.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct UiConfig {
+    /// Preferred display locale for setting labels, help text, and
+    /// future UI chrome. `None` defers to `tui.language` for backward
+    /// compatibility; once a user saves through the settings webview
+    /// or `peridot setting`, this gets populated with `Some(...)` and
+    /// becomes the source of truth.
+    #[serde(default)]
+    pub language: Option<Locale>,
 }
 
 fn default_tui_theme() -> String {
@@ -972,20 +1070,24 @@ pub struct DefaultsConfig {
     #[serde(default = "default_budget_warning_pct")]
     pub budget_warning_pct: u8,
     /// Automatically run `verify_build` after direct file edits
-    /// (`file_write` / `file_patch`). Off by default —
-    /// projects with a slow build can keep the legacy "model calls
-    /// verify when it wants" behaviour. When on, compile errors are
-    /// surfaced immediately while the change is still fresh in
-    /// context, so the model fixes them in the very next turn.
-    #[serde(default)]
+    /// (`file_write` / `file_patch`). On by default — the harness
+    /// runs more reliably when compile errors surface in the same
+    /// turn that caused them, so the model can fix them while the
+    /// change is still fresh in context. Projects with a slow build
+    /// can opt out via `.peridot/config.toml`.
+    ///
+    /// Note: the serde default mirrors the struct default so a partial
+    /// TOML that omits this field still gets the harness-optimised
+    /// behaviour, not silently `false`.
+    #[serde(default = "default_true")]
     pub auto_verify_after_mutation: bool,
     /// Automatically call the LLM-based grader (`grade_work`) after
     /// `agent_done` to decide whether the task is actually shippable.
     /// When the verdict is `passed: false`, the recommendations are
     /// injected as a `PlanReminder` and the loop continues for another
-    /// turn instead of stopping. Off by default to keep the legacy
-    /// "first agent_done wins" behaviour.
-    #[serde(default)]
+    /// turn instead of stopping. On by default so "first agent_done"
+    /// doesn't ship half-finished work.
+    #[serde(default = "default_true")]
     pub auto_grade_on_done: bool,
 }
 

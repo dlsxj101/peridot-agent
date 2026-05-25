@@ -1,0 +1,18 @@
+---
+description: Peridot Agent repository workflow and implementation guardrails
+alwaysApply: true
+---
+
+# Peridot Agent
+
+- Read `PERIDOT_SPEC_v1.md` before implementation work. Treat it as the product architecture source of truth.
+- Keep changes scoped to one logical implementation unit and inspect existing files before editing.
+- The active implementation has progressed beyond the original seven sessions; use `docs/agents/implementation-playbook.md` to map new work to the closest session area.
+- Rust workspace changes should leave these checks passing:
+  - `cargo fmt --all --check`
+  - `cargo clippy --workspace -- -D warnings`
+  - `cargo test --workspace`
+- Keep crate responsibilities narrow. Shared types belong in `peridot-common`; use trait boundaries for providers, tools, subagents, scanners, verification, and persistence.
+- All user-facing TUI strings flow through `peridot_tui::tr(PhraseKey, Locale)`.
+- When touching multi-session routing, read `.peridot/skills/multisession-orchestration/SKILL.md` if present.
+- Do not bypass command blocklists, path sandboxing, AGENTS boundaries, prompt-injection tagging, or permission gates for convenience.

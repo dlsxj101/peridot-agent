@@ -12,6 +12,155 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 
 ---
 
+## [0.8.11 / extension 0.5.17] — 2026-05-25
+
+### Added — VS Code settings page, slash-invokable auto-skills, LLM-rewritten SKILL.md
+
+- **Editor-area settings webview**. A new `Peridot: Open Settings` command
+  (also reachable from the gear icon in the sidebar title bar) opens a
+  form-style editor for `.peridot/config.toml` backed by the daemon's
+  `settings.list` / `settings.save` RPC. The same curated registry feeds
+  both the TUI `peridot setting` screen and the VS Code form, so adding
+  a knob shows up on both surfaces. New sessions started after a save
+  pick up the new values automatically — running sessions keep their
+  boot snapshot.
+- **Skill slash commands**. Any otherwise-unknown kebab-case slash
+  (`/auto-fix-parser-tests`, `/ship-daily`) now resolves against the
+  project's `MemoryStore` and loads the matching SKILL body as a
+  context entry — Hermes-style `/skill-name args` invocation without
+  needing to pre-register every skill. Mismatches surface "skill not
+  found: <name>" so the operator knows where the lookup happened.
+- **LLM-rewritten SKILL.md bodies**. Auto-skill capture (5+ tools, any
+  failed turn, `agent_ask_user`, or 3+ distinct tools) now routes
+  through the main provider for a Markdown body with YAML frontmatter
+  (`name`, `description`, `version`, `tags`) and `When to Use /
+  Procedure / Pitfalls / Verification` sections. Falls back to the
+  deterministic template when no provider is wired (mock sessions,
+  offline daemons) or when the LLM response doesn't parse as a
+  SKILL.md.
+- **Pinned skills + per-skill descriptions**. `StoredSkill` now carries
+  a `description` column (surfaced in `skill_list` L0 disclosure) and
+  a `pinned_at_unix` flag; `apply_auto_rules` skips pinned rows so the
+  Curator can't archive an operator-protected skill. New
+  `set_skill_pinned` API toggles the flag.
+- **Curator pre-rewrite snapshot**. Before the LLM-driven `keep /
+  patch / consolidate / archive` pass runs, the Curator copies
+  `.peridot/skills/auto/` into `.peridot/skills/.snapshots/<unix>/` so
+  a botched consolidate can be rolled back by hand. Snapshots older
+  than 30 days are pruned automatically; operator-tagged directories
+  (`.snapshots/before-big-merge/`) are left alone.
+- **`AGENT_RUN_EVENT_SCHEMA_VERSION`-aware daemon handshake**. The
+  daemon now emits a `peridot.handshake` notification before any RPC
+  frame, carrying the schema version and daemon version. VS Code
+  surfaces an explicit "extension/daemon schema version mismatch"
+  warning instead of silently breaking on shape drift.
+- **`--ndjson-events` flag**. `peridot run` can stream every
+  `AgentRunEvent` as JSON-lines on stderr while stdout stays reserved
+  for the summary, making CI/automation hookups observable.
+  `--headless` and `PERIDOT_NDJSON_EVENTS=1` both opt in automatically.
+- **VS Code session title generator**. The extension now requests an
+  LLM-authored title via `session.generate_title` instead of
+  truncating the first user message. Failed generations fall back to
+  `"No title"` so the placeholder stays distinguishable from a real
+  title. Operator-renamed sessions are preserved across regenerations
+  via a `userRenamed` flag.
+
+### Changed — harness-optimized defaults, structured compaction, central phase transitions
+
+- **Defaults flipped to "harness-optimized"**.
+  `defaults.auto_verify_after_mutation`, `defaults.auto_grade_on_done`,
+  `auto_fix.enabled`, and `committee.use_llm_complexity_gate` now
+  default to `true` so a fresh install runs the full safety/recovery
+  loop without manual TOML edits. Each field's `#[serde(default = …)]`
+  matches the struct default, so partial TOMLs that omit the field no
+  longer drift to `false`.
+- **`peridot setup` now auto-detects stored credentials**. When the
+  initial `.peridot/config.toml` is created, the setup command checks
+  `~/.peridot/auth/openai-oauth.json`, `claude-api.json`,
+  `openai-api.json`, plus `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` env
+  vars and writes a matching `[auth].primary` + `[models].main`
+  combination — no more first-run failures from the default
+  `claude-api` config when the user only has a ChatGPT subscription
+  configured.
+- **`peridot init` (and similar typo'd commands) emit a hint**. Typing
+  a common-subcommand-shaped task like `init`, `status`, or `start`
+  prints `"Did you mean \`peridot setup\`?"` to stderr and exits with
+  code 2 instead of burning an LLM turn trying to interpret the typo
+  as a real task.
+- **Settings registry is now i18n-aware**. Setting labels and help
+  text live in a single `commands::settings_i18n` table keyed by id,
+  with English + Korean (`ko`) translations. Flipping
+  `ui.language = "ko"` (preferred over the legacy `tui.language`)
+  shows Korean labels on the very next `settings.list`. The legacy
+  `tui.language` value is still read as a fallback so existing
+  configs survive.
+- **VS Code transcript routine phase transitions hidden**. The
+  `Executing ↔ Verifying ↔ Planning` cycle that previously crowded
+  the chat is now suppressed; only transitions involving
+  `Recovering`, `Delegating`, or `Done` surface as transcript status
+  lines. The full event stream is still available in the underlying
+  ndjson so tools that want every transition keep working.
+- **Compaction now emits a structured snapshot**. The LLM compaction
+  pass still writes the legacy prose PlanReminder, but the
+  `CompactedContext` (decisions / files_read / files_changed /
+  verifications / open_todos / approvals / untrusted_inputs /
+  narrative) is exposed on `ContextManager.last_compacted()` and
+  fired as a new `AgentRunEvent::ContextCompacted` so UIs can render
+  the counts directly instead of parsing prose.
+- **All `AgentPhase` transitions go through `transition_phase()`**.
+  14 ad-hoc `self.state.phase = …` sites in `run_until_done_with_events`
+  are replaced with a central helper that also emits a
+  `PhaseChanged { from, to, reason }` event. The driver loop dropped
+  from ~671 lines to ~432 as policies (`Preflight`, `GoalChecker`,
+  `AutoGrade`, `ErrorRecovery`, `Budget`, `Stuck`, `SubAgentReview`,
+  `AutoVerifyAfterMutation`, `AutoFixLoop`, …) absorbed the inline
+  blocks.
+- **`SettingItem.surfaces`** lets the VS Code webview hide TUI-only
+  knobs (`tui.show_thinking`, `tui.show_token_count`, `tui.show_cost`,
+  `tui.show_mascot`) that wouldn't do anything if toggled from the
+  editor, while keeping them visible in the TUI. Save still ships the
+  full item array — the filter is presentation-only.
+
+### Fixed — onboarding paper cuts
+
+- **File writes no longer fail on nested directories that the agent
+  intends to create in the same turn**. `ensure_within_project` now
+  walks up to the deepest existing ancestor before canonicalising, so
+  writing `backend/src/main/java/com/example/Foo.java` into a project
+  that only contains `backend/` works on the first try instead of
+  burning ~20 recovery turns.
+- **`tool_started` chips carry a `risk_class`** (read-only / local-
+  write / build-or-test / external-network / destructive /
+  secret-adjacent) from the Tool trait, so the VS Code chip and TUI
+  badge can colour-code tool risk without re-classifying the call
+  by name.
+- **Subagent results downgrade to untrusted by default**. Survey /
+  implementation / review subagent outputs without an explicit
+  `evidence_refs` list now enter context as
+  `ContextSource::SubAgentSummary` instead of trusted plan reminders,
+  matching the spec's "trust calibrated to evidence" guidance.
+- **Preflight checks gate `agent_done`**. Sessions that mutate the
+  worktree but never run a `verify_*` tool now get a `Decision::SkipTurn`
+  with a "verify before declaring done" plan reminder rather than
+  dropping into the final-done path. Off by default; opt in via
+  `with_verify_after_mutation()` on the policy.
+
+### Migration notes
+
+- Workspace 0.8.10 → 0.8.11.
+- Extension package 0.5.16 → 0.5.17.
+- Existing `.peridot/config.toml` files keep working untouched. New
+  TOMLs (created by `peridot setup`) carry the harness-optimized
+  defaults plus a `[ui]` section.
+- The `[tui].language` knob is still read on load; the settings UI
+  writes to `[ui].language` going forward. `effective_language()`
+  prefers the new key and falls back to the legacy one.
+- Schema-version 1 of `AgentRunEvent` covers all new variants
+  (`PhaseChanged`, `ContextCompacted`); older daemon clients will
+  ignore unknown variants per `#[serde]` defaults.
+
+---
+
 ## [0.8.10 / extension 0.5.16] — 2026-05-23
 
 ### Added — evidence-backed answers and bounded codebase surveys

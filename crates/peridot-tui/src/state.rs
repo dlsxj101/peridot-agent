@@ -332,6 +332,33 @@ pub enum TuiRuntimeEvent {
         /// Recovery message.
         message: String,
     },
+    /// Centralized `AgentPhase` transition. Forwarded from the harness's
+    /// `PhaseChanged` event so the TUI / daemon can render the live state
+    /// machine without polling. `from`/`to` are the formatted phase names
+    /// (snake_case) — kept as strings here to avoid pulling
+    /// peridot-common into the TUI's runtime-event surface for what's
+    /// purely a display concern.
+    PhaseChanged {
+        /// Previous phase, formatted lower-case (e.g., `"planning"`).
+        from: String,
+        /// New phase, formatted lower-case (e.g., `"executing"`).
+        to: String,
+        /// Short stable label describing why this transition happened.
+        reason: String,
+    },
+    /// Context was compacted; carries a compact structured snapshot.
+    /// Surfaced as an activity-panel entry; the structured fields are
+    /// available to side-panel renderers via the underlying
+    /// [`peridot_context::CompactedContext`] but the TUI currently
+    /// only renders the narrative.
+    ContextCompacted {
+        /// LLM-generated short prose summary.
+        narrative: String,
+        /// Number of distinct files the model has read so far.
+        files_read_count: usize,
+        /// Number of untrusted-external inputs in the conversation so far.
+        untrusted_count: usize,
+    },
     /// Background run finished.
     Finished {
         /// Stop reason.
@@ -788,6 +815,15 @@ pub enum SessionCommandEvent {
     SessionSwitch(String),
     /// `/session close <id|title>` — cancel and remove a session.
     SessionClose(String),
+    /// `/session delete <id|title>` — cancel and remove a session and persisted data.
+    SessionDelete(String),
+    /// `/session rename <id|title> <new title>` — update a session display title.
+    SessionRename {
+        /// Session id, title, or index to rename.
+        target: String,
+        /// New display title.
+        title: String,
+    },
     /// `/fork <task>` — spawn a single-turn Fork subagent inline.
     Fork(String),
     /// `/teammate <task>` — spawn a worktree-isolated Teammate subagent.
@@ -2003,6 +2039,35 @@ impl TuiState {
                 self.side_panel.stats.errors += 1;
                 self.push_transcript_entry(TranscriptKind::Notice, format!("recovery: {message}"));
                 self.push_activity(ActivityKind::Verification, "recovery", message);
+            }
+            TuiRuntimeEvent::PhaseChanged { from, to, reason } => {
+                // Phase transitions are observational — surface them in the
+                // activity panel so the operator can see the harness's
+                // state-machine progression, but don't push them as
+                // transcript entries (they'd be too chatty).
+                self.push_activity(
+                    ActivityKind::Verification,
+                    "phase",
+                    format!("{from} → {to} ({reason})"),
+                );
+            }
+            TuiRuntimeEvent::ContextCompacted {
+                narrative,
+                files_read_count,
+                untrusted_count,
+            } => {
+                // Compactions are infrequent and high-signal — surface
+                // them in the activity panel with a concise structured
+                // marker (`compact: N files read, M untrusted`) plus
+                // the LLM narrative when present.
+                let label =
+                    format!("compact: {files_read_count} files read, {untrusted_count} untrusted");
+                let detail = if narrative.is_empty() {
+                    label.clone()
+                } else {
+                    format!("{label}\n{narrative}")
+                };
+                self.push_activity(ActivityKind::Verification, "compact", detail);
             }
             TuiRuntimeEvent::Finished {
                 stop_reason,

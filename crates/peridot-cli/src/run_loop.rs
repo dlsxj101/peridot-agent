@@ -35,11 +35,12 @@ pub(super) async fn run_task(
     context.set_model_window_tokens(Some(window));
     let mut agent = HarnessAgent::new(state, context, registry);
 
+    let ndjson_events = cli.effective_ndjson_events();
     if let Some(mock_response_file) = &cli.mock_response_file {
         let profile = ProjectScanner::new().scan(project_root)?;
         let denied_paths = profile.boundaries.into_iter().map(PathBuf::from).collect();
         let provider = FileMockProvider::from_file(mock_response_file)?;
-        let summary = run_agent_loop(
+        let summary = run_agent_loop_with_default_observability(
             &mut agent,
             &provider,
             RunLoopOptions {
@@ -53,6 +54,7 @@ pub(super) async fn run_task(
                 project_root,
                 denied_paths,
             },
+            ndjson_events,
         )
         .await?;
         if cli.output == OutputFormat::Json {
@@ -87,7 +89,7 @@ pub(super) async fn run_task(
     agent.set_auto_verify_after_mutation(config.defaults.auto_verify_after_mutation);
     agent.set_auto_grade_on_done(config.defaults.auto_grade_on_done);
     agent.set_auto_fix_cap(config.auto_fix.max_attempts);
-    let summary = run_agent_loop(
+    let summary = run_agent_loop_with_default_observability(
         &mut agent,
         provider.as_ref(),
         RunLoopOptions {
@@ -101,6 +103,7 @@ pub(super) async fn run_task(
             project_root,
             denied_paths,
         },
+        ndjson_events,
     )
     .await?;
     if cli.output == OutputFormat::Json {
@@ -233,7 +236,7 @@ pub(crate) async fn run_task_with_events<F>(
     events: F,
 ) -> Result<peridot_core::AgentRunSummary>
 where
-    F: FnMut(AgentRunEvent),
+    F: FnMut(AgentRunEvent) + Send,
 {
     let task = apply_resume(task, options.resume.as_deref(), &project_root)?;
     let state = if mode == ExecutionMode::Goal {
@@ -422,9 +425,9 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) async fn run_planner_preflight_if_enabled<P, F>(
+pub(super) async fn run_planner_preflight_if_enabled<F>(
     executor: &mut HarnessAgent,
-    provider: &P,
+    provider: &dyn peridot_llm::LlmProvider,
     task: &str,
     config: &PeridotConfig,
     options: &AgentTaskOptions,
@@ -433,8 +436,7 @@ pub(super) async fn run_planner_preflight_if_enabled<P, F>(
     events: &mut F,
 ) -> Result<()>
 where
-    P: peridot_llm::LlmProvider + ?Sized,
-    F: FnMut(AgentRunEvent),
+    F: FnMut(AgentRunEvent) + Send,
 {
     use peridot_common::CommitteeMode;
     if config.committee.mode == CommitteeMode::Off {
@@ -572,31 +574,69 @@ pub(super) struct RunLoopOptions<'a> {
     denied_paths: Vec<PathBuf>,
 }
 
-pub(super) async fn run_agent_loop<P>(
+/// Backwards-compatible silent variant. `run_task` now goes through
+/// `run_agent_loop_with_default_observability` directly because every
+/// caller wants the `ndjson_events` knob; this wrapper stays for
+/// non-CLI callers (e.g. integration test harnesses) that didn't yet
+/// migrate.
+#[allow(dead_code)]
+pub(super) async fn run_agent_loop(
     agent: &mut HarnessAgent,
-    provider: &P,
+    provider: &dyn LlmProvider,
     options: RunLoopOptions<'_>,
-) -> Result<peridot_core::AgentRunSummary>
-where
-    P: LlmProvider + ?Sized,
-{
+) -> Result<peridot_core::AgentRunSummary> {
+    run_agent_loop_with_default_observability(agent, provider, options, false).await
+}
+
+/// `run_agent_loop` with an explicit knob to also stream every event
+/// as JSON-lines to stderr. Used by `run_task` when the user passed
+/// `--ndjson-events` (or `--headless`, which implicitly opts in).
+/// Stderr is intentional: stdout is reserved for the final summary so
+/// shell pipes like `peridot run --headless "…" | jq` keep parsing
+/// just the summary.
+pub(super) async fn run_agent_loop_with_default_observability(
+    agent: &mut HarnessAgent,
+    provider: &dyn LlmProvider,
+    options: RunLoopOptions<'_>,
+    ndjson_events: bool,
+) -> Result<peridot_core::AgentRunSummary> {
     run_agent_loop_with_events(agent, provider, options, |event| {
-        if let AgentRunEvent::Recovery { message } = event {
+        if ndjson_events {
+            emit_ndjson_event(&event);
+        }
+        if let AgentRunEvent::Recovery { message } = &event
+            && !ndjson_events
+        {
+            // Already serialised above; avoid duplicating the
+            // recovery line when we're in JSONL mode.
             eprintln!("recovery: {message}");
         }
     })
     .await
 }
 
-pub(super) async fn run_agent_loop_with_events<P, F>(
+/// Serialise an [`AgentRunEvent`] to a single line on stderr. Failure
+/// to serialise is logged as a structured fallback line so the consumer
+/// still sees *something* in their event stream — silent drops would
+/// defeat the whole point of the flag.
+fn emit_ndjson_event(event: &AgentRunEvent) {
+    match serde_json::to_string(event) {
+        Ok(line) => eprintln!("{line}"),
+        Err(err) => eprintln!(
+            r#"{{"kind":"_serialization_error","error":{:?},"context":"ndjson event"}}"#,
+            err.to_string()
+        ),
+    }
+}
+
+pub(super) async fn run_agent_loop_with_events<F>(
     agent: &mut HarnessAgent,
-    provider: &P,
+    provider: &dyn LlmProvider,
     options: RunLoopOptions<'_>,
     mut events: F,
 ) -> Result<peridot_core::AgentRunSummary>
 where
-    P: LlmProvider + ?Sized,
-    F: FnMut(AgentRunEvent),
+    F: FnMut(AgentRunEvent) + Send,
 {
     let session_id = format!("session-{}-{}", std::process::id(), unix_timestamp());
     run_lifecycle_hook(agent, &options, &session_id, "session_start", "running", "")?;
@@ -630,13 +670,21 @@ where
         &format!("turns={}", summary.turns.len()),
     )?;
     run_completion_lifecycle_hooks(agent, &options, &session_id, &summary)?;
+    // Pass the live provider through so `save_auto_skill` can route
+    // the SKILL.md rewrite through the same model the session was
+    // running on. The fallback template is used when this branch
+    // didn't supply a provider (e.g. mock sessions).
     if let Err(err) = save_run_session(
         options.project_root,
         &session_id,
         &summary,
         &options.task,
         &options.config.memory,
-    ) {
+        Some(provider),
+        &options.model,
+    )
+    .await
+    {
         events(AgentRunEvent::SessionSaveFailed {
             session_id: session_id.clone(),
             message: err.to_string(),
@@ -658,15 +706,14 @@ where
     Ok(summary)
 }
 
-pub(super) async fn run_committee_loop_with_events<P, F>(
+pub(super) async fn run_committee_loop_with_events<F>(
     executor: &mut HarnessAgent,
-    provider: &P,
+    provider: &dyn LlmProvider,
     options: RunLoopOptions<'_>,
     mut events: F,
 ) -> Result<peridot_core::AgentRunSummary>
 where
-    P: LlmProvider + ?Sized,
-    F: FnMut(AgentRunEvent),
+    F: FnMut(AgentRunEvent) + Send,
 {
     use peridot_context::ContextEntry as Entry;
     use peridot_context::ContextSource as Source;
@@ -883,7 +930,11 @@ where
         &summary,
         &options.task,
         &options.config.memory,
-    ) {
+        Some(provider),
+        &options.model,
+    )
+    .await
+    {
         events(AgentRunEvent::SessionSaveFailed {
             session_id: session_id.clone(),
             message: err.to_string(),
@@ -932,8 +983,8 @@ fn truncate_diff(raw: &str, max_chars: usize) -> String {
     out
 }
 
-async fn run_reviewer_pass<P, F>(
-    provider: &P,
+async fn run_reviewer_pass<F>(
+    provider: &dyn LlmProvider,
     reviewer_model: &str,
     task: &str,
     diff: &str,
@@ -941,8 +992,7 @@ async fn run_reviewer_pass<P, F>(
     events: &mut F,
 ) -> Result<peridot_core::ReviewerVerdict>
 where
-    P: LlmProvider + ?Sized,
-    F: FnMut(AgentRunEvent),
+    F: FnMut(AgentRunEvent) + Send,
 {
     use peridot_core::AgentRole;
     use peridot_llm::{CompletionRequest, LlmMessage, MessageRole, ToolChoice};

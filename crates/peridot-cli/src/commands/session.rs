@@ -11,6 +11,13 @@ pub(crate) fn run_session_command(
             let sessions = store.list_sessions()?;
             let records = store.list_session_records().unwrap_or_default();
             let record_for = |id: &str| records.iter().find(|r| r.id == id).cloned();
+            let summary_for = |id: &str| sessions.iter().find(|s| s.id == id).cloned();
+            let mut ids: Vec<String> = sessions.iter().map(|session| session.id.clone()).collect();
+            for record in &records {
+                if !ids.iter().any(|id| id == &record.id) {
+                    ids.push(record.id.clone());
+                }
+            }
             let status_filter = match status.as_deref() {
                 Some(value) => Some(parse_lifecycle_filter(value)?),
                 None => None,
@@ -23,12 +30,26 @@ pub(crate) fn run_session_command(
                 OutputFormat::Json => {
                     let payload: Vec<_> = sessions
                         .iter()
-                        .filter(|session| keep(&session.id))
-                        .map(|session| {
-                            let record = record_for(&session.id);
+                        .map(|session| session.id.clone())
+                        .chain(records.iter().map(|record| record.id.clone()))
+                        .fold(Vec::<String>::new(), |mut acc, id| {
+                            if !acc.iter().any(|existing| existing == &id) {
+                                acc.push(id);
+                            }
+                            acc
+                        })
+                        .into_iter()
+                        .filter(|id| keep(id))
+                        .map(|id| {
+                            let session = summary_for(&id);
+                            let record = record_for(&id);
                             serde_json::json!({
-                                "id": session.id,
-                                "summary": session.summary,
+                                "id": id,
+                                "summary": session
+                                    .as_ref()
+                                    .map(|session| session.summary.as_str())
+                                    .or_else(|| record.as_ref().and_then(record_title))
+                                    .unwrap_or(""),
                                 "record": record,
                             })
                         })
@@ -36,11 +57,17 @@ pub(crate) fn run_session_command(
                     println!("{}", serde_json::to_string_pretty(&payload)?);
                 }
                 OutputFormat::Text => {
-                    for session in sessions {
-                        if !keep(&session.id) {
+                    for id in ids {
+                        if !keep(&id) {
                             continue;
                         }
-                        let record = record_for(&session.id);
+                        let session = summary_for(&id);
+                        let record = record_for(&id);
+                        let summary = session
+                            .as_ref()
+                            .map(|session| session.summary.as_str())
+                            .or_else(|| record.as_ref().and_then(record_title))
+                            .unwrap_or("");
                         let suffix = record
                             .as_ref()
                             .map(|r| {
@@ -50,7 +77,7 @@ pub(crate) fn run_session_command(
                                 )
                             })
                             .unwrap_or_default();
-                        println!("{}\t{}{}", session.id, session.summary, suffix);
+                        println!("{id}\t{summary}{suffix}");
                     }
                 }
             }
@@ -210,10 +237,22 @@ pub(crate) fn run_session_command(
             }
         }
         SessionCommand::Delete { id } => {
-            let deleted = store.delete_session(id)?;
+            let deleted = delete_persisted_session(&store, project_root, id)?;
             print_json_or_text_result(
                 serde_json::json!({"deleted": deleted, "id": id}),
                 format!("deleted session {id}: {deleted}"),
+                output,
+            )?;
+        }
+        SessionCommand::Rename { id, title } => {
+            let title = title.join(" ").trim().to_string();
+            if title.is_empty() {
+                anyhow::bail!("session title must not be empty");
+            }
+            let renamed = rename_persisted_session(&store, project_root, id, &title)?;
+            print_json_or_text_result(
+                serde_json::json!({"renamed": renamed, "id": id, "title": title}),
+                format!("renamed session {id}: {title}"),
                 output,
             )?;
         }
@@ -324,6 +363,62 @@ pub(crate) fn run_session_command(
         }
     }
     Ok(())
+}
+
+fn delete_persisted_session(store: &MemoryStore, project_root: &Path, id: &str) -> Result<bool> {
+    let deleted_summary = store.delete_session(id)?;
+    let deleted_record = store.delete_session_record(id)?;
+    let sessions_root = project_root.join(".peridot").join("sessions");
+    let deleted_blobs = peridot_memory::remove_session_dir(&sessions_root, id)?;
+    Ok(deleted_summary || deleted_record || deleted_blobs)
+}
+
+fn rename_persisted_session(
+    store: &MemoryStore,
+    project_root: &Path,
+    id: &str,
+    title: &str,
+) -> Result<bool> {
+    let existing_summary = store.get_session(id)?;
+    let existing_record = store.get_session_record(id)?;
+    let sessions_root = project_root.join(".peridot").join("sessions");
+    let existing_blob = peridot_memory::load_session_blob(&sessions_root, id, "tui_state.json")?;
+    if existing_summary.is_none() && existing_record.is_none() && existing_blob.is_none() {
+        return Ok(false);
+    }
+    store.save_session(&SessionSummary {
+        id: id.to_string(),
+        summary: title.to_string(),
+    })?;
+    if let Some(mut record) = existing_record {
+        record.summary = title.to_string();
+        record.updated_at_unix = unix_timestamp();
+        store.save_session_record(&record)?;
+    }
+    if let Some(bytes) = existing_blob
+        && let Ok(mut state) = serde_json::from_slice::<peridot_tui::TuiState>(&bytes)
+    {
+        for item in &mut state.sessions {
+            if item.id == id {
+                item.title = title.to_string();
+                item.title_generated = true;
+            }
+        }
+        let serialized = serde_json::to_vec(&state)?;
+        peridot_memory::save_session_blob(&sessions_root, id, "tui_state.json", &serialized)?;
+    }
+    Ok(true)
+}
+
+fn record_title(record: &peridot_memory::SessionRecord) -> Option<&str> {
+    (!record.summary.trim().is_empty())
+        .then_some(record.summary.as_str())
+        .or_else(|| {
+            record
+                .last_task
+                .as_deref()
+                .filter(|task| !task.trim().is_empty())
+        })
 }
 
 /// Parses a `--status <value>` CLI flag into a `SessionLifecycle` enum.
@@ -628,6 +723,115 @@ fn import_session(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+// Tests live mid-file because the helpers and command types they
+// exercise (rename + delete) sit in the first half of the module; the
+// remaining helpers (export, prune, search, replay) tested elsewhere
+// trail below. Moving the block to the end would put 500+ lines
+// between the helpers and their tests for no gain.
+#[allow(clippy::items_after_test_module)]
+mod tests {
+    use super::*;
+
+    fn temp_root(name: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or_default();
+        std::env::temp_dir().join(format!(
+            "peridot-session-{name}-{}-{nanos}",
+            std::process::id()
+        ))
+    }
+
+    #[test]
+    fn session_rename_updates_summary_record_and_tui_blob() {
+        let root = temp_root("rename");
+        let store = memory_store(&root);
+        store
+            .save_session(&SessionSummary {
+                id: "s1".to_string(),
+                summary: "old".to_string(),
+            })
+            .unwrap();
+        store
+            .save_session_record(&peridot_memory::SessionRecord::new("s1", &root))
+            .unwrap();
+        let mut state = peridot_tui::TuiState::new(peridot_tui::HeaderState::new(
+            peridot_common::ExecutionMode::Execute,
+            peridot_common::PermissionMode::Auto,
+            "mock",
+        ));
+        state
+            .sessions
+            .push(peridot_tui::SessionDirectoryItem::new("s1", "old"));
+        let sessions_root = root.join(".peridot").join("sessions");
+        peridot_memory::save_session_blob(
+            &sessions_root,
+            "s1",
+            "tui_state.json",
+            &serde_json::to_vec(&state).unwrap(),
+        )
+        .unwrap();
+
+        run_session_command(
+            &SessionCommand::Rename {
+                id: "s1".to_string(),
+                title: vec!["new".to_string(), "title".to_string()],
+            },
+            &root,
+            OutputFormat::Json,
+        )
+        .unwrap();
+
+        assert_eq!(
+            store.get_session("s1").unwrap().unwrap().summary,
+            "new title"
+        );
+        assert_eq!(
+            store.get_session_record("s1").unwrap().unwrap().summary,
+            "new title"
+        );
+        let bytes = peridot_memory::load_session_blob(&sessions_root, "s1", "tui_state.json")
+            .unwrap()
+            .unwrap();
+        let state: peridot_tui::TuiState = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(state.sessions[0].title, "new title");
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn session_delete_removes_summary_record_and_blobs() {
+        let root = temp_root("delete");
+        let store = memory_store(&root);
+        store
+            .save_session(&SessionSummary {
+                id: "s1".to_string(),
+                summary: "old".to_string(),
+            })
+            .unwrap();
+        store
+            .save_session_record(&peridot_memory::SessionRecord::new("s1", &root))
+            .unwrap();
+        let sessions_root = root.join(".peridot").join("sessions");
+        peridot_memory::save_session_blob(&sessions_root, "s1", "tui_state.json", b"{}").unwrap();
+
+        run_session_command(
+            &SessionCommand::Delete {
+                id: "s1".to_string(),
+            },
+            &root,
+            OutputFormat::Json,
+        )
+        .unwrap();
+
+        assert!(store.get_session("s1").unwrap().is_none());
+        assert!(store.get_session_record("s1").unwrap().is_none());
+        assert!(!sessions_root.join("s1").exists());
+        fs::remove_dir_all(&root).ok();
+    }
 }
 
 fn export_session(

@@ -115,6 +115,16 @@ export interface TranscriptItem {
   pending?: boolean;
   toolParameters?: unknown;
   toolResultSummary?: string;
+  /**
+   * Tool risk class label forwarded from the daemon's `tool_started`
+   * event (`AgentRunEvent::ToolStarted::risk_class`). Stable strings
+   * matching the Rust [`RiskClass`] variants in `peridot-common`:
+   * `read_only`, `local_write`, `build_or_test`, `external_network`,
+   * `destructive`, `secret_adjacent`. The webview renders this as a
+   * coloured chip next to the tool name; missing/unknown values fall
+   * back to no chip rather than blocking the display.
+   */
+  riskClass?: string;
 }
 
 export interface SidebarContext {
@@ -240,6 +250,9 @@ export type OutboundMessage =
   | { type: 'showSession' }
   | { type: 'newSession' }
   | { type: 'selectSession'; id: string }
+  | { type: 'renameSession'; id: string; title: string }
+  | { type: 'deleteSession'; id: string }
+  | { type: 'copyText'; text: string }
   | { type: 'queueAdd'; task: string }
   | { type: 'queueRemove'; id: string }
   | { type: 'queueEdit'; id: string; text: string }

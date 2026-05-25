@@ -14,11 +14,16 @@ pub fn ensure_within_project(root: &Path, candidate: &Path) -> PeriResult<PathBu
             .canonicalize()
             .map_err(|_| PeriError::PathBoundary(candidate.to_path_buf()))?
     } else {
-        let parent = candidate.parent().unwrap_or_else(|| Path::new("."));
-        let parent = parent
-            .canonicalize()
-            .map_err(|_| PeriError::PathBoundary(candidate.to_path_buf()))?;
-        parent.join(candidate.file_name().unwrap_or_default())
+        // The candidate path doesn't exist yet, so we can't canonicalize
+        // it directly. Walk up until we hit an existing ancestor we
+        // *can* canonicalize, then re-attach the missing tail. This is
+        // what makes `file_write` work for files inside nested
+        // directories that the agent intends to create in the same
+        // turn — without this, every `mkdir -p`-implying write fails
+        // with a confusing "path outside project boundary" error
+        // because the parent directory hasn't been created yet.
+        resolve_partial_canonical(candidate)
+            .ok_or_else(|| PeriError::PathBoundary(candidate.to_path_buf()))?
     };
 
     if path.starts_with(&root) {
@@ -26,6 +31,44 @@ pub fn ensure_within_project(root: &Path, candidate: &Path) -> PeriResult<PathBu
     } else {
         Err(PeriError::PathBoundary(path))
     }
+}
+
+/// Find the deepest existing ancestor of `candidate`, canonicalize it,
+/// then re-attach the non-existing tail. Returns `None` only when none
+/// of the path's components — not even the root — can be canonicalised,
+/// which on Unix is essentially "the filesystem is broken." The returned
+/// path is not itself guaranteed to be canonical past the live ancestor,
+/// but `starts_with(&root)` is still correct because `root` is already
+/// canonical and the live ancestor's canonical form is a superset of
+/// the project root (or it's not, in which case the boundary check
+/// catches it correctly).
+fn resolve_partial_canonical(candidate: &Path) -> Option<PathBuf> {
+    // Walk ancestors from deepest to shallowest looking for the first
+    // one that actually exists on disk and can be canonicalised.
+    let mut current = candidate;
+    while let Some(parent) = current.parent() {
+        if parent.as_os_str().is_empty() {
+            break;
+        }
+        if let Ok(canonical_parent) = parent.canonicalize() {
+            // Rebuild the relative tail by stripping `parent` off
+            // `candidate`. If the strip fails for any reason
+            // (shouldn't, but be defensive), fall back to just
+            // appending the original file_name.
+            let tail = candidate.strip_prefix(parent).ok();
+            return Some(match tail {
+                Some(tail) => canonical_parent.join(tail),
+                None => canonical_parent.join(candidate.file_name()?),
+            });
+        }
+        current = parent;
+    }
+    // Last-resort: try `.` as the working directory anchor. This
+    // covers paths relative to cwd whose entire ancestry is still
+    // virtual (e.g. running the agent from a freshly-created tmp
+    // dir with no existing children).
+    let cwd = Path::new(".").canonicalize().ok()?;
+    Some(cwd.join(candidate))
 }
 
 pub(crate) fn required_str<'a>(params: &'a Value, key: &str) -> PeriResult<&'a str> {
@@ -41,6 +84,92 @@ pub(crate) fn workspace_path(ctx: &ToolContext, params: &Value) -> PeriResult<Pa
     let path = ensure_within_project(&ctx.project_root, &candidate)?;
     ensure_not_denied(ctx, &path)?;
     Ok(path)
+}
+
+#[cfg(test)]
+#[allow(clippy::items_after_test_module)]
+// The test module sits in the middle of the file because the
+// downstream helper (`ensure_not_denied`) only matters for one of the
+// `workspace_path` callers and reads better grouped with it.
+mod tests {
+    use super::*;
+    use std::fs;
+
+    fn tmp_project(label: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "peridot-path-test-{}-{}-{}",
+            label,
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn allows_existing_file_inside_root() {
+        let root = tmp_project("existing");
+        let file = root.join("hello.txt");
+        fs::write(&file, "hi").unwrap();
+        let resolved = ensure_within_project(&root, &file).unwrap();
+        assert!(resolved.ends_with("hello.txt"));
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn allows_new_file_in_existing_subdir() {
+        let root = tmp_project("new_in_existing");
+        fs::create_dir_all(root.join("sub")).unwrap();
+        let candidate = root.join("sub/new.txt");
+        let resolved = ensure_within_project(&root, &candidate).unwrap();
+        assert!(resolved.ends_with("sub/new.txt"));
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn allows_new_file_in_deeply_nested_nonexistent_dir() {
+        // This is the regression from the Java+Vue scaffold session:
+        // the LLM tries to write `backend/src/main/java/.../Foo.java`
+        // before any of those directories exist. Old behaviour: hard
+        // PathBoundary error because parent.canonicalize() failed.
+        // New behaviour: ancestor walk finds the project root, joins
+        // the relative tail, and the boundary check passes.
+        let root = tmp_project("deep_nested");
+        let candidate = root.join("backend/src/main/java/com/example/Foo.java");
+        let resolved = ensure_within_project(&root, &candidate).unwrap();
+        assert!(resolved.ends_with("backend/src/main/java/com/example/Foo.java"));
+        // And critically, the resolved path is still inside the
+        // canonical root — the boundary check protects us.
+        let canonical_root = root.canonicalize().unwrap();
+        assert!(resolved.starts_with(&canonical_root));
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn rejects_new_file_outside_root() {
+        // Even with the partial-canonical resolution path, anything
+        // that resolves outside the project root must still fail.
+        let root = tmp_project("outside");
+        let outside = std::env::temp_dir().join("definitely-not-under-root.txt");
+        let result = ensure_within_project(&root, &outside);
+        assert!(matches!(result, Err(PeriError::PathBoundary(_))));
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn rejects_path_traversal_via_dotdot() {
+        // `..` traversal should be caught by the canonicalisation step
+        // — the live ancestor canonicalisation strips the `..` and we
+        // compare against the root.
+        let root = tmp_project("traversal");
+        let candidate = root.join("../escape.txt");
+        let result = ensure_within_project(&root, &candidate);
+        assert!(matches!(result, Err(PeriError::PathBoundary(_))));
+        fs::remove_dir_all(&root).ok();
+    }
 }
 
 fn ensure_not_denied(ctx: &ToolContext, path: &Path) -> PeriResult<()> {

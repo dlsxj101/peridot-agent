@@ -35,6 +35,7 @@ mod output;
 mod project;
 mod session;
 mod settings;
+mod settings_i18n;
 mod setup;
 mod ship;
 mod skills;
@@ -193,10 +194,17 @@ pub(crate) enum SessionCommand {
         #[arg(long)]
         committee_tail: Option<usize>,
     },
-    /// Delete one session summary.
+    /// Delete one persisted session.
     Delete {
         /// Session id.
         id: String,
+    },
+    /// Rename one session.
+    Rename {
+        /// Session id.
+        id: String,
+        /// New display title.
+        title: Vec<String>,
     },
     /// Replay the persisted transcript for one session.
     Replay {

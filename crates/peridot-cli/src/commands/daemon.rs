@@ -6,6 +6,7 @@
 //! session tasks cannot interleave JSON frames.
 
 use std::collections::{BTreeMap, HashMap};
+use std::fs;
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -24,6 +25,7 @@ use peridot_core::{
 };
 use peridot_git::GitManager;
 use peridot_tools::AskUserPort;
+use peridot_tui::SettingItem;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::io::AsyncWriteExt;
@@ -95,6 +97,12 @@ struct SessionRunSpec {
     model: Option<String>,
     reasoning_effort: Option<ReasoningEffort>,
     service_tier: Option<Option<String>>,
+    /// Snapshot of `.peridot/config.toml` taken when this session was
+    /// requested. Carrying it on the spec instead of reading the daemon
+    /// state's boot snapshot is what makes `settings.save` apply to the
+    /// next session: the fresh disk content arrives here and flows
+    /// straight into `run_session_task`'s config clone.
+    config: PeridotConfig,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -171,6 +179,10 @@ pub(crate) async fn run_daemon_command(
         template,
         out_tx.clone(),
     );
+    // Emit the handshake notification before reading any client traffic so an
+    // editor can detect version skew on the very first daemon line, before it
+    // sends `session.start` or any other request.
+    emit_handshake(&state)?;
 
     let (line_tx, mut line_rx) = mpsc::unbounded_channel::<std::io::Result<String>>();
     let reader = tokio::task::spawn_blocking(move || {
@@ -303,12 +315,22 @@ async fn dispatch_request(state: &DaemonState, request: RpcRequest) -> Result<bo
         "session.start" => {
             handle_session_start(state, request.id.unwrap_or(Value::Null), request.params).await?;
         }
+        "session.generate_title" => {
+            handle_session_generate_title(state, request.id.unwrap_or(Value::Null), request.params)
+                .await?;
+        }
         "session.command" => {
             handle_session_command(state, request.id.unwrap_or(Value::Null), request.params)
                 .await?;
         }
         "session.cancel" => {
             handle_session_cancel(state, request.id.unwrap_or(Value::Null), request.params).await?;
+        }
+        "settings.list" => {
+            handle_settings_list(state, request.id.unwrap_or(Value::Null)).await?;
+        }
+        "settings.save" => {
+            handle_settings_save(state, request.id.unwrap_or(Value::Null), request.params).await?;
         }
         "interaction.respond" => {
             handle_interaction_respond(state, request.id.unwrap_or(Value::Null), request.params)
@@ -450,6 +472,14 @@ async fn handle_session_start(state: &DaemonState, id: Value, params: Option<Val
         return Ok(());
     };
 
+    // Pull a fresh PeridotConfig off disk so changes saved via
+    // `settings.save` apply from the next session start. Falls back to
+    // the boot snapshot when the file is missing or unparseable —
+    // blocking session start on a config glitch would be worse than
+    // running with the last known-good snapshot.
+    let fresh_config =
+        reload_run_config_from_disk(state).unwrap_or_else(|| (*state.run_config).clone());
+
     let mode = match optional_str(&params, "mode") {
         Some(value) => match parse_execution_mode(value) {
             Some(mode) => mode,
@@ -463,7 +493,7 @@ async fn handle_session_start(state: &DaemonState, id: Value, params: Option<Val
                 return Ok(());
             }
         },
-        None => state.run_config.defaults.mode,
+        None => fresh_config.defaults.mode,
     };
     let permission = match optional_str(&params, "permission") {
         Some(value) => match parse_permission_mode(value) {
@@ -547,6 +577,7 @@ async fn handle_session_start(state: &DaemonState, id: Value, params: Option<Val
         model,
         reasoning_effort,
         service_tier,
+        config: fresh_config,
     };
     let spec_for_task = spec.clone();
     let (start_tx, start_rx) = oneshot::channel::<()>();
@@ -588,6 +619,223 @@ async fn handle_session_start(state: &DaemonState, id: Value, params: Option<Val
     Ok(())
 }
 
+/// JSON-RPC: `session.generate_title`
+///
+/// Generate a short LLM-authored title for a coding session from the user's
+/// first task text. Wraps `crate::generate_session_title`, which uses the
+/// configured main model with `reasoning_effort: Off, thinking: false` — so
+/// this is a cheap one-shot completion, no tools.
+///
+/// Returns `{ "title": <string> | null }`. A `null` result means the provider
+/// failed or returned an empty string; the caller (VS Code sidebar) is
+/// expected to surface a `"No title"` fallback rather than silently using
+/// the raw task text.
+async fn handle_session_generate_title(
+    state: &DaemonState,
+    id: Value,
+    params: Option<Value>,
+) -> Result<()> {
+    let map = match params {
+        Some(Value::Object(map)) => map,
+        _ => {
+            return emit_error(
+                state,
+                id,
+                -32602,
+                "params must be an object with a `task` field".to_string(),
+            );
+        }
+    };
+    let task = match map.get("task").and_then(|v| v.as_str()) {
+        Some(t) if !t.trim().is_empty() => t.to_string(),
+        _ => {
+            return emit_error(
+                state,
+                id,
+                -32602,
+                "`task` must be a non-empty string".to_string(),
+            );
+        }
+    };
+    let config = state.run_config.as_ref().clone();
+    let project_root = state.project_root.as_ref().clone();
+    // Reach across into the binary crate root for the shared helper.
+    let title = crate::generate_session_title(&config, &project_root, &task).await;
+    emit_response(state, id, serde_json::json!({ "title": title }))
+}
+
+/// Re-read `.peridot/config.toml` so the next session start picks up
+/// any changes saved via `settings.save`. Returns `None` when the file
+/// is missing or unparseable so the caller can transparently fall back
+/// to the daemon's boot snapshot — a broken disk config must not block
+/// the user from starting a session.
+///
+/// Cheap (<1ms for the ~1KB file) so re-running it per session start
+/// is acceptable without caching or mtime tracking.
+fn reload_run_config_from_disk(state: &DaemonState) -> Option<PeridotConfig> {
+    let path = state.project_root.join(".peridot").join("config.toml");
+    let raw = fs::read_to_string(&path).ok()?;
+    toml::from_str(&raw).ok()
+}
+
+/// JSON-RPC: `settings.list`
+///
+/// Reads `.peridot/config.toml` (creating it if missing) and returns the
+/// curated [`SettingItem`] list the TUI's settings screen exposes. The
+/// VS Code webview renders the same items as form controls so the two
+/// surfaces stay in lock-step — every field added to `settings_registry`
+/// flows through both UIs automatically.
+///
+/// Response: `{ "config_path": <abs path>, "items": [SettingItem, ...] }`.
+async fn handle_settings_list(state: &DaemonState, id: Value) -> Result<()> {
+    let project_root = state.project_root.as_ref().clone();
+    let result = match super::config::init_project_config_value(&project_root) {
+        Ok(r) => r,
+        Err(err) => {
+            return emit_error(
+                state,
+                id,
+                -32000,
+                format!("failed to prepare project config: {err}"),
+            );
+        }
+    };
+    let raw = match fs::read_to_string(&result.config_path) {
+        Ok(s) => s,
+        Err(err) => {
+            return emit_error(
+                state,
+                id,
+                -32000,
+                format!("failed to read {}: {err}", result.config_path.display()),
+            );
+        }
+    };
+    let config: PeridotConfig = match toml::from_str(&raw) {
+        Ok(c) => c,
+        Err(err) => {
+            return emit_error(
+                state,
+                id,
+                -32000,
+                format!("failed to parse {}: {err}", result.config_path.display()),
+            );
+        }
+    };
+    let items = super::settings::settings_registry(&config);
+    emit_response(
+        state,
+        id,
+        serde_json::json!({
+            "config_path": result.config_path,
+            "items": items,
+        }),
+    )
+}
+
+/// JSON-RPC: `settings.save`
+///
+/// Takes a mutated [`SettingItem`] list (same shape `settings.list`
+/// returned), folds each value back into the on-disk config, and writes
+/// `.peridot/config.toml`. Unknown ids in the payload are silently
+/// ignored, matching the TUI screen's forward-compatible behaviour.
+///
+/// New sessions started after this RPC succeeds will see the new values
+/// — see `reload_run_config_from_disk` for the snapshot refresh.
+/// Already-running sessions are not touched.
+///
+/// Params: `{ "items": [SettingItem, ...] }`.
+/// Response: `{ "saved": true, "config_path": <abs path> }`.
+async fn handle_settings_save(state: &DaemonState, id: Value, params: Option<Value>) -> Result<()> {
+    let Some(Value::Object(mut params)) = params else {
+        return emit_error(
+            state,
+            id,
+            -32602,
+            "params must be an object with an `items` array".to_string(),
+        );
+    };
+    let items_json = match params.remove("items") {
+        Some(v) => v,
+        None => {
+            return emit_error(
+                state,
+                id,
+                -32602,
+                "missing `items` array in params".to_string(),
+            );
+        }
+    };
+    let items: Vec<SettingItem> = match serde_json::from_value(items_json) {
+        Ok(v) => v,
+        Err(err) => {
+            return emit_error(state, id, -32602, format!("invalid `items` payload: {err}"));
+        }
+    };
+    let project_root = state.project_root.as_ref().clone();
+    let result = match super::config::init_project_config_value(&project_root) {
+        Ok(r) => r,
+        Err(err) => {
+            return emit_error(
+                state,
+                id,
+                -32000,
+                format!("failed to prepare project config: {err}"),
+            );
+        }
+    };
+    let raw = match fs::read_to_string(&result.config_path) {
+        Ok(s) => s,
+        Err(err) => {
+            return emit_error(
+                state,
+                id,
+                -32000,
+                format!("failed to read {}: {err}", result.config_path.display()),
+            );
+        }
+    };
+    let mut config: PeridotConfig = match toml::from_str(&raw) {
+        Ok(c) => c,
+        Err(err) => {
+            return emit_error(
+                state,
+                id,
+                -32000,
+                format!("failed to parse existing config: {err}"),
+            );
+        }
+    };
+    super::settings::apply_settings_to_config(&items, &mut config);
+    let serialized = match toml::to_string_pretty(&config) {
+        Ok(s) => s,
+        Err(err) => {
+            return emit_error(
+                state,
+                id,
+                -32000,
+                format!("failed to serialize updated config: {err}"),
+            );
+        }
+    };
+    if let Err(err) = fs::write(&result.config_path, serialized) {
+        return emit_error(
+            state,
+            id,
+            -32000,
+            format!("failed to write {}: {err}", result.config_path.display()),
+        );
+    }
+    emit_response(
+        state,
+        id,
+        serde_json::json!({
+            "saved": true,
+            "config_path": result.config_path,
+        }),
+    )
+}
+
 async fn run_session_task(
     state: DaemonState,
     session_id: String,
@@ -606,7 +854,15 @@ async fn run_session_task(
     if let Some(service_tier) = spec.service_tier.clone() {
         options.service_tier = service_tier;
     }
-    let mut config = (*state.run_config).clone();
+    // Pick up config-controlled run parameters from the fresh snapshot
+    // captured by `handle_session_start`. Fields the operator can edit
+    // via the VS Code settings webview (max_turns, budget) need to live
+    // here so a save → new-session round-trip actually changes behaviour.
+    // CLI-only fields (`resume`, `mock_response_file`, `live`) stay on
+    // the boot template untouched.
+    options.max_turns = spec.config.defaults.max_turns;
+    options.budget_usd = spec.config.defaults.budget_usd;
+    let mut config = spec.config.clone();
     apply_session_approval_grants(&state, &session_id, &mut config).await;
 
     let ask_user_port = Arc::new(DaemonAskUserPort {
@@ -1004,6 +1260,50 @@ async fn execute_session_command(
             "severity": "info",
             "command": raw_command,
         })),
+        SlashCommand::Skill { name, args } => {
+            // Try the project's skill store. If the name exists, inject
+            // the body as a PlanReminder-style context entry so the
+            // model picks it up on the next turn. If not, surface a
+            // clear "skill not found" rather than the generic invalid-
+            // command error — this is the difference between "typo'd
+            // command" and "asked for a skill I don't have."
+            let project_root = state.project_root.as_ref().clone();
+            let store = peridot_memory::MemoryStore::new(project_root.join(".peridot/memory.db"));
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or_default();
+            let active = store
+                .list_skills()
+                .map_err(|err| format!("failed to read skill store: {err}"))?;
+            let Some(skill) = active.into_iter().find(|s| s.name == name) else {
+                return Err(format!(
+                    "skill not found: {name}. Run `peridot run \"…\"` once \
+                     to build relevant auto-skills, or try `/help`."
+                ));
+            };
+            // Best-effort: stamp `last_used_at_unix` so the Curator's
+            // staleness pass treats this skill as recently active.
+            let _ = store.mark_skill_viewed(&skill.name, now);
+            let trimmed_args = args.trim();
+            let args_note = if trimmed_args.is_empty() {
+                String::new()
+            } else {
+                format!("\n\nOperator passed args: {trimmed_args}")
+            };
+            Ok(serde_json::json!({
+                "kind": "skill",
+                "title": format!("Skill: {}", skill.name),
+                "message": format!("Loaded skill `{}`{}", skill.name, args_note),
+                "severity": "info",
+                "command": raw_command,
+                "skill": {
+                    "name": skill.name,
+                    "description": skill.description,
+                    "body": skill.body,
+                },
+            }))
+        }
         SlashCommand::Clear => Ok(serde_json::json!({
             "kind": "client_action",
             "action": "clear",
@@ -1022,6 +1322,8 @@ async fn execute_session_command(
         | SlashCommand::SessionNew(_)
         | SlashCommand::SessionSwitch(_)
         | SlashCommand::SessionClose(_)
+        | SlashCommand::SessionDelete(_)
+        | SlashCommand::SessionRename { .. }
         | SlashCommand::SessionList
         | SlashCommand::GoalStart(_)
         | SlashCommand::GoalPause
@@ -1649,6 +1951,7 @@ fn source_label(source: &ContextSource) -> &'static str {
         ContextSource::PlanReminder => "plan",
         ContextSource::ReviewerComment => "review",
         ContextSource::External => "external",
+        ContextSource::SubAgentSummary => "subagent",
     }
 }
 
@@ -2459,6 +2762,26 @@ fn emit_error(state: &DaemonState, id: Value, code: i32, message: String) -> Res
     emit_json(state, &envelope)
 }
 
+/// Emit a one-shot `peridot.handshake` notification before any other daemon
+/// output. Carries the wire-format version of [`AgentRunEvent`] plus the
+/// daemon's own crate version so an editor extension can detect skew (e.g.,
+/// a stale extension talking to a fresher daemon that added an event variant).
+///
+/// JSON-RPC notification, not a request — there's no `id`. Clients that don't
+/// know about handshakes can ignore it without error; clients that do know
+/// can refuse to talk if the schema version differs from what they expect.
+fn emit_handshake(state: &DaemonState) -> Result<()> {
+    let envelope = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "peridot.handshake",
+        "params": {
+            "schema_version": peridot_core::AGENT_RUN_EVENT_SCHEMA_VERSION,
+            "daemon_version": env!("CARGO_PKG_VERSION"),
+        },
+    });
+    emit_json(state, &envelope)
+}
+
 fn emit_event(state: &DaemonState, session_id: &str, event: Value) {
     let envelope = serde_json::json!({
         "jsonrpc": "2.0",
@@ -2613,6 +2936,196 @@ mod tests {
         let out = dispatch_and_collect(r#"{"jsonrpc":"2.0","id":4,"method":"not.real"}"#).await;
         assert_eq!(out[0]["id"], 4);
         assert_eq!(out[0]["error"]["code"], -32601);
+    }
+
+    #[tokio::test]
+    async fn generate_title_rejects_missing_task() {
+        let out = dispatch_and_collect(
+            r#"{"jsonrpc":"2.0","id":51,"method":"session.generate_title","params":{}}"#,
+        )
+        .await;
+        assert_eq!(out[0]["id"], 51);
+        assert_eq!(out[0]["error"]["code"], -32602);
+    }
+
+    #[tokio::test]
+    async fn generate_title_rejects_empty_task() {
+        let out = dispatch_and_collect(
+            r#"{"jsonrpc":"2.0","id":52,"method":"session.generate_title","params":{"task":"   "}}"#,
+        )
+        .await;
+        assert_eq!(out[0]["id"], 52);
+        assert_eq!(out[0]["error"]["code"], -32602);
+    }
+
+    #[tokio::test]
+    async fn generate_title_rejects_non_object_params() {
+        let out = dispatch_and_collect(
+            r#"{"jsonrpc":"2.0","id":53,"method":"session.generate_title","params":"oops"}"#,
+        )
+        .await;
+        assert_eq!(out[0]["id"], 53);
+        assert_eq!(out[0]["error"]["code"], -32602);
+    }
+
+    #[tokio::test]
+    async fn settings_list_returns_curated_items_with_config_path() {
+        let out =
+            dispatch_and_collect(r#"{"jsonrpc":"2.0","id":80,"method":"settings.list"}"#).await;
+        assert_eq!(out[0]["id"], 80);
+        let result = &out[0]["result"];
+        let items = result["items"].as_array().expect("items array present");
+        assert!(
+            items.len() >= 15,
+            "expected curated registry to expose 15+ items, got {}",
+            items.len()
+        );
+        // settings_registry must include a stable autonomy toggle so the
+        // webview's `Auto-verify` section actually has something to render.
+        let auto_verify = items
+            .iter()
+            .find(|i| i["id"] == "defaults.auto_verify_after_mutation")
+            .expect("auto-verify item exposed");
+        assert_eq!(auto_verify["value"]["kind"], "Bool");
+        assert!(
+            result["config_path"]
+                .as_str()
+                .unwrap_or_default()
+                .ends_with("config.toml")
+        );
+    }
+
+    #[tokio::test]
+    async fn settings_save_round_trips_through_list() {
+        // Drive a real save+reload through the dispatcher so the on-disk
+        // TOML round-trips end to end (encode, write, re-read, decode).
+        let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+        let root = test_project("settings_round_trip");
+        let state = DaemonState::new(
+            root.clone(),
+            PeridotConfig::default(),
+            test_options(None),
+            tx,
+        );
+        // Prime the config file via settings.list.
+        dispatch_line(
+            &state,
+            r#"{"jsonrpc":"2.0","id":1,"method":"settings.list"}"#,
+        )
+        .await
+        .unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+        let mut list_first = Vec::new();
+        while let Ok(line) = rx.try_recv() {
+            list_first.push(serde_json::from_str::<Value>(&line).unwrap());
+        }
+        // The handshake notification arrives ahead of the response, hence
+        // we pick the entry with our id.
+        let list_response = list_first
+            .iter()
+            .find(|v| v["id"] == 1)
+            .expect("settings.list response");
+        let mut items: Vec<Value> = list_response["result"]["items"].as_array().unwrap().clone();
+
+        // Flip auto_verify_after_mutation to true.
+        for item in items.iter_mut() {
+            if item["id"] == "defaults.auto_verify_after_mutation" {
+                item["value"]["data"] = Value::Bool(true);
+            }
+        }
+
+        let save_req = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "settings.save",
+            "params": { "items": items },
+        });
+        dispatch_line(&state, &serde_json::to_string(&save_req).unwrap())
+            .await
+            .unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+        let mut save_responses = Vec::new();
+        while let Ok(line) = rx.try_recv() {
+            save_responses.push(serde_json::from_str::<Value>(&line).unwrap());
+        }
+        let save_response = save_responses
+            .iter()
+            .find(|v| v["id"] == 2)
+            .expect("settings.save response");
+        assert_eq!(save_response["result"]["saved"], true);
+
+        // Re-list and confirm the change survived a TOML round trip.
+        dispatch_line(
+            &state,
+            r#"{"jsonrpc":"2.0","id":3,"method":"settings.list"}"#,
+        )
+        .await
+        .unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+        let mut list_second = Vec::new();
+        while let Ok(line) = rx.try_recv() {
+            list_second.push(serde_json::from_str::<Value>(&line).unwrap());
+        }
+        let list_response_second = list_second
+            .iter()
+            .find(|v| v["id"] == 3)
+            .expect("second settings.list response");
+        let items_second = list_response_second["result"]["items"].as_array().unwrap();
+        let saved_item = items_second
+            .iter()
+            .find(|i| i["id"] == "defaults.auto_verify_after_mutation")
+            .unwrap();
+        assert_eq!(saved_item["value"]["data"], true);
+
+        shutdown_sessions(&state).await;
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn settings_save_rejects_missing_items_array() {
+        let out = dispatch_and_collect(
+            r#"{"jsonrpc":"2.0","id":81,"method":"settings.save","params":{}}"#,
+        )
+        .await;
+        let response = out.iter().find(|v| v["id"] == 81).expect("save response");
+        assert_eq!(response["error"]["code"], -32602);
+    }
+
+    #[tokio::test]
+    async fn settings_save_rejects_non_object_params() {
+        let out = dispatch_and_collect(
+            r#"{"jsonrpc":"2.0","id":82,"method":"settings.save","params":"oops"}"#,
+        )
+        .await;
+        let response = out.iter().find(|v| v["id"] == 82).expect("save response");
+        assert_eq!(response["error"]["code"], -32602);
+    }
+
+    #[tokio::test]
+    async fn handshake_emits_schema_and_daemon_version() {
+        let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+        let root = test_project("handshake");
+        let state = DaemonState::new(
+            root.clone(),
+            PeridotConfig::default(),
+            test_options(None),
+            tx,
+        );
+        emit_handshake(&state).unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        let line = rx.try_recv().unwrap();
+        let value: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(value["jsonrpc"], "2.0");
+        assert_eq!(value["method"], "peridot.handshake");
+        // Should not be a response/request — no id field on a notification.
+        assert!(value.get("id").is_none());
+        assert_eq!(
+            value["params"]["schema_version"],
+            peridot_core::AGENT_RUN_EVENT_SCHEMA_VERSION
+        );
+        assert_eq!(value["params"]["daemon_version"], env!("CARGO_PKG_VERSION"));
+        shutdown_sessions(&state).await;
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[tokio::test]
@@ -2811,6 +3324,7 @@ mod tests {
                     model: None,
                     reasoning_effort: None,
                     service_tier: None,
+                    config: PeridotConfig::default(),
                 },
                 approval_grants: Vec::new(),
                 waiting_approval: None,

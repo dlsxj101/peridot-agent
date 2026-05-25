@@ -1,5 +1,8 @@
 //! Append-only conversation context management.
 
+pub mod compacted;
+pub use compacted::CompactedContext;
+
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::{collections::HashSet, fs};
@@ -27,6 +30,11 @@ pub enum ContextSource {
     External,
     /// Reviewer comment injected by the M-COM3 reviewer pass.
     ReviewerComment,
+    /// Summary returned by a sub-agent that did NOT cite evidence
+    /// references. The model must treat it as a hint, not as a
+    /// verified claim — re-read source files / re-run verifications
+    /// before acting on the summary's assertions.
+    SubAgentSummary,
 }
 
 /// One immutable entry in the append-only context log.
@@ -583,6 +591,13 @@ pub struct ContextManager {
     /// instead of the fixed `llm_compaction_threshold_tokens`. The
     /// harness installs this per session from the configured model.
     model_window_tokens: Option<usize>,
+    /// Most recent structured compaction snapshot. Populated by
+    /// `compact_with_llm_inner` whenever a recap successfully lands.
+    /// Consumers (TUI side panel, VS Code "context overview") read
+    /// this for the structured view of "what's happened so far";
+    /// the legacy prose summary is still inserted into `entries` as
+    /// a `PlanReminder` for backward compatibility.
+    last_compacted: Option<crate::compacted::CompactedContext>,
 }
 
 impl ContextManager {
@@ -600,6 +615,7 @@ impl ContextManager {
             current_turn_id: 0,
             branched_from: None,
             model_window_tokens: None,
+            last_compacted: None,
         }
     }
 
@@ -720,6 +736,21 @@ impl ContextManager {
     /// Returns all context entries in append order.
     pub fn entries(&self) -> &[ContextEntry] {
         &self.entries
+    }
+
+    /// Returns the most recent structured compaction snapshot, if any.
+    ///
+    /// Populated by [`compact_with_llm`] (and `force_compact_with_llm`)
+    /// after every successful recap. Consumers — TUI side panels, the
+    /// VS Code "context overview" view, the auto-grader's preamble —
+    /// can read this for a structured view of "what's happened so far"
+    /// (`decisions`, `files_read`, `untrusted_inputs`, `narrative`) without
+    /// having to parse the prose `PlanReminder` entry the harness still
+    /// injects for backward compatibility.
+    ///
+    /// `None` means no compaction has fired yet on this manager.
+    pub fn last_compacted(&self) -> Option<&crate::compacted::CompactedContext> {
+        self.last_compacted.as_ref()
     }
 
     /// Builds a bounded parent-context packet for delegated subagents.
@@ -988,6 +1019,31 @@ Use this as intent and evidence index, not as proof. Re-read exact files or call
         let response = provider.complete(request).await?;
         let summary =
             render_llm_summary(&response.text).unwrap_or_else(|| summarize_entries(to_summarize));
+        // PR-B.6: build the structured `CompactedContext` snapshot
+        // alongside the legacy prose. Mechanical fields come from the
+        // entries being folded; narrative + decisions come from the LLM
+        // JSON if it parsed, otherwise from the deterministic fallback.
+        let mut compacted_snapshot = crate::compacted::CompactedContext::from_entries(to_summarize);
+        let llm_json = parse_llm_summary_json(&response.text);
+        compacted_snapshot.narrative = llm_json
+            .as_ref()
+            .and_then(|v| v.get("current_task"))
+            .and_then(|v| v.as_str())
+            .unwrap_or(&summary)
+            .to_string();
+        if let Some(json) = llm_json.as_ref()
+            && let Some(arr) = json.get("recent_decisions").and_then(|v| v.as_array())
+        {
+            compacted_snapshot.decisions = arr
+                .iter()
+                .filter_map(|item| item.as_str())
+                .map(|s| crate::compacted::Decision {
+                    summary: s.to_string(),
+                    turn_id: None,
+                })
+                .collect();
+        }
+        self.last_compacted = Some(compacted_snapshot);
         let preserved_anchor = self.preserved_current_user_entry_before(keep_from);
         // Same pin-preservation policy as the deterministic compaction:
         // any entry marked `pinned` is carried verbatim across the LLM
@@ -1067,7 +1123,8 @@ Use this as intent and evidence index, not as proof. Re-read exact files or call
                     ContextSource::Tool
                     | ContextSource::PlanReminder
                     | ContextSource::ReviewerComment
-                    | ContextSource::External => MessageRole::User,
+                    | ContextSource::External
+                    | ContextSource::SubAgentSummary => MessageRole::User,
                 };
                 let mut content = if entry.untrusted {
                     render_untrusted_content(&entry.source, &entry.content)
@@ -1101,6 +1158,10 @@ fn summarize_entries(entries: &[ContextEntry]) -> String {
             ContextSource::PlanReminder => plan += 1,
             ContextSource::ReviewerComment => reviewer += 1,
             ContextSource::External => external += 1,
+            // Sub-agent summaries with no evidence refs — treated as
+            // hints. Counted under `external` so the existing summary
+            // bucketing surfaces them as untrusted-adjacent in stats.
+            ContextSource::SubAgentSummary => external += 1,
         }
         if fragments.len() < 6 {
             fragments.push(entry_summary_fragment(entry, 120));
@@ -1405,14 +1466,23 @@ fn format_entries_for_summary(entries: &[ContextEntry]) -> String {
 /// human-readable summary block. Returns `None` when the response is
 /// unparseable so the caller can fall back to the deterministic Tier 1
 /// summary.
-fn render_llm_summary(text: &str) -> Option<String> {
+/// Parse the LLM's structured-recap response into a JSON [`Value`] for
+/// callers that want individual fields (narrative, decisions) rather
+/// than the formatted prose [`render_llm_summary`] produces. Returns
+/// `None` on parse failure so callers can fall back to the
+/// deterministic summary.
+fn parse_llm_summary_json(text: &str) -> Option<serde_json::Value> {
     let trimmed = text.trim();
     let body = trimmed
         .trim_start_matches("```json")
         .trim_start_matches("```")
         .trim_end_matches("```")
         .trim();
-    let value: serde_json::Value = serde_json::from_str(body).ok()?;
+    serde_json::from_str(body).ok()
+}
+
+fn render_llm_summary(text: &str) -> Option<String> {
+    let value = parse_llm_summary_json(text)?;
     let key_facts = value
         .get("key_facts")
         .and_then(|v| v.as_array())
@@ -1470,6 +1540,7 @@ fn source_name(source: &ContextSource) -> &'static str {
         ContextSource::PlanReminder => "plan_reminder",
         ContextSource::ReviewerComment => "reviewer_comment",
         ContextSource::External => "external",
+        ContextSource::SubAgentSummary => "sub_agent_summary",
     }
 }
 
@@ -1938,6 +2009,51 @@ mod tests {
             assert_eq!(manager.entries()[1].source, ContextSource::PlanReminder);
             assert!(manager.entries()[1].content.contains("touched src/lib.rs"));
             assert!(manager.entries()[1].content.contains("ship release"));
+        }
+
+        #[tokio::test]
+        async fn compact_with_llm_populates_structured_snapshot() {
+            let mut manager = loaded_manager();
+            let provider = ScriptedSummaryProvider::new(
+                r#"{"current_task":"ship the release","key_facts":["touched src/lib.rs"],"current_plan":"plan steps","recent_decisions":["bumped version","added telemetry"],"important_files":["src/lib.rs"]}"#,
+            );
+
+            manager
+                .compact_with_llm(&provider, "test-model")
+                .await
+                .unwrap();
+
+            let snapshot = manager
+                .last_compacted()
+                .expect("last_compacted should be populated after successful LLM compaction");
+            assert_eq!(snapshot.narrative, "ship the release");
+            assert_eq!(snapshot.decisions.len(), 2);
+            assert_eq!(snapshot.decisions[0].summary, "bumped version");
+            assert_eq!(snapshot.decisions[1].summary, "added telemetry");
+        }
+
+        #[tokio::test]
+        async fn unparseable_llm_response_still_populates_snapshot_with_fallback_narrative() {
+            let mut manager = loaded_manager();
+            let provider = ScriptedSummaryProvider::new("not json at all");
+
+            manager
+                .compact_with_llm(&provider, "test-model")
+                .await
+                .unwrap();
+
+            // Snapshot should exist with deterministic-summary narrative.
+            let snapshot = manager
+                .last_compacted()
+                .expect("snapshot should be populated even when LLM JSON fails to parse");
+            assert!(
+                !snapshot.narrative.is_empty(),
+                "narrative should fall back to the deterministic summary, not be empty"
+            );
+            assert!(
+                snapshot.decisions.is_empty(),
+                "no decisions array on parse failure"
+            );
         }
 
         #[tokio::test]

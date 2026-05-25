@@ -1,8 +1,22 @@
 use std::path::PathBuf;
 
-use peridot_common::{HooksConfig, SecurityConfig, ToolResult};
+use peridot_common::{AgentPhase, HooksConfig, SecurityConfig, ToolResult};
 use peridot_llm::Usage;
 use serde::{Deserialize, Serialize};
+
+/// Wire-format version of [`AgentRunEvent`].
+///
+/// Daemons emit this value in their initial `peridot.handshake` notification
+/// so editor extensions can detect skew (e.g., an older VS Code extension
+/// talking to a newer daemon that added an event variant). Bump this whenever:
+///   - a variant is removed or renamed,
+///   - an existing variant's field is removed/renamed/changes type,
+///   - serialization semantics change in a way an older client cannot ignore.
+///
+/// Adding a *new* variant with new fields does NOT require a bump — older
+/// clients should treat unknown variants as a no-op. Bump on breaking changes
+/// only.
+pub const AGENT_RUN_EVENT_SCHEMA_VERSION: u32 = 1;
 
 /// User-interface event emitted by the harness run loop.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -44,6 +58,14 @@ pub enum AgentRunEvent {
         name: String,
         /// Tool parameters.
         parameters: serde_json::Value,
+        /// Stable label for the tool's [`peridot_common::RiskClass`]
+        /// (e.g., `"read_only"`, `"destructive"`). Surfaced so the UI can
+        /// colour-code tool chips and explain *why* a tool needs approval
+        /// without re-deriving the class downstream. Optional for backward
+        /// compatibility — older daemons serialised events without it and
+        /// new consumers must tolerate `None`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        risk_class: Option<String>,
     },
     /// Tool execution finished.
     ToolFinished {
@@ -71,6 +93,29 @@ pub enum AgentRunEvent {
     Recovery {
         /// Recovery message.
         message: String,
+    },
+    /// The agent's high-level phase transitioned. Emitted exactly once per
+    /// `AgentState::phase` change so editors / TUIs can render the live
+    /// state machine without polling.
+    PhaseChanged {
+        /// Previous phase.
+        from: AgentPhase,
+        /// New phase.
+        to: AgentPhase,
+        /// Short label describing why this transition happened (e.g.,
+        /// `"tool_started"`, `"verify_failed"`, `"approval_required"`).
+        /// Stable strings — not user-facing prose.
+        reason: String,
+    },
+    /// Context was just compacted with the LLM recap. Carries the
+    /// structured [`peridot_context::CompactedContext`] snapshot so
+    /// editors / TUIs can render "files read so far", "open todos",
+    /// "untrusted inputs" etc. directly instead of parsing the prose
+    /// PlanReminder the harness still injects for backward compatibility.
+    /// Emitted exactly once per successful LLM compaction.
+    ContextCompacted {
+        /// Structured snapshot of the recap.
+        compacted: peridot_context::CompactedContext,
     },
     /// The bounded run finished.
     Finished {

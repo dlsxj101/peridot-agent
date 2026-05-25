@@ -95,6 +95,20 @@ pub async fn run_llm_curator(
     if batch.is_empty() {
         return Ok(CuratorReport::default());
     }
+    // Snapshot the on-disk skill files BEFORE the LLM gets to rewrite
+    // them. If a `consolidate` action goes sideways and merges two
+    // unrelated skills together, the operator can recover by copying
+    // out of `.peridot/skills/.snapshots/<unix>/`. Best-effort: a
+    // snapshot failure logs to stderr and lets the Curator continue
+    // — refusing to run the Curator because of a snapshot copy error
+    // would be a worse failure mode.
+    if let Err(err) = snapshot_skills_dir(project_root, now_unix) {
+        eprintln!("warning: curator snapshot failed: {err}");
+    }
+    // While we're here, prune snapshots older than the configured
+    // retention window so we don't accumulate them forever.
+    let _ = prune_old_skill_snapshots(project_root, now_unix, SNAPSHOT_RETENTION_SECS);
+
     let prompt = build_user_prompt(&batch, now_unix);
     let request = CompletionRequest {
         model: model.to_string(),
@@ -142,6 +156,80 @@ pub(crate) fn archive_skill_with_file(
     let target = archive_dir.join(format!("{name}.md"));
     std::fs::rename(&source, &target)
         .with_context(|| format!("renaming {} -> {}", source.display(), target.display()))?;
+    Ok(())
+}
+
+/// Curator snapshot retention. 30 days mirrors the Hermes "stale"
+/// threshold — anything older than that is well past the window where
+/// a rollback would still be useful, since the LLM Curator has
+/// touched the skills several more times in the meantime.
+const SNAPSHOT_RETENTION_SECS: u64 = 30 * 24 * 3600;
+
+/// Copy `.peridot/skills/auto/` into a timestamped subdirectory under
+/// `.peridot/skills/.snapshots/<now_unix>/`. Used as a rollback point
+/// before the Curator's LLM-driven rewrite phase. Missing source dir
+/// is treated as a no-op (fresh project with no auto-skills yet);
+/// other I/O errors bubble up so the caller can log them.
+fn snapshot_skills_dir(project_root: &Path, now_unix: u64) -> Result<()> {
+    let source = project_root.join(".peridot/skills/auto");
+    if !source.is_dir() {
+        return Ok(());
+    }
+    let target = project_root
+        .join(".peridot/skills/.snapshots")
+        .join(format!("{now_unix}"));
+    std::fs::create_dir_all(&target)
+        .with_context(|| format!("create snapshot dir {}", target.display()))?;
+    copy_dir_recursive(&source, &target)
+        .with_context(|| format!("copy {} -> {}", source.display(), target.display()))?;
+    Ok(())
+}
+
+/// Drop any snapshot directories whose name (unix seconds) is older
+/// than `retention_secs` before `now_unix`. Quietly skips files
+/// whose name doesn't parse as a u64 — those are operator-renamed
+/// keepsakes (e.g. `.snapshots/before-big-merge/`) and we shouldn't
+/// delete them just because they don't look like our timestamps.
+fn prune_old_skill_snapshots(
+    project_root: &Path,
+    now_unix: u64,
+    retention_secs: u64,
+) -> Result<()> {
+    let snapshots = project_root.join(".peridot/skills/.snapshots");
+    if !snapshots.is_dir() {
+        return Ok(());
+    }
+    let cutoff = now_unix.saturating_sub(retention_secs);
+    for entry in std::fs::read_dir(&snapshots)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        let Ok(ts) = name_str.parse::<u64>() else {
+            continue;
+        };
+        if ts < cutoff {
+            let _ = std::fs::remove_dir_all(entry.path());
+        }
+    }
+    Ok(())
+}
+
+/// Recursive directory copy. Stdlib has no equivalent; this is a
+/// minimal walker that creates the target tree and `copy()`s each
+/// file. Used by `snapshot_skills_dir` — too small to justify pulling
+/// in `walkdir`.
+fn copy_dir_recursive(from: &Path, to: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(to)?;
+    for entry in std::fs::read_dir(from)? {
+        let entry = entry?;
+        let path = entry.path();
+        let dest = to.join(entry.file_name());
+        if path.is_dir() {
+            copy_dir_recursive(&path, &dest)?;
+        } else {
+            std::fs::copy(&path, &dest)?;
+        }
+    }
     Ok(())
 }
 
@@ -516,6 +604,88 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_skills_dir_copies_files_to_timestamped_subdir() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "peridot-curator-snap-{}-{nanos}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(root.join(".peridot/skills/auto")).unwrap();
+        std::fs::write(
+            root.join(".peridot/skills/auto/ship-daily.md"),
+            "# Ship Daily\nstep1",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join(".peridot/skills/auto/fix-parser.md"),
+            "# Fix Parser",
+        )
+        .unwrap();
+
+        snapshot_skills_dir(&root, 12_345).unwrap();
+
+        let snap = root.join(".peridot/skills/.snapshots/12345");
+        assert!(snap.join("ship-daily.md").is_file());
+        assert!(snap.join("fix-parser.md").is_file());
+        let body = std::fs::read_to_string(snap.join("ship-daily.md")).unwrap();
+        assert!(body.contains("step1"));
+
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn snapshot_no_op_when_skills_dir_missing() {
+        // A fresh project with no auto-skills should not crash the
+        // Curator just because there's nothing to snapshot.
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "peridot-curator-snap-noop-{}-{nanos}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        snapshot_skills_dir(&root, 99).unwrap();
+        assert!(!root.join(".peridot/skills/.snapshots/99").exists());
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn prune_old_snapshots_drops_only_aged_timestamp_dirs() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "peridot-curator-prune-{}-{nanos}",
+            std::process::id()
+        ));
+        let snaps = root.join(".peridot/skills/.snapshots");
+        std::fs::create_dir_all(snaps.join("100")).unwrap(); // very old
+        std::fs::create_dir_all(snaps.join("1000000")).unwrap(); // recent
+        std::fs::create_dir_all(snaps.join("before-big-merge")).unwrap(); // operator-tagged
+
+        // now = 1_000_500, retention = 1000 → drop anything before 999_500
+        prune_old_skill_snapshots(&root, 1_000_500, 1000).unwrap();
+
+        assert!(!snaps.join("100").exists(), "old snapshot should be pruned");
+        assert!(
+            snaps.join("1000000").exists(),
+            "recent snapshot must remain"
+        );
+        assert!(
+            snaps.join("before-big-merge").exists(),
+            "non-numeric snapshot names must not be touched"
+        );
+
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
     fn parses_well_formed_response() {
         let raw = r#"{"actions":[{"name":"a","action":"keep"},{"name":"b","action":"archive"}]}"#;
         let parsed = parse_curator_response(raw).unwrap();
@@ -686,7 +856,7 @@ mod tests {
         let report = apply_reflection_items(
             &store,
             &root,
-            &[trigram.clone()],
+            std::slice::from_ref(&trigram),
             response,
             1_700_001_000,
             true,

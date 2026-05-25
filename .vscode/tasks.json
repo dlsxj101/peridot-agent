@@ -2,6 +2,72 @@
   "version": "2.0.0",
   "tasks": [
     {
+      "label": "Peridot: Cargo build workspace",
+      "type": "shell",
+      "command": "cargo build --workspace",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": "$rustc",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      }
+    },
+    {
+      "label": "Peridot: Cargo test workspace",
+      "type": "shell",
+      "command": "cargo test --workspace",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": "$rustc",
+      "group": {
+        "kind": "test",
+        "isDefault": true
+      }
+    },
+    {
+      "label": "Peridot: Cargo clippy workspace",
+      "type": "shell",
+      "command": "cargo clippy --workspace -- -D warnings",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": "$rustc",
+      "group": "build"
+    },
+    {
+      "label": "Peridot: Cargo fmt check",
+      "type": "shell",
+      "command": "cargo fmt --all --check",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [],
+      "group": "build"
+    },
+    {
+      "label": "Peridot: Verify Rust workspace",
+      "dependsOn": [
+        "Peridot: Cargo fmt check",
+        "Peridot: Cargo clippy workspace",
+        "Peridot: Cargo test workspace"
+      ],
+      "dependsOrder": "sequence",
+      "problemMatcher": [],
+      "group": "test"
+    },
+    {
+      "label": "Peridot: Run CLI version",
+      "type": "shell",
+      "command": "cargo run -p peridot-cli -- --version",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": "$rustc"
+    },
+    {
       "label": "Peridot: Typecheck extension",
       "type": "shell",
       "command": "npm run typecheck",

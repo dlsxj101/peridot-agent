@@ -24,11 +24,18 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Wrap};
+use serde::{Deserialize, Serialize};
 
 use crate::terminal::TerminalGuard;
 
 /// One row in the settings screen.
-#[derive(Clone, Debug)]
+///
+/// The struct is `Serialize`/`Deserialize` so the daemon can ship the same
+/// item list across JSON-RPC to non-TUI clients (VS Code webview, future
+/// REST shim, …) without duplicating the schema. The TUI renders these
+/// rows directly; the wire format and the in-memory form are intentionally
+/// the same type to keep them in lock-step.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SettingItem {
     /// Stable identifier (e.g. `"defaults.auto_verify_after_mutation"`).
     /// Echoed verbatim back to the caller after save so the caller can
@@ -44,10 +51,35 @@ pub struct SettingItem {
     pub help: Option<String>,
     /// Current value.
     pub value: SettingValue,
+    /// Which surfaces should display this item. Lets the VS Code
+    /// webview filter out TUI-only knobs (`show_mascot`, `show_thinking`,
+    /// …) that would do nothing if toggled there. Defaults to
+    /// `["tui", "vscode"]` via [`SettingItem::default_surfaces`] when
+    /// the producer doesn't care. Unknown surfaces are ignored by
+    /// renderers — adding a new surface (e.g. `"web"`) is additive.
+    #[serde(default = "SettingItem::default_surfaces")]
+    pub surfaces: Vec<String>,
+}
+
+impl SettingItem {
+    /// Default surface list — the item is rendered everywhere.
+    /// Centralised so the registry doesn't litter literal vec
+    /// constructions and so the serde `default` callback has a
+    /// stable target.
+    pub fn default_surfaces() -> Vec<String> {
+        vec!["tui".to_string(), "vscode".to_string()]
+    }
 }
 
 /// Value held by a [`SettingItem`].
-#[derive(Clone, Debug, PartialEq)]
+///
+/// JSON shape uses adjacently-tagged enum representation
+/// (`{"kind": "Bool", "data": true}`) for an unambiguous mapping that
+/// TypeScript / Python clients can pattern-match on. The TUI never reads
+/// the JSON form — the same `enum` is the in-memory state — but keeping
+/// one definition prevents wire-format drift between TUI and webview.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "data")]
 pub enum SettingValue {
     /// On/off toggle.
     Bool(bool),
@@ -350,6 +382,7 @@ mod tests {
             label: id.to_string(),
             help: None,
             value: SettingValue::Bool(value),
+            surfaces: SettingItem::default_surfaces(),
         }
     }
 

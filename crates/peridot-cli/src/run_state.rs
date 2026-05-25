@@ -24,12 +24,14 @@ pub(super) fn resume_task_text(id: &str, summary: &str, task: &str) -> String {
     }
 }
 
-pub(super) fn save_run_session(
+pub(super) async fn save_run_session(
     project_root: &Path,
     session_id: &str,
     summary: &AgentRunSummary,
     task: &str,
     memory: &MemoryConfig,
+    rewriter: Option<&dyn peridot_llm::LlmProvider>,
+    rewriter_model: &str,
 ) -> Result<()> {
     if !memory.session_history {
         return Ok(());
@@ -58,7 +60,10 @@ pub(super) fn save_run_session(
             summary,
             &task,
             memory.skills_review,
-        )?;
+            rewriter,
+            rewriter_model,
+        )
+        .await?;
     }
     // Persist the tool sequence + bump n-gram counters whenever
     // cross-session reflection is enabled. Runs on EVERY completed
@@ -111,20 +116,44 @@ pub(super) fn skill_worth_saving(summary: &AgentRunSummary) -> bool {
         >= MIN_DISTINCT_TOOLS
 }
 
-pub(super) fn save_auto_skill(
+// Argument list mirrors what the caller already threads through —
+// folding them into a struct would just shuffle the count from the
+// function signature into a `SaveSkillArgs` builder. The lint is
+// silenced rather than masked.
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn save_auto_skill(
     project_root: &Path,
     store: &MemoryStore,
     session_id: &str,
     summary: &AgentRunSummary,
     task: &str,
     needs_review: bool,
+    rewriter: Option<&dyn peridot_llm::LlmProvider>,
+    rewriter_model: &str,
 ) -> Result<()> {
     let name = format!("auto-{}", slugify_for_branch(task));
-    let body = auto_skill_body(session_id, summary, task, needs_review);
+    // Prefer the LLM-rewritten body (Hermes-style SKILL.md with YAML
+    // frontmatter + procedure/pitfalls/verification sections) when a
+    // provider is available. Falls back to the deterministic template
+    // when the LLM is missing, errors, or returns something that
+    // doesn't look like a SKILL.md — silent fallback beats blocking
+    // session save on a flaky provider.
+    let rewritten = match rewriter {
+        Some(provider) => llm_rewrite_skill_body(provider, rewriter_model, task, summary).await,
+        None => None,
+    };
+    let (body, description) = match rewritten {
+        Some(r) => (r.body, r.description),
+        None => (
+            auto_skill_body(session_id, summary, task, needs_review),
+            String::new(),
+        ),
+    };
     store.save_skill(&StoredSkill {
         name: name.clone(),
         body: body.clone(),
         scope: "auto".to_string(),
+        description,
         ..Default::default()
     })?;
     let skills_dir = project_root.join(".peridot/skills/auto");
@@ -133,6 +162,10 @@ pub(super) fn save_auto_skill(
     Ok(())
 }
 
+/// Hermes-style template fallback. Kept as the safety net when no
+/// provider is wired (mock-response sessions, offline daemons), or
+/// when the LLM call fails. Has no frontmatter so `description` stays
+/// empty — distinguishable from an LLM-rewritten skill at L0.
 pub(super) fn auto_skill_body(
     session_id: &str,
     summary: &AgentRunSummary,
@@ -149,6 +182,129 @@ pub(super) fn auto_skill_body(
     format!(
         "# Auto Skill: {task}\n\nreview_required: {review}\nsession: {session_id}\n\n## When To Use\nRepeat this pattern for similar tasks.\n\n## Observed Steps\n{tools}\n"
     )
+}
+
+/// LLM-rewritten skill body. Returns `None` whenever the call fails or
+/// the output doesn't parse as a SKILL.md with YAML frontmatter —
+/// silent failure is preferred over a half-formed skill polluting the
+/// store, since the deterministic template is always a safe fallback.
+pub(super) struct RewrittenSkill {
+    pub body: String,
+    pub description: String,
+}
+
+pub(super) async fn llm_rewrite_skill_body(
+    provider: &dyn peridot_llm::LlmProvider,
+    model: &str,
+    task: &str,
+    summary: &AgentRunSummary,
+) -> Option<RewrittenSkill> {
+    // Compact the turn log to ~25 entries so we don't blow the prompt
+    // window on long sessions. Each entry is "name: summary".
+    let tool_log: String = summary
+        .turns
+        .iter()
+        .take(25)
+        .map(|t| {
+            let one_line = t.tool_result.summary.replace('\n', " ");
+            format!(
+                "- {}: {}",
+                t.tool_name,
+                compact_summary_text(&one_line, 200)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let system = SKILL_REWRITER_SYSTEM_PROMPT.to_string();
+    let user = format!(
+        "Task description:\n{task}\n\nTool log from the completed session:\n{tool_log}\n\nWrite the SKILL.md now."
+    );
+    let request = peridot_llm::CompletionRequest {
+        model: model.to_string(),
+        system: Some(system),
+        messages: vec![peridot_llm::LlmMessage::new(
+            peridot_llm::MessageRole::User,
+            user,
+        )],
+        max_tokens: Some(1200),
+        thinking: false,
+        reasoning_effort: peridot_common::ReasoningEffort::Off,
+        service_tier: None,
+        tools: Vec::new(),
+        tool_choice: Default::default(),
+    };
+    let response = provider.complete(request).await.ok()?;
+    let body = response.text.trim().to_string();
+    if !looks_like_skill_md(&body) {
+        return None;
+    }
+    let description = extract_yaml_field(&body, "description").unwrap_or_default();
+    Some(RewrittenSkill { body, description })
+}
+
+const SKILL_REWRITER_SYSTEM_PROMPT: &str = "\
+You write reusable agent SKILL.md files in the Hermes-style format. \
+Given a task and the tool log from a session that solved it, produce \
+exactly one Markdown document with these sections:\n\
+\n\
+1. YAML frontmatter (between `---` fences) carrying `name`, \
+`description` (one sentence, what the skill is for), `version` (`1`), \
+`tags` (array of 1-4 short kebab-case tags).\n\
+2. `## When to Use` — 1-3 bullet points naming the situations this \
+skill applies to.\n\
+3. `## Procedure` — numbered steps that a future agent can replay. \
+Abstract away project-specific details (paths, branch names, PR \
+numbers) — phrase steps so they reuse, not just describe.\n\
+4. `## Pitfalls` — 1-3 bullets on what to watch out for.\n\
+5. `## Verification` — one sentence on how to confirm the skill \
+worked.\n\
+\n\
+Reply with ONLY the SKILL.md content, starting at the opening `---`. \
+No commentary, no code fences around the whole output.";
+
+/// Cheap structural check to reject obviously broken LLM output before
+/// we store it. We require: starts with a YAML frontmatter fence,
+/// contains a `name:` line in the frontmatter, and contains at least
+/// one `##` section header. Anything else falls back to the template.
+fn looks_like_skill_md(body: &str) -> bool {
+    let trimmed = body.trim_start();
+    if !trimmed.starts_with("---") {
+        return false;
+    }
+    // Take just the frontmatter (between first two `---` fences).
+    let after_first = match trimmed.find("---").map(|i| &trimmed[i + 3..]) {
+        Some(t) => t,
+        None => return false,
+    };
+    let Some(close_idx) = after_first.find("\n---") else {
+        return false;
+    };
+    let frontmatter = &after_first[..close_idx];
+    frontmatter.contains("name:") && body.contains("##")
+}
+
+/// Pull a single top-level YAML field value out of the frontmatter.
+/// Intentionally a minimal parser — we only want one or two fields and
+/// pulling in a YAML dep just for this is overkill. Returns the trimmed
+/// value with surrounding quotes stripped; multi-line or list values
+/// are returned as-is (good enough for the description case).
+fn extract_yaml_field(body: &str, key: &str) -> Option<String> {
+    let trimmed = body.trim_start_matches("---").trim_start();
+    for line in trimmed.lines() {
+        let line = line.trim_end();
+        if line == "---" {
+            break;
+        }
+        if let Some(rest) = line.strip_prefix(&format!("{key}:")) {
+            let value = rest.trim().trim_matches('"').trim_matches('\'').to_string();
+            if value.is_empty() {
+                return None;
+            }
+            return Some(value);
+        }
+    }
+    None
 }
 
 pub(super) fn auto_commit_run(
@@ -321,5 +477,51 @@ mod tests {
             turn("shell_exec", true),
         ]);
         assert!(skill_worth_saving(&s));
+    }
+
+    #[test]
+    fn looks_like_skill_md_accepts_well_formed_output() {
+        let valid = "\
+---
+name: ship-daily
+description: Daily release flow
+version: 1
+tags: [release, daily]
+---
+
+## When to Use
+- Friday afternoons
+
+## Procedure
+1. step
+";
+        assert!(super::looks_like_skill_md(valid));
+    }
+
+    #[test]
+    fn looks_like_skill_md_rejects_missing_frontmatter() {
+        let invalid = "# Auto Skill: foo\n\n## When to Use\n- bar\n";
+        assert!(!super::looks_like_skill_md(invalid));
+    }
+
+    #[test]
+    fn looks_like_skill_md_rejects_missing_name_field() {
+        let invalid = "---\ndescription: x\n---\n\n## Section\n";
+        assert!(!super::looks_like_skill_md(invalid));
+    }
+
+    #[test]
+    fn extract_yaml_field_returns_description() {
+        let body = "---\nname: ship-daily\ndescription: \"Daily release flow\"\n---\n\nrest";
+        assert_eq!(
+            super::extract_yaml_field(body, "description"),
+            Some("Daily release flow".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_yaml_field_returns_none_when_absent() {
+        let body = "---\nname: x\n---\n\nrest";
+        assert!(super::extract_yaml_field(body, "description").is_none());
     }
 }

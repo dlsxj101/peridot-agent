@@ -5,9 +5,10 @@
 
 import * as childProcess from 'child_process';
 import * as vscode from 'vscode';
-import { PeridotDaemon, RpcNotification } from './daemon';
+import { EXPECTED_AGENT_RUN_EVENT_SCHEMA_VERSION, PeridotDaemon, RpcNotification } from './daemon';
 import { resetBinaryCache, resolvePeridotBinary } from './peridotBin';
 import { peridotChildEnv } from './processEnv';
+import { SettingsPanelManager } from './settingsPanel';
 import { StatusCache } from './statusCache';
 import type { CommandResultView, SlashCommandSpec } from './types';
 import {
@@ -69,6 +70,13 @@ interface WorkspaceRun {
 let workspaceRun: WorkspaceRun | undefined;
 let statusCache: StatusCache<DaemonStatusResult> | undefined;
 let cachedFolder: string | undefined;
+/**
+ * Module-level reference to the active sidebar provider. Set during
+ * `activate()`. Helpers that need to reach the sidebar from outside the
+ * activate() closure (e.g., the standalone `generateSessionTitle` helper)
+ * read this instead of being passed the sidebar through every callsite.
+ */
+let activeSidebar: PeridotSidebarProvider | undefined;
 
 const OPENAI_OAUTH_DEFAULT_MODEL = 'gpt-5.5';
 const OPENAI_OAUTH_BASE_URL = 'https://chatgpt.com/backend-api/codex';
@@ -92,13 +100,19 @@ export function activate(context: vscode.ExtensionContext) {
       respondAskUser(requestId, answer, output, sidebar),
     respondApproval: async (decision: ApprovalResponse): Promise<void> =>
       respondApproval(decision, output, sidebar),
-    openFile: async (relativePath: string, line?: number, column?: number): Promise<void> =>
-      openWorkspaceFile(relativePath, output, line, column),
+    openFile: async (relativePath: string, line?: number, column?: number, projectRoot?: string): Promise<void> =>
+      openWorkspaceFile(relativePath, output, line, column, undefined, projectRoot),
     registerProvider: async (
       provider: ProviderChoice,
       params: Record<string, string>,
     ): Promise<void> => registerProvider(provider, params, output, sidebar),
+    deleteSession: async (clientSessionId: string, daemonSessionId?: string): Promise<void> =>
+      deleteExtensionSession(clientSessionId, daemonSessionId, output),
+    copyText: async (text: string): Promise<void> => vscode.env.clipboard.writeText(text),
+    generateSessionTitle: async (task: string): Promise<string | null> =>
+      generateSessionTitle(task, output),
   });
+  activeSidebar = sidebar;
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(PeridotSidebarProvider.viewType, sidebar, {
       webviewOptions: { retainContextWhenHidden: true },
@@ -182,6 +196,34 @@ export function activate(context: vscode.ExtensionContext) {
       await refreshStatus(output, sidebar, { force: true });
     }),
   );
+
+  // Editor-area settings panel. Uses the workspace daemon to read+write
+  // `.peridot/config.toml`. If no daemon is running yet (user hasn't
+  // started a task), spawning one just to read settings is fine —
+  // they'd hit the same cost on their first task anyway.
+  const settingsPanel = new SettingsPanelManager(context.extensionUri, output, async () => {
+    const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (!folder) {
+      void vscode.window.showErrorMessage(
+        'Open a folder before editing Peridot settings — the daemon needs a project root.',
+      );
+      return null;
+    }
+    try {
+      const ws = await ensureWorkspaceRun(folder, output, sidebar);
+      return ws.daemon;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      output.appendLine(`[peridot] settings: failed to reach daemon: ${message}`);
+      return null;
+    }
+  });
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('peridot.openSettings', async () => {
+      await settingsPanel.open();
+    }),
+  );
 }
 
 export async function deactivate() {
@@ -211,6 +253,20 @@ async function ensureWorkspaceRun(
   };
   run.disposeNotification = daemon.onNotification((notification) => {
     void handleDaemonNotification(notification, output, sidebar);
+  });
+  daemon.onHandshake((handshake) => {
+    output.appendLine(
+      `[peridot] daemon handshake: schema_version=${handshake.schemaVersion} daemon_version=${handshake.daemonVersion}`,
+    );
+    if (handshake.schemaVersion !== EXPECTED_AGENT_RUN_EVENT_SCHEMA_VERSION) {
+      const message =
+        `Peridot daemon and VS Code extension are out of sync. ` +
+        `Extension expects AgentRunEvent schema v${EXPECTED_AGENT_RUN_EVENT_SCHEMA_VERSION}, ` +
+        `but daemon ${handshake.daemonVersion} reports v${handshake.schemaVersion}. ` +
+        `Some events may not render correctly until both sides are updated.`;
+      output.appendLine(`[peridot] ${message}`);
+      void vscode.window.showWarningMessage(message);
+    }
   });
   run.disposeExit = daemon.onExit((exit) => {
     output.appendLine(
@@ -266,6 +322,53 @@ function runForApproval(
   sidebar: PeridotSidebarProvider,
 ): ActiveRun | undefined {
   return runForDaemonSession(decision.sessionId) ?? currentActiveRun(sidebar) ?? singleActiveRun();
+}
+
+/**
+ * Ask the daemon to LLM-generate a short title for the current session.
+ *
+ * Resolves to the LLM's title string, or `null` if the daemon reports an
+ * error / no workspace is open / the LLM returns empty. The sidebar treats
+ * `null` as "fall back to 'No title'" — never to the raw truncated task.
+ *
+ * Fire-and-forget from the caller's perspective: this never throws. We
+ * deliberately don't share the workspace daemon's lifetime semantics here —
+ * if no workspace daemon exists yet, we just return `null` and let the
+ * placeholder remain. By the time the second turn runs there will be one.
+ */
+async function generateSessionTitle(
+  task: string,
+  output: vscode.OutputChannel,
+): Promise<string | null> {
+  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!folder) {
+    return null;
+  }
+  try {
+    const workspace = await ensureWorkspaceRun(folder, output, sidebarForGenerateTitle());
+    const result = (await workspace.daemon.send('session.generate_title', {
+      task,
+    })) as { title?: string | null };
+    const title = result?.title?.trim();
+    return title && title.length > 0 ? title : null;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    output.appendLine(`[peridot] session.generate_title failed: ${message}`);
+    return null;
+  }
+}
+
+/**
+ * Sidebar lookup helper used by `generateSessionTitle`. ensureWorkspaceRun
+ * needs a sidebar reference for its exit-listener callback, but the
+ * sidebar instance is held by the outer activate() closure. We resolve it
+ * through the module-level binding `activeSidebar` set during activation.
+ */
+function sidebarForGenerateTitle(): PeridotSidebarProvider {
+  if (!activeSidebar) {
+    throw new Error('Peridot sidebar is not active');
+  }
+  return activeSidebar;
 }
 
 async function runTask(
@@ -973,40 +1076,103 @@ async function openWorkspaceFile(
   line?: number,
   column?: number,
   openOptions?: { beside?: boolean; preview?: boolean },
+  projectRoot?: string,
 ): Promise<void> {
   const folder = vscode.workspace.workspaceFolders?.[0];
-  if (!folder) {
+  if (!folder && !projectRoot) {
     output.appendLine(`[peridot] openFile ignored — no workspace open: ${relativePath}`);
     return;
   }
-  try {
-    const uri = relativePath.startsWith('/') || /^[A-Za-z]:[\\/]/.test(relativePath)
-      ? vscode.Uri.file(relativePath)
-      : vscode.Uri.joinPath(folder.uri, relativePath);
-    const selectionOptions =
-      typeof line === 'number'
-        ? {
-            selection: new vscode.Range(
-              Math.max(0, line - 1),
-              Math.max(0, (column ?? 1) - 1),
-              Math.max(0, line - 1),
-              Math.max(0, (column ?? 1) - 1),
-            ),
-          }
-        : undefined;
-    const document = await vscode.workspace.openTextDocument(uri);
-    await vscode.window.showTextDocument(document, {
-      ...selectionOptions,
-      preview: openOptions?.preview ?? false,
-      viewColumn:
-        openOptions?.beside && vscode.window.activeTextEditor
-          ? vscode.ViewColumn.Beside
-          : vscode.ViewColumn.Active,
-    });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    output.appendLine(`[peridot] openFile failed: ${message}`);
+
+  const isAbsolute = relativePath.startsWith('/') || /^[A-Za-z]:[\\/]/.test(relativePath);
+
+  // Build candidate URIs for relative paths.  Prefer the daemon's project
+  // root (which may differ from the VS Code workspace folder) so that paths
+  // emitted by the agent resolve correctly.
+  //
+  // URI construction uses the workspace folder's scheme + authority so it
+  // works correctly in remote environments (WSL, SSH, containers).
+  const candidateUris: vscode.Uri[] = [];
+  if (isAbsolute) {
+    // Absolute path: use the folder's scheme/authority for remote compatibility
+    const uri = folder
+      ? folder.uri.with({ path: relativePath })
+      : vscode.Uri.file(relativePath);
+    candidateUris.push(uri);
+  } else {
+    // Relative path: try project root first, then workspace folder, then
+    // a findFiles fallback for cases where both roots are the same or wrong.
+    if (projectRoot && folder) {
+      candidateUris.push(vscode.Uri.joinPath(folder.uri.with({ path: projectRoot }), relativePath));
+    }
+    if (folder) {
+      const folderCandidate = vscode.Uri.joinPath(folder.uri, relativePath);
+      // Avoid duplicate when projectRoot === folder path
+      if (!candidateUris.some((u) => u.toString() === folderCandidate.toString())) {
+        candidateUris.push(folderCandidate);
+      }
+    }
   }
+
+  const selectionOptions =
+    typeof line === 'number'
+      ? {
+          selection: new vscode.Range(
+            Math.max(0, line - 1),
+            Math.max(0, (column ?? 1) - 1),
+            Math.max(0, line - 1),
+            Math.max(0, (column ?? 1) - 1),
+          ),
+        }
+      : undefined;
+
+  // Try each candidate until one succeeds.
+  const errors: string[] = [];
+  for (const uri of candidateUris) {
+    try {
+      const document = await vscode.workspace.openTextDocument(uri);
+      await vscode.window.showTextDocument(document, {
+        ...selectionOptions,
+        preview: openOptions?.preview ?? false,
+        viewColumn:
+          openOptions?.beside && vscode.window.activeTextEditor
+            ? vscode.ViewColumn.Beside
+            : vscode.ViewColumn.Active,
+      });
+      return; // success — stop trying
+    } catch (err) {
+      errors.push(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  // All direct candidates failed — try a workspace-wide file search as a
+  // last resort.  This handles the common case where the VS Code workspace
+  // folder is a parent of the actual project root (e.g. workspace is
+  // /home/user/workspace but project is /home/user/workspace/my-project).
+  if (!isAbsolute) {
+    try {
+      const pattern = `**/${relativePath}`;
+      const found = await vscode.workspace.findFiles(pattern, undefined, 1);
+      if (found.length > 0) {
+        const document = await vscode.workspace.openTextDocument(found[0]);
+        await vscode.window.showTextDocument(document, {
+          ...selectionOptions,
+          preview: openOptions?.preview ?? false,
+          viewColumn:
+            openOptions?.beside && vscode.window.activeTextEditor
+              ? vscode.ViewColumn.Beside
+              : vscode.ViewColumn.Active,
+        });
+        return;
+      }
+    } catch (err) {
+      errors.push(`findFiles: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  // Everything failed.
+  output.appendLine(`[peridot] openFile failed for "${relativePath}": ${errors.join(' | ')}`);
+  void vscode.window.showWarningMessage(`파일을 열 수 없습니다: ${relativePath}`);
 }
 
 async function clearExtensionSession(
@@ -1023,6 +1189,27 @@ async function clearExtensionSession(
     }
     await finishRunByClient(current.clientSessionId, output);
   }
+}
+
+async function deleteExtensionSession(
+  clientSessionId: string,
+  daemonSessionId: string | undefined,
+  output: vscode.OutputChannel,
+): Promise<void> {
+  const run =
+    workspaceRun?.activeRuns.get(clientSessionId) ??
+    (daemonSessionId ? runForDaemonSession(daemonSessionId) : undefined);
+  const sessionId = run?.sessionId ?? daemonSessionId;
+  const daemon = run?.daemon ?? workspaceRun?.daemon;
+  if (sessionId && daemon) {
+    try {
+      await daemon.send('session.cancel', { session_id: sessionId });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      output.appendLine(`[peridot] delete session cancel failed: ${message}`);
+    }
+  }
+  await finishRunByClient(clientSessionId, output);
 }
 
 async function handleDaemonNotification(

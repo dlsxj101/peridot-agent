@@ -9,6 +9,21 @@ import * as readline from 'readline';
 import { resolvePeridotBinary } from './peridotBin';
 import { peridotChildEnv } from './processEnv';
 
+/**
+ * AgentRunEvent wire-format version the extension was built against.
+ *
+ * The daemon sends its own version as the very first stdout line in a
+ * `peridot.handshake` notification. If the values disagree the daemon shipped
+ * with a different version of the Peridot binary than this extension was
+ * built for — the user is surfaced a one-shot warning so they can update,
+ * instead of mysterious silent malfunctions when an unknown event variant
+ * arrives.
+ *
+ * MUST be kept in sync with `AGENT_RUN_EVENT_SCHEMA_VERSION` in
+ * `crates/peridot-core/src/requests.rs`. Bumping rules are documented there.
+ */
+export const EXPECTED_AGENT_RUN_EVENT_SCHEMA_VERSION = 1;
+
 /** One JSON-RPC 2.0 request envelope. */
 interface RpcRequest {
   jsonrpc: '2.0';
@@ -44,6 +59,17 @@ export interface DaemonExit {
 /** Listener invoked when the daemon process exits. */
 type ExitListener = (exit: DaemonExit) => void;
 
+/** Payload of the daemon's initial `peridot.handshake` notification. */
+export interface DaemonHandshake {
+  /** Wire-format version of `AgentRunEvent`. */
+  schemaVersion: number;
+  /** Crate version of the daemon binary. */
+  daemonVersion: string;
+}
+
+/** Listener invoked once when the daemon completes its initial handshake. */
+type HandshakeListener = (handshake: DaemonHandshake) => void;
+
 /**
  * Spawned `peridot daemon` process plus the bookkeeping needed to
  * correlate stdout lines with outstanding requests and dispatch
@@ -65,6 +91,8 @@ export class PeridotDaemon {
   >();
   private notificationListeners = new Set<NotificationListener>();
   private exitListeners = new Set<ExitListener>();
+  private handshakeListeners = new Set<HandshakeListener>();
+  private handshake: DaemonHandshake | undefined;
   private exited = false;
 
   private constructor(child: childProcess.ChildProcessWithoutNullStreams) {
@@ -143,6 +171,26 @@ export class PeridotDaemon {
   }
 
   /**
+   * Registers a listener for the daemon's initial `peridot.handshake`
+   * notification. Fires once per daemon process. If the handshake already
+   * arrived before this listener was attached, fires synchronously with
+   * the cached value so late subscribers don't miss it.
+   */
+  public onHandshake(listener: HandshakeListener): () => void {
+    this.handshakeListeners.add(listener);
+    if (this.handshake) {
+      try {
+        listener(this.handshake);
+      } catch (err) {
+        console.error('[peridot] handshake listener failed:', err);
+      }
+    }
+    return () => {
+      this.handshakeListeners.delete(listener);
+    };
+  }
+
+  /**
    * Asks the daemon to drain and exit. Best-effort: we send the
    * notification, close stdin, and wait briefly for the child to
    * leave gracefully before forcing a kill.
@@ -182,6 +230,24 @@ export class PeridotDaemon {
       return;
     }
     if (isRpcNotification(parsed)) {
+      // The handshake notification is the daemon's first stdout line — peel
+      // it off here so listeners that care about generic `event` traffic
+      // don't see a one-shot version envelope, and so the daemon's
+      // schema/version becomes queryable via `onHandshake`.
+      if (parsed.method === 'peridot.handshake') {
+        const handshake = extractHandshake(parsed.params);
+        if (handshake) {
+          this.handshake = handshake;
+          for (const listener of this.handshakeListeners) {
+            try {
+              listener(handshake);
+            } catch (err) {
+              console.error('[peridot] handshake listener failed:', err);
+            }
+          }
+        }
+        return;
+      }
       for (const listener of this.notificationListeners) {
         try {
           listener(parsed);
@@ -227,6 +293,16 @@ function isRpcNotification(value: unknown): value is RpcNotification {
     typeof value.method === 'string' &&
     !('id' in value)
   );
+}
+
+function extractHandshake(params: unknown): DaemonHandshake | undefined {
+  if (!isRecord(params)) return undefined;
+  const schemaVersion = params.schema_version;
+  const daemonVersion = params.daemon_version;
+  if (typeof schemaVersion !== 'number' || typeof daemonVersion !== 'string') {
+    return undefined;
+  }
+  return { schemaVersion, daemonVersion };
 }
 
 function isRpcResponse(value: unknown): value is RpcResponse {

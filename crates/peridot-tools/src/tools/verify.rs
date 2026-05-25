@@ -72,6 +72,10 @@ impl Tool for VerifyBuildTool {
     fn permission_level(&self) -> PermissionLevel {
         PermissionLevel::Read
     }
+
+    fn risk_class(&self) -> peridot_common::RiskClass {
+        peridot_common::RiskClass::BuildOrTest
+    }
 }
 
 /// Built-in verify test tool.
@@ -110,6 +114,10 @@ impl Tool for VerifyTestTool {
     fn permission_level(&self) -> PermissionLevel {
         PermissionLevel::Read
     }
+
+    fn risk_class(&self) -> peridot_common::RiskClass {
+        peridot_common::RiskClass::BuildOrTest
+    }
 }
 
 /// Built-in verify lint tool.
@@ -147,6 +155,10 @@ impl Tool for VerifyLintTool {
 
     fn permission_level(&self) -> PermissionLevel {
         PermissionLevel::Read
+    }
+
+    fn risk_class(&self) -> peridot_common::RiskClass {
+        peridot_common::RiskClass::BuildOrTest
     }
 }
 

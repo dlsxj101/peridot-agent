@@ -285,6 +285,18 @@ pub fn slash_command_catalog() -> &'static [SlashCommandSpec] {
             category: "session",
         },
         SlashCommandSpec {
+            name: "/session delete",
+            description: "delete a session and its persisted data",
+            arg_hint: Some("<id|title>"),
+            category: "session",
+        },
+        SlashCommandSpec {
+            name: "/session rename",
+            description: "rename a session",
+            arg_hint: Some("<id|title> <new title>"),
+            category: "session",
+        },
+        SlashCommandSpec {
             name: "/session list",
             description: "list all sessions",
             arg_hint: None,

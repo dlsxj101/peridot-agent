@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use peridot_agents::{ModelTier, SubAgent, SubAgentKind, SubAgentTask};
+use peridot_agents::SubAgent;
 use peridot_common::{
     AgentPhase, ExecutionMode, PeriError, PeriResult, SecurityConfig, ToolCall, ToolResult,
 };
@@ -15,17 +15,11 @@ use peridot_tools::audit::{AuditEvent, append_audit_event};
 use peridot_tools::hooks::{HookRunner, tool_hook_variables};
 use peridot_tools::{AgentMessageBus, AskUserPort, ToolContext, ToolRegistry};
 
-use crate::agent_helpers::{
-    approval_required_error, is_mutating_tool_name, recent_verify_summary, truncate_chars,
-};
-use crate::goal::check_goal_satisfied;
+use crate::agent_helpers::{approval_required_error, truncate_chars};
 use crate::permissions::ensure_tool_allowed;
 use crate::prompt::{read_plan_reminder, system_prompt_for_role};
 use crate::recovery::{
-    StuckAction, StuckDetector, budget_exceeded_message, budget_warning_message, classify_error,
-    format_reminder_message, recovery_analysis_message, recovery_message, run_budget_warning_hook,
-    run_context_compacted_hook, run_error_event_hooks, run_recovery_event_hook,
-    should_emit_budget_warning,
+    budget_exceeded_message, run_context_compacted_hook, run_recovery_event_hook,
 };
 use crate::requests::{
     AgentRunEvent, AgentRunRequest, AgentRunSummary, AgentTurnOutcome, AgentTurnRequest,
@@ -39,9 +33,59 @@ use peridot_common::CancelToken;
 /// Function the auto-grade gate consults to produce a worktree diff
 /// when the production `collect_git_diff` is unsuitable (e.g. in
 /// unit tests that don't bootstrap a real git repo).
-pub type GraderDiffProvider = Box<dyn Fn(&std::path::Path) -> String + Send + Sync>;
+pub type GraderDiffProvider = std::sync::Arc<dyn Fn(&std::path::Path) -> String + Send + Sync>;
 
-const MAX_ERROR_RECOVERY_ATTEMPTS: usize = 3;
+/// What the driver should do after the turn_error policy chain runs.
+/// Flattens `Decision` into the driver's specific control-flow needs
+/// (some `Decision` variants don't make sense at this hook).
+#[derive(Debug)]
+enum TurnErrorAction {
+    /// No policy claimed the error → sleep briefly to avoid hot-looping
+    /// the same failure and retry.
+    Continue,
+    /// A policy injected a reminder and asked to retry immediately.
+    Retry,
+    /// Treat as SkipTurn — re-enter the loop from the top.
+    Skip,
+    /// Stop the run with this reason; the optional message gets
+    /// forwarded as a `Recovery` event and recovery_abort hook.
+    Stop {
+        reason: StopReason,
+        message: Option<String>,
+    },
+}
+
+/// Build a final `AgentRunSummary`, fire the [`AgentRunEvent::Finished`]
+/// event, and return the summary so the caller can `return Ok(...)`.
+///
+/// Used at every run-termination site in `run_until_done_with_events`
+/// (Done, Interrupted, Budget, ApprovalRequired, MaxTurns). Centralising
+/// the pattern keeps `duration_ms` consistent and ensures every exit
+/// path emits a Finished event exactly once.
+fn finalize_run<F>(
+    turns: Vec<AgentTurnOutcome>,
+    usage: Usage,
+    stopped_reason: StopReason,
+    started_at: std::time::Instant,
+    events: &mut F,
+) -> AgentRunSummary
+where
+    F: FnMut(AgentRunEvent),
+{
+    let summary = AgentRunSummary {
+        turns,
+        usage,
+        stopped_reason,
+        duration_ms: started_at.elapsed().as_millis() as u64,
+    };
+    events(AgentRunEvent::Finished {
+        summary: summary.clone(),
+    });
+    summary
+}
+
+// `MAX_ERROR_RECOVERY_ATTEMPTS` moved into `ErrorRecoveryPolicy` (see
+// loop_policy/recovery.rs) — that's where the attempt counter lives now.
 const ERROR_RECOVERY_RETRY_DELAY: Duration = Duration::from_secs(3);
 
 /// Peridot harness agent shell.
@@ -196,7 +240,7 @@ impl HarnessAgent {
     where
         F: Fn(&std::path::Path) -> String + Send + Sync + 'static,
     {
-        self.grader_diff_provider = Some(Box::new(provider));
+        self.grader_diff_provider = Some(std::sync::Arc::new(provider));
     }
 
     /// Sets the maximum identical-failure attempts before the auto-fix
@@ -423,27 +467,30 @@ impl HarnessAgent {
     }
 
     /// Runs one model/tool turn and records the observation in context.
-    pub async fn run_turn<P>(
+    ///
+    /// Takes `&dyn LlmProvider` (rather than the older `&P: LlmProvider
+    /// + ?Sized`) so the run loop can stash the provider in `PolicyCx`
+    /// without an unsized coercion. Concrete `&MyProvider` auto-coerces
+    /// at the call site; `&*arc_dyn` is already `&dyn`. Internal
+    /// helpers (`grader::grade_work`, etc.) keep their `?Sized` generic
+    /// — `&dyn LlmProvider` flows through them as `P = dyn`.
+    pub async fn run_turn(
         &mut self,
-        provider: &P,
+        provider: &dyn LlmProvider,
         request: AgentTurnRequest,
-    ) -> PeriResult<AgentTurnOutcome>
-    where
-        P: LlmProvider + ?Sized,
-    {
+    ) -> PeriResult<AgentTurnOutcome> {
         self.run_turn_with_events(provider, request, &mut |_| {})
             .await
     }
 
     /// Runs one model/tool turn and emits user-interface events.
-    pub async fn run_turn_with_events<P, F>(
+    pub async fn run_turn_with_events<F>(
         &mut self,
-        provider: &P,
+        provider: &dyn LlmProvider,
         request: AgentTurnRequest,
         events: &mut F,
     ) -> PeriResult<AgentTurnOutcome>
     where
-        P: LlmProvider + ?Sized,
         F: FnMut(AgentRunEvent),
     {
         // Start of a new turn: bump the turn id so every entry
@@ -500,10 +547,16 @@ impl HarnessAgent {
                 estimated_tokens,
                 self.context.llm_compaction_threshold(),
             )?;
-            // Surface the auto-compaction in the transcript so the
-            // operator can see that the 90%-of-window guard rail did
-            // fire. Without this, compaction is invisible — the hook
-            // path only spawns user-defined shell scripts.
+            // Emit the structured snapshot first so editors that wire
+            // a `context overview` panel can render `files_read /
+            // open_todos / untrusted_inputs / narrative` directly,
+            // then a human-readable Thinking line so transcript-only
+            // consumers still see "context compacted: X → Y".
+            if let Some(snapshot) = self.context.last_compacted() {
+                events(AgentRunEvent::ContextCompacted {
+                    compacted: snapshot.clone(),
+                });
+            }
             let threshold = self.context.llm_compaction_threshold();
             let post_tokens = self.context.estimated_tokens();
             events(AgentRunEvent::Thinking {
@@ -601,7 +654,12 @@ impl HarnessAgent {
                 name: "agent_done".to_string(),
                 parameters: serde_json::json!({ "summary": summary }),
             };
-            self.state.phase = AgentPhase::Executing;
+            transition_phase(
+                &mut self.state,
+                AgentPhase::Executing,
+                "agent_done_execute",
+                events,
+            );
             let (tool_result, _file_diff) = self
                 .execute_tool_call_with_runtime(
                     tool_call,
@@ -611,7 +669,12 @@ impl HarnessAgent {
                     request.security,
                 )
                 .await?;
-            self.state.phase = AgentPhase::Done;
+            transition_phase(
+                &mut self.state,
+                AgentPhase::Done,
+                "agent_done_complete",
+                events,
+            );
             return Ok(AgentTurnOutcome {
                 tool_name: "agent_done".to_string(),
                 tool_result,
@@ -637,7 +700,12 @@ impl HarnessAgent {
         };
         let tool_name = tool_call.name.clone();
         let tool_parameters = tool_call.parameters.clone();
-        self.state.phase = AgentPhase::Executing;
+        transition_phase(
+            &mut self.state,
+            AgentPhase::Executing,
+            "tool_started",
+            events,
+        );
         // When the model both streams a reply AND closes the turn with
         // `agent_done`, the `agent_done` summary almost always duplicates the
         // text the user just read (qwen does this consistently). Suppress the
@@ -652,6 +720,7 @@ impl HarnessAgent {
             events(AgentRunEvent::ToolStarted {
                 name: tool_name.clone(),
                 parameters: tool_parameters.clone(),
+                risk_class: risk_class_label_for(&self.tools, &tool_name),
             });
         }
         let pending_for_resume = ToolCall {
@@ -708,6 +777,12 @@ impl HarnessAgent {
                 // well-formed.
                 let failure_result =
                     peridot_common::ToolResult::failure(format!("tool failed: {err}"));
+                if !suppress_done_ui {
+                    events(AgentRunEvent::ToolFinished {
+                        name: tool_name.clone(),
+                        result: failure_result.clone(),
+                    });
+                }
                 let (observation_result, evidence_ref) = tool_result_for_context_observation(
                     &request.project_root,
                     &tool_name,
@@ -762,9 +837,19 @@ impl HarnessAgent {
         self.context.append(entry);
 
         if tool_name == "agent_done" && tool_result.success {
-            self.state.phase = AgentPhase::Done;
+            transition_phase(
+                &mut self.state,
+                AgentPhase::Done,
+                "agent_done_result",
+                events,
+            );
         } else {
-            self.state.phase = AgentPhase::Verifying;
+            transition_phase(
+                &mut self.state,
+                AgentPhase::Verifying,
+                "tool_finished",
+                events,
+            );
         }
 
         Ok(AgentTurnOutcome {
@@ -776,28 +861,24 @@ impl HarnessAgent {
     }
 
     /// Runs model/tool turns until done or guardrail exhaustion.
-    pub async fn run_until_done<P>(
+    pub async fn run_until_done(
         &mut self,
-        provider: &P,
+        provider: &dyn LlmProvider,
         request: AgentRunRequest,
-    ) -> PeriResult<AgentRunSummary>
-    where
-        P: LlmProvider + ?Sized,
-    {
+    ) -> PeriResult<AgentRunSummary> {
         self.run_until_done_with_events(provider, request, |_| {})
             .await
     }
 
     /// Runs model/tool turns until done while emitting user-interface events.
-    pub async fn run_until_done_with_events<P, F>(
+    pub async fn run_until_done_with_events<F>(
         &mut self,
-        provider: &P,
+        provider: &dyn LlmProvider,
         request: AgentRunRequest,
         mut events: F,
     ) -> PeriResult<AgentRunSummary>
     where
-        P: LlmProvider + ?Sized,
-        F: FnMut(AgentRunEvent),
+        F: FnMut(AgentRunEvent) + Send,
     {
         events(AgentRunEvent::RunStarted {
             task: request.task.clone(),
@@ -815,122 +896,96 @@ impl HarnessAgent {
         // against the new (presumably relaxed) security posture so
         // the run picks up exactly where it stopped instead of asking
         // the model to redo everything that led up to the gated step.
-        let pending_resume = take_pending_resume(self.pending_resume_path.as_ref());
-        if let Some(call) = pending_resume {
-            let pending_name = call.name.clone();
-            let pending_params = call.parameters.clone();
-            events(AgentRunEvent::ToolStarted {
-                name: pending_name.clone(),
-                parameters: pending_params.clone(),
-            });
-            match self
-                .execute_tool_call_with_runtime(
-                    call,
-                    request.project_root.clone(),
-                    request.denied_paths.clone(),
-                    request.hooks.clone(),
-                    request.security.clone(),
-                )
-                .await
-            {
-                Ok((result, file_diff)) => {
-                    if let Some(diff) = file_diff {
-                        events(AgentRunEvent::FileDiff(diff));
-                    }
-                    events(AgentRunEvent::ToolFinished {
-                        name: pending_name.clone(),
-                        result: result.clone(),
-                    });
-                    emit_plan_updated_after_tool(
-                        &pending_name,
-                        &result,
-                        &request.project_root,
-                        &mut events,
-                    );
-                    append_pending_resume_observation(&mut self.context, &pending_name, &result)?;
-                }
-                Err(err) => {
-                    let failure_result =
-                        ToolResult::failure(format!("resume failed after approval: {err}"));
-                    append_pending_resume_observation(
-                        &mut self.context,
-                        &pending_name,
-                        &failure_result,
-                    )?;
-                    // Resume failed (still blocked, or environment changed).
-                    // Surface it but don't abort — the model can pick up
-                    // and try a different approach on its next turn.
-                    self.context.append(ContextEntry::trusted(
-                        ContextSource::PlanReminder,
-                        format!(
-                            "[resume] Tried to resume {pending_name} after approval but failed: {err}. Try a different approach."
-                        ),
-                    ));
-                }
-            }
-        }
-        if should_prefetch_codebase_survey(self.state.mode, &request.task)
-            && let Some(runner) = self.subagent_runner.clone()
-        {
-            let prompt = codebase_survey_prompt(&request.task, &self.context);
-            events(AgentRunEvent::ToolStarted {
-                name: "agent_delegate".to_string(),
-                parameters: serde_json::json!({
-                    "kind": "fork",
-                    "model_tier": "main",
-                    "prompt": "codebase survey prefetch",
-                }),
-            });
-            match runner
-                .run(SubAgentTask {
-                    prompt,
-                    kind: SubAgentKind::Fork,
-                    model_tier: Some(ModelTier::Main),
-                })
-                .await
-            {
-                Ok(result) => {
-                    let output = serde_json::json!(result);
-                    let tool_result =
-                        ToolResult::success("codebase survey subagent finished", output.clone());
-                    events(AgentRunEvent::ToolFinished {
-                        name: "agent_delegate".to_string(),
-                        result: tool_result,
-                    });
-                    self.context.append(ContextEntry::trusted(
-                        ContextSource::PlanReminder,
-                        format!(
-                            "[codebase survey sub-agent]\n{}\n\nUse this as orientation only. Re-read exact files or evidence refs before making final claims.",
-                            build_subagent_review(&output)
-                        ),
-                    ));
-                }
-                Err(err) => {
-                    events(AgentRunEvent::Recovery {
-                        message: format!("codebase survey subagent failed: {err}"),
-                    });
-                    self.context.append(ContextEntry::trusted(
-                        ContextSource::PlanReminder,
-                        format!(
-                            "[codebase survey sub-agent] Failed before the main turn: {err}. Continue with direct file_search/file_read, and avoid broad full-repo reads."
-                        ),
-                    ));
-                }
-            }
-        }
+        // PR-B.4: pre-loop setup steps extracted to dedicated methods.
+        // Their behaviour is unchanged from when they were inline; this
+        // is purely an organisational move so `run_until_done_with_events`
+        // gets closer to the "30-line orchestrator" goal. A future change
+        // will lift each helper into a `LoopPolicy::pre_turn` impl once
+        // `ToolDispatcher` lands.
+        // PendingResumePolicy now owns pending-tool resume; the inline
+        // helper is kept on `HarnessAgent` as a backward-compat alias
+        // for in-test direct calls, but the production path runs the
+        // policy via `dispatch_pre_turn` inside the loop body.
+        // CodebaseSurveyPrefetchPolicy now owns prefetch; the inline
+        // helper definition stays as a backward-compat shim until any
+        // direct test callers move over.
         let mut outcomes = Vec::new();
         let mut total_usage = Usage::default();
-        let mut stuck_detector = StuckDetector::new(3);
-        let mut budget_warning_sent = false;
-        let mut consecutive_parse_failures = 0usize;
-        let mut error_recovery_attempts = 0usize;
-        let mut last_error_recovery_signature: Option<String> = None;
+        // Composable run-loop policies, dispatched per phase boundary.
+        // Each one owns its own state (e.g. budget warning's one-shot
+        // sent flag, stuck detector's history). Inline blocks below
+        // will be progressively migrated into this ordered list as the
+        // loop_policy/ module grows.
+        // The auto-grade policy needs a closure that produces the
+        // current worktree diff on demand. Capture the existing
+        // grader-diff provider (test injection or production
+        // `collect_git_diff`) and the project root by clone so the
+        // closure outlives the run.
+        let grader_diff_fn: crate::loop_policy::DiffProvider = {
+            let grader_diff_provider = self.grader_diff_provider.clone();
+            let project_root = request.project_root.clone();
+            std::sync::Arc::new(move || match grader_diff_provider.as_ref() {
+                Some(custom) => custom(&project_root),
+                None => collect_git_diff(&project_root),
+            })
+        };
+        let mut policies: Vec<Box<dyn crate::loop_policy::LoopPolicy>> = vec![
+            // Recovery first — it observes on_turn_error and resets its
+            // attempt counters on post_turn before any other policy runs.
+            Box::new(crate::loop_policy::ErrorRecoveryPolicy::new()),
+            // pre_turn: resume any tool that was halted by approval.
+            // Idempotent — fires only on turn_index == 0 when a
+            // sidecar exists.
+            Box::new(crate::loop_policy::PendingResumePolicy::new()),
+            // pre_turn: codebase-survey subagent on Goal-mode first
+            // turn so the model gets structured orientation.
+            Box::new(crate::loop_policy::CodebaseSurveyPrefetchPolicy::new()),
+            Box::new(crate::loop_policy::SubAgentReviewPolicy::new()),
+            Box::new(crate::loop_policy::BudgetWarningPolicy::new()),
+            Box::new(crate::loop_policy::StuckDetectorPolicy::new()),
+            // post_turn: run verify_build after every successful
+            // mutating tool when the harness opts in.
+            Box::new(crate::loop_policy::AutoVerifyAfterMutationPolicy::new(
+                self.auto_verify_after_mutation,
+            )),
+            // post_turn: track verify_* failures, inject a "fix this
+            // first" directive on retries, and abort with
+            // StopReason::Interrupted when the signature repeats
+            // beyond `fix_cap`.
+            Box::new(crate::loop_policy::AutoFixLoopPolicy::new(
+                self.auto_fix_cap,
+            )),
+            // on_done policies — ordered so cheaper / deterministic
+            // checks run first, then LLM gates last:
+            //   Preflight  → mechanical (file lists, todo state)
+            //   GoalChecker → LLM call, Goal-mode only
+            //   AutoGrade  → LLM call, when enabled, with diff
+            //
+            // Preflight stays OFF by default. The "verify after
+            // mutation" gate is context-aware (it accepts a successful
+            // `[auto-verify] verify_build passed` PlanReminder as
+            // satisfying the check), but auto-coupling it to
+            // `auto_verify_after_mutation` would block runs whose
+            // verify_build *failed* — the existing helper still appends
+            // a marker, just with FAILED, and that's a separate decision
+            // from "should the loop refuse to terminate."
+            //
+            // Operators opt into the gate explicitly via a future flag;
+            // the test suite uses `with_verify_after_mutation()` directly
+            // when it wants to exercise the path.
+            Box::new(crate::loop_policy::PreflightPolicy::new()),
+            Box::new(crate::loop_policy::GoalCheckerPolicy::new()),
+            Box::new(crate::loop_policy::AutoGradePolicy::new(
+                self.auto_grade_on_done,
+                grader_diff_fn,
+                initial_grade_diff.clone(),
+            )),
+        ];
         // Auto-fix loop state. Tracks the current failing verifier by
         // a compact signature so the model can tell "same failure,
         // same attempted fix" apart from a new failure uncovered by
         // progress.
-        let mut verify_failure_state: Option<VerifyFailureState> = None;
-        let fix_cap = self.auto_fix_cap;
+        // verify_failure_state + fix_cap moved into AutoFixLoopPolicy.
         for turn_index in 0..request.max_turns {
             // Drain any inter-session messages parked for this session.
             // Each entry becomes a trusted `[peer message from <id>]`
@@ -957,18 +1012,58 @@ impl HarnessAgent {
                 events(AgentRunEvent::Interrupted {
                     stage: "turn_start".to_string(),
                 });
-                let summary = AgentRunSummary {
-                    turns: outcomes,
-                    usage: total_usage,
-                    stopped_reason: StopReason::Interrupted,
-                    duration_ms: started_at.elapsed().as_millis() as u64,
-                };
-                events(AgentRunEvent::Finished {
-                    summary: summary.clone(),
-                });
-                return Ok(summary);
+                return Ok(finalize_run(
+                    outcomes,
+                    total_usage,
+                    StopReason::Interrupted,
+                    started_at,
+                    &mut events,
+                ));
             }
             self.refresh_agents_md(&mut events);
+            // pre_turn policy dispatch. PendingResumePolicy fires here
+            // on turn_index == 0 to replay any sidecar-recorded tool
+            // call. Other pre_turn policies (codebase-survey prefetch)
+            // will land here as they're extracted.
+            {
+                let pre_decision = {
+                    let tool_dispatcher = self.build_tool_dispatcher();
+                    let subagent_runner = self.subagent_runner.clone();
+                    let mut cx = crate::loop_policy::PolicyCx {
+                        state: &mut self.state,
+                        context: &mut self.context,
+                        events: &mut events,
+                        usage: &mut total_usage,
+                        request: &request,
+                        turn_index: turn_index as usize,
+                        project_root: &request.project_root,
+                        hooks: &request.hooks,
+                        security: &request.security,
+                        provider,
+                        tool_dispatcher: &tool_dispatcher,
+                        subagent_runner,
+                        pending_resume_path: self.pending_resume_path.as_deref(),
+                    };
+                    crate::loop_policy::dispatch_pre_turn(&mut policies, &mut cx).await?
+                };
+                match pre_decision {
+                    crate::loop_policy::Decision::Continue => {}
+                    crate::loop_policy::Decision::SkipTurn => continue,
+                    crate::loop_policy::Decision::Retry => continue,
+                    crate::loop_policy::Decision::Stop(reason, message) => {
+                        if let Some(msg) = message {
+                            events(AgentRunEvent::Recovery { message: msg });
+                        }
+                        return Ok(finalize_run(
+                            outcomes,
+                            total_usage,
+                            reason,
+                            started_at,
+                            &mut events,
+                        ));
+                    }
+                }
+            }
             events(AgentRunEvent::TurnStarted { turn_index });
             let outcome = match self
                 .run_turn_with_events(
@@ -988,24 +1083,20 @@ impl HarnessAgent {
                 )
                 .await
             {
-                Ok(outcome) => {
-                    consecutive_parse_failures = 0;
-                    error_recovery_attempts = 0;
-                    last_error_recovery_signature = None;
-                    outcome
-                }
+                Ok(outcome) => outcome,
                 Err(err) => {
+                    // Two early-exit conditions the policy chain can't handle
+                    // (they need to terminate the run immediately, not recover):
+                    //   - approval-required: a tool is gated, paused for user.
+                    //   - cancellation token tripped: external interrupt.
                     if approval_required_error(&err) {
-                        let summary = AgentRunSummary {
-                            turns: outcomes,
-                            usage: total_usage,
-                            stopped_reason: StopReason::ApprovalRequired,
-                            duration_ms: started_at.elapsed().as_millis() as u64,
-                        };
-                        events(AgentRunEvent::Finished {
-                            summary: summary.clone(),
-                        });
-                        return Ok(summary);
+                        return Ok(finalize_run(
+                            outcomes,
+                            total_usage,
+                            StopReason::ApprovalRequired,
+                            started_at,
+                            &mut events,
+                        ));
                     }
                     if self
                         .cancel
@@ -1016,197 +1107,68 @@ impl HarnessAgent {
                         events(AgentRunEvent::Interrupted {
                             stage: "turn_error".to_string(),
                         });
-                        let summary = AgentRunSummary {
-                            turns: outcomes,
-                            usage: total_usage,
-                            stopped_reason: StopReason::Interrupted,
-                            duration_ms: started_at.elapsed().as_millis() as u64,
-                        };
-                        events(AgentRunEvent::Finished {
-                            summary: summary.clone(),
-                        });
-                        return Ok(summary);
-                    }
-                    self.state.phase = AgentPhase::Recovering;
-                    run_error_event_hooks(&request.project_root, &request.hooks, &err)?;
-                    if classify_error(&err) == "parse" {
-                        consecutive_parse_failures += 1;
-                    } else {
-                        consecutive_parse_failures = 0;
-                    }
-                    self.context.append(ContextEntry::trusted(
-                        ContextSource::PlanReminder,
-                        format!(
-                            "{}\n\n{}",
-                            recovery_message(&err),
-                            recovery_analysis_message(&err)
-                        ),
-                    ));
-                    let recovery_signature = err.to_string();
-                    if last_error_recovery_signature.as_deref() == Some(recovery_signature.as_str())
-                    {
-                        error_recovery_attempts += 1;
-                    } else {
-                        last_error_recovery_signature = Some(recovery_signature.clone());
-                        error_recovery_attempts = 1;
-                    }
-                    events(AgentRunEvent::Recovery {
-                        message: recovery_signature.clone(),
-                    });
-                    if error_recovery_attempts >= MAX_ERROR_RECOVERY_ATTEMPTS {
-                        let message = format!(
-                            "Recovery failed after {error_recovery_attempts} attempts. Peridot stopped instead of retrying indefinitely. Reason: {recovery_signature}. Check the provider/model setting, credentials, network/API error, or task direction, then run again."
-                        );
-                        self.state.phase = AgentPhase::Recovering;
-                        run_recovery_event_hook(
-                            &request.project_root,
-                            &request.hooks,
-                            "recovery_abort",
-                            &message,
-                        )?;
-                        events(AgentRunEvent::Recovery {
-                            message: message.clone(),
-                        });
-                        let summary = AgentRunSummary {
-                            turns: outcomes,
-                            usage: total_usage,
-                            stopped_reason: StopReason::Interrupted,
-                            duration_ms: started_at.elapsed().as_millis() as u64,
-                        };
-                        events(AgentRunEvent::Finished {
-                            summary: summary.clone(),
-                        });
-                        return Ok(summary);
-                    }
-                    sleep_before_error_recovery_retry().await;
-                    if consecutive_parse_failures == 3 {
-                        self.context.append(ContextEntry::trusted(
-                            ContextSource::PlanReminder,
-                            format_reminder_message(),
+                        return Ok(finalize_run(
+                            outcomes,
+                            total_usage,
+                            StopReason::Interrupted,
+                            started_at,
+                            &mut events,
                         ));
                     }
-                    continue;
+                    // Hand the error to the policy chain. ErrorRecoveryPolicy
+                    // owns: phase transition, hook firing, classify_error
+                    // branching, attempt counter, signature tracking,
+                    // category-specific backoff, plan-reminder injection,
+                    // and the abort-after-N-attempts decision.
+                    let action = self
+                        .dispatch_turn_error(
+                            &err,
+                            &request,
+                            &mut total_usage,
+                            turn_index,
+                            provider,
+                            &mut policies,
+                            &mut events,
+                        )
+                        .await?;
+                    match action {
+                        TurnErrorAction::Continue => {
+                            // No policy claimed the error → sleep
+                            // briefly to avoid hammering the same
+                            // failure, then retry.
+                            sleep_before_error_recovery_retry().await;
+                            continue;
+                        }
+                        TurnErrorAction::Retry | TurnErrorAction::Skip => continue,
+                        TurnErrorAction::Stop { reason, message } => {
+                            if let Some(msg) = message {
+                                run_recovery_event_hook(
+                                    &request.project_root,
+                                    &request.hooks,
+                                    "recovery_abort",
+                                    &msg,
+                                )?;
+                                events(AgentRunEvent::Recovery { message: msg });
+                            }
+                            return Ok(finalize_run(
+                                outcomes,
+                                total_usage,
+                                reason,
+                                started_at,
+                                &mut events,
+                            ));
+                        }
+                    }
                 }
             };
             let turn_success = outcome.tool_result.success;
-            // Auto-fix loop: when verify_* fails, inject a structured
-            // "fix this first" directive keyed by the failure signature
-            // so repeated identical failures force a strategy change.
-            // Cap repeated failures so a permanently-broken checker
-            // doesn't blow the budget.
-            let is_verify_tool = outcome.tool_name.starts_with("verify_");
-            if is_verify_tool && !turn_success {
-                let failure =
-                    update_verify_failure_state(&mut verify_failure_state, &outcome).clone();
-                events(AgentRunEvent::AutoFixAttempt {
-                    attempt: failure.attempts,
-                    max: fix_cap,
-                    tool_name: failure.tool_name.clone(),
-                    passed: false,
-                });
-                if failure.attempts >= fix_cap {
-                    let message = format!(
-                        "Auto-fix loop circuit breaker: {} failed {} times with signature `{}`. Aborting so the operator can intervene.",
-                        failure.tool_name, failure.attempts, failure.signature
-                    );
-                    self.state.phase = AgentPhase::Recovering;
-                    run_recovery_event_hook(
-                        &request.project_root,
-                        &request.hooks,
-                        "auto_fix_abort",
-                        &message,
-                    )?;
-                    events(AgentRunEvent::Recovery {
-                        message: message.clone(),
-                    });
-                    outcomes.push(outcome);
-                    let summary = AgentRunSummary {
-                        turns: outcomes,
-                        usage: total_usage,
-                        stopped_reason: StopReason::Interrupted,
-                        duration_ms: started_at.elapsed().as_millis() as u64,
-                    };
-                    events(AgentRunEvent::Finished {
-                        summary: summary.clone(),
-                    });
-                    return Ok(summary);
-                }
-                self.context.append(ContextEntry::trusted(
-                    ContextSource::PlanReminder,
-                    verify_failure_directive(&failure, fix_cap),
-                ));
-            } else {
-                if is_verify_tool && turn_success && verify_failure_state.is_some() {
-                    events(AgentRunEvent::AutoFixAttempt {
-                        attempt: verify_failure_state
-                            .as_ref()
-                            .map(|s| s.attempts + 1)
-                            .unwrap_or(1),
-                        max: fix_cap,
-                        tool_name: outcome.tool_name.clone(),
-                        passed: true,
-                    });
-                }
-                verify_failure_state = None;
-            }
+            // AutoFixLoopPolicy and AutoVerifyAfterMutationPolicy now
+            // own this — they run in the post_turn dispatch block
+            // below. AutoFix's circuit-breaker abort flows through
+            // Decision::Stop in the same dispatch.
             accumulate_usage(&mut total_usage, outcome.usage);
-            // Auto-verify after file edits: if the operator opted into
-            // "verify after every mutation", run `verify_build`
-            // immediately so a broken compile surfaces while the
-            // diff is still fresh. Read-only shell inspections must not
-            // trigger this path.
-            if self.auto_verify_after_mutation
-                && turn_success
-                && is_mutating_tool_name(&outcome.tool_name)
-            {
-                let auto_verify = self
-                    .execute_tool_call_with_runtime(
-                        ToolCall {
-                            name: "verify_build".to_string(),
-                            parameters: serde_json::json!({}),
-                        },
-                        request.project_root.clone(),
-                        request.denied_paths.clone(),
-                        request.hooks.clone(),
-                        request.security.clone(),
-                    )
-                    .await;
-                match auto_verify {
-                    Ok((result, _file_diff)) => {
-                        let note = if result.success {
-                            format!("[auto-verify] verify_build passed: {}", result.summary)
-                        } else {
-                            format!(
-                                "[auto-verify] verify_build FAILED: {}\nFix this before declaring agent_done.",
-                                result.summary
-                            )
-                        };
-                        self.context
-                            .append(ContextEntry::trusted(ContextSource::PlanReminder, note));
-                    }
-                    Err(err) => {
-                        // Verify infrastructure isn't available
-                        // (e.g. no build command configured). Surface
-                        // a quiet note but never abort the run.
-                        self.context.append(ContextEntry::trusted(
-                            ContextSource::PlanReminder,
-                            format!("[auto-verify] verify_build could not run: {err}"),
-                        ));
-                    }
-                }
-            }
-            // Sub-agent review: after agent_delegate returns, parse
-            // the SubAgentResult payload and surface its workspace
-            // diff to the parent as a [sub-agent review] directive.
-            // Stops the parent from rubber-stamping a textual summary
-            // without ever looking at what actually changed.
-            if outcome.tool_name == "agent_delegate" && outcome.tool_result.success {
-                let review = build_subagent_review(&outcome.tool_result.output);
-                if !review.is_empty() {
-                    self.context
-                        .append(ContextEntry::trusted(ContextSource::PlanReminder, review));
-                }
-            }
+            // AutoVerifyAfterMutationPolicy now owns this — it runs in
+            // the post_turn dispatch above.
             events(AgentRunEvent::UsageUpdated { usage: total_usage });
             events(AgentRunEvent::TurnEnded {
                 turn_index,
@@ -1215,250 +1177,147 @@ impl HarnessAgent {
             if let Some(path) = self.context_snapshot_path.as_ref() {
                 snapshot_context_to_disk(path, &self.context, &mut events);
             }
-            if should_emit_budget_warning(
-                request.budget_usd,
-                request.budget_warning_pct,
-                total_usage.estimated_cost_usd,
-                budget_warning_sent,
-            ) {
-                run_budget_warning_hook(
-                    &request.project_root,
-                    &request.hooks,
-                    total_usage.estimated_cost_usd,
-                    request.budget_usd,
-                )?;
-                budget_warning_sent = true;
-                if self.state.mode == ExecutionMode::Goal {
-                    self.context.append(ContextEntry::trusted(
-                        ContextSource::PlanReminder,
-                        budget_warning_message(total_usage.estimated_cost_usd, request.budget_usd),
-                    ));
+            // Post-turn policy dispatch. Sub-agent review + budget warning
+            // (and, in later PRs, stuck detector, auto-verify, etc.) live
+            // here. PolicyCx is constructed in a tight scope so its
+            // mutable borrows release before the rest of the iteration
+            // resumes its own use of self.state/self.context/events.
+            {
+                let policy_decision = {
+                    let tool_dispatcher = self.build_tool_dispatcher();
+                    let subagent_runner = self.subagent_runner.clone();
+                    let mut cx = crate::loop_policy::PolicyCx {
+                        state: &mut self.state,
+                        context: &mut self.context,
+                        events: &mut events,
+                        usage: &mut total_usage,
+                        request: &request,
+                        turn_index: turn_index as usize,
+                        project_root: &request.project_root,
+                        hooks: &request.hooks,
+                        security: &request.security,
+                        provider,
+                        tool_dispatcher: &tool_dispatcher,
+                        subagent_runner,
+                        pending_resume_path: self.pending_resume_path.as_deref(),
+                    };
+                    crate::loop_policy::dispatch_post_turn(&mut policies, &mut cx, &outcome).await?
+                };
+                match policy_decision {
+                    crate::loop_policy::Decision::Continue => {}
+                    crate::loop_policy::Decision::SkipTurn => {
+                        outcomes.push(outcome);
+                        continue;
+                    }
+                    crate::loop_policy::Decision::Retry => {
+                        // post_turn cannot meaningfully request a retry —
+                        // the turn already produced an outcome. Treat
+                        // identically to Continue.
+                    }
+                    crate::loop_policy::Decision::Stop(reason, message) => {
+                        outcomes.push(outcome);
+                        if let Some(msg) = message {
+                            events(AgentRunEvent::Recovery { message: msg });
+                        }
+                        return Ok(finalize_run(
+                            outcomes,
+                            total_usage,
+                            reason,
+                            started_at,
+                            &mut events,
+                        ));
+                    }
                 }
             }
             let done = outcome.done;
-            let stuck_action = stuck_detector.record(&outcome);
             outcomes.push(outcome);
-            match stuck_action {
-                StuckAction::Continue => {}
-                StuckAction::Recover(message) => {
-                    self.state.phase = AgentPhase::Recovering;
-                    run_recovery_event_hook(
-                        &request.project_root,
-                        &request.hooks,
-                        "stuck",
-                        &message,
-                    )?;
-                    self.context
-                        .append(ContextEntry::trusted(ContextSource::PlanReminder, message));
-                    events(AgentRunEvent::Recovery {
-                        message: "stuck detector requested a new strategy".to_string(),
-                    });
-                }
-                StuckAction::Abort(message) => {
-                    // Hard circuit-breaker. The model has ignored the recovery
-                    // directive for too many turns; stop the run before we burn
-                    // more tokens. Surface a Recovery event so the TUI's
-                    // activity panel records what happened.
-                    self.state.phase = AgentPhase::Recovering;
-                    run_recovery_event_hook(
-                        &request.project_root,
-                        &request.hooks,
-                        "stuck_abort",
-                        &message,
-                    )?;
-                    events(AgentRunEvent::Recovery {
-                        message: message.clone(),
-                    });
-                    let summary = AgentRunSummary {
-                        turns: outcomes,
-                        usage: total_usage,
-                        stopped_reason: StopReason::Interrupted,
-                        duration_ms: started_at.elapsed().as_millis() as u64,
-                    };
-                    events(AgentRunEvent::Finished {
-                        summary: summary.clone(),
-                    });
-                    return Ok(summary);
-                }
-            }
             if done {
-                if let Some(goal_checker_model) = request.goal_checker_model.as_deref()
-                    && self.state.mode == ExecutionMode::Goal
+                // Deterministic preflight gate. Runs BEFORE the LLM
+                // goal checker / auto-grader so cheap, mechanical
+                // failure modes (mutation without verify, lingering
+                // pending tools) are caught without an LLM round-trip.
+                // PreflightPolicy returns SkipTurn + appends a plan
+                // reminder when the model declared done prematurely.
                 {
-                    let verdict = check_goal_satisfied(
-                        provider,
-                        goal_checker_model,
-                        &request.task,
-                        &outcomes,
-                    )
-                    .await?;
-                    accumulate_usage(&mut total_usage, verdict.usage);
-                    self.context.append(ContextEntry::trusted(
-                        ContextSource::PlanReminder,
-                        format!("Goal checker verdict: {}", verdict.reason),
-                    ));
-                    if !verdict.satisfied {
-                        self.state.phase = AgentPhase::Recovering;
-                        run_recovery_event_hook(
-                            &request.project_root,
-                            &request.hooks,
-                            "goal_checker",
-                            &verdict.reason,
-                        )?;
-                        self.context.append(ContextEntry::trusted(
-                            ContextSource::PlanReminder,
-                            "Goal checker says the objective is not satisfied yet. Continue with a concrete next action.".to_string(),
-                        ));
-                        continue;
-                    }
-                }
-                // Auto-grade on agent_done: ask an LLM to gate the
-                // task. When the grader fails the verdict we fold
-                // recommendations back into context and `continue` —
-                // the model gets one more turn to address them
-                // instead of finishing. Cheap callers can keep this
-                // off; the gate is `auto_grade_on_done`.
-                if self.auto_grade_on_done {
-                    let diff = self.current_grader_diff(&request.project_root);
-                    // No-diff fast path: chat / explanation / "do you
-                    // remember the last conversation?" turns finish
-                    // without touching the worktree. The grader's
-                    // whole question is "is the change acceptable to
-                    // ship?", so feeding it an empty diff makes it
-                    // dutifully reject every non-coding turn with
-                    // "No change was provided to address the
-                    // request", looping the agent forever. Skip the
-                    // grader when there is nothing for it to grade.
-                    if diff.trim().is_empty() {
-                        self.context.append(ContextEntry::trusted(
-                            ContextSource::PlanReminder,
-                            "[auto-grade] Skipped: no worktree changes to grade (chat or explanation turn)."
-                                .to_string(),
-                        ));
-                        let summary = AgentRunSummary {
-                            turns: outcomes,
-                            usage: total_usage,
-                            stopped_reason: StopReason::Done,
-                            duration_ms: started_at.elapsed().as_millis() as u64,
+                    let preflight_decision = {
+                        let tool_dispatcher = self.build_tool_dispatcher();
+                        let subagent_runner = self.subagent_runner.clone();
+                        let mut cx = crate::loop_policy::PolicyCx {
+                            state: &mut self.state,
+                            context: &mut self.context,
+                            events: &mut events,
+                            usage: &mut total_usage,
+                            request: &request,
+                            turn_index: turn_index as usize,
+                            project_root: &request.project_root,
+                            hooks: &request.hooks,
+                            security: &request.security,
+                            provider,
+                            tool_dispatcher: &tool_dispatcher,
+                            subagent_runner,
+                            pending_resume_path: self.pending_resume_path.as_deref(),
                         };
-                        events(AgentRunEvent::Finished {
-                            summary: summary.clone(),
-                        });
-                        return Ok(summary);
-                    }
-                    if initial_grade_diff.as_deref() == Some(diff.as_str()) {
-                        self.context.append(ContextEntry::trusted(
-                            ContextSource::PlanReminder,
-                            "[auto-grade] Skipped: worktree diff is unchanged since run start."
-                                .to_string(),
-                        ));
-                        let summary = AgentRunSummary {
-                            turns: outcomes,
-                            usage: total_usage,
-                            stopped_reason: StopReason::Done,
-                            duration_ms: started_at.elapsed().as_millis() as u64,
-                        };
-                        events(AgentRunEvent::Finished {
-                            summary: summary.clone(),
-                        });
-                        return Ok(summary);
-                    }
-                    let verify_summary = recent_verify_summary(&self.context).unwrap_or_default();
-                    match crate::grader::grade_work(
-                        provider,
-                        &request.model,
-                        &request.task,
-                        &diff,
-                        &verify_summary,
-                    )
-                    .await
-                    {
-                        Ok(verdict) => {
-                            accumulate_usage(&mut total_usage, verdict.usage);
-                            if !verdict.passed {
-                                self.state.phase = AgentPhase::Recovering;
-                                let mut directive = format!(
-                                    "[auto-grade] Grader rejected agent_done: {}",
-                                    verdict.summary
-                                );
-                                if !verdict.recommendations.is_empty() {
-                                    directive.push_str("\nRecommendations:\n");
-                                    for rec in &verdict.recommendations {
-                                        directive.push_str("- ");
-                                        directive.push_str(rec);
-                                        directive.push('\n');
-                                    }
-                                }
-                                directive.push_str("\nAddress the recommendations and call agent_done again only when the change actually ships.");
-                                self.context.append(ContextEntry::trusted(
-                                    ContextSource::PlanReminder,
-                                    directive,
-                                ));
-                                events(AgentRunEvent::Recovery {
-                                    message: format!("auto-grade failed: {}", verdict.summary),
-                                });
-                                continue;
+                        crate::loop_policy::dispatch_on_done(&mut policies, &mut cx, &outcomes)
+                            .await?
+                    };
+                    match preflight_decision {
+                        crate::loop_policy::Decision::Continue => {}
+                        crate::loop_policy::Decision::SkipTurn => continue,
+                        crate::loop_policy::Decision::Retry => continue,
+                        crate::loop_policy::Decision::Stop(reason, message) => {
+                            if let Some(msg) = message {
+                                events(AgentRunEvent::Recovery { message: msg });
                             }
-                            self.context.append(ContextEntry::trusted(
-                                ContextSource::PlanReminder,
-                                format!("[auto-grade] Grader passed: {}", verdict.summary),
-                            ));
-                        }
-                        Err(err) => {
-                            // Grader infrastructure failed (provider
-                            // hiccup, unparseable response after
-                            // retries). Surface a note and let
-                            // agent_done stand — degrading to the
-                            // legacy "first done wins" path is safer
-                            // than blocking the operator on a flaky
-                            // grader.
-                            self.context.append(ContextEntry::trusted(
-                                ContextSource::PlanReminder,
-                                format!("[auto-grade] Grader unavailable: {err}"),
+                            return Ok(finalize_run(
+                                outcomes,
+                                total_usage,
+                                reason,
+                                started_at,
+                                &mut events,
                             ));
                         }
                     }
                 }
-                let summary = AgentRunSummary {
-                    turns: outcomes,
-                    usage: total_usage,
-                    stopped_reason: StopReason::Done,
-                    duration_ms: started_at.elapsed().as_millis() as u64,
-                };
-                events(AgentRunEvent::Finished {
-                    summary: summary.clone(),
-                });
-                return Ok(summary);
+                // GoalCheckerPolicy and AutoGradePolicy ran above in
+                // `dispatch_on_done`. If they wanted to veto the done
+                // state they returned SkipTurn → already handled.
+                // Reaching this point means done is final.
+                return Ok(finalize_run(
+                    outcomes,
+                    total_usage,
+                    StopReason::Done,
+                    started_at,
+                    &mut events,
+                ));
             }
             if request.budget_usd > 0.0 && total_usage.estimated_cost_usd >= request.budget_usd {
-                self.state.phase = AgentPhase::Recovering;
+                transition_phase(
+                    &mut self.state,
+                    AgentPhase::Recovering,
+                    "budget_exceeded",
+                    &mut events,
+                );
                 self.context.append(ContextEntry::trusted(
                     ContextSource::PlanReminder,
                     budget_exceeded_message(total_usage.estimated_cost_usd, request.budget_usd),
                 ));
-                let summary = AgentRunSummary {
-                    turns: outcomes,
-                    usage: total_usage,
-                    stopped_reason: StopReason::Budget,
-                    duration_ms: started_at.elapsed().as_millis() as u64,
-                };
-                events(AgentRunEvent::Finished {
-                    summary: summary.clone(),
-                });
-                return Ok(summary);
+                return Ok(finalize_run(
+                    outcomes,
+                    total_usage,
+                    StopReason::Budget,
+                    started_at,
+                    &mut events,
+                ));
             }
         }
 
-        let summary = AgentRunSummary {
-            turns: outcomes,
-            usage: total_usage,
-            stopped_reason: StopReason::MaxTurns,
-            duration_ms: started_at.elapsed().as_millis() as u64,
-        };
-        events(AgentRunEvent::Finished {
-            summary: summary.clone(),
-        });
-        Ok(summary)
+        Ok(finalize_run(
+            outcomes,
+            total_usage,
+            StopReason::MaxTurns,
+            started_at,
+            &mut events,
+        ))
     }
 }
 
@@ -1472,7 +1331,246 @@ async fn sleep_before_error_recovery_retry() {
     let _ = ERROR_RECOVERY_RETRY_DELAY;
 }
 
+/// Look up a tool's risk-class label by name, suitable for the
+/// `AgentRunEvent::ToolStarted::risk_class` field. Returns `None` when
+/// the registry has no such tool (e.g. for synthetic delegate events
+/// emitted before a real tool dispatch).
+pub(crate) fn risk_class_label_for(tools: &ToolRegistry, name: &str) -> Option<String> {
+    tools
+        .get(name)
+        .map(|tool| tool.risk_class().label().to_string())
+}
+
+/// Snapshot of [`HarnessAgent`]'s tool-execution dependencies, cloned
+/// fresh at the start of each loop iteration so policies can dispatch
+/// tool calls without re-borrowing `&mut HarnessAgent`.
+///
+/// All fields are owned (or `Arc`-shared) so the dispatcher can be
+/// passed by `&` into `PolicyCx` while `&mut self.state` /
+/// `&mut self.context` borrows are live. Construction takes a single
+/// `&self` snapshot — see [`HarnessAgent::build_tool_dispatcher`].
+pub struct HarnessToolDispatcher {
+    tools: ToolRegistry,
+    cancel: Option<peridot_common::CancelToken>,
+    subagent_runner: Option<std::sync::Arc<dyn peridot_agents::SubAgent>>,
+    ask_user_port: Option<std::sync::Arc<dyn AskUserPort>>,
+    message_bus: Option<std::sync::Arc<dyn AgentMessageBus>>,
+    /// Parent-context mission packet captured at construction time.
+    /// Slightly stale across the loop iteration but acceptable — the
+    /// packet is a high-level summary, not a per-call diff.
+    mission_packet: String,
+}
+
+#[async_trait::async_trait]
+impl crate::loop_policy::ToolDispatcher for HarnessToolDispatcher {
+    async fn execute(
+        &self,
+        call: ToolCall,
+        mode: ExecutionMode,
+        phase: peridot_common::AgentPhase,
+        permission: peridot_common::PermissionMode,
+        project_root: PathBuf,
+        denied_paths: Vec<PathBuf>,
+        hooks: peridot_common::HooksConfig,
+        security: SecurityConfig,
+    ) -> PeriResult<(ToolResult, Option<FileDiffPayload>)> {
+        // Mirrors `HarnessAgent::execute_tool_call_with_runtime`. State
+        // values are parameters (not `&self.state` access) so this can
+        // run while the harness's state is mutably borrowed elsewhere.
+        let tool = self
+            .tools
+            .get(&call.name)
+            .ok_or_else(|| PeriError::Tool(format!("unknown tool: {}", call.name)))?;
+        crate::permissions::ensure_tool_allowed(mode, phase, tool.group(), &call.name)?;
+        tool.validate_params(&call.parameters)?;
+        if tool.requires_confirmation(permission)
+            && !tool_call_has_confirmation_grant(&call, &security)
+        {
+            return Err(PeriError::PermissionDenied(format!(
+                "{} requires explicit user approval",
+                call.name
+            )));
+        }
+        let mut ctx = ToolContext::new(project_root.clone(), permission)
+            .with_denied_paths(denied_paths)
+            .with_hooks(hooks)
+            .with_security(security);
+        if let Some(token) = self.cancel.clone() {
+            ctx = ctx.with_cancel(token);
+        }
+        if let Some(runner) = self.subagent_runner.clone() {
+            ctx = ctx.with_subagent_runner(runner);
+        }
+        if let Some(port) = self.ask_user_port.clone() {
+            ctx = ctx.with_ask_user_port(port);
+        }
+        if let Some(bus) = self.message_bus.clone() {
+            ctx = ctx.with_message_bus(bus);
+        }
+        if !self.mission_packet.trim().is_empty() {
+            ctx = ctx.with_parent_context_packet(self.mission_packet.clone());
+        }
+        let runner = HookRunner::new(&project_root, ctx.hooks.clone());
+        let mut variables = tool_hook_variables(&call.name, &call.parameters);
+        variables.insert(
+            "project_root".to_string(),
+            project_root.display().to_string(),
+        );
+        variables.insert("workspace".to_string(), project_root.display().to_string());
+        variables.insert("mode".to_string(), mode.to_string());
+        variables.insert("permission".to_string(), permission.to_string());
+        runner.run_tool_hooks(&format!("pre:{}", call.name), &variables)?;
+        let tool_name = call.name.clone();
+        let params = call.parameters.clone();
+        let checkpoint = if tool.modifies_state() {
+            write_file_checkpoint(&project_root, &tool_name, &params)
+                .ok()
+                .flatten()
+        } else {
+            None
+        };
+        let checkpoint_id = checkpoint.as_ref().map(|cp| cp.id.clone());
+        let result = tool.execute(call.parameters, &ctx).await?;
+        let file_diff = checkpoint.as_ref().and_then(|cp| {
+            if !result.success {
+                return None;
+            }
+            let after = std::fs::read_to_string(&cp.absolute_path).ok()?;
+            Some(FileDiffPayload {
+                tool_name: tool_name.clone(),
+                path: cp.relative_path.clone(),
+                before: cp.previous_content.clone(),
+                after,
+            })
+        });
+        let _ = append_audit_event(
+            &project_root,
+            &AuditEvent::tool_call(
+                &tool_name,
+                result.success,
+                &result.summary,
+                serde_json::json!({
+                    "params": params,
+                    "phase": phase,
+                    "mode": mode,
+                    "permission": permission,
+                    "checkpoint_id": checkpoint_id
+                }),
+            ),
+        );
+        variables.insert(
+            "result_json".to_string(),
+            serde_json::to_string(&result).map_err(|err| {
+                PeriError::Parse(format!("failed to serialize hook result: {err}"))
+            })?,
+        );
+        runner.run_tool_hooks(&format!("post:{}", call.name), &variables)?;
+        Ok((result, file_diff))
+    }
+}
+
+/// Centralized `AgentState::phase` transition.
+///
+/// Every change of `state.phase` flows through here so observers
+/// (TUI, daemon, VS Code) receive a single structured event per
+/// transition instead of inferring phase from other signals. The
+/// `reason` is a short, stable label (e.g. `"tool_started"`,
+/// `"recovery_abort"`) — not user-facing prose. No-op when the
+/// requested phase equals the current one, which keeps the event
+/// stream free of spurious self-transitions.
+///
+/// This is a free function (not a `&mut self` method on
+/// `HarnessAgent`) so it can be called from inside methods that
+/// already hold `&mut self` plus a separately-borrowed event sink
+/// without tripping the borrow checker.
+pub(crate) fn transition_phase<F: FnMut(AgentRunEvent) + ?Sized>(
+    state: &mut AgentState,
+    next: AgentPhase,
+    reason: &'static str,
+    events: &mut F,
+) {
+    let from = state.phase;
+    if from == next {
+        return;
+    }
+    state.phase = next;
+    events(AgentRunEvent::PhaseChanged {
+        from,
+        to: next,
+        reason: reason.to_string(),
+    });
+}
+
 impl HarnessAgent {
+    /// Run the `on_turn_error` policy chain for `err` and flatten the
+    /// resulting [`Decision`] into a [`TurnErrorAction`] the driver can
+    /// match on. Centralises the `PolicyCx` construction so the
+    /// driver's error branch stays short — see `run_until_done_with_events`.
+    ///
+    /// The argument list mirrors `PolicyCx`'s fields; collapsing them
+    /// into a struct would just shuffle the count from here into the
+    /// caller, so the lint is silenced rather than masked.
+    #[allow(clippy::too_many_arguments)]
+    async fn dispatch_turn_error<F>(
+        &mut self,
+        err: &peridot_common::PeriError,
+        request: &AgentRunRequest,
+        total_usage: &mut Usage,
+        turn_index: u32,
+        provider: &dyn LlmProvider,
+        policies: &mut [Box<dyn crate::loop_policy::LoopPolicy>],
+        events: &mut F,
+    ) -> PeriResult<TurnErrorAction>
+    where
+        F: FnMut(AgentRunEvent) + Send,
+    {
+        let tool_dispatcher = self.build_tool_dispatcher();
+        let subagent_runner = self.subagent_runner.clone();
+        let pending_resume_path = self.pending_resume_path.as_deref();
+        let decision = {
+            let mut cx = crate::loop_policy::PolicyCx {
+                state: &mut self.state,
+                context: &mut self.context,
+                events,
+                usage: total_usage,
+                request,
+                turn_index: turn_index as usize,
+                project_root: &request.project_root,
+                hooks: &request.hooks,
+                security: &request.security,
+                provider,
+                tool_dispatcher: &tool_dispatcher,
+                subagent_runner,
+                pending_resume_path,
+            };
+            crate::loop_policy::dispatch_on_turn_error(policies, &mut cx, err).await?
+        };
+        Ok(match decision {
+            crate::loop_policy::Decision::Continue => TurnErrorAction::Continue,
+            crate::loop_policy::Decision::Retry => TurnErrorAction::Retry,
+            crate::loop_policy::Decision::SkipTurn => TurnErrorAction::Skip,
+            crate::loop_policy::Decision::Stop(reason, message) => {
+                TurnErrorAction::Stop { reason, message }
+            }
+        })
+    }
+
+    /// Snapshot the dependencies needed for tool execution into an
+    /// owned [`HarnessToolDispatcher`]. Called once per loop iteration
+    /// just before constructing `PolicyCx`, so the dispatcher's Arcs +
+    /// mission packet reflect the current turn's view of the world
+    /// without holding a `&self` borrow across the policy chain.
+    pub(crate) fn build_tool_dispatcher(&self) -> HarnessToolDispatcher {
+        HarnessToolDispatcher {
+            tools: self.tools.clone(),
+            cancel: self.cancel.clone(),
+            subagent_runner: self.subagent_runner.clone(),
+            ask_user_port: self.ask_user_port.clone(),
+            message_bus: self.message_bus.clone(),
+            mission_packet: self.context.subagent_mission_packet(5_000),
+        }
+    }
+
     fn current_grader_diff(&self, project_root: &std::path::Path) -> String {
         self.grader_diff_provider
             .as_ref()
@@ -1533,7 +1631,7 @@ impl HarnessAgent {
 /// when the file exists, parses as a `ToolCall`, and was successfully
 /// removed afterward. Any I/O or parse failure returns `None` so the
 /// caller silently falls back to the legacy restart-from-scratch flow.
-fn take_pending_resume(path: Option<&PathBuf>) -> Option<ToolCall> {
+pub(crate) fn take_pending_resume(path: Option<&PathBuf>) -> Option<ToolCall> {
     let path = path?;
     if !path.exists() {
         return None;
@@ -1557,13 +1655,13 @@ struct TodoPlanStep {
     status: String,
 }
 
-fn emit_plan_updated_after_tool<F>(
+pub(crate) fn emit_plan_updated_after_tool<F>(
     tool_name: &str,
     result: &ToolResult,
     project_root: &Path,
     events: &mut F,
 ) where
-    F: FnMut(AgentRunEvent),
+    F: FnMut(AgentRunEvent) + ?Sized,
 {
     if !result.success || !matches!(tool_name, "plan_create" | "plan_update") {
         return;
@@ -1596,7 +1694,7 @@ fn read_todo_plan_updates(project_root: &Path) -> Option<(Vec<PlanStepUpdate>, O
     Some((steps, current))
 }
 
-fn append_pending_resume_observation(
+pub(crate) fn append_pending_resume_observation(
     context: &mut ContextManager,
     tool_name: &str,
     result: &ToolResult,
@@ -1787,7 +1885,7 @@ fn write_file_checkpoint(
     }))
 }
 
-fn should_prefetch_codebase_survey(mode: ExecutionMode, task: &str) -> bool {
+pub(crate) fn should_prefetch_codebase_survey(mode: ExecutionMode, task: &str) -> bool {
     if mode == ExecutionMode::Plan {
         return false;
     }
@@ -1818,7 +1916,7 @@ fn should_prefetch_codebase_survey(mode: ExecutionMode, task: &str) -> bool {
         || broad_korean.iter().any(|needle| task.contains(needle))
 }
 
-fn codebase_survey_prompt(task: &str, context: &ContextManager) -> String {
+pub(crate) fn codebase_survey_prompt(task: &str, context: &ContextManager) -> String {
     format!(
         "{}\n\n[codebase survey task]\n\
 The parent received this broad request:\n{task}\n\n\
@@ -1839,7 +1937,7 @@ Treat summaries and filenames as hypotheses unless you inspected exact source.",
 /// the serialized `SubAgentResult` (under `output.diff`) and wraps it
 /// in an explicit "verify this" instruction. Empty diff → empty
 /// directive (the helper returns "" and the caller skips the append).
-fn build_subagent_review(output: &serde_json::Value) -> String {
+pub(crate) fn build_subagent_review(output: &serde_json::Value) -> String {
     let diff = output.get("diff").and_then(|v| v.as_str()).unwrap_or("");
     let summary = output.get("summary").and_then(|v| v.as_str()).unwrap_or("");
     let workspace = output
@@ -1876,7 +1974,7 @@ fn build_subagent_review(output: &serde_json::Value) -> String {
 /// Runs `git diff` in `project_root` and returns its stdout. Returns
 /// an empty string when git isn't available or the directory isn't a
 /// repo — auto-grade is best-effort, never blocks the run.
-fn collect_git_diff(project_root: &std::path::Path) -> String {
+pub(crate) fn collect_git_diff(project_root: &std::path::Path) -> String {
     std::process::Command::new("git")
         .args(["diff", "HEAD"])
         .current_dir(project_root)
@@ -1887,18 +1985,18 @@ fn collect_git_diff(project_root: &std::path::Path) -> String {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct VerifyFailureState {
-    tool_name: String,
-    signature: String,
-    attempts: u32,
+pub(crate) struct VerifyFailureState {
+    pub(crate) tool_name: String,
+    pub(crate) signature: String,
+    pub(crate) attempts: u32,
     /// Parsed `path[:line]` hints extracted from the verifier output.
     /// Helps the model jump straight to the culprit instead of grepping
     /// the failing log line by line. Empty when no recognisable
     /// `path:line` token is present.
-    hints: Vec<String>,
+    pub(crate) hints: Vec<String>,
 }
 
-fn update_verify_failure_state<'a>(
+pub(crate) fn update_verify_failure_state<'a>(
     state: &'a mut Option<VerifyFailureState>,
     outcome: &AgentTurnOutcome,
 ) -> &'a VerifyFailureState {
@@ -2019,7 +2117,7 @@ fn verify_failure_signature(result: &ToolResult) -> String {
     truncate_chars(&normalized, 180)
 }
 
-fn verify_failure_directive(failure: &VerifyFailureState, cap: u32) -> String {
+pub(crate) fn verify_failure_directive(failure: &VerifyFailureState, cap: u32) -> String {
     let repeat_note = if failure.attempts > 1 {
         " This is the same verifier failure signature as the previous attempt; change strategy before editing again."
     } else {
@@ -2189,6 +2287,44 @@ fn normalize_shell_command_for_approval(command: &str) -> String {
 #[cfg(test)]
 mod helpers_tests {
     use super::*;
+
+    #[test]
+    fn transition_phase_emits_event_on_change() {
+        use peridot_common::{ExecutionMode, PermissionMode};
+        let mut state = AgentState::new(ExecutionMode::Plan, PermissionMode::Safe);
+        let mut emitted = Vec::new();
+        let mut sink = |event: AgentRunEvent| emitted.push(event);
+
+        transition_phase(&mut state, AgentPhase::Executing, "tool_started", &mut sink);
+
+        assert_eq!(state.phase, AgentPhase::Executing);
+        assert_eq!(emitted.len(), 1);
+        match &emitted[0] {
+            AgentRunEvent::PhaseChanged { from, to, reason } => {
+                assert_eq!(*from, AgentPhase::Planning);
+                assert_eq!(*to, AgentPhase::Executing);
+                assert_eq!(reason, "tool_started");
+            }
+            other => panic!("expected PhaseChanged, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn transition_phase_skips_event_when_phase_unchanged() {
+        use peridot_common::{ExecutionMode, PermissionMode};
+        let mut state = AgentState::new(ExecutionMode::Plan, PermissionMode::Safe);
+        state.phase = AgentPhase::Recovering;
+        let mut emitted = Vec::new();
+        let mut sink = |event: AgentRunEvent| emitted.push(event);
+
+        transition_phase(&mut state, AgentPhase::Recovering, "turn_error", &mut sink);
+
+        assert_eq!(state.phase, AgentPhase::Recovering);
+        assert!(
+            emitted.is_empty(),
+            "no event should fire for a self-transition: got {emitted:?}"
+        );
+    }
 
     #[test]
     fn build_subagent_review_with_diff_carries_workspace_and_diff() {

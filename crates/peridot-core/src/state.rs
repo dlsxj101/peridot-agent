@@ -47,7 +47,8 @@ impl AgentState {
             SlashCommand::GoalStart(goal) => {
                 self.goal = Some(goal.clone());
             }
-            SlashCommand::Plan
+            SlashCommand::Skill { .. }
+            | SlashCommand::Plan
             | SlashCommand::Execute
             | SlashCommand::Safe
             | SlashCommand::Auto
@@ -77,6 +78,8 @@ impl AgentState {
             | SlashCommand::SessionNew(_)
             | SlashCommand::SessionSwitch(_)
             | SlashCommand::SessionClose(_)
+            | SlashCommand::SessionDelete(_)
+            | SlashCommand::SessionRename { .. }
             | SlashCommand::SessionList
             | SlashCommand::SubagentModel(_)
             | SlashCommand::Reasoning(_)

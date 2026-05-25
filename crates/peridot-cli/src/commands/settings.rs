@@ -1,15 +1,22 @@
-//! `peridot setting` interactive command.
+//! `peridot setting` interactive command + cross-surface settings registry.
 //!
 //! Loads the project config (creating it if needed), renders an
 //! interactive list of the toggleable / cycleable / numeric options
 //! via [`peridot_tui::run_settings_screen`], then writes the mutated
 //! values back to `.peridot/config.toml` when the operator saves.
 //!
-//! Adding a new option means: (1) extend [`settings_registry`] with
-//! the field's id, label, group, help text, and a starting
-//! [`SettingValue`]; (2) extend [`apply_settings_to_config`] with a
-//! match arm on the id that copies the new value back into
-//! `PeridotConfig`. The screen UI never needs to change.
+//! The same [`settings_registry`] feeds the daemon's `settings.list`
+//! RPC so the VS Code webview shares a single definition; group, label,
+//! and help strings come from [`super::settings_i18n`] so swapping
+//! languages just means rebuilding the registry under a different
+//! locale. `surfaces` on each item lets non-TUI clients filter out rows
+//! that wouldn't do anything if toggled there (`tui.show_mascot`, …).
+//!
+//! Adding a new option: (1) extend [`settings_registry`] with the
+//! field's id, surfaces, and a [`SettingValue`] seed; (2) extend
+//! [`apply_settings_to_config`] with a match arm that copies the new
+//! value back into `PeridotConfig`; (3) add a translation entry in
+//! [`super::settings_i18n`]. The screen UI never needs to change.
 
 use std::fs;
 use std::path::Path;
@@ -24,6 +31,7 @@ use peridot_tui::{SettingItem, SettingValue, SettingsOutcome, run_settings_scree
 use super::OutputFormat;
 use super::config::init_project_config_value;
 use super::output::print_json_or_text_result;
+use super::settings_i18n::{LocalizedSetting, fallback as i18n_fallback, lookup as i18n_lookup};
 
 /// Entry point for `peridot setting`. Reads the project config, opens
 /// the interactive screen, and persists the result on save.
@@ -59,45 +67,84 @@ pub(crate) fn run_setting_command(project_root: &Path, output: OutputFormat) -> 
     }
 }
 
+/// Surface tags. Centralised so registry callsites don't drift between
+/// `"vscode"` and `"vs-code"` etc. Renderers compare by string anyway,
+/// but keeping these constants makes a typo a compile error rather
+/// than a silently-empty webview.
+const SURFACE_TUI: &str = "tui";
+const SURFACE_VSCODE: &str = "vscode";
+
+fn surfaces_all() -> Vec<String> {
+    vec![SURFACE_TUI.to_string(), SURFACE_VSCODE.to_string()]
+}
+
+fn surfaces_tui_only() -> Vec<String> {
+    vec![SURFACE_TUI.to_string()]
+}
+
+/// Build a [`SettingItem`] with translated group/label/help fetched
+/// from the i18n table. Falls back to the id as the label when no
+/// translation entry exists — this keeps the page rendering even when
+/// a freshly-added field hasn't been translated yet.
+fn make_item(id: &str, surfaces: Vec<String>, value: SettingValue, locale: Locale) -> SettingItem {
+    // Two-step lookup: try the id in the requested locale; if that
+    // returns None (newly added setting whose translation is still
+    // missing), call into `fallback` for the static "(missing
+    // translation)" placeholder. The label is then overridden with
+    // the id so operators can see *which* field is missing in
+    // production without crashing — surfacing the gap is more useful
+    // than hiding it.
+    let (strings, translated) = match i18n_lookup(id, locale) {
+        Some(s) => (s, true),
+        None => (i18n_fallback(id), false),
+    };
+    let label = if translated {
+        strings.label.to_string()
+    } else {
+        id.to_string()
+    };
+    SettingItem {
+        id: id.to_string(),
+        group: strings.group.to_string(),
+        label,
+        help: strings.help.map(str::to_string),
+        value,
+        surfaces,
+    }
+}
+
 /// Builds the full list of toggleable settings, seeded with the
-/// current values from `config`. Stable order is alphabetical within
-/// each group; groups are ordered by importance (autonomy first,
-/// then defaults, committee, security, git, TUI).
+/// current values from `config`. Label/help strings come from the
+/// effective locale (`config.effective_language()`), so toggling
+/// `ui.language` and re-listing flips every row to the new language.
+///
+/// Group order matches the TUI screen's mental hierarchy: autonomy
+/// first, defaults next, then committee / models / security / git /
+/// surfaces / updates / locale.
 #[allow(clippy::vec_init_then_push)] // 20+ items — sequential pushes are easier to scan than one giant vec![]
 pub(crate) fn settings_registry(config: &PeridotConfig) -> Vec<SettingItem> {
     let mut items = Vec::new();
+    let locale = config.effective_language();
 
     // === Autonomy loops ===
-    items.push(SettingItem {
-        id: "defaults.auto_verify_after_mutation".into(),
-        group: "Autonomy".into(),
-        label: "Auto-verify after every file change".into(),
-        help: Some(
-            "After every file_write / file_patch, run verify_build automatically so compile errors surface immediately."
-                .into(),
-        ),
-        value: SettingValue::Bool(config.defaults.auto_verify_after_mutation),
-    });
-    items.push(SettingItem {
-        id: "defaults.auto_grade_on_done".into(),
-        group: "Autonomy".into(),
-        label: "Auto-grade on agent_done".into(),
-        help: Some(
-            "Before declaring the task done, ask an LLM to grade the change. If it fails, the loop continues with the recommendations injected."
-                .into(),
-        ),
-        value: SettingValue::Bool(config.defaults.auto_grade_on_done),
-    });
+    items.push(make_item(
+        "defaults.auto_verify_after_mutation",
+        surfaces_all(),
+        SettingValue::Bool(config.defaults.auto_verify_after_mutation),
+        locale,
+    ));
+    items.push(make_item(
+        "defaults.auto_grade_on_done",
+        surfaces_all(),
+        SettingValue::Bool(config.defaults.auto_grade_on_done),
+        locale,
+    ));
 
     // === Defaults ===
-    items.push(SettingItem {
-        id: "defaults.mode".into(),
-        group: "Defaults".into(),
-        label: "Default execution mode".into(),
-        help: Some(
-            "Plan = read-only planning; Execute = normal coding; Goal = long autonomous run".into(),
-        ),
-        value: SettingValue::Choice {
+    items.push(make_item(
+        "defaults.mode",
+        surfaces_all(),
+        SettingValue::Choice {
             options: vec!["plan".into(), "execute".into(), "goal".into()],
             selected: match config.defaults.mode {
                 ExecutionMode::Plan => 0,
@@ -105,15 +152,12 @@ pub(crate) fn settings_registry(config: &PeridotConfig) -> Vec<SettingItem> {
                 ExecutionMode::Goal => 2,
             },
         },
-    });
-    items.push(SettingItem {
-        id: "defaults.permission".into(),
-        group: "Defaults".into(),
-        label: "Default permission posture".into(),
-        help: Some(
-            "Safe = confirm every write; Auto = confirm only destructive; Yolo = no prompts".into(),
-        ),
-        value: SettingValue::Choice {
+        locale,
+    ));
+    items.push(make_item(
+        "defaults.permission",
+        surfaces_all(),
+        SettingValue::Choice {
             options: vec!["safe".into(), "auto".into(), "yolo".into()],
             selected: match config.defaults.permission {
                 PermissionMode::Safe => 0,
@@ -121,54 +165,47 @@ pub(crate) fn settings_registry(config: &PeridotConfig) -> Vec<SettingItem> {
                 PermissionMode::Yolo => 2,
             },
         },
-    });
-    items.push(SettingItem {
-        id: "defaults.max_turns".into(),
-        group: "Defaults".into(),
-        label: "Max turns per run".into(),
-        help: Some("Hard cap on how many model→tool cycles a single task can take.".into()),
-        value: SettingValue::U32 {
+        locale,
+    ));
+    items.push(make_item(
+        "defaults.max_turns",
+        surfaces_all(),
+        SettingValue::U32 {
             value: config.defaults.max_turns,
             min: 1,
             max: 1000,
             step: 10,
         },
-    });
-    items.push(SettingItem {
-        id: "defaults.budget_usd".into(),
-        group: "Defaults".into(),
-        label: "Budget per run (USD)".into(),
-        help: Some("Cost ceiling. 0 disables the cap.".into()),
-        value: SettingValue::F64 {
+        locale,
+    ));
+    items.push(make_item(
+        "defaults.budget_usd",
+        surfaces_all(),
+        SettingValue::F64 {
             value: config.defaults.budget_usd,
             min: 0.0,
             max: 100.0,
             step: 0.5,
         },
-    });
-    items.push(SettingItem {
-        id: "defaults.budget_warning_pct".into(),
-        group: "Defaults".into(),
-        label: "Budget warning at (%)".into(),
-        help: Some("Fire a hook when this share of the budget is consumed.".into()),
-        value: SettingValue::U32 {
+        locale,
+    ));
+    items.push(make_item(
+        "defaults.budget_warning_pct",
+        surfaces_all(),
+        SettingValue::U32 {
             value: config.defaults.budget_warning_pct as u32,
             min: 0,
             max: 100,
             step: 5,
         },
-    });
+        locale,
+    ));
 
     // === Committee (multi-agent) ===
-    items.push(SettingItem {
-        id: "committee.mode".into(),
-        group: "Committee".into(),
-        label: "Multi-agent committee".into(),
-        help: Some(
-            "Off = single agent; Planner = run a planner preflight; Full = planner + reviewer per mutating turn."
-                .into(),
-        ),
-        value: SettingValue::Choice {
+    items.push(make_item(
+        "committee.mode",
+        surfaces_all(),
+        SettingValue::Choice {
             options: vec!["off".into(), "planner".into(), "full".into()],
             selected: match config.committee.mode {
                 CommitteeMode::Off => 0,
@@ -176,52 +213,42 @@ pub(crate) fn settings_registry(config: &PeridotConfig) -> Vec<SettingItem> {
                 CommitteeMode::Full => 2,
             },
         },
-    });
-    items.push(SettingItem {
-        id: "committee.min_task_chars".into(),
-        group: "Committee".into(),
-        label: "Skip planner below N chars".into(),
-        help: Some("Tasks shorter than this skip the planner preflight. 0 = always run.".into()),
-        value: SettingValue::Usize {
+        locale,
+    ));
+    items.push(make_item(
+        "committee.min_task_chars",
+        surfaces_all(),
+        SettingValue::Usize {
             value: config.committee.min_task_chars,
             min: 0,
             max: 2000,
             step: 25,
         },
-    });
-    items.push(SettingItem {
-        id: "committee.max_review_passes".into(),
-        group: "Committee".into(),
-        label: "Max reviewer re-passes".into(),
-        help: Some("After this many consecutive RequestChanges, auto-block the run.".into()),
-        value: SettingValue::U32 {
+        locale,
+    ));
+    items.push(make_item(
+        "committee.max_review_passes",
+        surfaces_all(),
+        SettingValue::U32 {
             value: config.committee.max_review_passes,
             min: 1,
             max: 10,
             step: 1,
         },
-    });
-    items.push(SettingItem {
-        id: "committee.use_llm_complexity_gate".into(),
-        group: "Committee".into(),
-        label: "Let the model decide task complexity".into(),
-        help: Some(
-            "Classify the task with a capped-output call to the main model before the planner. Skips planning for chat / simple tasks, fires for complex / architectural."
-                .into(),
-        ),
-        value: SettingValue::Bool(config.committee.use_llm_complexity_gate),
-    });
+        locale,
+    ));
+    items.push(make_item(
+        "committee.use_llm_complexity_gate",
+        surfaces_all(),
+        SettingValue::Bool(config.committee.use_llm_complexity_gate),
+        locale,
+    ));
 
     // === Models ===
-    items.push(SettingItem {
-        id: "models.reasoning_effort".into(),
-        group: "Models".into(),
-        label: "Reasoning effort".into(),
-        help: Some(
-            "How hard the model thinks: off / low / medium / high / xhigh (cost grows with depth)."
-                .into(),
-        ),
-        value: SettingValue::Choice {
+    items.push(make_item(
+        "models.reasoning_effort",
+        surfaces_all(),
+        SettingValue::Choice {
             options: vec![
                 "off".into(),
                 "low".into(),
@@ -237,15 +264,14 @@ pub(crate) fn settings_registry(config: &PeridotConfig) -> Vec<SettingItem> {
                 ReasoningEffort::XHigh => 4,
             },
         },
-    });
+        locale,
+    ));
 
     // === Security ===
-    items.push(SettingItem {
-        id: "security.sandbox".into(),
-        group: "Security".into(),
-        label: "Sandbox mode".into(),
-        help: Some("None = run tools directly; Docker / Firejail = isolate tool execution.".into()),
-        value: SettingValue::Choice {
+    items.push(make_item(
+        "security.sandbox",
+        surfaces_all(),
+        SettingValue::Choice {
             options: vec!["none".into(), "docker".into(), "firejail".into()],
             selected: match config.security.sandbox {
                 SandboxMode::None => 0,
@@ -253,97 +279,84 @@ pub(crate) fn settings_registry(config: &PeridotConfig) -> Vec<SettingItem> {
                 SandboxMode::Firejail => 2,
             },
         },
-    });
-    items.push(SettingItem {
-        id: "security.ask_before_install".into(),
-        group: "Security".into(),
-        label: "Confirm before installing dependencies".into(),
-        help: Some("Block `cargo add`, `npm install`, etc. until the operator approves.".into()),
-        value: SettingValue::Bool(config.security.ask_before_install),
-    });
-    items.push(SettingItem {
-        id: "security.ask_before_delete".into(),
-        group: "Security".into(),
-        label: "Confirm before destructive shell commands".into(),
-        help: Some(
-            "Block `rm`, `git clean`, `git reset --hard`, etc. until the operator approves.".into(),
-        ),
-        value: SettingValue::Bool(config.security.ask_before_delete),
-    });
+        locale,
+    ));
+    items.push(make_item(
+        "security.ask_before_install",
+        surfaces_all(),
+        SettingValue::Bool(config.security.ask_before_install),
+        locale,
+    ));
+    items.push(make_item(
+        "security.ask_before_delete",
+        surfaces_all(),
+        SettingValue::Bool(config.security.ask_before_delete),
+        locale,
+    ));
 
     // === Git ===
-    items.push(SettingItem {
-        id: "git.auto_commit".into(),
-        group: "Git".into(),
-        label: "Auto-commit after each run".into(),
-        help: Some("Create a git commit at the end of every successful run.".into()),
-        value: SettingValue::Bool(config.git.auto_commit),
-    });
-    items.push(SettingItem {
-        id: "git.auto_branch".into(),
-        group: "Git".into(),
-        label: "Auto-branch before changes".into(),
-        help: Some("Create a topic branch before the agent starts editing.".into()),
-        value: SettingValue::Bool(config.git.auto_branch),
-    });
+    items.push(make_item(
+        "git.auto_commit",
+        surfaces_all(),
+        SettingValue::Bool(config.git.auto_commit),
+        locale,
+    ));
+    items.push(make_item(
+        "git.auto_branch",
+        surfaces_all(),
+        SettingValue::Bool(config.git.auto_branch),
+        locale,
+    ));
 
-    // === TUI ===
-    items.push(SettingItem {
-        id: "tui.show_thinking".into(),
-        group: "TUI".into(),
-        label: "Show model thinking".into(),
-        help: Some("Display extended-thinking output inline (Goal mode only).".into()),
-        value: SettingValue::Bool(config.tui.show_thinking),
-    });
-    items.push(SettingItem {
-        id: "tui.show_token_count".into(),
-        group: "TUI".into(),
-        label: "Show token count".into(),
-        help: Some("Surface running token totals in the header.".into()),
-        value: SettingValue::Bool(config.tui.show_token_count),
-    });
-    items.push(SettingItem {
-        id: "tui.show_cost".into(),
-        group: "TUI".into(),
-        label: "Show running cost".into(),
-        help: Some("Surface the estimated USD spend in the header.".into()),
-        value: SettingValue::Bool(config.tui.show_cost),
-    });
-    items.push(SettingItem {
-        id: "tui.show_mascot".into(),
-        group: "TUI".into(),
-        label: "Show the deer mascot".into(),
-        help: Some("Toggle the idle-state pixel mascot in the side panel.".into()),
-        value: SettingValue::Bool(config.tui.show_mascot),
-    });
-    items.push(SettingItem {
-        id: "tui.language".into(),
-        group: "TUI".into(),
-        label: "UI language".into(),
-        help: Some("Locale used for TUI labels and status text.".into()),
-        value: SettingValue::Choice {
+    // === TUI (terminal-only — VS Code webview filters by surfaces) ===
+    items.push(make_item(
+        "tui.show_thinking",
+        surfaces_tui_only(),
+        SettingValue::Bool(config.tui.show_thinking),
+        locale,
+    ));
+    items.push(make_item(
+        "tui.show_token_count",
+        surfaces_tui_only(),
+        SettingValue::Bool(config.tui.show_token_count),
+        locale,
+    ));
+    items.push(make_item(
+        "tui.show_cost",
+        surfaces_tui_only(),
+        SettingValue::Bool(config.tui.show_cost),
+        locale,
+    ));
+    items.push(make_item(
+        "tui.show_mascot",
+        surfaces_tui_only(),
+        SettingValue::Bool(config.tui.show_mascot),
+        locale,
+    ));
+
+    // === UI (cross-surface locale — replaces the legacy tui.language row) ===
+    items.push(make_item(
+        "ui.language",
+        surfaces_all(),
+        SettingValue::Choice {
             options: vec!["en".into(), "ko".into()],
-            selected: tui_language_index(config),
+            selected: match locale {
+                Locale::En => 0,
+                Locale::Ko => 1,
+            },
         },
-    });
+        locale,
+    ));
 
     // === Updates ===
-    items.push(SettingItem {
-        id: "updates.auto_check".into(),
-        group: "Updates".into(),
-        label: "Check for updates on launch".into(),
-        help: Some("Phone home once at startup to see if a newer Peridot is available.".into()),
-        value: SettingValue::Bool(config.updates.auto_check),
-    });
+    items.push(make_item(
+        "updates.auto_check",
+        surfaces_all(),
+        SettingValue::Bool(config.updates.auto_check),
+        locale,
+    ));
 
     items
-}
-
-fn tui_language_index(config: &PeridotConfig) -> usize {
-    match config.tui.language {
-        Locale::Ko => 1,
-        Locale::En => 0,
-    }
 }
 
 /// Copies values from the mutated `items` slice back into `config`.
@@ -447,12 +460,19 @@ fn apply_one(item: &SettingItem, config: &mut PeridotConfig) {
         ("tui.show_mascot", SettingValue::Bool(v)) => {
             config.tui.show_mascot = *v;
         }
-        ("tui.language", SettingValue::Choice { options, selected }) => {
+        ("ui.language", SettingValue::Choice { options, selected }) => {
             if let Some(label) = options.get(*selected) {
-                config.tui.language = match label.as_str() {
+                let locale = match label.as_str() {
                     "ko" => Locale::Ko,
                     _ => Locale::En,
                 };
+                config.ui.language = Some(locale);
+                // Mirror to the legacy `tui.language` knob so old
+                // readers (anything still consulting `config.tui.language`
+                // directly instead of `effective_language()`) see the
+                // new value too. New code should read
+                // `effective_language()`.
+                config.tui.language = locale;
             }
         }
         ("updates.auto_check", SettingValue::Bool(v)) => {
@@ -543,6 +563,7 @@ mod tests {
             label: "x".into(),
             help: None,
             value: SettingValue::Bool(true),
+            surfaces: SettingItem::default_surfaces(),
         }];
         // Should not panic and should not touch defaults.
         let snapshot = config.clone();
@@ -551,5 +572,97 @@ mod tests {
             config.defaults.auto_verify_after_mutation,
             snapshot.defaults.auto_verify_after_mutation
         );
+    }
+
+    #[test]
+    fn registry_switches_language_via_ui_language() {
+        let mut config = PeridotConfig::default();
+        config.ui.language = Some(Locale::Ko);
+        let items = settings_registry(&config);
+        let verify = items
+            .iter()
+            .find(|i| i.id == "defaults.auto_verify_after_mutation")
+            .expect("auto-verify item present");
+        assert!(
+            verify.label.contains("자동 검증"),
+            "expected Korean label, got {:?}",
+            verify.label
+        );
+    }
+
+    #[test]
+    fn registry_falls_back_to_tui_language_when_ui_unset() {
+        // Mirror an older config file that pre-dates the [ui] section:
+        // `ui.language` is None, `tui.language` is the only knob set.
+        let mut config = PeridotConfig::default();
+        config.ui.language = None;
+        config.tui.language = Locale::Ko;
+        let items = settings_registry(&config);
+        let verify = items
+            .iter()
+            .find(|i| i.id == "defaults.auto_verify_after_mutation")
+            .unwrap();
+        assert!(
+            verify.label.contains("자동 검증"),
+            "expected Korean label via tui.language fallback, got {:?}",
+            verify.label
+        );
+    }
+
+    #[test]
+    fn tui_only_items_carry_tui_surface() {
+        let config = PeridotConfig::default();
+        let items = settings_registry(&config);
+        let mascot = items
+            .iter()
+            .find(|i| i.id == "tui.show_mascot")
+            .expect("mascot item present");
+        assert_eq!(mascot.surfaces, vec!["tui".to_string()]);
+        // ui.language is cross-surface — sanity check the contrast.
+        let language = items
+            .iter()
+            .find(|i| i.id == "ui.language")
+            .expect("ui.language item present");
+        assert!(language.surfaces.contains(&"vscode".to_string()));
+    }
+
+    #[test]
+    fn applying_ui_language_mirrors_to_tui_language() {
+        // Old code paths still read `tui.language` directly — make
+        // sure `apply_settings_to_config` keeps both fields in sync so
+        // nothing sees a stale value when the user flips locales.
+        let mut config = PeridotConfig::default();
+        let mut items = settings_registry(&config);
+        for item in items.iter_mut() {
+            if item.id == "ui.language"
+                && let SettingValue::Choice {
+                    options, selected, ..
+                } = &mut item.value
+            {
+                *selected = options.iter().position(|o| o == "ko").unwrap();
+            }
+        }
+        apply_settings_to_config(&items, &mut config);
+        assert_eq!(config.ui.language, Some(Locale::Ko));
+        assert_eq!(config.tui.language, Locale::Ko);
+    }
+
+    #[test]
+    fn settings_i18n_covers_registry() {
+        // Every id surfaced by the registry must have a translation
+        // entry, otherwise the page silently falls back to the id
+        // string which looks broken in production. Catching this at
+        // test time forces translators to update the table when a new
+        // field lands.
+        let config = PeridotConfig::default();
+        let items = settings_registry(&config);
+        for item in &items {
+            let en = i18n_lookup(&item.id, Locale::En)
+                .unwrap_or_else(|| panic!("missing en for {}", item.id));
+            let ko = i18n_lookup(&item.id, Locale::Ko)
+                .unwrap_or_else(|| panic!("missing ko for {}", item.id));
+            assert!(!en.label.is_empty());
+            assert!(!ko.label.is_empty());
+        }
     }
 }

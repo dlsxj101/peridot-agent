@@ -256,6 +256,22 @@ pub trait Tool: Send + Sync {
     /// Permission category declared by the tool.
     fn permission_level(&self) -> PermissionLevel;
 
+    /// Finer-grained risk classification surfaced to the UI and used
+    /// by class-based approval policies. Defaults to a derivation from
+    /// [`PermissionLevel`] so existing tools keep working without
+    /// explicit overrides; security-sensitive tools (shell, web_fetch,
+    /// env-touching utilities) should override this with a specific
+    /// [`RiskClass`].
+    fn risk_class(&self) -> peridot_common::RiskClass {
+        use peridot_common::RiskClass;
+        match self.permission_level() {
+            PermissionLevel::Read => RiskClass::ReadOnly,
+            PermissionLevel::Write => RiskClass::LocalWrite,
+            PermissionLevel::Destructive => RiskClass::Destructive,
+            PermissionLevel::System => RiskClass::SecretAdjacent,
+        }
+    }
+
     /// Whether this tool is read-only.
     fn is_read_only(&self) -> bool {
         self.permission_level() == PermissionLevel::Read

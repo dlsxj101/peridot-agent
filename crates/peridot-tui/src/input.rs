@@ -1097,6 +1097,15 @@ pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
             state.push_transcript(format!("session: closing {target}"));
             state.push_pending_session_command(SessionCommandEvent::SessionClose(target));
         }
+        SlashCommand::SessionDelete(target) => {
+            state.push_transcript(format!("session: deleting {target}"));
+            state.push_pending_session_command(SessionCommandEvent::SessionDelete(target));
+        }
+        SlashCommand::SessionRename { target, title } => {
+            state.push_transcript(format!("session: renaming {target} to {title}"));
+            state
+                .push_pending_session_command(SessionCommandEvent::SessionRename { target, title });
+        }
         SlashCommand::SessionList => {
             if state.sessions.is_empty() {
                 state.push_transcript("sessions: <none>");
@@ -1224,6 +1233,19 @@ pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
                 state.push_transcript("branch: opening picker…");
                 state.push_pending_session_command(SessionCommandEvent::BranchPickerOpen);
             }
+        }
+        SlashCommand::Skill { name, .. } => {
+            // The TUI surface doesn't have direct access to the
+            // project's MemoryStore — only the daemon code path does,
+            // because session storage is per-workspace and the TUI is
+            // process-wide. Surface a friendly note rather than
+            // crash, and explicitly mention `/help` so an operator
+            // who hit this via a typo (rather than a real skill
+            // invocation) sees the same hint the legacy
+            // "invalid slash" path used to provide.
+            state.push_transcript(format!(
+                "skill `{name}`: not loadable from the TUI yet — run from the VS Code extension to apply, or type `/help` for available commands."
+            ));
         }
     }
 }

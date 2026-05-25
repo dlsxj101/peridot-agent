@@ -1,5 +1,6 @@
 use std::path::Path;
-use std::process::Command;
+use std::process::{Child, Command, Output};
+use std::{io, thread};
 
 use async_trait::async_trait;
 use peridot_common::{PeriError, PeriResult, PermissionLevel, SandboxMode, ToolGroup, ToolResult};
@@ -90,6 +91,15 @@ impl Tool for ShellExecTool {
         PermissionLevel::Write
     }
 
+    fn risk_class(&self) -> peridot_common::RiskClass {
+        // Shell can do anything — destroy files, push to remotes,
+        // exfiltrate secrets. Permission-level is `Write` for the
+        // allowlist machinery but the UI / class-based approval policy
+        // needs to treat it as the most dangerous class so prompts
+        // surface clearly.
+        peridot_common::RiskClass::Destructive
+    }
+
     fn can_run_concurrent(&self) -> bool {
         false
     }
@@ -125,26 +135,37 @@ pub(crate) fn spawn_and_wait_interruptible(
             .output()
             .map_err(|err| PeriError::Tool(format!("failed to run command: {err}")));
     }
+    configure_interruptible_process_group(&mut command);
     let mut child = command
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
         .map_err(|err| PeriError::Tool(format!("failed to spawn command: {err}")))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| PeriError::Tool("failed to capture command stdout".to_string()))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| PeriError::Tool("failed to capture command stderr".to_string()))?;
+    let stdout_reader = read_pipe_in_background(stdout);
+    let stderr_reader = read_pipe_in_background(stderr);
     let started = std::time::Instant::now();
     let deadline = if timeout_seconds == 0 {
         None
     } else {
         Some(started + std::time::Duration::from_secs(timeout_seconds))
     };
+    let status;
     loop {
         match child
             .try_wait()
             .map_err(|err| PeriError::Tool(format!("failed to poll command: {err}")))?
         {
             Some(_status) => {
-                return child.wait_with_output().map_err(|err| {
-                    PeriError::Tool(format!("failed to read command output: {err}"))
-                });
+                status = _status;
+                break;
             }
             None => {
                 if let Some(token) = cancel.as_ref()
@@ -153,8 +174,10 @@ pub(crate) fn spawn_and_wait_interruptible(
                     // Best-effort kill; ignore the error so we never
                     // double-report a failure that the cancellation
                     // already explains.
-                    let _ = child.kill();
+                    terminate_child_tree(&mut child);
                     let _ = child.wait();
+                    let _ = collect_pipe_output("stdout", stdout_reader);
+                    let _ = collect_pipe_output("stderr", stderr_reader);
                     return Err(PeriError::Tool(format!(
                         "{label}: interrupted by user before completion"
                     )));
@@ -166,8 +189,10 @@ pub(crate) fn spawn_and_wait_interruptible(
                     // model gets a recoverable error instead of a generic
                     // "interrupted". Goal-mode loops use this to detect
                     // runaway commands without operator intervention.
-                    let _ = child.kill();
+                    terminate_child_tree(&mut child);
                     let _ = child.wait();
+                    let _ = collect_pipe_output("stdout", stdout_reader);
+                    let _ = collect_pipe_output("stderr", stderr_reader);
                     return Err(PeriError::Tool(format!(
                         "{label}: timed out after {timeout_seconds}s (security.shell_command_timeout_seconds)"
                     )));
@@ -176,6 +201,61 @@ pub(crate) fn spawn_and_wait_interruptible(
             }
         }
     }
+    let stdout = collect_pipe_output("stdout", stdout_reader)?;
+    let stderr = collect_pipe_output("stderr", stderr_reader)?;
+    Ok(Output {
+        status,
+        stdout,
+        stderr,
+    })
+}
+
+#[cfg(unix)]
+fn configure_interruptible_process_group(command: &mut Command) {
+    use std::os::unix::process::CommandExt;
+    command.process_group(0);
+}
+
+#[cfg(not(unix))]
+fn configure_interruptible_process_group(_command: &mut Command) {}
+
+fn terminate_child_tree(child: &mut Child) {
+    #[cfg(unix)]
+    {
+        let _ = Command::new("kill")
+            .arg("-KILL")
+            .arg("--")
+            .arg(format!("-{}", child.id()))
+            .status();
+    }
+    #[cfg(windows)]
+    {
+        let _ = Command::new("taskkill")
+            .args(["/PID", &child.id().to_string(), "/T", "/F"])
+            .status();
+    }
+    let _ = child.kill();
+}
+
+fn read_pipe_in_background<R>(mut reader: R) -> thread::JoinHandle<io::Result<Vec<u8>>>
+where
+    R: io::Read + Send + 'static,
+{
+    thread::spawn(move || {
+        let mut output = Vec::new();
+        reader.read_to_end(&mut output)?;
+        Ok(output)
+    })
+}
+
+fn collect_pipe_output(
+    name: &str,
+    reader: thread::JoinHandle<io::Result<Vec<u8>>>,
+) -> PeriResult<Vec<u8>> {
+    reader
+        .join()
+        .map_err(|_| PeriError::Tool(format!("shell {name} reader panicked")))?
+        .map_err(|err| PeriError::Tool(format!("failed to read command {name}: {err}")))
 }
 
 pub(crate) fn reject_hard_blocked_command(command: &str) -> PeriResult<()> {

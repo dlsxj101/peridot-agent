@@ -2,6 +2,53 @@
   "version": "0.2.0",
   "configurations": [
     {
+      "name": "Peridot: Debug CLI (--version)",
+      "type": "lldb",
+      "request": "launch",
+      "cargo": {
+        "args": [
+          "build",
+          "-p",
+          "peridot-cli",
+          "--bin",
+          "peridot"
+        ],
+        "filter": {
+          "name": "peridot",
+          "kind": "bin"
+        }
+      },
+      "args": [
+        "--version"
+      ],
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "Peridot: Debug CLI task",
+      "type": "lldb",
+      "request": "launch",
+      "cargo": {
+        "args": [
+          "build",
+          "-p",
+          "peridot-cli",
+          "--bin",
+          "peridot"
+        ],
+        "filter": {
+          "name": "peridot",
+          "kind": "bin"
+        }
+      },
+      "args": [
+        "hello from cursor dev"
+      ],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "RUST_BACKTRACE": "1"
+      }
+    },
+    {
       "name": "Peridot: Run Extension with bundled CLI",
       "type": "extensionHost",
       "request": "launch",

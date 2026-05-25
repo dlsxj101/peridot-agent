@@ -454,6 +454,34 @@ fn finds_release_asset_url() {
 }
 
 #[test]
+fn latest_cli_release_skips_extension_releases() {
+    let releases = serde_json::json!([
+        {
+            "tag_name": "vsce/v0.5.16",
+            "html_url": "https://example.test/vsce",
+            "draft": false,
+            "prerelease": false,
+            "assets": [
+                {"name": "peridot-vscode-win32-x64-0.5.16.vsix"}
+            ]
+        },
+        {
+            "tag_name": "v0.8.10",
+            "html_url": "https://example.test/cli",
+            "draft": false,
+            "prerelease": false,
+            "assets": [
+                {"name": "peridot-x86_64-pc-windows-msvc.tar.gz"}
+            ]
+        }
+    ]);
+
+    let release = latest_cli_release(&releases).unwrap();
+
+    assert_eq!(release["tag_name"], "v0.8.10");
+}
+
+#[test]
 fn reads_release_checksum_for_asset() {
     let checksums = "\
 1111111111111111111111111111111111111111111111111111111111111111  peridot-aarch64-apple-darwin.tar.gz\n\

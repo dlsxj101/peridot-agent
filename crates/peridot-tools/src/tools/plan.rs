@@ -184,8 +184,21 @@ impl Tool for PlanUpdateTool {
             ))
         })?;
         write_plan_json(&json_path, &plan)?;
+        let summary = if let Some(step_id) = params.get("step").and_then(Value::as_u64) {
+            let status = params
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or("done");
+            format!("updated todo.md (step {step_id} → {status})")
+        } else if !update.trim().is_empty() {
+            let note = update.trim();
+            let preview: String = note.chars().take(60).collect();
+            format!("updated todo.md: {preview}")
+        } else {
+            "updated todo.md and todo.json".to_string()
+        };
         Ok(ToolResult::success(
-            "updated todo.md and todo.json",
+            &summary,
             serde_json::json!({ "markdown_path": markdown_path, "json_path": json_path }),
         ))
     }

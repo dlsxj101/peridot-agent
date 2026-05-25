@@ -124,6 +124,20 @@ pub struct StoredSkill {
     /// treated as bundled to keep legacy rows safe.
     #[serde(default)]
     pub scope: String,
+    /// One-line human description of what the skill is for. Surfaced by
+    /// `skill_list` (L0 disclosure) so the model can pick a relevant
+    /// skill without paying the body-tokens cost of `skill_view`. Empty
+    /// string for legacy rows; new auto-skill writers should populate
+    /// this from the YAML frontmatter of the LLM-rewritten SKILL body.
+    #[serde(default)]
+    pub description: String,
+    /// When the operator pinned this skill (`peridot skill pin <name>`
+    /// or equivalent). Unix seconds; `0` means not pinned. The Curator
+    /// excludes pinned rows from `keep / patch / consolidate / archive`
+    /// actions, matching Hermes' pin semantics — patches *can* still
+    /// apply if the operator re-edits, but no automated archival.
+    #[serde(default)]
+    pub pinned_at_unix: u64,
 }
 
 /// Snapshot of a skill row plus Curator-relevant metadata.
@@ -331,6 +345,22 @@ impl MemoryStore {
             "INTEGER NOT NULL DEFAULT 0",
         )?;
         ensure_column(&connection, "skills", "scope", "TEXT NOT NULL DEFAULT ''")?;
+        // New in v0.8.11: `description` for L0 list-mode disclosure, and
+        // `pinned_at_unix` so operators can shield a skill from the
+        // automated Curator. Both columns default to "empty/zero" so
+        // existing rows survive the migration unchanged.
+        ensure_column(
+            &connection,
+            "skills",
+            "description",
+            "TEXT NOT NULL DEFAULT ''",
+        )?;
+        ensure_column(
+            &connection,
+            "skills",
+            "pinned_at_unix",
+            "INTEGER NOT NULL DEFAULT 0",
+        )?;
         Ok(())
     }
 
@@ -530,16 +560,19 @@ impl MemoryStore {
                 r#"
                 INSERT INTO skills (
                     name, body, updated_at, updated_at_unix,
-                    last_used_at_unix, archived_at_unix, scope
+                    last_used_at_unix, archived_at_unix, scope,
+                    description, pinned_at_unix
                 )
-                VALUES (?1, ?2, CURRENT_TIMESTAMP, ?3, ?4, ?5, ?6)
+                VALUES (?1, ?2, CURRENT_TIMESTAMP, ?3, ?4, ?5, ?6, ?7, ?8)
                 ON CONFLICT(name) DO UPDATE SET
                     body = excluded.body,
                     updated_at = CURRENT_TIMESTAMP,
                     updated_at_unix = excluded.updated_at_unix,
                     last_used_at_unix = excluded.last_used_at_unix,
                     archived_at_unix = excluded.archived_at_unix,
-                    scope = excluded.scope
+                    scope = excluded.scope,
+                    description = excluded.description,
+                    pinned_at_unix = excluded.pinned_at_unix
                 "#,
                 params![
                     skill.name,
@@ -548,6 +581,8 @@ impl MemoryStore {
                     skill.last_used_at_unix as i64,
                     skill.archived_at_unix as i64,
                     skill.scope,
+                    skill.description,
+                    skill.pinned_at_unix as i64,
                 ],
             )
             .map_err(sql_error)?;
@@ -560,8 +595,10 @@ impl MemoryStore {
         let connection = self.connection()?;
         let mut statement = connection
             .prepare(
-                "SELECT name, body, last_used_at_unix, archived_at_unix, scope FROM skills
-                 WHERE archived_at_unix = 0
+                "SELECT name, body, last_used_at_unix, archived_at_unix, scope, \
+                        description, pinned_at_unix \
+                 FROM skills \
+                 WHERE archived_at_unix = 0 \
                  ORDER BY updated_at DESC, name ASC",
             )
             .map_err(sql_error)?;
@@ -578,16 +615,19 @@ impl MemoryStore {
         let connection = self.connection()?;
         let mut statement = connection
             .prepare(
-                "SELECT name, body, last_used_at_unix, archived_at_unix, scope, updated_at_unix
-                 FROM skills
+                "SELECT name, body, last_used_at_unix, archived_at_unix, scope, \
+                        description, pinned_at_unix, updated_at_unix \
+                 FROM skills \
                  ORDER BY updated_at_unix DESC, name ASC",
             )
             .map_err(sql_error)?;
         let rows = statement
             .query_map([], |row| {
+                // `updated_at_unix` lives in slot 7 now that the
+                // decoder consumes columns 0..=6.
                 Ok(SkillRecord {
                     skill: stored_skill_from_row(row)?,
-                    updated_at_unix: row.get::<_, i64>(5)? as u64,
+                    updated_at_unix: row.get::<_, i64>(7)? as u64,
                 })
             })
             .map_err(sql_error)?;
@@ -601,8 +641,10 @@ impl MemoryStore {
         let connection = self.connection()?;
         let mut statement = connection
             .prepare(
-                "SELECT name, body, last_used_at_unix, archived_at_unix, scope FROM skills
-                 WHERE archived_at_unix = 0 AND (name LIKE ?1 OR body LIKE ?1)
+                "SELECT name, body, last_used_at_unix, archived_at_unix, scope, \
+                        description, pinned_at_unix \
+                 FROM skills \
+                 WHERE archived_at_unix = 0 AND (name LIKE ?1 OR body LIKE ?1) \
                  ORDER BY updated_at DESC, name ASC",
             )
             .map_err(sql_error)?;
@@ -640,6 +682,23 @@ impl MemoryStore {
         Ok(changed > 0)
     }
 
+    /// Pin or unpin a skill so the Curator can't archive it. Pass
+    /// `at_unix = 0` to unpin, any positive value to pin. Returns
+    /// whether a row was changed (false if the skill doesn't exist).
+    /// Pinning a skill that's already archived doesn't restore it —
+    /// callers should call `set_skill_archived(.., 0)` separately.
+    pub fn set_skill_pinned(&self, name: &str, at_unix: u64) -> PeriResult<bool> {
+        self.initialize()?;
+        let connection = self.connection()?;
+        let changed = connection
+            .execute(
+                "UPDATE skills SET pinned_at_unix = ?1 WHERE name = ?2",
+                params![at_unix as i64, name],
+            )
+            .map_err(sql_error)?;
+        Ok(changed > 0)
+    }
+
     /// Applies the 30/90-day Stale/Archive rules to every `scope='auto'`
     /// row. Returns one `(name, verdict)` pair per auto skill so the caller
     /// can render a report; bundled / community / empty-scope rows are
@@ -655,6 +714,19 @@ impl MemoryStore {
         let mut decisions = Vec::with_capacity(records.len());
         for record in records {
             if record.skill.scope != "auto" {
+                continue;
+            }
+            // Pinned skills are shielded from automated archival —
+            // the operator explicitly told us "keep this one around."
+            // They're still listed in the decision vec so callers can
+            // surface "skipped: pinned" feedback, mirroring Hermes'
+            // `curator --status` UX.
+            if record.skill.pinned_at_unix > 0 {
+                // Pinned → always-active by definition. We use the
+                // existing `Active` verdict rather than introducing a
+                // dedicated `Pinned` enum just so callers can report
+                // "skipped, still pinned" without a schema bump.
+                decisions.push((record.skill.name, AutoRuleVerdict::Active));
                 continue;
             }
             let verdict = auto_rule_verdict(&record, now_unix);
@@ -1105,12 +1177,19 @@ pub fn remove_session_dir(sessions_root: &Path, id: &str) -> PeriResult<bool> {
 }
 
 fn stored_skill_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredSkill> {
+    // Column order is the same across every query that uses this
+    // decoder. New fields go after the legacy ones so v0.8.10-and-older
+    // dumps that still produce a 5-column projection (without
+    // `description` / `pinned_at_unix`) keep deserialising — see the
+    // `_legacy` decoder for that path.
     Ok(StoredSkill {
         name: row.get(0)?,
         body: row.get(1)?,
         last_used_at_unix: row.get::<_, i64>(2)? as u64,
         archived_at_unix: row.get::<_, i64>(3)? as u64,
         scope: row.get(4)?,
+        description: row.get::<_, Option<String>>(5)?.unwrap_or_default(),
+        pinned_at_unix: row.get::<_, i64>(6)? as u64,
     })
 }
 
@@ -1324,6 +1403,70 @@ mod tests {
     }
 
     #[test]
+    fn skill_description_and_pin_roundtrip() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "peridot-memory-skill-pin-{}-{nanos}",
+            std::process::id()
+        ));
+        let store = MemoryStore::new(root.join(".peridot/memory.db"));
+        store
+            .save_skill(&StoredSkill {
+                name: "ship-daily".into(),
+                body: "# Ship Daily\nrun verify_build, then commit, then push.".into(),
+                scope: "auto".into(),
+                description: "Daily release checklist".into(),
+                pinned_at_unix: 1_700_000_000,
+                ..Default::default()
+            })
+            .unwrap();
+
+        // List + read back: both new columns survive the round trip.
+        let active = store.list_skills().unwrap();
+        let stored = active.iter().find(|s| s.name == "ship-daily").unwrap();
+        assert_eq!(stored.description, "Daily release checklist");
+        assert_eq!(stored.pinned_at_unix, 1_700_000_000);
+
+        // Pinned rows are protected from `apply_auto_rules` — verdict
+        // is Active even past the 90-day archive threshold. We
+        // anchor `now` to the live system clock plus a year so the
+        // record's `updated_at_unix` (set by save_skill to the real
+        // current time) is meaningfully older than our `now`.
+        let real_now = unix_now();
+        let now_far_future = real_now + 200 * 24 * 3600;
+        let decisions = store.apply_auto_rules(now_far_future, false).unwrap();
+        let verdict = decisions
+            .iter()
+            .find(|(n, _)| n == "ship-daily")
+            .map(|(_, v)| *v)
+            .expect("ship-daily decision present");
+        assert_eq!(verdict, AutoRuleVerdict::Active, "pinned shouldn't archive");
+
+        // Unpinning re-enables the rule path. Now 200 days have
+        // elapsed since `updated_at_unix`, so we expect Archive
+        // (>90 days threshold).
+        store.set_skill_pinned("ship-daily", 0).unwrap();
+        let after = store.apply_auto_rules(now_far_future, true).unwrap();
+        let verdict_after = after
+            .iter()
+            .find(|(n, _)| n == "ship-daily")
+            .map(|(_, v)| *v)
+            .unwrap();
+        assert!(
+            matches!(
+                verdict_after,
+                AutoRuleVerdict::Stale | AutoRuleVerdict::Archive
+            ),
+            "unpinned, 200-days-stale skill must now be Stale or Archive, got {verdict_after:?}"
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn auto_rule_verdict_distinguishes_active_stale_archive() {
         let record = |last_used: u64, updated: u64| SkillRecord {
             skill: StoredSkill {
@@ -1332,6 +1475,8 @@ mod tests {
                 last_used_at_unix: last_used,
                 archived_at_unix: 0,
                 scope: "auto".into(),
+                description: String::new(),
+                pinned_at_unix: 0,
             },
             updated_at_unix: updated,
         };

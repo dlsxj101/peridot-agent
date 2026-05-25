@@ -253,8 +253,8 @@ fn tui_lifecycle_hooks_run_for_switches() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
-#[test]
-fn saves_run_summary_for_resume() {
+#[tokio::test]
+async fn saves_run_summary_for_resume() {
     let root = std::env::temp_dir().join(format!("peridot-cli-run-save-{}", std::process::id()));
     let summary = AgentRunSummary {
         turns: Vec::new(),
@@ -272,7 +272,13 @@ fn saves_run_summary_for_resume() {
             auto_skills: false,
             ..MemoryConfig::default()
         },
+        // No rewriter passed — auto_skills is also off, so the
+        // skill path is skipped entirely; this test only cares
+        // about the session-summary persistence.
+        None,
+        "mock",
     )
+    .await
     .unwrap();
 
     let session = MemoryStore::new(root.join(".peridot/memory.db"))
@@ -284,8 +290,8 @@ fn saves_run_summary_for_resume() {
     fs::remove_dir_all(root).unwrap();
 }
 
-#[test]
-fn completed_run_saves_auto_skill_when_enabled() {
+#[tokio::test]
+async fn completed_run_saves_auto_skill_when_enabled() {
     let root = std::env::temp_dir().join(format!("peridot-cli-auto-skill-{}", std::process::id()));
     // Three distinct tool names trip the workflow-breadth branch of the
     // Hermes 4-condition gate, so the run earns an auto-skill.
@@ -312,7 +318,14 @@ fn completed_run_saves_auto_skill_when_enabled() {
         &summary,
         "fix parser tests",
         &MemoryConfig::default(),
+        // No rewriter — exercise the deterministic-template fallback
+        // path. A separate test covers the LLM-rewritten branch via a
+        // StaticProvider so we can hold both shapes in regression
+        // simultaneously.
+        None,
+        "mock",
     )
+    .await
     .unwrap();
 
     let skill = MemoryStore::new(root.join(".peridot/memory.db"))

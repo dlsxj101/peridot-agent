@@ -1,5 +1,65 @@
 # Peridot Agent — Extension Changelog
 
+## [0.5.17] — 2026-05-25
+
+### Added — settings webview, slash skills, schema-version handshake
+
+- **`Peridot: Open Settings`** opens a form-style editor in the editor
+  area (also reachable via a gear icon in the sidebar title bar).
+  The webview talks to the daemon's `settings.list` / `settings.save`
+  RPC and renders the same curated registry the TUI's `peridot
+  setting` screen uses, with checkbox / dropdown / number inputs and
+  a flash status for save outcome. New sessions started after a save
+  pick up the new values automatically.
+- **Skill slash commands**. The webview now recognises
+  `/auto-fix-parser-tests`, `/ship-daily`, and any other kebab-case
+  skill name registered in the project's auto-skill store. The daemon
+  looks the name up, returns the SKILL body, and the extension
+  surfaces it as a status entry so the model picks it up on the next
+  turn.
+- **Daemon handshake parity**. The extension now reads the daemon's
+  `peridot.handshake` notification and shows an explicit
+  "extension/daemon schema version mismatch" warning if the daemon's
+  `AGENT_RUN_EVENT_SCHEMA_VERSION` doesn't match the bundled
+  expectation. Prevents silent breakage when shipping a new extension
+  against an older daemon.
+- **`ContextCompacted` + `PhaseChanged` events**. Compaction now
+  surfaces as a single status row showing `Context compacted (N files
+  read, M untrusted)`. Phase transitions still appear when something
+  notable happens (entering recovery, delegating, hitting done).
+- **LLM session titles**. The extension now requests an LLM-authored
+  session title from the daemon (`session.generate_title`) and
+  replaces the placeholder once it lands. Failed generations fall
+  back to `"No title"` rather than the raw truncated task. Sessions
+  the operator renames manually are preserved via a `userRenamed`
+  flag.
+
+### Changed — quieter transcript, surface-aware settings filter
+
+- **Routine phase transitions hidden**. `Executing ↔ Verifying ↔
+  Planning` ping-pong no longer floods the chat. Only `Recovering`,
+  `Delegating`, or `Done` phase changes appear as status rows. The
+  underlying ndjson event stream is unchanged so debugging /
+  automation hooks still see every transition.
+- **TUI-only settings hidden in the webview**. `tui.show_thinking`,
+  `tui.show_token_count`, `tui.show_cost`, `tui.show_mascot` only
+  affect the terminal UI; the webview filters them out by reading
+  the `surfaces` field on each `SettingItem`. The full item list is
+  still shipped to the daemon on save so the TUI sees the same
+  values.
+- **Tool chip risk colouring**. `tool_started` chips carry the
+  Rust-side `risk_class` (read-only / local-write / build-or-test /
+  external-network / destructive / secret-adjacent) and the webview
+  renders them with matching colours so an operator can spot
+  destructive shell commands at a glance.
+
+### Migration notes
+
+- Extension package 0.5.16 → 0.5.17.
+- Daemon must be v0.8.11+ for the handshake check to pass without a
+  warning. Older daemons still work — the version mismatch is a
+  warning, not a fatal error.
+
 ## [0.5.16] — 2026-05-23
 
 ### Added — multi-run parity and canonical slash state

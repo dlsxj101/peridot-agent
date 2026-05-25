@@ -1,4 +1,5 @@
 mod budget_recovery;
 mod harness;
+mod policy_chain;
 mod slash_prompt;
-mod support;
+pub(crate) mod support;

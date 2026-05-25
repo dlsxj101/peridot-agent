@@ -516,14 +516,36 @@ textarea {
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
 }
 
-.session-menu-item {
+.session-menu-row {
   width: 100%;
   min-height: 42px;
   display: flex;
   align-items: center;
+  border: 1px solid transparent;
+  border-radius: var(--peri-radius-tight);
+  background: transparent;
+}
+
+.session-menu-row:hover,
+.session-menu-row:focus-within {
+  background: var(--peri-bg-elev-soft);
+  border-color: var(--peri-border);
+}
+
+.session-menu-row.active {
+  background: color-mix(in srgb, var(--peri-accent) 14%, var(--peri-bg-elev));
+  border-color: var(--peri-accent-dim);
+}
+
+.session-menu-item {
+  min-width: 0;
+  min-height: 40px;
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
   gap: 8px;
   padding: 7px 8px;
-  border: 1px solid transparent;
+  border: 0;
   border-radius: var(--peri-radius-tight);
   background: transparent;
   color: var(--peri-fg);
@@ -534,21 +556,100 @@ textarea {
 .session-menu-item:hover,
 .session-menu-item:focus-visible {
   outline: none;
-  background: var(--peri-bg-elev-soft);
-  border-color: var(--peri-border);
-}
-
-.session-menu-item.active {
-  background: color-mix(in srgb, var(--peri-accent) 14%, var(--peri-bg-elev));
-  border-color: var(--peri-accent-dim);
 }
 
 .session-menu-item:disabled {
   cursor: default;
 }
 
+.session-menu-actions {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding-right: 5px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+
+.session-menu-row:hover .session-menu-actions,
+.session-menu-row:focus-within .session-menu-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.session-menu-actions.editing,
+.session-menu-actions.confirming {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.session-menu-confirm-label {
+  font-size: 11px;
+  color: var(--vscode-errorForeground);
+  white-space: nowrap;
+  margin-right: 2px;
+}
+
+.session-menu-confirm-delete:hover,
+.session-menu-confirm-delete:focus-visible {
+  color: var(--vscode-errorForeground);
+}
+
+.session-menu-item.editing {
+  cursor: default;
+}
+
+.session-menu-rename-input {
+  width: 100%;
+  min-width: 0;
+  height: 24px;
+  padding: 2px 6px;
+  border: 1px solid var(--vscode-focusBorder);
+  border-radius: var(--peri-radius-tight);
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  font: inherit;
+}
+
+.session-menu-rename-input:focus {
+  outline: none;
+}
+
+.session-menu-action {
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: var(--peri-radius-tight);
+  background: transparent;
+  color: var(--peri-fg-muted);
+  cursor: pointer;
+}
+
+.session-menu-action:hover,
+.session-menu-action:focus-visible {
+  outline: none;
+  color: var(--peri-fg);
+  background: var(--peri-bg-elev);
+  border-color: var(--peri-border);
+}
+
+.session-menu-delete:hover,
+.session-menu-delete:focus-visible {
+  color: var(--vscode-errorForeground);
+}
+
 .session-menu-new {
   color: var(--peri-accent-strong);
+}
+
+.session-menu-new:hover,
+.session-menu-new:focus-visible {
+  background: var(--peri-bg-elev-soft);
 }
 
 .session-menu-icon,
@@ -935,21 +1036,6 @@ textarea {
   }
 }
 
-@keyframes text-weight-in {
-  0% {
-    opacity: 0;
-    font-variation-settings: 'wght' 180;
-  }
-  58% {
-    opacity: 1;
-    font-variation-settings: 'wght' 560;
-  }
-  100% {
-    opacity: 1;
-    font-variation-settings: 'wght' 400;
-  }
-}
-
 @keyframes tool-swap-in {
   from {
     opacity: 0;
@@ -1060,7 +1146,6 @@ textarea {
 
 @media (prefers-reduced-motion: reduce) {
   .bubble-enter,
-  .stream-weight-char,
   .text-gradient-active,
   .tool-name.text-gradient-active,
   .tool-detail-name.text-gradient-active,
@@ -1132,6 +1217,11 @@ textarea {
   border-radius: 0;
   border: 0;
   background: transparent;
+  /* NOTE: do NOT use `content-visibility: auto` here. It collapses off-screen
+     messages to their intrinsic-size estimate, which makes scrollHeight shrink
+     dramatically. Combined with our scroll-preserve logic, that causes the
+     transcript to "jump to the top" when streaming finishes, and on-screen
+     messages to flicker as they re-layout. */
 }
 
 .msg-label {
@@ -1151,19 +1241,12 @@ textarea {
   white-space: normal;
 }
 
-.stream-weight-char {
-  display: inline-block;
-  color: inherit;
-  opacity: 0;
-  font-variation-settings: 'wght' 180;
-  animation: text-weight-in 620ms cubic-bezier(0.2, 0.7, 0.2, 1) forwards;
-  animation-delay: var(--stream-delay, 0ms);
-  will-change: opacity, font-variation-settings;
-}
-
-.stream-weight-space {
-  white-space: pre;
-}
+/* Streaming text: rendered as plain text with no animation — matches the
+   feel of Claude Desktop / Codex. Smoothness comes from token frequency,
+   not from per-block animation. Animating each appended chunk creates a
+   visible "stutter" because the animation fires on every render, and
+   re-rendering the entire .msg-body innerHTML wipes any in-flight CSS
+   animation anyway. */
 
 .markdown-body > :first-child {
   margin-top: 0;
@@ -1432,11 +1515,66 @@ textarea {
   min-width: max-content;
   white-space: nowrap;
   transform-origin: 0 50%;
+  transition: opacity 190ms cubic-bezier(0.16, 1, 0.3, 1), transform 190ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.tool-name.tool-name-swap-out {
+  opacity: 0;
+  transform: translateY(-7px);
+  transition-duration: 120ms;
+  transition-timing-function: cubic-bezier(0.4, 0, 1, 1);
+}
+
+.tool-name.tool-name-swap-in {
+  opacity: 0;
+  transform: translateY(8px);
+  transition: none;
 }
 
 .tool-name.text-gradient-active,
 .tool-detail-name.text-gradient-active {
-  will-change: background-position;
+  /* no will-change — GPU compositing layer conflicts with background-clip:text */
+}
+
+/* Risk-class chip. Colours map to the six Rust `RiskClass` variants —
+   neutral grey for read_only, blue for local_write, teal for build_or_test,
+   yellow for external_network, red for destructive, orange for
+   secret_adjacent. The chip is one character tall and sits between the
+   tool name and the summary snippet, so any palette tweak should keep
+   contrast against the side-panel background. */
+.risk-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  margin-left: 6px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0;
+  color: var(--peri-bg);
+  background: var(--peri-fg-muted);
+  cursor: help;
+}
+.risk-chip-read_only       { background: var(--peri-fg-muted); }
+.risk-chip-local_write     { background: var(--peri-accent); }
+.risk-chip-build_or_test   { background: color-mix(in srgb, var(--peri-accent) 60%, var(--peri-fg-muted) 40%); }
+.risk-chip-external_network { background: #d4a017; }
+.risk-chip-destructive     { background: #c0392b; }
+.risk-chip-secret_adjacent { background: #e67e22; }
+
+.tool-summary-snippet {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--peri-fg-muted);
+  font-size: 11px;
+  opacity: 0.7;
 }
 
 .tool-path,
@@ -1935,6 +2073,20 @@ textarea {
 
 .file-link {
   color: var(--peri-accent);
+}
+
+.inline-file-link {
+  display: inline;
+  font: inherit;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.inline-file-link:hover {
+  text-decoration-style: solid;
+  color: var(--vscode-textLink-activeForeground, var(--peri-accent-strong));
 }
 
 /* Queue */

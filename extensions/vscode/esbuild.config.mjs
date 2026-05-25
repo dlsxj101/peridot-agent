@@ -33,15 +33,31 @@ const webviewConfig = {
   loader: { '.css': 'css' },
 };
 
+/** @type {import('esbuild').BuildOptions} */
+const settingsWebviewConfig = {
+  ...common,
+  entryPoints: ['webview/settings.ts'],
+  outfile: 'dist/settings.js',
+  platform: 'browser',
+  target: 'es2022',
+  format: 'iife',
+  loader: { '.css': 'css' },
+};
+
 async function run() {
   if (watch) {
     const ext = await context(extensionConfig);
     const web = await context(webviewConfig);
-    await Promise.all([ext.watch(), web.watch()]);
-    console.log('[esbuild] watching extension + webview bundles');
+    const settings = await context(settingsWebviewConfig);
+    await Promise.all([ext.watch(), web.watch(), settings.watch()]);
+    console.log('[esbuild] watching extension + webview + settings bundles');
     return;
   }
-  await Promise.all([build(extensionConfig), build(webviewConfig)]);
+  await Promise.all([
+    build(extensionConfig),
+    build(webviewConfig),
+    build(settingsWebviewConfig),
+  ]);
 }
 
 run().catch((err) => {

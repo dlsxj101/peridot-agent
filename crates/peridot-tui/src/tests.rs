@@ -1959,6 +1959,14 @@ fn session_switch_and_close_slashes_queue_router_intents() {
 
     apply_slash_command(&mut state, SlashCommand::SessionSwitch("s2".to_string()));
     apply_slash_command(&mut state, SlashCommand::SessionClose("s1".to_string()));
+    apply_slash_command(&mut state, SlashCommand::SessionDelete("s2".to_string()));
+    apply_slash_command(
+        &mut state,
+        SlashCommand::SessionRename {
+            target: "s1".to_string(),
+            title: "main work".to_string(),
+        },
+    );
 
     let pending = state.drain_pending_session_commands();
     assert_eq!(
@@ -1966,6 +1974,11 @@ fn session_switch_and_close_slashes_queue_router_intents() {
         vec![
             SessionCommandEvent::SessionSwitch("s2".to_string()),
             SessionCommandEvent::SessionClose("s1".to_string()),
+            SessionCommandEvent::SessionDelete("s2".to_string()),
+            SessionCommandEvent::SessionRename {
+                target: "s1".to_string(),
+                title: "main work".to_string(),
+            },
         ]
     );
 }
@@ -2461,7 +2474,16 @@ fn parse_slash_command_accepts_provider() {
         peridot_core::parse_slash_command("/provider claude-api"),
         Some(SlashCommand::Provider("claude-api".to_string())),
     );
-    assert_eq!(peridot_core::parse_slash_command("/provider"), None);
+    // After the auto-skill slash registration (see SlashCommand::Skill),
+    // bare `/provider` no longer returns None — the parser falls
+    // through to the kebab-case skill-lookup gate. The dispatcher
+    // surfaces "skill not found: provider" instead, which still tells
+    // the operator the form was wrong but goes through the skill path
+    // rather than the legacy "invalid slash" path.
+    assert!(matches!(
+        peridot_core::parse_slash_command("/provider"),
+        Some(SlashCommand::Skill { ref name, .. }) if name == "provider"
+    ));
 }
 
 #[test]

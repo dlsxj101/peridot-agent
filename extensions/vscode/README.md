@@ -4,10 +4,13 @@ VS Code panel for [Peridot Agent](https://github.com/dlsxj101/peridot-agent) —
 a Rust CLI/TUI autonomous coding agent with multi-LLM committee mode,
 native tool calling, and 2-Tier context management.
 
-> **Status**: v0.5.14 ships platform-specific `.vsix` packages plus a
-> universal fallback package for Cursor. The sidebar includes onboarding,
-> queued prompts, persistent chat sessions, Markdown answers, single-line
-> tool activity, approval/diff cards, usage/budget HUD, an inline plan
+> **Status**: v0.5.17 adds an editor-area settings page (`Peridot: Open
+> Settings` + sidebar gear icon) backed by daemon `settings.list /
+> save` RPC, Hermes-style auto-skill invocation via `/skill-name`
+> slashes, and a daemon-handshake schema-version check. The sidebar
+> includes onboarding, queued prompts, persistent chat sessions,
+> Markdown answers, single-line tool activity (with risk-class chip
+> colouring), approval/diff cards, usage/budget HUD, an inline plan
 > panel, a compact context donut, daemon-backed slash commands, and a
 > structured `/branch` picker.
 
@@ -21,6 +24,7 @@ native tool calling, and 2-Tier context management.
 | `Peridot: Cancel Current Task` | Sends `session.cancel` for the active daemon session. |
 | `Peridot: Login with ChatGPT` | Runs `peridot login openai-oauth` from the active workspace. |
 | `Peridot: Refresh Status` | Refreshes daemon workspace/provider/model/auth status. |
+| `Peridot: Open Settings` | Opens an editor-area form for `.peridot/config.toml`. Toggle autonomy loops, defaults, committee mode, security, git automation, language, and updates. New sessions started after a save pick up the values automatically; running sessions keep their boot snapshot. Also reachable from the gear icon in the Peridot sidebar title bar. |
 
 ## First run
 
@@ -105,9 +109,20 @@ fallback package.
   budget / context, inline plan panel, inline unified-diff cards,
   pre-approval diff preview for `file_write` / `file_patch`, and
   cached / reused-daemon status reads.
-- **v0.6.0** — Skill picker, multi-session tab bar, and remaining editor
-  parity polish. Slash command catalog sync, daemon-backed session commands,
-  and the `/branch` picker are already available in v0.5.14.
+- **v0.5.17** — ✅ Editor-area settings webview (form for
+  `.peridot/config.toml`), Hermes-style `/skill-name` slash skill
+  invocation, daemon `peridot.handshake` schema-version check,
+  routine phase-transition filtering for a quieter transcript,
+  risk-class chip colours on tool rows, and an LLM-authored session
+  title with `"No title"` fallback.
+- **v0.6.0** — Settings webview polish (in-flight save guard, aria-
+  live flash, focus-visible outline on toggles, responsive layout
+  below 480px viewports, webview-side i18n for Save / Reload /
+  flash strings); per-skill description shown in `skill_list` L0
+  disclosure; L2 reference-file tier under
+  `.peridot/skills/auto/<name>/references/`; operator-facing
+  `peridot skill pin <name>` / `unpin <name>` subcommands. Multi-
+  session tab bar and remaining editor parity polish.
 
 ## Source
 
