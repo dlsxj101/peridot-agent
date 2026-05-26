@@ -3142,9 +3142,19 @@ fn tui_runtime_event_from_agent(event: AgentRunEvent) -> TuiRuntimeEvent {
         AgentRunEvent::ContextUtilizationChanged {
             tokens_used,
             threshold,
+            context_tokens,
+            message_tokens,
+            system_tokens,
+            tool_schema_tokens,
+            overhead_tokens,
         } => TuiRuntimeEvent::ContextUtilizationChanged {
             tokens_used,
             threshold,
+            context_tokens,
+            message_tokens,
+            system_tokens,
+            tool_schema_tokens,
+            overhead_tokens,
         },
         AgentRunEvent::McpStatusChanged { servers } => TuiRuntimeEvent::McpStatusChanged {
             servers: servers

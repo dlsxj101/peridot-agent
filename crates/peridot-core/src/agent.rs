@@ -7,9 +7,12 @@ use peridot_agents::SubAgent;
 use peridot_common::{
     AgentPhase, ExecutionMode, PeriError, PeriResult, SecurityConfig, ToolCall, ToolResult,
 };
-use peridot_context::{ContextEntry, ContextManager, ContextSource, EvidenceLedger, EvidenceRef};
+use peridot_context::{
+    ContextEntry, ContextManager, ContextSource, EvidenceLedger, EvidenceRef,
+    estimate_tokens_for_text,
+};
 use peridot_llm::{
-    CompletionRequest, LlmProvider, ToolChoice, ToolDefinition, ToolInvocation, Usage,
+    CompletionRequest, LlmMessage, LlmProvider, ToolChoice, ToolDefinition, ToolInvocation, Usage,
 };
 use peridot_tools::audit::{AuditEvent, append_audit_event};
 use peridot_tools::hooks::{HookRunner, tool_hook_variables};
@@ -53,6 +56,15 @@ enum TurnErrorAction {
         reason: StopReason,
         message: Option<String>,
     },
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct RequestContextEstimate {
+    total_tokens: u64,
+    message_tokens: u64,
+    system_tokens: u64,
+    tool_schema_tokens: u64,
+    overhead_tokens: u64,
 }
 
 /// Build a final `AgentRunSummary`, fire the [`AgentRunEvent::Finished`]
@@ -483,6 +495,15 @@ impl HarnessAgent {
             .await
     }
 
+    fn can_batch_read_only_tool_calls(&self, invocations: &[ToolInvocation]) -> bool {
+        invocations.len() > 1
+            && invocations.iter().all(|invocation| {
+                invocation.name != "agent_done"
+                    && risk_class_label_for(&self.tools, &invocation.name).as_deref()
+                        == Some("read_only")
+            })
+    }
+
     /// Runs one model/tool turn and emits user-interface events.
     pub async fn run_turn_with_events<F>(
         &mut self,
@@ -565,21 +586,29 @@ impl HarnessAgent {
                 ),
             });
         }
-        // Always emit the current context size so the TUI can render a
-        // `ctx used/window` indicator in the status line. The displayed window
-        // is the full model context; auto-compaction still triggers at
-        // `window * auto_compaction_pct`.
-        let window = self.context.model_context_window_tokens();
-        let tokens_now = self.context.estimated_tokens();
-        events(AgentRunEvent::ContextUtilizationChanged {
-            tokens_used: tokens_now as u64,
-            threshold: window as u64,
-        });
-
         events(AgentRunEvent::AssistantStarted {
             label: "assistant".to_string(),
         });
         let tool_definitions = self.cached_tool_definitions.clone();
+        let system_prompt = system_prompt_for_role(self.state.mode, self.role).to_string();
+        let messages = self.context.to_messages();
+        // Emit the effective next-request footprint, not just the stored
+        // context-manager estimate. Provider latency is driven by the full
+        // assembled request: system prompt, messages, tool schemas and the
+        // protocol overhead needed to serialize roles/tool-call ids.
+        let window = self.context.model_context_window_tokens();
+        let context_tokens = self.context.estimated_tokens() as u64;
+        let request_context =
+            estimate_request_context_tokens(Some(&system_prompt), &messages, &tool_definitions);
+        events(AgentRunEvent::ContextUtilizationChanged {
+            tokens_used: request_context.total_tokens,
+            threshold: window as u64,
+            context_tokens,
+            message_tokens: request_context.message_tokens,
+            system_tokens: request_context.system_tokens,
+            tool_schema_tokens: request_context.tool_schema_tokens,
+            overhead_tokens: request_context.overhead_tokens,
+        });
         // Honour the provider's capability advertisement: a provider that
         // returns `supports_thinking() == false` (e.g. plain OpenAI Chat
         // Completions) must not receive the thinking flag, otherwise the
@@ -592,8 +621,8 @@ impl HarnessAgent {
             provider,
             CompletionRequest {
                 model: request.model,
-                system: Some(system_prompt_for_role(self.state.mode, self.role).to_string()),
-                messages: self.context.to_messages(),
+                system: Some(system_prompt),
+                messages,
                 max_tokens: Some(request.max_tokens),
                 thinking,
                 reasoning_effort: request.reasoning_effort,
@@ -615,17 +644,124 @@ impl HarnessAgent {
             text: completion.text.clone(),
         });
 
-        // We only honour the first tool call per turn. Parallel calls are surfaced
-        // as a thinking event so the operator sees them, but the loop keeps its
-        // single-tool-per-turn invariant; future work can fan them out.
         let first_tool_call = completion.tool_calls.first().cloned();
         if completion.tool_calls.len() > 1 {
-            events(AgentRunEvent::Thinking {
-                text: format!(
-                    "ignoring {} additional parallel tool call(s)",
-                    completion.tool_calls.len() - 1
-                ),
-            });
+            if self.can_batch_read_only_tool_calls(&completion.tool_calls) {
+                self.context.append(ContextEntry::assistant_with_tool_calls(
+                    completion.text.clone(),
+                    completion.tool_calls.clone(),
+                ));
+                transition_phase(
+                    &mut self.state,
+                    AgentPhase::Executing,
+                    "tools_started",
+                    events,
+                );
+                let mut outputs = Vec::with_capacity(completion.tool_calls.len());
+                let mut all_success = true;
+                let names = completion
+                    .tool_calls
+                    .iter()
+                    .map(|call| call.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                for invocation in &completion.tool_calls {
+                    let tool_call_id = invocation.id.clone();
+                    let tool_parameters = tool_invocation_parameters(invocation);
+                    events(AgentRunEvent::ToolStarted {
+                        name: invocation.name.clone(),
+                        parameters: tool_parameters.clone(),
+                        risk_class: risk_class_label_for(&self.tools, &invocation.name),
+                    });
+                    let (tool_result, file_diff) = match self
+                        .execute_tool_call_with_runtime(
+                            ToolCall {
+                                name: invocation.name.clone(),
+                                parameters: tool_parameters.clone(),
+                            },
+                            request.project_root.clone(),
+                            request.denied_paths.clone(),
+                            request.hooks.clone(),
+                            request.security.clone(),
+                        )
+                        .await
+                    {
+                        Ok(outcome) => outcome,
+                        Err(err) => {
+                            let failure_result =
+                                peridot_common::ToolResult::failure(format!("tool failed: {err}"));
+                            events(AgentRunEvent::ToolFinished {
+                                name: invocation.name.clone(),
+                                result: failure_result.clone(),
+                            });
+                            append_tool_result_to_context(
+                                &mut self.context,
+                                &request.project_root,
+                                tool_call_id,
+                                &invocation.name,
+                                &tool_parameters,
+                                &failure_result,
+                            )?;
+                            return Err(err);
+                        }
+                    };
+                    if let Some(diff) = file_diff {
+                        events(AgentRunEvent::FileDiff(diff));
+                    }
+                    events(AgentRunEvent::ToolFinished {
+                        name: invocation.name.clone(),
+                        result: tool_result.clone(),
+                    });
+                    emit_plan_updated_after_tool(
+                        &invocation.name,
+                        &tool_result,
+                        &request.project_root,
+                        events,
+                    );
+                    append_tool_result_to_context(
+                        &mut self.context,
+                        &request.project_root,
+                        tool_call_id,
+                        &invocation.name,
+                        &tool_parameters,
+                        &tool_result,
+                    )?;
+                    all_success &= tool_result.success;
+                    outputs.push(serde_json::json!({
+                        "name": invocation.name.clone(),
+                        "success": tool_result.success,
+                        "summary": tool_result.summary.clone(),
+                        "output": tool_result.output.clone(),
+                    }));
+                }
+                transition_phase(
+                    &mut self.state,
+                    AgentPhase::Verifying,
+                    "tools_finished",
+                    events,
+                );
+                let summary = format!(
+                    "executed {} read-only tool calls: {names}",
+                    completion.tool_calls.len()
+                );
+                return Ok(AgentTurnOutcome {
+                    tool_name: "multi_tool".to_string(),
+                    tool_result: ToolResult {
+                        success: all_success,
+                        summary,
+                        output: serde_json::Value::Array(outputs),
+                    },
+                    usage: completion.usage,
+                    done: false,
+                });
+            } else {
+                events(AgentRunEvent::Thinking {
+                    text: format!(
+                        "received {} tool calls; executing the first because the batch contains a non-read-only tool",
+                        completion.tool_calls.len()
+                    ),
+                });
+            }
         }
 
         // No tool call → treat the assistant's text as a chat-style reply and finish
@@ -1750,6 +1886,71 @@ pub(crate) struct FileCheckpoint {
 }
 
 const TOOL_OBSERVATION_INLINE_LIMIT: usize = 12_000;
+
+fn estimate_request_context_tokens(
+    system: Option<&str>,
+    messages: &[LlmMessage],
+    tools: &[ToolDefinition],
+) -> RequestContextEstimate {
+    let system_tokens = system.map(estimate_tokens_for_text).unwrap_or_default() as u64;
+    let mut message_tokens = 0_u64;
+    let mut overhead_tokens = 8_u64;
+    for message in messages {
+        message_tokens += estimate_tokens_for_text(&message.content) as u64;
+        overhead_tokens += 6;
+        overhead_tokens += message
+            .tool_call_id
+            .as_ref()
+            .map(|id| id.len().div_ceil(4) + 4)
+            .unwrap_or(0) as u64;
+        if !message.tool_calls.is_empty() {
+            overhead_tokens += 8 * message.tool_calls.len() as u64;
+            for call in &message.tool_calls {
+                message_tokens += estimate_tokens_for_text(&call.name) as u64;
+                message_tokens += estimate_tokens_for_text(&call.arguments.to_string()) as u64;
+                overhead_tokens += estimate_tokens_for_text(&call.id) as u64 + 4;
+            }
+        }
+    }
+    let tool_schema_tokens = if tools.is_empty() {
+        0
+    } else {
+        serde_json::to_string(tools)
+            .map(|json| estimate_tokens_for_text(&json) as u64)
+            .unwrap_or_default()
+    };
+    if !tools.is_empty() {
+        overhead_tokens += 10 * tools.len() as u64;
+    }
+    RequestContextEstimate {
+        total_tokens: system_tokens + message_tokens + tool_schema_tokens + overhead_tokens,
+        message_tokens,
+        system_tokens,
+        tool_schema_tokens,
+        overhead_tokens,
+    }
+}
+
+fn append_tool_result_to_context(
+    context: &mut ContextManager,
+    project_root: &Path,
+    tool_call_id: String,
+    tool_name: &str,
+    parameters: &serde_json::Value,
+    result: &ToolResult,
+) -> PeriResult<()> {
+    let (observation_result, evidence_ref) =
+        tool_result_for_context_observation(project_root, tool_name, parameters, result);
+    let observation = serde_json::to_string(&observation_result)
+        .map_err(|err| PeriError::Parse(format!("failed to serialize tool result: {err}")))?;
+    let mut entry =
+        ContextEntry::trusted(ContextSource::Tool, observation).with_tool_call_id(tool_call_id);
+    if let Some(evidence) = evidence_ref {
+        entry = entry.with_evidence_ref(evidence);
+    }
+    context.append(entry);
+    Ok(())
+}
 
 fn tool_result_for_context_observation(
     project_root: &Path,

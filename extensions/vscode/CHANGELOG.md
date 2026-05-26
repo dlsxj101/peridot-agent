@@ -1,5 +1,24 @@
 # Peridot Agent — Extension Changelog
 
+## [0.5.19] — 2026-05-26
+
+### Added — request-context details and mutation markers
+
+- The context donut now reflects the daemon's estimated next request
+  footprint, with tooltip lines for persisted context, messages,
+  system prompt, tool schemas, and request overhead.
+- Tool-result summaries include `mutated=true|false` when the daemon
+  reports worktree mutation status.
+
+### Changed — quieter phase display
+
+- Routine `phase_changed` events update the sidebar status chip without
+  adding transcript rows.
+- The user-facing label for the daemon's verifying phase is now
+  `checking`, matching what the harness is actually doing between tool
+  calls.
+- Extension package 0.5.18 → 0.5.19.
+
 ## [0.5.18] — 2026-05-26
 
 ### Added — Cursor remote install workaround and settings polish

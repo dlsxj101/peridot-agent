@@ -163,6 +163,11 @@ export interface BudgetSlice {
 export interface ContextSlice {
   tokensUsed: number;
   threshold: number;
+  contextTokens?: number;
+  messageTokens?: number;
+  systemTokens?: number;
+  toolSchemaTokens?: number;
+  overheadTokens?: number;
 }
 
 export interface PlanStepView {

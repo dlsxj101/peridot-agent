@@ -906,6 +906,7 @@ function phaseColor(phase: string): string {
   if (lower === 'recovering') return 'amber';
   if (lower === 'delegating') return 'blue';
   if (lower === 'done') return 'green';
+  if (lower === 'checking') return 'blue';
   return 'gray';
 }
 
@@ -959,6 +960,13 @@ function renderContextDock(s: SidebarState): HTMLElement {
   const pct = Math.min(1, context.tokensUsed / context.threshold);
   const pctText = `${Math.round(pct * 100)}%`;
   const exact = `${context.tokensUsed.toLocaleString()} / ${context.threshold.toLocaleString()} tokens`;
+  const breakdown = [
+    typeof context.contextTokens === 'number' ? `stored ${context.contextTokens.toLocaleString()}` : undefined,
+    typeof context.messageTokens === 'number' ? `msg ${context.messageTokens.toLocaleString()}` : undefined,
+    typeof context.systemTokens === 'number' ? `sys ${context.systemTokens.toLocaleString()}` : undefined,
+    typeof context.toolSchemaTokens === 'number' ? `tools ${context.toolSchemaTokens.toLocaleString()}` : undefined,
+    typeof context.overheadTokens === 'number' ? `wire ${context.overheadTokens.toLocaleString()}` : undefined,
+  ].filter(Boolean).join(' · ');
   const donut = el('div', 'context-donut');
   const circumference = 62.832;
   donut.style.setProperty('--context-dash', `${(circumference * pct).toFixed(2)}`);
@@ -967,7 +975,7 @@ function renderContextDock(s: SidebarState): HTMLElement {
   else if (pct >= 0.75) donut.classList.add('warn');
   donut.tabIndex = 0;
   donut.setAttribute('role', 'img');
-  donut.setAttribute('aria-label', `Context ${exact} (${pctText})`);
+  donut.setAttribute('aria-label', `Request context ${exact} (${pctText})`);
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.setAttribute('class', 'context-ring');
   svg.setAttribute('viewBox', '0 0 24 24');
@@ -985,9 +993,12 @@ function renderContextDock(s: SidebarState): HTMLElement {
   svg.append(track, value);
   donut.append(svg);
   const tooltip = el('span', 'context-tooltip');
-  tooltip.append(el('span', 'context-tooltip-label', 'Context'));
+  tooltip.append(el('span', 'context-tooltip-label', 'Request'));
   tooltip.append(el('span', 'context-tooltip-value', pctText));
   tooltip.append(el('span', 'context-tooltip-detail', exact));
+  if (breakdown.length > 0) {
+    tooltip.append(el('span', 'context-tooltip-breakdown', breakdown));
+  }
   donut.append(tooltip);
   dock.append(donut);
   return dock;

@@ -161,10 +161,32 @@ pub enum AgentRunEvent {
     },
     /// Context-manager utilization changed.
     ContextUtilizationChanged {
-        /// Tokens already in the context window.
+        /// Estimated tokens that will be sent in the next provider request.
+        ///
+        /// This intentionally includes the system prompt, provider messages,
+        /// tool schemas, and a small wire-format overhead estimate. Older
+        /// clients display this field directly, so it carries the most useful
+        /// "will this next request fit?" number.
         tokens_used: u64,
         /// Full model context window used for display.
         threshold: u64,
+        /// Legacy context-manager entry estimate before provider request
+        /// assembly. Useful for debugging the difference between stored
+        /// conversation context and actual prompt footprint.
+        #[serde(default)]
+        context_tokens: u64,
+        /// Token estimate for the assembled provider messages.
+        #[serde(default)]
+        message_tokens: u64,
+        /// Token estimate for the system prompt.
+        #[serde(default)]
+        system_tokens: u64,
+        /// Token estimate for native tool schemas attached to the request.
+        #[serde(default)]
+        tool_schema_tokens: u64,
+        /// Estimated provider wire/protocol overhead.
+        #[serde(default)]
+        overhead_tokens: u64,
     },
     /// MCP server status changed (one or more servers connected / disconnected).
     McpStatusChanged {

@@ -791,12 +791,27 @@ where
             success: turn_success,
         });
 
-        let mutating = turn_success && is_mutating_tool(&outcome.tool_name);
+        let review_candidate = turn_success && should_consider_reviewer(&outcome);
         let done = outcome.tool_name == "agent_done" && turn_success;
         outcomes.push(outcome);
 
-        if mutating {
-            let diff = collect_diff_for_review(options.project_root);
+        if review_candidate {
+            let Some(diff) = collect_diff_for_review(options.project_root) else {
+                events(AgentRunEvent::Thinking {
+                    text: "committee reviewer skipped: no git diff after tool result".to_string(),
+                });
+                review_pass_counter = 0;
+                if done {
+                    stop_reason = StopReason::Done;
+                    break;
+                }
+                if options.budget_usd > 0.0 && total_usage.estimated_cost_usd >= options.budget_usd
+                {
+                    stop_reason = StopReason::Budget;
+                    break;
+                }
+                continue;
+            };
             match run_reviewer_pass(
                 provider,
                 &reviewer_model,
@@ -955,23 +970,84 @@ where
     Ok(summary)
 }
 
-fn is_mutating_tool(name: &str) -> bool {
-    matches!(name, "file_write" | "file_patch" | "shell_exec")
+fn should_consider_reviewer(outcome: &peridot_core::AgentTurnOutcome) -> bool {
+    match outcome.tool_name.as_str() {
+        "file_write" | "file_patch" => true,
+        "shell_exec" => outcome
+            .tool_result
+            .output
+            .get("workspace_mutated")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(true),
+        _ => false,
+    }
 }
 
-fn collect_diff_for_review(project_root: &Path) -> String {
+fn collect_diff_for_review(project_root: &Path) -> Option<String> {
     let manager = peridot_git::GitManager::new(project_root);
     if !manager.is_repository() {
-        return "(workspace is not a git repository; reviewer received no diff)".to_string();
+        return None;
     }
-    let raw = manager
-        .diff()
-        .unwrap_or_else(|err| format!("(git diff unavailable: {err})"));
-    if raw.trim().is_empty() {
-        "(no uncommitted changes detected)".to_string()
-    } else {
-        truncate_diff(&raw, 8_000)
+    let mut sections = Vec::new();
+    if let Some(diff) = run_git_text(project_root, &["diff", "--no-ext-diff"])
+        && !diff.trim().is_empty()
+    {
+        sections.push(diff);
     }
+    if let Some(diff) = run_git_text(project_root, &["diff", "--cached", "--no-ext-diff"])
+        && !diff.trim().is_empty()
+    {
+        sections.push(diff);
+    }
+    if let Some(untracked) = run_git_text(
+        project_root,
+        &["ls-files", "--others", "--exclude-standard"],
+    ) {
+        let untracked_diff = untracked_files_diff(project_root, &untracked, 8_000);
+        if !untracked_diff.trim().is_empty() {
+            sections.push(untracked_diff);
+        }
+    }
+    let raw = sections.join("\n");
+    (!raw.trim().is_empty()).then(|| truncate_diff(&raw, 8_000))
+}
+
+fn run_git_text(project_root: &Path, args: &[&str]) -> Option<String> {
+    let output = std::process::Command::new("git")
+        .args(args)
+        .current_dir(project_root)
+        .output()
+        .ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+fn untracked_files_diff(project_root: &Path, untracked: &str, max_chars: usize) -> String {
+    let mut out = String::new();
+    for path in untracked.lines().take(20) {
+        if path.trim().is_empty() {
+            continue;
+        }
+        let full_path = project_root.join(path);
+        let Ok(content) = std::fs::read_to_string(&full_path) else {
+            continue;
+        };
+        out.push_str(&format!(
+            "diff --git a/{path} b/{path}\nnew file mode 100644\n--- /dev/null\n+++ b/{path}\n@@\n"
+        ));
+        for line in content.lines().take(200) {
+            out.push('+');
+            out.push_str(line);
+            out.push('\n');
+            if out.chars().count() >= max_chars {
+                out.push_str("... <untracked file diff truncated for reviewer context>\n");
+                return out;
+            }
+        }
+    }
+    out
 }
 
 fn truncate_diff(raw: &str, max_chars: usize) -> String {

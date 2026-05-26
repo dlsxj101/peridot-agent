@@ -4,7 +4,32 @@ Peridot Agent is a Rust CLI/TUI autonomous coding agent with multi-session orche
 
 ## Status
 
-Current version: **0.8.11**
+Current version: **0.8.12**
+
+### What's new in v0.8.12
+
+- **Request-context meter.** Context utilization now estimates the
+  next provider request footprint instead of only the persisted
+  `ContextManager` body. CLI, TUI, and VS Code show the request total
+  with a breakdown for conversation messages, system prompt, tool
+  schemas, and wire overhead.
+- **Parallel read-only tool calls.** When the model asks for multiple
+  safe read-only tools in one turn, the harness can execute the batch
+  and record every paired tool result. Mixed or mutating batches still
+  fall back to the conservative single-tool path.
+- **Dedicated read-only inspection tools.** New `ripgrep_search` and
+  `shell_readonly` tools cover common search/list/read workflows
+  without routing everything through mutating `shell_exec`.
+  `shell_exec` now reports whether the worktree actually changed.
+- **Committee reviewer fast path.** Reviewer checks are gated on real
+  mutations and skipped when the review diff is empty, so read-only
+  shell/search activity no longer pays the mutation-review cost.
+- **Subagent worktree branch names are bounded.** Delegated task
+  worktree slugs are truncated with a stable hash suffix, preventing
+  long parent-context prompts from creating invalid Git refs.
+- **Quieter phase UI.** User-facing phase labels now say `checking`
+  instead of `verifying`, and the VS Code transcript hides routine
+  phase-change rows while keeping the live status chip updated.
 
 ### What's new in v0.8.11
 

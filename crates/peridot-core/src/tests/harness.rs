@@ -409,6 +409,75 @@ async fn parallel_tool_calls_record_only_executed_call_in_context() {
 }
 
 #[tokio::test]
+async fn parallel_read_only_tool_calls_record_all_outputs_in_context() {
+    let root = std::env::temp_dir().join(format!(
+        "peridot-core-multi-tool-history-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("a.txt"), "alpha\n").unwrap();
+    let mut registry = ToolRegistry::new();
+    register_builtin_tools(&mut registry).unwrap();
+    let mut agent = HarnessAgent::new(
+        AgentState::new(ExecutionMode::Execute, PermissionMode::Auto),
+        ContextManager::new(),
+        registry,
+    );
+    let provider = StaticProvider::new_custom_completion(
+        String::new(),
+        vec![
+            ToolInvocation {
+                id: "call_file_list".to_string(),
+                name: "file_list".to_string(),
+                arguments: json!({"path": "."}),
+            },
+            ToolInvocation {
+                id: "call_file_read".to_string(),
+                name: "file_read".to_string(),
+                arguments: json!({"path": "a.txt"}),
+            },
+        ],
+    );
+
+    let outcome = agent
+        .run_turn(
+            &provider,
+            AgentTurnRequest {
+                user_input: Some("inspect files".to_string()),
+                model: "mock".to_string(),
+                max_tokens: 512,
+                reasoning_effort: peridot_common::ReasoningEffort::Off,
+                service_tier: None,
+                project_root: root.clone(),
+                denied_paths: Vec::new(),
+                hooks: HooksConfig::default(),
+                security: SecurityConfig::default(),
+            },
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(outcome.tool_name, "multi_tool");
+    assert!(outcome.tool_result.success);
+    let assistant_entry = agent
+        .context()
+        .entries()
+        .iter()
+        .find(|entry| entry.source == ContextSource::Assistant)
+        .expect("assistant tool-call entry");
+    assert_eq!(assistant_entry.tool_calls.len(), 2);
+    let tool_call_ids = agent
+        .context()
+        .entries()
+        .iter()
+        .filter(|entry| entry.source == ContextSource::Tool)
+        .filter_map(|entry| entry.tool_call_id.as_deref())
+        .collect::<Vec<_>>();
+    assert_eq!(tool_call_ids, vec!["call_file_list", "call_file_read"]);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
 async fn permission_denied_tool_emits_approval_event() {
     let root = std::env::temp_dir().join(format!(
         "peridot-core-approval-event-{}",

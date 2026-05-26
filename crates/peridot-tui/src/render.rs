@@ -115,6 +115,25 @@ fn short_session_id(id: &str) -> String {
         .unwrap_or_else(|| id.to_string())
 }
 
+fn render_request_context_block(state: &TuiState) -> String {
+    let used = state.side_panel.context_tokens_used;
+    let window = state.side_panel.context_tokens_window;
+    if used == 0 || window == 0 {
+        return String::new();
+    }
+    let pct = (used as f32 / window as f32 * 100.0).clamp(0.0, 999.0);
+    format!(
+        "Request context\nused: {} / {} ({pct:.0}%)\nstored: {}  msg: {}\nsys: {}  tools: {}  wire: {}\n\n",
+        format_token_count(used),
+        format_token_count(window),
+        format_token_count(state.side_panel.context_entry_tokens),
+        format_token_count(state.side_panel.context_message_tokens),
+        format_token_count(state.side_panel.context_system_tokens),
+        format_token_count(state.side_panel.context_tool_schema_tokens),
+        format_token_count(state.side_panel.context_overhead_tokens),
+    )
+}
+
 /// Renders the side-panel Committee block as plain text. Shows planner
 /// and reviewer cost / token totals so the operator can see how much
 /// the multi-LLM orchestration is spending without leaving the chat.
@@ -976,11 +995,9 @@ fn render_status_bar(state: &TuiState) -> Line<'static> {
                 .add_modifier(Modifier::BOLD),
         ));
     }
-    // Context utilisation gauge — sits between the activity blurb and
-    // the run metrics so the operator can see how close the current
-    // turn is to the 90%-of-window auto-compaction trigger without
-    // turning on the side panel. Yellow once we're past 75% so the
-    // approaching threshold catches the eye.
+    // Request-context gauge — this is the estimated provider request
+    // footprint, not just the stored conversation entries. It includes
+    // system prompt, messages, tool schemas and protocol overhead.
     let ctx_used = state.side_panel.context_tokens_used;
     let ctx_window = state.side_panel.context_tokens_window;
     if ctx_used > 0 && ctx_window > 0 {
@@ -998,7 +1015,7 @@ fn render_status_bar(state: &TuiState) -> Line<'static> {
         };
         spans.push(Span::styled(
             format!(
-                "  · ctx {}/{} ({pct:.0}%)",
+                "  · req {}/{} ({pct:.0}%)",
                 format_token_count(ctx_used),
                 format_token_count(ctx_window),
             ),
@@ -1116,6 +1133,19 @@ pub fn render_text_snapshot(state: &TuiState) -> String {
             state.side_panel.stats.errors,
             state.side_panel.stats.elapsed_seconds
         );
+        if state.side_panel.context_tokens_used > 0 && state.side_panel.context_tokens_window > 0 {
+            let _ = writeln!(
+                output,
+                "Request context: {}/{} (stored={} msg={} sys={} tools={} overhead={})",
+                state.side_panel.context_tokens_used,
+                state.side_panel.context_tokens_window,
+                state.side_panel.context_entry_tokens,
+                state.side_panel.context_message_tokens,
+                state.side_panel.context_system_tokens,
+                state.side_panel.context_tool_schema_tokens,
+                state.side_panel.context_overhead_tokens,
+            );
+        }
         if state.agent_run_status != AgentRunStatus::Idle {
             let _ = writeln!(
                 output,
@@ -1538,14 +1568,16 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
             format!("id: {}\n", short_session_id(&state.current_session_id))
         };
         let committee_block = render_committee_block(state);
+        let request_context_block = render_request_context_block(state);
         let side = format!(
-            "{goal}Plan {done}/{}\n{}\n\nSession\n{session_id_line}agent: {}\nsteps: {}\nerrors: {}\nelapsed: {}s\n\n{}{}",
+            "{goal}Plan {done}/{}\n{}\n\nSession\n{session_id_line}agent: {}\nsteps: {}\nerrors: {}\nelapsed: {}s\n\n{}{}{}",
             state.side_panel.plan.len(),
             plan,
             agent_run_status_label(&state.agent_run_status),
             state.side_panel.stats.steps,
             state.side_panel.stats.errors,
             state.side_panel.stats.elapsed_seconds,
+            request_context_block,
             committee_block,
             render_subagent_monitor(&state.subagents),
         );

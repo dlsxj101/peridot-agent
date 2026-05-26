@@ -7,6 +7,9 @@ use peridot_common::{PeriError, PeriResult};
 use peridot_git::GitManager;
 use serde::{Deserialize, Serialize};
 
+const MAX_WORKTREE_SLUG_CHARS: usize = 48;
+const WORKTREE_SLUG_HASH_CHARS: usize = 12;
+
 /// Subagent type.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -292,7 +295,7 @@ fn contains_any(text: &str, needles: &[&str]) -> bool {
 }
 
 fn slug(value: &str) -> PeriResult<String> {
-    let slug = value
+    let raw_slug = value
         .chars()
         .filter_map(|ch| {
             if ch.is_ascii_alphanumeric() {
@@ -308,10 +311,34 @@ fn slug(value: &str) -> PeriResult<String> {
         .filter(|part| !part.is_empty())
         .collect::<Vec<_>>()
         .join("-");
-    if slug.is_empty() {
+    if raw_slug.is_empty() {
         return Err(PeriError::Config("subagent task id is empty".to_string()));
     }
+    let slug = if raw_slug.chars().count() > MAX_WORKTREE_SLUG_CHARS {
+        let prefix_len = MAX_WORKTREE_SLUG_CHARS.saturating_sub(WORKTREE_SLUG_HASH_CHARS + 1);
+        let prefix = raw_slug
+            .chars()
+            .take(prefix_len)
+            .collect::<String>()
+            .trim_matches('-')
+            .to_string();
+        format!("{prefix}-{}", stable_slug_hash(value))
+    } else {
+        raw_slug
+    };
     Ok(slug)
+}
+
+fn stable_slug_hash(value: &str) -> String {
+    let mut hash = 0xcbf29ce484222325_u64;
+    for byte in value.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("{hash:016x}")
+        .chars()
+        .take(WORKTREE_SLUG_HASH_CHARS)
+        .collect()
 }
 
 #[cfg(test)]
@@ -346,6 +373,28 @@ mod tests {
         assert!(plan.path.ends_with("large-refactor"));
         assert_eq!(plan.add_args[0], "worktree");
         assert_eq!(plan.add_args[2], "-b");
+    }
+
+    #[test]
+    fn worktree_plan_truncates_long_task_slug_with_stable_hash() {
+        let long_task =
+            "Parent context packet: use this as intent and evidence index, not as proof. "
+                .repeat(20);
+        let plan = WorktreePlan::new("/repo", "/tmp/peridot-worktrees", &long_task).unwrap();
+        let slug = plan
+            .branch
+            .strip_prefix("codex/subagent-")
+            .expect("subagent branch prefix");
+
+        assert!(slug.chars().count() <= MAX_WORKTREE_SLUG_CHARS);
+        assert!(plan.branch.chars().count() < 100);
+        assert!(plan.path.file_name().unwrap().to_string_lossy().len() < 100);
+        assert_eq!(
+            WorktreePlan::new("/repo", "/tmp/peridot-worktrees", &long_task)
+                .unwrap()
+                .branch,
+            plan.branch
+        );
     }
 
     #[tokio::test]

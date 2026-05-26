@@ -182,6 +182,21 @@ pub struct SidePanelState {
     /// instead of having to back-derive the count from the percentage.
     #[serde(default)]
     pub context_tokens_used: usize,
+    /// Context-manager entry estimate before assembling the provider request.
+    #[serde(default)]
+    pub context_entry_tokens: usize,
+    /// Token estimate for the assembled provider messages.
+    #[serde(default)]
+    pub context_message_tokens: usize,
+    /// Token estimate for the active system prompt.
+    #[serde(default)]
+    pub context_system_tokens: usize,
+    /// Token estimate for native tool schemas attached to the request.
+    #[serde(default)]
+    pub context_tool_schema_tokens: usize,
+    /// Estimated provider wire/protocol overhead.
+    #[serde(default)]
+    pub context_overhead_tokens: usize,
     /// Full active model context window used for display.
     /// Surfaced verbatim in the status line so the operator can confirm
     /// which window peridot resolved for the active model.
@@ -419,6 +434,21 @@ pub enum TuiRuntimeEvent {
         tokens_used: u64,
         /// Full model context window.
         threshold: u64,
+        /// Context-manager entry estimate.
+        #[serde(default)]
+        context_tokens: u64,
+        /// Provider message estimate.
+        #[serde(default)]
+        message_tokens: u64,
+        /// System prompt estimate.
+        #[serde(default)]
+        system_tokens: u64,
+        /// Tool schema estimate.
+        #[serde(default)]
+        tool_schema_tokens: u64,
+        /// Wire/protocol overhead estimate.
+        #[serde(default)]
+        overhead_tokens: u64,
     },
     /// MCP server status snapshot.
     McpStatusChanged {
@@ -2048,7 +2078,11 @@ impl TuiState {
                 self.push_activity(
                     ActivityKind::Verification,
                     "phase",
-                    format!("{from} → {to} ({reason})"),
+                    format!(
+                        "{} → {} ({reason})",
+                        phase_display_label(&from),
+                        phase_display_label(&to)
+                    ),
                 );
             }
             TuiRuntimeEvent::ContextCompacted {
@@ -2195,9 +2229,19 @@ impl TuiState {
             TuiRuntimeEvent::ContextUtilizationChanged {
                 tokens_used,
                 threshold,
+                context_tokens,
+                message_tokens,
+                system_tokens,
+                tool_schema_tokens,
+                overhead_tokens,
             } => {
                 self.side_panel.context_tokens_used = tokens_used as usize;
                 self.side_panel.context_tokens_window = threshold as usize;
+                self.side_panel.context_entry_tokens = context_tokens as usize;
+                self.side_panel.context_message_tokens = message_tokens as usize;
+                self.side_panel.context_system_tokens = system_tokens as usize;
+                self.side_panel.context_tool_schema_tokens = tool_schema_tokens as usize;
+                self.side_panel.context_overhead_tokens = overhead_tokens as usize;
                 if threshold > 0 {
                     self.side_panel.context_pct =
                         (tokens_used as f32 / threshold as f32).clamp(0.0, 1.0);
@@ -2554,7 +2598,8 @@ fn input_byte_index(input: &str, char_index: usize) -> usize {
 
 fn tool_output_preview(tool_name: &str, output: &serde_json::Value) -> Vec<String> {
     match tool_name {
-        "shell_exec" => shell_output_preview(output),
+        "shell_exec" | "shell_readonly" => shell_output_preview(output),
+        "ripgrep_search" => ripgrep_output_preview(output),
         "file_write" | "file_patch" | "file_read" => file_output_preview(tool_name, output),
         _ => Vec::new(),
     }
@@ -2562,11 +2607,12 @@ fn tool_output_preview(tool_name: &str, output: &serde_json::Value) -> Vec<Strin
 
 fn tool_parameter_preview(tool_name: &str, parameters: &serde_json::Value) -> Vec<String> {
     match tool_name {
-        "shell_exec" => parameters
+        "shell_exec" | "shell_readonly" => parameters
             .get("command")
             .and_then(serde_json::Value::as_str)
             .map(|command| vec![format!("  command: {command}")])
             .unwrap_or_default(),
+        "ripgrep_search" => ripgrep_parameter_preview(parameters),
         "file_patch" => file_patch_parameter_preview(parameters),
         "file_write" => file_write_parameter_preview(parameters),
         _ => parameters
@@ -2608,10 +2654,27 @@ fn file_write_parameter_preview(parameters: &serde_json::Value) -> Vec<String> {
     lines
 }
 
+fn ripgrep_parameter_preview(parameters: &serde_json::Value) -> Vec<String> {
+    let mut lines = Vec::new();
+    if let Some(query) = parameters.get("query").and_then(serde_json::Value::as_str) {
+        lines.push(format!("  query: {query}"));
+    }
+    if let Some(path) = parameters.get("path").and_then(serde_json::Value::as_str) {
+        lines.push(format!("  path: {path}"));
+    }
+    lines
+}
+
 fn shell_output_preview(output: &serde_json::Value) -> Vec<String> {
     let mut lines = Vec::new();
     if let Some(status) = output.get("status") {
         lines.push(format!("  status: {status}"));
+    }
+    if let Some(mutated) = output
+        .get("workspace_mutated")
+        .and_then(serde_json::Value::as_bool)
+    {
+        lines.push(format!("  mutated: {mutated}"));
     }
     for key in ["stdout", "stderr"] {
         let Some(text) = output.get(key).and_then(serde_json::Value::as_str) else {
@@ -2621,6 +2684,33 @@ fn shell_output_preview(output: &serde_json::Value) -> Vec<String> {
         if !preview.is_empty() {
             lines.push(format!("  {key}:"));
             lines.extend(preview.into_iter().map(|line| format!("    {line}")));
+        }
+    }
+    lines
+}
+
+fn ripgrep_output_preview(output: &serde_json::Value) -> Vec<String> {
+    let mut lines = Vec::new();
+    if let Some(backend) = output.get("backend").and_then(serde_json::Value::as_str) {
+        lines.push(format!("  backend: {backend}"));
+    }
+    if let Some(matches) = output.get("matches").and_then(serde_json::Value::as_array) {
+        lines.push(format!("  matches: {}", matches.len()));
+        for item in matches.iter().take(3) {
+            let path = item
+                .get("path")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("<unknown>");
+            let line = item
+                .get("line")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or_default();
+            let text = item
+                .get("text")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("")
+                .trim();
+            lines.push(format!("    {path}:{line}: {text}"));
         }
     }
     lines
@@ -2661,4 +2751,12 @@ fn preview_lines(text: &str, limit: usize) -> Vec<String> {
         lines.push("...".to_string());
     }
     lines
+}
+
+fn phase_display_label(phase: &str) -> &str {
+    if phase.eq_ignore_ascii_case("verifying") {
+        "checking"
+    } else {
+        phase
+    }
 }

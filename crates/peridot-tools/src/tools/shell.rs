@@ -13,6 +13,10 @@ use crate::{Tool, ToolContext};
 #[derive(Clone, Debug)]
 pub struct ShellExecTool;
 
+/// Built-in guarded read-only shell execution tool.
+#[derive(Clone, Debug)]
+pub struct ShellReadOnlyTool;
+
 #[async_trait]
 impl Tool for ShellExecTool {
     fn name(&self) -> &str {
@@ -57,9 +61,12 @@ impl Tool for ShellExecTool {
                     "dry_run": true,
                     "would_execute": description,
                     "command": command,
+                    "workspace_mutated": false,
+                    "mutation_basis": "dry_run",
                 }),
             ));
         }
+        let before_fingerprint = git_worktree_fingerprint(&ctx.project_root);
         let ctx_for_block = ctx.clone();
         let label = command.to_string();
         let output = tokio::task::spawn_blocking(move || {
@@ -67,6 +74,8 @@ impl Tool for ShellExecTool {
         })
         .await
         .map_err(|err| PeriError::Tool(format!("shell worker failed: {err}")))??;
+        let after_fingerprint = git_worktree_fingerprint(&ctx.project_root);
+        let mutation = workspace_mutation_snapshot(before_fingerprint, after_fingerprint);
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
         let summary = if output.status.success() {
@@ -82,7 +91,11 @@ impl Tool for ShellExecTool {
             serde_json::json!({
                 "status": output.status.code(),
                 "stdout": stdout,
-                "stderr": stderr
+                "stderr": stderr,
+                "workspace_mutated": mutation.mutated,
+                "mutation_basis": mutation.basis,
+                "git_status_before": mutation.before,
+                "git_status_after": mutation.after,
             }),
         ))
     }
@@ -102,6 +115,93 @@ impl Tool for ShellExecTool {
 
     fn can_run_concurrent(&self) -> bool {
         false
+    }
+}
+
+#[async_trait]
+impl Tool for ShellReadOnlyTool {
+    fn name(&self) -> &str {
+        "shell_readonly"
+    }
+
+    fn group(&self) -> ToolGroup {
+        ToolGroup::Shell
+    }
+
+    fn description(&self) -> &str {
+        "Execute a tightly restricted read-only shell command from the project root. Prefer ripgrep_search, git_status, and git_diff when possible."
+    }
+
+    fn parameters_schema(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "command": {
+                    "type": "string",
+                    "description": "Read-only shell command. Allows search/list/print/git inspection commands; rejects redirects, command separators, installs, and known mutations."
+                }
+            },
+            "required": ["command"],
+            "additionalProperties": false,
+        })
+    }
+
+    async fn execute(&self, params: Value, ctx: &ToolContext) -> PeriResult<ToolResult> {
+        let command = required_str(&params, "command")?;
+        reject_hard_blocked_command(command)?;
+        enforce_readonly_shell_policy(command)?;
+        let prepared = shell_command(command, ctx)?;
+        if ctx.security.shell_dry_run {
+            return Ok(ToolResult::success(
+                format!("dry-run readonly: {command}"),
+                serde_json::json!({
+                    "dry_run": true,
+                    "would_execute": describe_shell_command(&prepared),
+                    "command": command,
+                    "workspace_mutated": false,
+                    "mutation_basis": "dry_run",
+                }),
+            ));
+        }
+        let before_fingerprint = git_worktree_fingerprint(&ctx.project_root);
+        let ctx_for_block = ctx.clone();
+        let label = command.to_string();
+        let output = tokio::task::spawn_blocking(move || {
+            spawn_and_wait_interruptible(prepared, &ctx_for_block, &label)
+        })
+        .await
+        .map_err(|err| PeriError::Tool(format!("readonly shell worker failed: {err}")))??;
+        let after_fingerprint = git_worktree_fingerprint(&ctx.project_root);
+        let mutation = workspace_mutation_snapshot(before_fingerprint, after_fingerprint);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let summary = if mutation.mutated {
+            format!("read-only command mutated workspace: {command}")
+        } else if output.status.success() {
+            format!("read-only command exited 0: {command}")
+        } else {
+            format!(
+                "read-only command exited {}: {command}",
+                output.status.code().unwrap_or(-1)
+            )
+        };
+        Ok(ToolResult {
+            success: output.status.success() && !mutation.mutated,
+            summary,
+            output: serde_json::json!({
+                "status": output.status.code(),
+                "stdout": stdout,
+                "stderr": stderr,
+                "workspace_mutated": mutation.mutated,
+                "mutation_basis": mutation.basis,
+                "git_status_before": mutation.before,
+                "git_status_after": mutation.after,
+            }),
+        })
+    }
+
+    fn permission_level(&self) -> PermissionLevel {
+        PermissionLevel::Read
     }
 }
 
@@ -258,6 +358,48 @@ fn collect_pipe_output(
         .map_err(|err| PeriError::Tool(format!("failed to read command {name}: {err}")))
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct MutationSnapshot {
+    mutated: bool,
+    basis: &'static str,
+    before: Option<String>,
+    after: Option<String>,
+}
+
+fn git_worktree_fingerprint(project_root: &Path) -> Option<String> {
+    let inside = Command::new("git")
+        .args(["rev-parse", "--is-inside-work-tree"])
+        .current_dir(project_root)
+        .output()
+        .ok()?;
+    if !inside.status.success() || String::from_utf8_lossy(&inside.stdout).trim() != "true" {
+        return None;
+    }
+    let output = Command::new("git")
+        .args(["status", "--porcelain=v1", "--untracked-files=all"])
+        .current_dir(project_root)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+fn workspace_mutation_snapshot(before: Option<String>, after: Option<String>) -> MutationSnapshot {
+    let mutated = matches!((&before, &after), (Some(left), Some(right)) if left != right);
+    let basis = match (&before, &after) {
+        (Some(_), Some(_)) => "git_status",
+        _ => "git_status_unavailable",
+    };
+    MutationSnapshot {
+        mutated,
+        basis,
+        before,
+        after,
+    }
+}
+
 pub(crate) fn reject_hard_blocked_command(command: &str) -> PeriResult<()> {
     let normalized = command.split_whitespace().collect::<Vec<_>>().join(" ");
 
@@ -282,6 +424,90 @@ pub(crate) fn reject_hard_blocked_command(command: &str) -> PeriResult<()> {
         )));
     }
     Ok(())
+}
+
+fn enforce_readonly_shell_policy(command: &str) -> PeriResult<()> {
+    let normalized = normalize_shell_command(command);
+    if is_install_command(&normalized) || is_destructive_shell_command(&normalized) {
+        return Err(PeriError::PermissionDenied(
+            "read-only shell rejects install or destructive commands".to_string(),
+        ));
+    }
+    if contains_shell_write_syntax(&normalized) {
+        return Err(PeriError::PermissionDenied(
+            "read-only shell rejects redirects, backgrounding, and command separators".to_string(),
+        ));
+    }
+    for segment in normalized.split('|') {
+        let trimmed = segment.trim();
+        if trimmed.is_empty() {
+            return Err(PeriError::PermissionDenied(
+                "read-only shell rejects empty pipeline segments".to_string(),
+            ));
+        }
+        if !is_allowed_readonly_segment(trimmed) {
+            return Err(PeriError::PermissionDenied(format!(
+                "read-only shell command is not on the inspection allowlist: {trimmed}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn contains_shell_write_syntax(command: &str) -> bool {
+    command.contains(">>")
+        || command.contains('>')
+        || command.contains('<')
+        || command.contains("&&")
+        || command.contains("||")
+        || command.contains(';')
+        || command.contains('`')
+        || command.contains("$(")
+        || command.ends_with('&')
+}
+
+fn is_allowed_readonly_segment(segment: &str) -> bool {
+    let tokens = segment.split_whitespace().collect::<Vec<_>>();
+    let Some(program) = tokens.first().map(|token| clean_shell_token(token)) else {
+        return false;
+    };
+    let basename = program.rsplit('/').next().unwrap_or(program);
+    if basename == "git" {
+        let Some(subcommand) = tokens.get(1).map(|token| clean_shell_token(token)) else {
+            return false;
+        };
+        return matches!(
+            subcommand,
+            "status"
+                | "diff"
+                | "log"
+                | "show"
+                | "grep"
+                | "branch"
+                | "ls-files"
+                | "rev-parse"
+                | "describe"
+        );
+    }
+    if basename == "sed" && tokens.iter().any(|token| clean_shell_token(token) == "-i") {
+        return false;
+    }
+    matches!(
+        basename,
+        "rg" | "grep"
+            | "find"
+            | "ls"
+            | "pwd"
+            | "cat"
+            | "head"
+            | "tail"
+            | "sed"
+            | "awk"
+            | "wc"
+            | "sort"
+            | "uniq"
+            | "cut"
+    )
 }
 
 fn has_recursive_force_root_remove(command: &str) -> bool {

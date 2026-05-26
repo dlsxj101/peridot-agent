@@ -2320,7 +2320,8 @@ textarea {
   grid-template-columns: max-content max-content;
   grid-template-areas:
     'label value'
-    'detail detail';
+    'detail detail'
+    'breakdown breakdown';
   gap: 3px 8px;
   min-width: 132px;
   padding: 7px 8px;
@@ -2383,6 +2384,15 @@ textarea {
   font-size: 11px;
   line-height: 1.25;
   color: var(--peri-fg-soft);
+  white-space: nowrap;
+  font-family: var(--vscode-editor-font-family, ui-monospace, monospace);
+}
+
+.context-tooltip-breakdown {
+  grid-area: breakdown;
+  font-size: 10.5px;
+  line-height: 1.25;
+  color: var(--peri-fg-muted);
   white-space: nowrap;
   font-family: var(--vscode-editor-font-family, ui-monospace, monospace);
 }

@@ -1283,6 +1283,11 @@ fn cross_crate_events_update_side_panel_state() {
     state.apply_runtime_event(TuiRuntimeEvent::ContextUtilizationChanged {
         tokens_used: 5_000,
         threshold: 10_000,
+        context_tokens: 4_000,
+        message_tokens: 4_500,
+        system_tokens: 200,
+        tool_schema_tokens: 250,
+        overhead_tokens: 50,
     });
     assert!((state.side_panel.context_pct - 0.5).abs() < 1e-6);
 

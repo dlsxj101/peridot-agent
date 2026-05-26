@@ -17,9 +17,9 @@ pub use tools::{
     AgentScratchpadTool, EvidenceReadTool, FileListTool, FileOutlineTool, FilePatchTool,
     FileReadTool, FileSearchTool, FileWriteTool, GhPrCreateTool, GhPrMergeTool, GhPrStatusTool,
     GitBranchTool, GitCommitTool, GitDiffTool, GitLogTool, GitPushTool, GitStatusTool,
-    PlanCreateTool, PlanUpdateTool, ShellExecTool, SkillListTool, SkillViewTool, SymbolSearchTool,
-    VerifyBuildTool, VerifyLintTool, VerifyTestTool, WebFetchTool, WebSearchTool,
-    WorkspaceSymbolsTool, register_builtin_tools,
+    PlanCreateTool, PlanUpdateTool, RipgrepSearchTool, ShellExecTool, ShellReadOnlyTool,
+    SkillListTool, SkillViewTool, SymbolSearchTool, VerifyBuildTool, VerifyLintTool,
+    VerifyTestTool, WebFetchTool, WebSearchTool, WorkspaceSymbolsTool, register_builtin_tools,
 };
 
 #[cfg(test)]

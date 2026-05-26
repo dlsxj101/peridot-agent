@@ -5,7 +5,8 @@ use crate::tools::shell::{
 };
 use crate::{
     AgentAskUserTool, AgentDelegateTool, AgentMemorySearchTool, AskUserPort, EvidenceReadTool,
-    FileWriteTool, ShellExecTool, Tool, ToolContext, ToolRegistry, register_builtin_tools,
+    FileWriteTool, ShellExecTool, ShellReadOnlyTool, Tool, ToolContext, ToolRegistry,
+    register_builtin_tools,
 };
 use async_trait::async_trait;
 use peridot_common::{
@@ -701,6 +702,67 @@ async fn shell_exec_dry_run_skips_execution_and_describes_invocation() {
         "dry-run must not create files; got {}",
         sentinel.display()
     );
+    fs::remove_dir_all(&root).ok();
+}
+
+#[tokio::test]
+async fn shell_exec_reports_git_workspace_mutation() {
+    let root = std::env::temp_dir().join(format!(
+        "peridot-tools-shell-mutation-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    if std::process::Command::new("git")
+        .arg("init")
+        .current_dir(&root)
+        .output()
+        .is_err()
+    {
+        fs::remove_dir_all(&root).ok();
+        return;
+    }
+    let ctx = ToolContext::new(&root, PermissionMode::Yolo);
+    let result = ShellExecTool
+        .execute(
+            serde_json::json!({"command": "printf changed > shell.txt"}),
+            &ctx,
+        )
+        .await
+        .unwrap();
+    assert!(result.success);
+    assert_eq!(result.output["workspace_mutated"], true);
+    assert_eq!(result.output["mutation_basis"], "git_status");
+    fs::remove_dir_all(&root).ok();
+}
+
+#[tokio::test]
+async fn shell_readonly_allows_search_and_rejects_writes() {
+    let root = std::env::temp_dir().join(format!(
+        "peridot-tools-shell-readonly-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("notes.txt"), "hello readonly\n").unwrap();
+    let ctx = ToolContext::new(&root, PermissionMode::Auto);
+
+    let result = ShellReadOnlyTool
+        .execute(
+            serde_json::json!({"command": "grep readonly notes.txt"}),
+            &ctx,
+        )
+        .await
+        .unwrap();
+    assert!(result.success);
+    assert_eq!(result.output["workspace_mutated"], false);
+
+    let err = ShellReadOnlyTool
+        .execute(
+            serde_json::json!({"command": "printf nope > notes.txt"}),
+            &ctx,
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, PeriError::PermissionDenied(_)));
     fs::remove_dir_all(&root).ok();
 }
 

@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::Path;
+use std::process::Command;
 
 use async_trait::async_trait;
 use peridot_common::{PeriError, PeriResult, PermissionLevel, ToolGroup, ToolResult};
@@ -375,6 +376,115 @@ impl Tool for FileSearchTool {
     }
 }
 
+/// Built-in ripgrep-backed workspace search tool.
+#[derive(Clone, Debug)]
+pub struct RipgrepSearchTool;
+
+#[async_trait]
+impl Tool for RipgrepSearchTool {
+    fn name(&self) -> &str {
+        "ripgrep_search"
+    }
+
+    fn group(&self) -> ToolGroup {
+        ToolGroup::File
+    }
+
+    fn description(&self) -> &str {
+        "Fast read-only workspace text search using ripgrep when available. Prefer this over shell_exec for code and text searches."
+    }
+
+    fn parameters_schema(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Text or regex pattern to search for"},
+                "path": {
+                    "type": "string",
+                    "description": "Optional project-relative file or directory to search"
+                },
+                "glob": {
+                    "oneOf": [
+                        {"type": "string"},
+                        {"type": "array", "items": {"type": "string"}, "maxItems": 16}
+                    ],
+                    "description": "Optional ripgrep glob(s), e.g. '*.rs' or '!target/**'"
+                },
+                "regex": {
+                    "type": "boolean",
+                    "description": "Treat query as a regex. Defaults to false (literal search)."
+                },
+                "case_sensitive": {
+                    "type": "boolean",
+                    "description": "Case-sensitive search. Defaults to true."
+                },
+                "context_lines": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 5,
+                    "description": "Context lines before and after each match"
+                },
+                "max_matches": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 200,
+                    "description": "Maximum match records to return"
+                }
+            },
+            "required": ["query"],
+            "additionalProperties": false,
+        })
+    }
+
+    async fn execute(&self, params: Value, ctx: &ToolContext) -> PeriResult<ToolResult> {
+        let query = required_str(&params, "query")?;
+        let search_root = params.get("path").and_then(Value::as_str).map_or_else(
+            || ctx.project_root.clone(),
+            |path| ctx.project_root.join(path),
+        );
+        let search_root = ensure_within_project(&ctx.project_root, &search_root)?;
+        let max_matches = params
+            .get("max_matches")
+            .and_then(Value::as_u64)
+            .unwrap_or(50)
+            .clamp(1, 200) as usize;
+        let context_lines = params
+            .get("context_lines")
+            .and_then(Value::as_u64)
+            .unwrap_or(0)
+            .clamp(0, 5) as usize;
+        let regex = params
+            .get("regex")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let case_sensitive = params
+            .get("case_sensitive")
+            .and_then(Value::as_bool)
+            .unwrap_or(true);
+        let globs = search_globs(params.get("glob"))?;
+        match run_ripgrep_search(
+            &ctx.project_root,
+            &search_root,
+            query,
+            &globs,
+            regex,
+            case_sensitive,
+            context_lines,
+            max_matches,
+        ) {
+            Ok(result) => Ok(result),
+            Err(PeriError::Tool(message)) if message.contains("`rg` not installed") => {
+                fallback_substring_search(&ctx.project_root, &search_root, query, max_matches)
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    fn permission_level(&self) -> PermissionLevel {
+        PermissionLevel::Read
+    }
+}
+
 /// Built-in file outline tool.
 #[derive(Clone, Debug)]
 pub struct FileOutlineTool;
@@ -552,6 +662,238 @@ fn search_path(path: &Path, pattern: &str, matches: &mut Vec<Value>) -> PeriResu
                 "line": line_idx + 1,
                 "text": line
             }));
+        }
+    }
+    Ok(())
+}
+
+fn search_globs(value: Option<&Value>) -> PeriResult<Vec<String>> {
+    match value {
+        None => Ok(Vec::new()),
+        Some(Value::String(glob)) => Ok(vec![glob.clone()]),
+        Some(Value::Array(items)) => items
+            .iter()
+            .map(|item| {
+                item.as_str().map(ToString::to_string).ok_or_else(|| {
+                    PeriError::Tool("glob array entries must be strings".to_string())
+                })
+            })
+            .collect(),
+        Some(_) => Err(PeriError::Tool(
+            "glob must be a string or array of strings".to_string(),
+        )),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_ripgrep_search(
+    project_root: &Path,
+    search_root: &Path,
+    query: &str,
+    globs: &[String],
+    regex: bool,
+    case_sensitive: bool,
+    context_lines: usize,
+    max_matches: usize,
+) -> PeriResult<ToolResult> {
+    let mut command = Command::new("rg");
+    command
+        .arg("--json")
+        .arg("--line-number")
+        .arg("--column")
+        .arg("--color")
+        .arg("never")
+        .arg("--no-messages");
+    if !regex {
+        command.arg("--fixed-strings");
+    }
+    if !case_sensitive {
+        command.arg("--ignore-case");
+    }
+    if context_lines > 0 {
+        command.arg("--context").arg(context_lines.to_string());
+    }
+    for default_ignore in [
+        ".git/**",
+        "target/**",
+        "node_modules/**",
+        ".peridot/evidence/**",
+    ] {
+        command.arg("--glob").arg(format!("!{default_ignore}"));
+    }
+    for glob in globs {
+        command.arg("--glob").arg(glob);
+    }
+    command
+        .arg(query)
+        .arg(search_root)
+        .current_dir(project_root);
+    let output = command.output().map_err(|err| {
+        if err.kind() == std::io::ErrorKind::NotFound {
+            PeriError::Tool("`rg` not installed; falling back unavailable".to_string())
+        } else {
+            PeriError::Tool(format!("failed to run ripgrep_search: {err}"))
+        }
+    })?;
+    if !output.status.success() && output.status.code() != Some(1) {
+        return Err(PeriError::Tool(format!(
+            "ripgrep_search exited {}: {}",
+            output.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut matches = Vec::new();
+    let mut context = Vec::new();
+    for line in stdout.lines() {
+        let Ok(value) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        match value.get("type").and_then(Value::as_str) {
+            Some("match") => {
+                if matches.len() >= max_matches {
+                    continue;
+                }
+                if let Some(record) = ripgrep_json_record(project_root, &value, "match") {
+                    matches.push(record);
+                }
+            }
+            Some("context") => {
+                if context.len()
+                    < max_matches.saturating_mul(context_lines.saturating_mul(2).max(1))
+                    && let Some(record) = ripgrep_json_record(project_root, &value, "context")
+                {
+                    context.push(record);
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(ToolResult::success(
+        format!("ripgrep_search: {} matches for {query:?}", matches.len()),
+        serde_json::json!({
+            "backend": "rg",
+            "query": query,
+            "matches": matches,
+            "context": context,
+            "truncated": matches.len() >= max_matches,
+        }),
+    ))
+}
+
+fn ripgrep_json_record(project_root: &Path, value: &Value, kind: &str) -> Option<Value> {
+    let data = value.get("data")?;
+    let path = data.get("path")?.get("text")?.as_str().unwrap_or_default();
+    let relative = Path::new(path)
+        .strip_prefix(project_root)
+        .unwrap_or_else(|_| Path::new(path))
+        .to_string_lossy()
+        .replace('\\', "/");
+    let lines = data
+        .get("lines")
+        .and_then(|lines| lines.get("text"))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim_end_matches('\n');
+    let line_number = data.get("line_number").and_then(Value::as_u64).unwrap_or(0);
+    let submatches = data
+        .get("submatches")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    Some(serde_json::json!({
+                        "start": item.get("start")?.as_u64()?,
+                        "end": item.get("end")?.as_u64()?,
+                        "text": item.get("match")?.get("text")?.as_str()?,
+                    }))
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    Some(serde_json::json!({
+        "kind": kind,
+        "path": relative,
+        "line": line_number,
+        "text": lines,
+        "submatches": submatches,
+    }))
+}
+
+fn fallback_substring_search(
+    project_root: &Path,
+    search_root: &Path,
+    query: &str,
+    max_matches: usize,
+) -> PeriResult<ToolResult> {
+    let mut matches = Vec::new();
+    search_path_limited(project_root, search_root, query, &mut matches, max_matches)?;
+    Ok(ToolResult::success(
+        format!(
+            "ripgrep_search fallback: {} matches for {query:?}",
+            matches.len()
+        ),
+        serde_json::json!({
+            "backend": "builtin_substring",
+            "query": query,
+            "matches": matches,
+            "truncated": matches.len() >= max_matches,
+        }),
+    ))
+}
+
+fn search_path_limited(
+    project_root: &Path,
+    path: &Path,
+    pattern: &str,
+    matches: &mut Vec<Value>,
+    max_matches: usize,
+) -> PeriResult<()> {
+    if matches.len() >= max_matches {
+        return Ok(());
+    }
+    if path.is_dir() {
+        let name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("");
+        if matches!(name, ".git" | "target" | "node_modules") {
+            return Ok(());
+        }
+        for entry in fs::read_dir(path)
+            .map_err(|err| PeriError::Tool(format!("failed to search {}: {err}", path.display())))?
+        {
+            let entry = entry.map_err(|err| PeriError::Tool(err.to_string()))?;
+            search_path_limited(project_root, &entry.path(), pattern, matches, max_matches)?;
+            if matches.len() >= max_matches {
+                break;
+            }
+        }
+        return Ok(());
+    }
+    if !path.is_file() {
+        return Ok(());
+    }
+    let Ok(content) = fs::read_to_string(path) else {
+        return Ok(());
+    };
+    let relative = path
+        .strip_prefix(project_root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/");
+    for (line_idx, line) in content.lines().enumerate() {
+        if line.contains(pattern) {
+            matches.push(serde_json::json!({
+                "kind": "match",
+                "path": relative,
+                "line": line_idx + 1,
+                "text": line
+            }));
+            if matches.len() >= max_matches {
+                break;
+            }
         }
     }
     Ok(())

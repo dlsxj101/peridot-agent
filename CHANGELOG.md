@@ -12,6 +12,53 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 
 ---
 
+## [0.8.12 / extension 0.5.19] — 2026-05-26
+
+### Added — request-context accounting and read-only tool batching
+
+- **Request-context utilization** now estimates the next provider
+  request size, including system prompt, conversation messages, tool
+  schemas, and wire overhead. CLI/TUI events, the TUI activity panel,
+  and the VS Code context donut all expose the same breakdown instead
+  of showing only persisted context-manager tokens.
+- **Parallel read-only tool execution** lets the harness run multiple
+  model-requested read-only tool calls in one turn and append all
+  matching tool results with their original call ids. Mixed batches or
+  mutating calls still execute conservatively.
+- **`ripgrep_search`** adds a structured read-only repository search
+  tool backed by `rg --json`, with a deterministic fallback when `rg`
+  is unavailable.
+- **`shell_readonly`** adds a constrained command surface for common
+  inspection commands (`rg`, `grep`, `find`, `ls`, `cat`, `sed`,
+  selected `git` reads, and similar). It rejects redirects,
+  separators, command substitutions, install/destructive commands, and
+  fails if a command unexpectedly mutates the worktree.
+
+### Changed — faster reviewer gates and clearer phase labels
+
+- **`shell_exec` mutation reporting** now records before/after
+  porcelain status and emits `workspace_mutated` plus a mutation basis,
+  allowing committee review to follow actual worktree changes instead
+  of the tool name alone.
+- **Committee reviewer checks** now skip read-only shell/search work and
+  skip reviewer invocation entirely when the review diff is empty. The
+  diff collector includes unstaged, staged, and untracked text-file
+  previews when there is something to review.
+- **Phase wording** now displays `checking` where the user previously
+  saw `verifying`. The internal enum remains compatible with existing
+  serialized sessions and event consumers.
+- **VS Code transcript phase noise** is reduced further: routine phase
+  changes update the status chip without adding transcript rows.
+
+### Fixed — delegated worktrees and extension event details
+
+- **Delegated worktree branches** now cap generated task slugs and add a
+  stable hash suffix, preventing long parent-context prompts from
+  creating Git refs that exceed filesystem path limits.
+- **VS Code usage parsing** accepts daemon cache fields emitted as
+  `cache_read_tokens` / `cache_creation_tokens` and appends
+  `mutated=true|false` to summarized tool-result rows when present.
+
 ## [0.8.11 / extension 0.5.17] — 2026-05-25
 
 ### Added — VS Code settings page, slash-invokable auto-skills, LLM-rewritten SKILL.md

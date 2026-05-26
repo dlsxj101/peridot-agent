@@ -1,7 +1,7 @@
 use crate::tools::plan::PlanFile;
 use crate::{
     FileOutlineTool, FilePatchTool, FileReadTool, FileWriteTool, PlanCreateTool, PlanUpdateTool,
-    SymbolSearchTool, Tool, ToolContext, ToolRegistry, WorkspaceSymbolsTool,
+    RipgrepSearchTool, SymbolSearchTool, Tool, ToolContext, ToolRegistry, WorkspaceSymbolsTool,
 };
 use async_trait::async_trait;
 use peridot_common::{
@@ -55,6 +55,7 @@ fn builtin_registry_includes_semantic_code_tools() {
     crate::register_builtin_tools(&mut registry).unwrap();
 
     assert!(registry.get("file_outline").is_some());
+    assert!(registry.get("ripgrep_search").is_some());
     assert!(registry.get("symbol_search").is_some());
     assert!(registry.get("workspace_symbols").is_some());
     assert!(
@@ -63,6 +64,39 @@ fn builtin_registry_includes_semantic_code_tools() {
             .unwrap()
             .requires_confirmation(PermissionMode::Safe)
     );
+}
+
+#[tokio::test]
+async fn ripgrep_search_finds_workspace_text() {
+    let root = std::env::temp_dir().join(format!(
+        "peridot-tools-ripgrep-search-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    fs::write(
+        root.join("main.rs"),
+        "fn main() {\n    println!(\"needle\");\n}\n",
+    )
+    .unwrap();
+    let ctx = ToolContext::new(&root, PermissionMode::Auto);
+
+    let result = RipgrepSearchTool
+        .execute(
+            serde_json::json!({"query": "needle", "path": ".", "max_matches": 5}),
+            &ctx,
+        )
+        .await
+        .unwrap();
+
+    assert!(result.success);
+    assert_eq!(result.output["query"], "needle");
+    assert!(
+        result.output["matches"]
+            .as_array()
+            .map(|matches| !matches.is_empty())
+            .unwrap_or(false)
+    );
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[tokio::test]

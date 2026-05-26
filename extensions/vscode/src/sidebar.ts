@@ -253,26 +253,12 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         this.publish();
       }
     } else if (kind === 'phase_changed') {
-      // PR1-A: central AgentPhase transition event. Surface as a
-      // lightweight status entry in the transcript — but only for
-      // *meaningful* transitions. The routine
-      // `Executing ↔ Verifying ↔ Planning` cycle that fires multiple
-      // times per turn is noise to most users; we keep transitions
-      // that involve a notable phase (Recovering, Delegating, Done)
-      // so the operator still sees when something abnormal happens.
-      // Routine transitions remain visible in the underlying ndjson
-      // event stream for tooling that wants every signal.
-      const from = stringField(event, 'from') ?? 'unknown';
       const to = stringField(event, 'to') ?? 'unknown';
-      const reason = stringField(event, 'reason') ?? '';
-      this.state.phase = to;
-      if (isNotablePhaseTransition(from, to)) {
-        this.append({
-          role: 'status',
-          text: `Phase: ${from} → ${to}`,
-          detail: reason || undefined,
-        });
-      }
+      // Phase transitions are high-volume internal state-machine signals.
+      // Keep the header chip current, but do not add them to the transcript;
+      // user-visible recovery/tool events already carry the actionable detail.
+      this.state.phase = displayPhaseLabel(to);
+      this.publish();
     } else if (kind === 'context_compacted') {
       // B.6: structured CompactedContext snapshot. The harness still
       // injects the legacy prose PlanReminder for backward compat;
@@ -763,8 +749,8 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
           const next: UsageSlice = {
             inputTokens: numberField(usage, 'input_tokens'),
             outputTokens: numberField(usage, 'output_tokens'),
-            cacheReadTokens: optionalNumber(usage, 'cache_read_input_tokens'),
-            cacheCreationTokens: optionalNumber(usage, 'cache_creation_input_tokens'),
+            cacheReadTokens: optionalNumber(usage, 'cache_read_tokens') ?? optionalNumber(usage, 'cache_read_input_tokens'),
+            cacheCreationTokens: optionalNumber(usage, 'cache_creation_tokens') ?? optionalNumber(usage, 'cache_creation_input_tokens'),
             costUsd: optionalNumber(usage, 'estimated_cost_usd'),
           };
           this.state.hud.usage = next;
@@ -790,6 +776,16 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
           tokensUsed: numberField(event, 'tokens_used'),
           threshold: numberField(event, 'threshold'),
         };
+        const contextTokens = optionalNumber(event, 'context_tokens');
+        const messageTokens = optionalNumber(event, 'message_tokens');
+        const systemTokens = optionalNumber(event, 'system_tokens');
+        const toolSchemaTokens = optionalNumber(event, 'tool_schema_tokens');
+        const overheadTokens = optionalNumber(event, 'overhead_tokens');
+        if (typeof contextTokens === 'number') next.contextTokens = contextTokens;
+        if (typeof messageTokens === 'number') next.messageTokens = messageTokens;
+        if (typeof systemTokens === 'number') next.systemTokens = systemTokens;
+        if (typeof toolSchemaTokens === 'number') next.toolSchemaTokens = toolSchemaTokens;
+        if (typeof overheadTokens === 'number') next.overheadTokens = overheadTokens;
         this.state.hud.context = next;
         this.publish();
         return;
@@ -1604,21 +1600,10 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
   }
 }
 
-/**
- * Decide whether a `phase_changed` event is worth surfacing in the
- * transcript. The harness rotates through Planning → Executing →
- * Verifying many times per turn (verify-after-mutation, post-tool
- * validation, etc.), which floods the chat with low-signal "Phase:"
- * lines. Notable transitions — entering or leaving recovery,
- * delegating to a sub-agent, or hitting the terminal Done state —
- * stay visible because they signal something the user might want to
- * act on. Phase strings come in as enum debug formatting like
- * "Recovering" / "RECOVERING" depending on the upstream emitter, so
- * the comparison is case-insensitive.
- */
-function isNotablePhaseTransition(from: string, to: string): boolean {
-  const notable = new Set(['recovering', 'delegating', 'done']);
-  return notable.has(from.toLowerCase()) || notable.has(to.toLowerCase());
+function displayPhaseLabel(phase: string): string {
+  const lower = phase.toLowerCase();
+  if (lower === 'verifying') return 'checking';
+  return lower;
 }
 
 function slashHelpText(commands: SlashCommandSpec[]): string {
@@ -1899,6 +1884,10 @@ function summarizeToolResult(event: Record<string, unknown>): string {
   if (isRecord(result)) {
     const summary = result.summary;
     if (typeof summary === 'string') {
+      const output = result.output;
+      if (isRecord(output) && typeof output.workspace_mutated === 'boolean') {
+        return `${summary} · mutated=${output.workspace_mutated}`;
+      }
       return summary;
     }
   }

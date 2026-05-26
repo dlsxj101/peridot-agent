@@ -14,14 +14,14 @@ pub use agent::{
 };
 pub use file::{
     EvidenceReadTool, FileListTool, FileOutlineTool, FilePatchTool, FileReadTool, FileSearchTool,
-    FileWriteTool, SymbolSearchTool, WorkspaceSymbolsTool,
+    FileWriteTool, RipgrepSearchTool, SymbolSearchTool, WorkspaceSymbolsTool,
 };
 pub use git::{
     GhPrCreateTool, GhPrMergeTool, GhPrStatusTool, GitBranchTool, GitCommitTool, GitDiffTool,
     GitLogTool, GitPushTool, GitStatusTool,
 };
 pub use plan::{PlanCreateTool, PlanUpdateTool};
-pub use shell::ShellExecTool;
+pub use shell::{ShellExecTool, ShellReadOnlyTool};
 pub use skill::{SkillListTool, SkillViewRefTool, SkillViewTool};
 pub use verify::{VerifyBuildTool, VerifyLintTool, VerifyTestTool};
 pub use web::{WebFetchTool, WebSearchTool};
@@ -38,6 +38,7 @@ pub fn register_builtin_tools(registry: &mut ToolRegistry) -> PeriResult<()> {
     registry.register(FileWriteTool)?;
     registry.register(FilePatchTool)?;
     registry.register(FileSearchTool)?;
+    registry.register(RipgrepSearchTool)?;
     registry.register(FileListTool)?;
     registry.register(FileOutlineTool)?;
     registry.register(SymbolSearchTool)?;
@@ -58,6 +59,7 @@ pub fn register_builtin_tools(registry: &mut ToolRegistry) -> PeriResult<()> {
     registry.register(VerifyLintTool)?;
     registry.register(WebSearchTool)?;
     registry.register(WebFetchTool)?;
+    registry.register(ShellReadOnlyTool)?;
     registry.register(AgentScratchpadTool)?;
     registry.register(AgentAskUserTool)?;
     registry.register(AgentDelegateTool)?;
