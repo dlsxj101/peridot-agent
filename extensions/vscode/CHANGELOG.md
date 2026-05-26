@@ -1,5 +1,26 @@
 # Peridot Agent — Extension Changelog
 
+## [0.5.20] — 2026-05-26
+
+### Added — run timing footer
+
+- Long-running sidebar tasks now show a Peridot gem loader with live
+  elapsed time while the daemon is working.
+- Completed tasks keep the final elapsed time in the bottom footer so
+  slow provider responses are visible after the run finishes.
+- Assistant copy actions moved into the message footer instead of
+  floating over the response body.
+
+### Fixed — ask-user fallback input
+
+- `agent_ask_user` single-select and multi-select prompts in the
+  sidebar now always include an `Other` option with a free-form text
+  input, matching the TUI behavior and the daemon contract.
+- Choosing `Other` sends a text answer back to the daemon so the agent
+  can continue with the operator's custom response instead of being
+  limited to model-proposed choices.
+- Extension package 0.5.19 → 0.5.20.
+
 ## [0.5.19] — 2026-05-26
 
 ### Added — request-context details and mutation markers

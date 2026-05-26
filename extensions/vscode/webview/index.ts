@@ -57,6 +57,7 @@ let todoExpanded = false;
 let lastTodoCurrentKey = '';
 let lastRenderedState: SidebarState | undefined;
 const toolNameSwapTimers = new WeakMap<HTMLElement, number>();
+let runFooterTimer: number | undefined;
 
 const CHATGPT_MODELS = ['gpt-5.5', 'gpt-5.5-fast', 'gpt-5.4', 'gpt-5.4-mini'];
 const APPROVAL_SCOPE_OPTIONS = [
@@ -141,6 +142,7 @@ function render(s: SidebarState): void {
     root.replaceChildren(s.view === 'landing' ? renderLanding(s) : renderSession(s));
   }
   lastRenderedState = s;
+  syncRunFooterTimer(s);
 
   const newTextarea = document.getElementById('composer-input') as HTMLTextAreaElement | null;
   if (newTextarea) newTextarea.value = composerDraft;
@@ -623,9 +625,65 @@ function updateSession(wrap: HTMLElement, s: SidebarState): void {
   if (s.branchPicker) children.push(sessionSlot('branch-picker', renderBranchPicker(s)));
   const prompt = latestPendingPrompt(s);
   if (prompt) children.push(sessionSlot('prompt', renderPromptDock(prompt)));
+  const runFooter = renderRunFooter(s);
+  if (runFooter) children.push(sessionSlot('run-footer', runFooter));
   children.push(sessionSlot('composer', renderComposer(s)));
   reconcileSessionChildren(wrap, children);
   scheduleTranscriptScroll(transcriptScroll.wrap, transcriptScroll.mode, transcriptScroll.previousScrollTop);
+}
+
+function renderRunFooter(s: SidebarState): HTMLElement | undefined {
+  const running = Boolean(s.running && typeof s.runStartedAtMs === 'number');
+  const finished = !running && typeof s.lastRunElapsedMs === 'number';
+  if (!running && !finished) return undefined;
+
+  const footer = el('div', `run-footer${running ? ' running' : ' complete'}`);
+  footer.setAttribute('role', 'status');
+  if (running) footer.dataset.runStart = String(s.runStartedAtMs);
+  if (finished) footer.dataset.runElapsed = String(s.lastRunElapsedMs);
+
+  const gem = el('span', 'peridot-loader', '◆');
+  gem.setAttribute('aria-hidden', 'true');
+  footer.append(gem);
+
+  const label = el('span', 'run-footer-text');
+  const completeLabel = String(s.status ?? '').toLowerCase().includes('fail') ? 'Stopped after ' : 'Finished in ';
+  label.append(document.createTextNode(running ? 'Peridot is working · ' : completeLabel));
+  label.append(el('span', 'run-footer-time', formatElapsed(running ? Date.now() - (s.runStartedAtMs ?? Date.now()) : s.lastRunElapsedMs ?? 0)));
+  footer.append(label);
+  return footer;
+}
+
+function syncRunFooterTimer(s: SidebarState): void {
+  const shouldTick = s.view === 'session' && Boolean(s.running && typeof s.runStartedAtMs === 'number');
+  if (!shouldTick) {
+    if (runFooterTimer !== undefined) {
+      window.clearInterval(runFooterTimer);
+      runFooterTimer = undefined;
+    }
+    return;
+  }
+  updateRunFooterClock();
+  if (runFooterTimer !== undefined) return;
+  runFooterTimer = window.setInterval(updateRunFooterClock, 1000);
+}
+
+function updateRunFooterClock(): void {
+  const footer = document.querySelector<HTMLElement>('.run-footer[data-run-start]');
+  const time = footer?.querySelector<HTMLElement>('.run-footer-time');
+  const startedAt = Number(footer?.dataset.runStart);
+  if (!footer || !time || !Number.isFinite(startedAt)) return;
+  time.textContent = formatElapsed(Date.now() - startedAt);
+}
+
+function formatElapsed(ms: number): string {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const seconds = totalSeconds % 60;
+  const minutes = Math.floor(totalSeconds / 60) % 60;
+  const hours = Math.floor(totalSeconds / 3600);
+  const two = (value: number) => String(value).padStart(2, '0');
+  if (hours > 0) return `${hours}:${two(minutes)}:${two(seconds)}`;
+  return `${minutes}:${two(seconds)}`;
 }
 
 function sessionSlot(name: string, node: HTMLElement): HTMLElement {
@@ -1476,10 +1534,20 @@ function updateMessageNode(previous: HTMLElement, next: HTMLElement): HTMLElemen
   if (previousBody && nextBody && previousBody.innerHTML !== nextBody.innerHTML) {
     reconcileMarkdownBody(previousBody, nextBody);
   }
-  const previousCopy = previous.querySelector<HTMLElement>('.copy-button');
-  const nextCopy = next.querySelector<HTMLElement>('.copy-button');
-  if (previousCopy && nextCopy) {
-    previousCopy.replaceWith(nextCopy);
+  const previousFooter = previous.querySelector<HTMLElement>('.msg-footer');
+  const nextFooter = next.querySelector<HTMLElement>('.msg-footer');
+  if (previousFooter && nextFooter) {
+    previousFooter.replaceWith(nextFooter);
+  } else if (!previousFooter && nextFooter) {
+    previous.append(nextFooter);
+  } else if (previousFooter && !nextFooter) {
+    previousFooter.remove();
+  } else {
+    const previousCopy = previous.querySelector<HTMLElement>('.copy-button');
+    const nextCopy = next.querySelector<HTMLElement>('.copy-button');
+    if (previousCopy && nextCopy) {
+      previousCopy.replaceWith(nextCopy);
+    }
   }
   return previous;
 }
@@ -1669,6 +1737,7 @@ function renderAssistantBubble(item: TranscriptItem, itemKey?: string): HTMLElem
   const body = renderMarkdownBody(item.text);
   assistantTextByKey.set(streamKey, { markdown: item.text, visibleText: body.textContent ?? '' });
   wrap.append(body);
+  const footer = el('div', 'msg-footer');
   const copy = el('button', 'copy-button', '');
   copy.type = 'button';
   copy.title = 'Copy response';
@@ -1677,7 +1746,8 @@ function renderAssistantBubble(item: TranscriptItem, itemKey?: string): HTMLElem
   copy.addEventListener('click', () => {
     void markCopied(copy, item.text);
   });
-  wrap.append(copy);
+  footer.append(copy);
+  wrap.append(footer);
   return wrap;
 }
 
@@ -2129,6 +2199,7 @@ function renderAskUserForm(item: TranscriptItem): HTMLElement {
       label.append(input, document.createTextNode(option));
       wrap.append(label);
     });
+    appendOtherChoice(wrap, item.requestId ?? 'ask-user');
   } else if (kind === 'multi_select') {
     options.forEach((option, index) => {
       const label = el('label', 'choice');
@@ -2138,6 +2209,7 @@ function renderAskUserForm(item: TranscriptItem): HTMLElement {
       label.append(input, document.createTextNode(option));
       wrap.append(label);
     });
+    appendOtherChoice(wrap);
   } else {
     const input = el('input', 'inline-text-input') as HTMLInputElement;
     input.type = 'text';
@@ -2184,6 +2256,36 @@ function renderAskUserForm(item: TranscriptItem): HTMLElement {
   }
 }
 
+function appendOtherChoice(wrap: HTMLElement, radioName?: string): void {
+  const label = el('label', 'choice choice-other');
+  const toggle = document.createElement('input');
+  toggle.type = radioName ? 'radio' : 'checkbox';
+  if (radioName) toggle.name = radioName;
+  toggle.value = '__other__';
+  toggle.dataset.otherToggle = 'true';
+
+  const content = el('div', 'choice-other-body');
+  content.append(el('span', 'choice-other-label', 'Other'));
+  const input = el('input', 'inline-text-input ask-other-input') as HTMLInputElement;
+  input.type = 'text';
+  input.placeholder = 'Write your answer';
+  input.dataset.otherText = 'true';
+  input.disabled = true;
+  content.append(input);
+
+  toggle.addEventListener('change', () => {
+    input.disabled = !toggle.checked;
+    if (toggle.checked) setTimeout(() => input.focus(), 0);
+  });
+  input.addEventListener('focus', () => {
+    toggle.checked = true;
+    input.disabled = false;
+  });
+
+  label.append(toggle, content);
+  wrap.append(label);
+}
+
 function answerForRequest(item: TranscriptItem, wrap: HTMLElement):
   | { kind: 'selected'; index: number; text: string }
   | { kind: 'multi_selected'; indices: number[] }
@@ -2193,18 +2295,38 @@ function answerForRequest(item: TranscriptItem, wrap: HTMLElement):
     ? request.options.filter((value): value is string => typeof value === 'string')
     : [];
   if (request.kind === 'single_select') {
+    const otherToggle = wrap.querySelector<HTMLInputElement>('[data-other-toggle="true"]:checked');
+    if (otherToggle) {
+      return { kind: 'text', text: otherTextValue(wrap) };
+    }
     const selected = wrap.querySelector<HTMLInputElement>('input[type="radio"]:checked');
     const index = selected ? Number(selected.value) : Number(request.default_index ?? 0);
     return { kind: 'selected', index, text: String(options[index] ?? '') };
   }
   if (request.kind === 'multi_select') {
+    const otherToggle = wrap.querySelector<HTMLInputElement>('[data-other-toggle="true"]:checked');
     const indices = Array.from(wrap.querySelectorAll<HTMLInputElement>('input[type="checkbox"]:checked'))
       .map((input) => Number(input.value))
       .filter((value) => Number.isFinite(value));
+    if (otherToggle) {
+      const selectedText = indices.map((index) => options[index]).filter(Boolean);
+      const otherText = otherTextValue(wrap);
+      return {
+        kind: 'text',
+        text: selectedText.length > 0
+          ? [...selectedText, otherText].filter((value) => value.trim().length > 0).join(', ')
+          : otherText,
+      };
+    }
     return { kind: 'multi_selected', indices };
   }
   const input = wrap.querySelector<HTMLInputElement>('[data-freeform="true"]');
   return { kind: 'text', text: input ? input.value : '' };
+}
+
+function otherTextValue(wrap: HTMLElement): string {
+  const input = wrap.querySelector<HTMLInputElement>('[data-other-text="true"]');
+  return input ? input.value : '';
 }
 
 function renderDiffBlock(item: TranscriptItem): HTMLElement {

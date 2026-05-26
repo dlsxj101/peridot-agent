@@ -228,6 +228,8 @@ export interface SidebarState {
   authBusy: boolean;
   authError?: string;
   phase?: string;
+  runStartedAtMs?: number;
+  lastRunElapsedMs?: number;
 }
 
 /** Identifier of the provider the user opts into from the landing UI. */

@@ -4,9 +4,10 @@ VS Code panel for [Peridot Agent](https://github.com/dlsxj101/peridot-agent) —
 a Rust CLI/TUI autonomous coding agent with multi-LLM committee mode,
 native tool calling, and 2-Tier context management.
 
-> **Status**: v0.5.19 adds request-context accounting that matches the
-> next daemon/provider request, quieter phase handling with a
-> user-facing `checking` label, and tool-result mutation markers. The sidebar
+> **Status**: v0.5.20 adds a bottom run-timing footer with a live
+> Peridot gem loader, moves assistant copy actions into message
+> footers, and restores the `agent_ask_user` `Other` free-form answer
+> path in the sidebar. The sidebar
 > includes onboarding, queued prompts, persistent chat sessions,
 > Markdown answers, single-line tool activity (with risk-class chip
 > colouring), approval/diff cards, usage/budget HUD, an inline plan
@@ -84,14 +85,14 @@ Install the decoded VSIX directly on the remote host:
 
 ```bash
 cd extensions/vscode
-bash scripts/install-cursor-remote.sh 0.5.19
+bash scripts/install-cursor-remote.sh 0.5.20
 ```
 
 Or run the same workaround without a checkout:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/dlsxj101/peridot-agent/main/extensions/vscode/scripts/install-cursor-remote.sh \
-  | bash -s -- 0.5.19
+  | bash -s -- 0.5.20
 ```
 
 The script downloads the Marketplace VSIX with `curl --compressed`,
@@ -139,6 +140,9 @@ fallback package.
   budget / context, inline plan panel, inline unified-diff cards,
   pre-approval diff preview for `file_write` / `file_patch`, and
   cached / reused-daemon status reads.
+- **v0.5.20** — ✅ `agent_ask_user` single-select and multi-select
+  prompts include an `Other` free-form answer in the sidebar; long
+  tasks show live and final elapsed time in a bottom footer.
 - **v0.5.19** — ✅ Request-context donut breakdown matching the next
   daemon/provider request, routine phase events hidden from the
   transcript, user-facing `checking` phase wording, and tool-result

@@ -67,6 +67,8 @@ interface StoredChatSession {
   hud: HudState;
   runOptions: RunOptions;
   pendingApproval?: TranscriptItem;
+  runStartedAtMs?: number;
+  lastRunElapsedMs?: number;
   /**
    * True once the user has manually renamed this session (via the
    * session-menu rename action or `/session rename`). The async LLM
@@ -162,6 +164,8 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
     };
     this.state.running = true;
     this.state.status = 'Starting daemon';
+    this.state.runStartedAtMs = Date.now();
+    this.state.lastRunElapsedMs = undefined;
     this.state.pendingApproval = undefined;
     this.state.transcript.push({ role: 'user', text: task });
     this.publish();
@@ -301,6 +305,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
     }
     if (isTerminalEvent(event)) {
       this.state.pendingApproval = undefined;
+      this.finishRunTimer();
       this.state.running = false;
       this.state.status = isErrorEvent(event) ? 'Failed' : 'Finished';
       this.state.context = {
@@ -326,6 +331,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
   }
 
   public appendError(text: string): void {
+    this.finishRunTimer();
     this.state.running = false;
     this.state.status = 'Failed';
     this.state.context = {
@@ -338,6 +344,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
   }
 
   public markIdle(status = 'Idle'): void {
+    if (this.state.running) this.finishRunTimer();
     this.state.running = false;
     this.state.status = status;
     this.state.context = { ...this.state.context, status, running: false };
@@ -433,6 +440,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
     if (temporarilyLoaded) {
       this.state.running = false;
       this.state.status = 'Failed';
+      this.finishRunTimer();
       this.state.context = {
         ...this.state.context,
         status: 'Failed',
@@ -1380,6 +1388,13 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
     return session;
   }
 
+  private finishRunTimer(): void {
+    const startedAt = this.state.runStartedAtMs;
+    if (typeof startedAt !== 'number') return;
+    this.state.lastRunElapsedMs = Math.max(0, Date.now() - startedAt);
+    this.state.runStartedAtMs = undefined;
+  }
+
   private activeStoredSession(): StoredChatSession | undefined {
     return this.state.activeChatId ? this.sessions.get(this.state.activeChatId) : undefined;
   }
@@ -1395,6 +1410,8 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       hud: {},
       runOptions: { ...this.state.runOptions },
       pendingApproval: undefined,
+      runStartedAtMs: undefined,
+      lastRunElapsedMs: undefined,
     };
     this.nextSessionOrdinal += 1;
     this.sessions.set(id, session);
@@ -1413,6 +1430,8 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
     session.hud = this.state.hud;
     session.runOptions = { ...this.state.runOptions };
     session.pendingApproval = this.state.pendingApproval;
+    session.runStartedAtMs = this.state.runStartedAtMs;
+    session.lastRunElapsedMs = this.state.lastRunElapsedMs;
   }
 
   private restorePersistedState(): void {
@@ -1430,6 +1449,8 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         hud: raw.hud ?? {},
         runOptions: raw.runOptions ?? freshState().runOptions,
         pendingApproval: raw.pendingApproval,
+        runStartedAtMs: undefined,
+        lastRunElapsedMs: raw.lastRunElapsedMs,
       };
       this.sessions.set(session.id, session);
     }
@@ -1493,6 +1514,8 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
     this.state.hud = session.hud;
     this.state.runOptions = { ...session.runOptions };
     this.state.pendingApproval = session.pendingApproval;
+    this.state.runStartedAtMs = session.runStartedAtMs;
+    this.state.lastRunElapsedMs = session.lastRunElapsedMs;
     this.state.context = {
       ...this.state.context,
       status: session.status,
@@ -1517,6 +1540,8 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
     this.state.hud = {};
     this.state.branchPicker = undefined;
     this.state.pendingApproval = undefined;
+    this.state.runStartedAtMs = undefined;
+    this.state.lastRunElapsedMs = undefined;
     this.state.runOptions = freshState().runOptions;
     this.state.context = {
       ...this.state.context,
@@ -1562,6 +1587,8 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       session.transcript = [];
       session.hud = {};
       session.pendingApproval = undefined;
+      session.runStartedAtMs = undefined;
+      session.lastRunElapsedMs = undefined;
     }
     this.publish();
   }
@@ -1751,6 +1778,8 @@ function freshState(): SidebarState {
     hud: {} as HudState,
     slashCommands: [],
     authBusy: false,
+    runStartedAtMs: undefined,
+    lastRunElapsedMs: undefined,
   };
 }
 

@@ -306,6 +306,21 @@ textarea {
   }
 }
 
+@keyframes peridot-loader-spin {
+  0% {
+    transform: rotate(0deg) scale(0.9);
+    opacity: 0.72;
+  }
+  50% {
+    transform: rotate(45deg) scale(1.08);
+    opacity: 1;
+  }
+  100% {
+    transform: rotate(90deg) scale(0.9);
+    opacity: 0.72;
+  }
+}
+
 .option-card.busy {
   position: relative;
 }
@@ -1163,6 +1178,7 @@ textarea {
   .text-gradient-active,
   .tool-name.text-gradient-active,
   .tool-detail-name.text-gradient-active,
+  .peridot-loader,
   .thinking-summary {
     animation: none;
   }
@@ -1416,10 +1432,15 @@ textarea {
   color: var(--peri-accent);
 }
 
+.msg-footer {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  min-height: 26px;
+  margin-top: 6px;
+}
+
 .copy-button {
-  position: absolute;
-  right: 0;
-  top: 0;
   width: 24px;
   height: 24px;
   display: inline-flex;
@@ -1431,27 +1452,71 @@ textarea {
   background: var(--peri-bg-elev);
   color: var(--peri-fg-muted);
   cursor: pointer;
-  opacity: 0;
-  transform: translateY(2px);
-  transition: opacity 120ms ease, transform 120ms ease, color 120ms ease;
+  opacity: 0.8;
+  transition: color 120ms ease, background 120ms ease, border-color 120ms ease;
 }
 
 .msg-assistant:hover .copy-button,
 .copy-button:focus-visible {
   opacity: 1;
-  transform: translateY(0);
 }
 
 .copy-button:hover {
   color: var(--peri-fg);
   background: var(--peri-bg-elev-soft);
+  border-color: var(--peri-border-strong);
 }
 
 .copy-button.copied {
   opacity: 1;
-  transform: translateY(0);
   color: var(--peri-accent-strong);
   border-color: var(--peri-accent-dim);
+}
+
+.run-footer {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-top: 1px solid var(--peri-border);
+  color: var(--peri-fg-muted);
+  background: color-mix(in srgb, var(--peri-bg-elev) 64%, transparent);
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.peridot-loader {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  color: var(--peri-accent);
+  font-size: 13px;
+  line-height: 1;
+  transform-origin: 50% 50%;
+}
+
+.run-footer.running .peridot-loader {
+  animation: peridot-loader-spin 1.1s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+.run-footer.complete .peridot-loader {
+  color: var(--peri-accent-strong);
+}
+
+.run-footer-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.run-footer-time {
+  color: var(--peri-fg);
+  font-variant-numeric: tabular-nums;
+  font-family: var(--vscode-editor-font-family, ui-monospace, monospace);
 }
 
 .msg-tool {
@@ -1975,6 +2040,20 @@ textarea {
   background: var(--peri-bg-elev-soft);
 }
 
+.choice-other {
+  align-items: center;
+}
+
+.choice-other-body {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.choice-other-label {
+  font-weight: 600;
+}
+
 .inline-text-input {
   padding: 7px 8px;
   border: 1px solid var(--peri-border-strong);
@@ -1982,6 +2061,10 @@ textarea {
   background: var(--vscode-input-background);
   color: var(--vscode-input-foreground);
   outline: none;
+}
+
+.ask-other-input:disabled {
+  opacity: 0.55;
 }
 
 .prompt-panel .tool-code {
