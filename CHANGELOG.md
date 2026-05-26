@@ -12,7 +12,7 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 
 ---
 
-## [0.8.13 / extension 0.5.19] — 2026-05-27
+## [0.8.13 / extension 0.5.20] — 2026-05-27
 
 ### Added — committee replay and executor defaults
 
