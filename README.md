@@ -4,7 +4,23 @@ Peridot Agent is a Rust CLI/TUI autonomous coding agent with multi-session orche
 
 ## Status
 
-Current version: **0.8.12**
+Current version: **0.8.13**
+
+### What's new in v0.8.13
+
+- **Committee replay timeline.** `peridot session replay` now weaves
+  transcript rows with persisted planner, reviewer, and usage events
+  from `committee.ndjson` while preserving transcript-only JSON
+  compatibility.
+- **Reviewer duplicate-diff guard.** Repeated reviewer
+  `request_changes` verdicts for the same diff signature now route
+  through the normal block/AskUser override path instead of looping.
+- **Committee executor model default.** `committee.executor_model` is
+  honored as the committee executor default unless the operator
+  supplied an explicit per-session model override.
+- **Obsolete Codex app-server bridge removed.** `openai-oauth` keeps
+  using the direct `OpenAiCodexProvider`; the unused local
+  `codex app-server` provider has been deleted.
 
 ### What's new in v0.8.12
 

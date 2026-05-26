@@ -12,6 +12,27 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 
 ---
 
+## [0.8.13 / extension 0.5.19] — 2026-05-27
+
+### Added — committee replay and executor defaults
+
+- **Committee replay weaving** now gives `peridot session replay` a unified
+  timeline that includes persisted planner, reviewer, and per-role usage
+  events from `committee.ndjson` while keeping JSON `entries` transcript-only
+  for existing consumers.
+- **Committee duplicate-diff guard** now auto-blocks repeated reviewer
+  `request_changes` verdicts for the same diff signature, using the same
+  AskUser override path as explicit reviewer blocks.
+- **`committee.executor_model`** is now honored as the default executor model
+  in committee mode unless the operator has supplied an explicit per-session
+  model override.
+
+### Removed — obsolete Codex app-server provider
+
+- **`CodexAppServerProvider`** and its local `codex app-server` bridge were
+  removed from `peridot-llm`; `openai-oauth` continues to use the direct
+  `OpenAiCodexProvider` path.
+
 ## [0.8.12 / extension 0.5.19] — 2026-05-26
 
 ### Added — request-context accounting and read-only tool batching

@@ -832,6 +832,158 @@ mod tests {
         assert!(!sessions_root.join("s1").exists());
         fs::remove_dir_all(&root).ok();
     }
+
+    fn transcript_entry(
+        kind: peridot_tui::TranscriptKind,
+        text: &str,
+        ts: u64,
+    ) -> peridot_tui::TranscriptEntry {
+        peridot_tui::TranscriptEntry {
+            kind,
+            text: text.to_string(),
+            ts,
+            parent_turn: None,
+        }
+    }
+
+    fn committee_event(order: usize, raw: serde_json::Value) -> CommitteeReplayEvent {
+        CommitteeReplayEvent {
+            ts: raw
+                .get("ts")
+                .and_then(|value| value.as_u64())
+                .unwrap_or_default(),
+            kind: raw
+                .get("kind")
+                .and_then(|value| value.as_str())
+                .unwrap()
+                .to_string(),
+            order,
+            raw,
+        }
+    }
+
+    #[test]
+    fn replay_timeline_orders_timestamped_transcript_and_committee_events() {
+        let transcript = vec![
+            transcript_entry(peridot_tui::TranscriptKind::User, "task", 10),
+            transcript_entry(peridot_tui::TranscriptKind::Assistant, "working", 12),
+        ];
+        let committee = vec![committee_event(
+            0,
+            serde_json::json!({
+                "ts": 11,
+                "kind": "role_usage",
+                "role": "planner",
+                "cost_usd": 0.01,
+                "tokens": 25
+            }),
+        )];
+
+        let timeline = build_replay_timeline(&transcript, &committee);
+
+        assert_eq!(
+            timeline
+                .iter()
+                .map(|entry| entry.text())
+                .collect::<Vec<_>>(),
+            vec![
+                "task".to_string(),
+                "committee planner usage: +$0.0100 / +25 tok".to_string(),
+                "working".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn replay_timeline_replaces_legacy_duplicate_committee_rows() {
+        let transcript = vec![
+            transcript_entry(peridot_tui::TranscriptKind::User, "task", 0),
+            transcript_entry(
+                peridot_tui::TranscriptKind::System,
+                "committee planner ready:\n1. edit",
+                0,
+            ),
+            transcript_entry(
+                peridot_tui::TranscriptKind::Notice,
+                "committee reviewer (turn 1): request_changes — indent off",
+                0,
+            ),
+        ];
+        let committee = vec![
+            committee_event(
+                0,
+                serde_json::json!({
+                    "ts": 20,
+                    "kind": "role_usage",
+                    "role": "planner",
+                    "cost_usd": 0.02,
+                    "tokens": 30
+                }),
+            ),
+            committee_event(
+                1,
+                serde_json::json!({
+                    "ts": 21,
+                    "kind": "planner_plan_ready",
+                    "plan_text": "1. edit"
+                }),
+            ),
+            committee_event(
+                2,
+                serde_json::json!({
+                    "ts": 22,
+                    "kind": "reviewer_verdict",
+                    "turn_index": 1,
+                    "verdict": "request_changes",
+                    "comments": "indent off"
+                }),
+            ),
+        ];
+
+        let timeline = build_replay_timeline(&transcript, &committee);
+        let texts: Vec<String> = timeline.iter().map(|entry| entry.text()).collect();
+
+        assert_eq!(texts.len(), 4);
+        assert_eq!(texts[0], "task");
+        assert_eq!(texts[1], "committee planner usage: +$0.0200 / +30 tok");
+        assert_eq!(texts[2], "committee planner ready:\n1. edit");
+        assert_eq!(
+            texts[3],
+            "committee reviewer (turn 1): request_changes — indent off"
+        );
+    }
+
+    #[test]
+    fn replay_timeline_last_can_limit_unified_entries() {
+        let transcript = vec![
+            transcript_entry(peridot_tui::TranscriptKind::User, "one", 1),
+            transcript_entry(peridot_tui::TranscriptKind::Assistant, "three", 3),
+        ];
+        let committee = vec![committee_event(
+            0,
+            serde_json::json!({
+                "ts": 2,
+                "kind": "role_usage",
+                "role": "reviewer",
+                "cost_usd": 0.03,
+                "tokens": 40
+            }),
+        )];
+
+        let timeline = build_replay_timeline(&transcript, &committee);
+        let last_two = &timeline[timeline.len().saturating_sub(2)..];
+
+        assert_eq!(
+            last_two
+                .iter()
+                .map(|entry| entry.text())
+                .collect::<Vec<_>>(),
+            vec![
+                "committee reviewer usage: +$0.0300 / +40 tok".to_string(),
+                "three".to_string()
+            ]
+        );
+    }
 }
 
 fn export_session(
@@ -1171,6 +1323,73 @@ fn print_transcript_ndjson_line(line: &str) {
     }
 }
 
+#[derive(Clone, Debug)]
+struct CommitteeReplayEvent {
+    ts: u64,
+    kind: String,
+    order: usize,
+    raw: serde_json::Value,
+}
+
+#[derive(Clone, Debug)]
+enum ReplayTimelineEntry {
+    Transcript {
+        entry: peridot_tui::TranscriptEntry,
+        order: usize,
+    },
+    Committee {
+        event: CommitteeReplayEvent,
+    },
+}
+
+impl ReplayTimelineEntry {
+    fn ts(&self) -> u64 {
+        match self {
+            ReplayTimelineEntry::Transcript { entry, .. } => entry.ts,
+            ReplayTimelineEntry::Committee { event } => event.ts,
+        }
+    }
+
+    fn order(&self) -> usize {
+        match self {
+            ReplayTimelineEntry::Transcript { order, .. } => *order,
+            ReplayTimelineEntry::Committee { event } => 1_000_000usize.saturating_add(event.order),
+        }
+    }
+
+    fn marker(&self) -> &'static str {
+        match self {
+            ReplayTimelineEntry::Transcript { entry, .. } => transcript_marker(entry.kind),
+            ReplayTimelineEntry::Committee { event } => committee_marker(event),
+        }
+    }
+
+    fn text(&self) -> String {
+        match self {
+            ReplayTimelineEntry::Transcript { entry, .. } => entry.text.clone(),
+            ReplayTimelineEntry::Committee { event } => committee_text(event),
+        }
+    }
+
+    fn to_json(&self) -> serde_json::Value {
+        match self {
+            ReplayTimelineEntry::Transcript { entry, .. } => serde_json::json!({
+                "source": "transcript",
+                "kind": format!("{:?}", entry.kind).to_ascii_lowercase(),
+                "text": entry.text.clone(),
+                "ts": entry.ts,
+            }),
+            ReplayTimelineEntry::Committee { event } => serde_json::json!({
+                "source": "committee",
+                "kind": event.kind.clone(),
+                "text": committee_text(event),
+                "ts": event.ts,
+                "event": event.raw.clone(),
+            }),
+        }
+    }
+}
+
 fn replay_session_transcript(
     project_root: &Path,
     id: &str,
@@ -1179,17 +1398,20 @@ fn replay_session_transcript(
     output: OutputFormat,
 ) -> Result<()> {
     let entries_owned = load_session_transcript(project_root, id)?;
-    let entries: Vec<&peridot_tui::TranscriptEntry> = if let Some(limit) = last {
-        let total = entries_owned.len();
+    let committee_events = load_committee_replay_events(project_root, id);
+    let timeline_owned = build_replay_timeline(&entries_owned, &committee_events);
+    let timeline: Vec<&ReplayTimelineEntry> = if let Some(limit) = last {
+        let total = timeline_owned.len();
         let start = total.saturating_sub(limit);
-        entries_owned[start..].iter().collect()
+        timeline_owned[start..].iter().collect()
     } else {
-        entries_owned.iter().collect()
+        timeline_owned.iter().collect()
     };
     let total_entries = entries_owned.len();
+    let total_timeline_entries = timeline_owned.len();
     match output {
         OutputFormat::Json => {
-            let payload: Vec<_> = entries
+            let payload: Vec<_> = entries_owned
                 .iter()
                 .map(|entry| {
                     serde_json::json!({
@@ -1198,35 +1420,239 @@ fn replay_session_transcript(
                     })
                 })
                 .collect();
+            let timeline_payload: Vec<_> = timeline.iter().map(|entry| entry.to_json()).collect();
             println!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
                     "id": id,
                     "entries": payload,
+                    "timeline": timeline_payload,
                     "total": total_entries,
+                    "timeline_total": total_timeline_entries,
+                    "committee_total": committee_events.len(),
                     "step_mode": step,
                 }))?
             );
         }
         OutputFormat::Text => {
             if step {
-                replay_step_mode(&entries)?;
+                replay_step_mode(&timeline)?;
             } else {
-                for entry in &entries {
-                    let marker = transcript_marker(entry.kind);
-                    println!("{marker} {}", entry.text);
+                for entry in &timeline {
+                    println!("{} {}", entry.marker(), entry.text());
                 }
             }
-            if entries.len() < total_entries {
+            if timeline.len() < total_timeline_entries {
                 println!(
-                    "... showing {} of {} entries; drop --last for the full replay.",
-                    entries.len(),
-                    total_entries
+                    "... showing {} of {} timeline entries; drop --last for the full replay.",
+                    timeline.len(),
+                    total_timeline_entries
                 );
             }
         }
     }
     Ok(())
+}
+
+fn build_replay_timeline(
+    transcript: &[peridot_tui::TranscriptEntry],
+    committee: &[CommitteeReplayEvent],
+) -> Vec<ReplayTimelineEntry> {
+    if transcript.iter().any(|entry| entry.ts > 0) {
+        return build_timestamped_timeline(transcript, committee);
+    }
+    build_legacy_timeline(transcript, committee)
+}
+
+fn build_timestamped_timeline(
+    transcript: &[peridot_tui::TranscriptEntry],
+    committee: &[CommitteeReplayEvent],
+) -> Vec<ReplayTimelineEntry> {
+    let mut used_committee = vec![false; committee.len()];
+    let mut timeline = Vec::new();
+    for (order, entry) in transcript.iter().cloned().enumerate() {
+        if let Some(index) = matching_committee_event_index(&entry, committee, &used_committee) {
+            used_committee[index] = true;
+            continue;
+        }
+        timeline.push(ReplayTimelineEntry::Transcript { entry, order });
+    }
+    for event in committee.iter().cloned() {
+        timeline.push(ReplayTimelineEntry::Committee { event });
+    }
+    timeline.sort_by_key(|entry| (entry.ts(), entry.order()));
+    timeline
+}
+
+fn build_legacy_timeline(
+    transcript: &[peridot_tui::TranscriptEntry],
+    committee: &[CommitteeReplayEvent],
+) -> Vec<ReplayTimelineEntry> {
+    let mut used_committee = vec![false; committee.len()];
+    let mut timeline = Vec::new();
+    for (order, entry) in transcript.iter().cloned().enumerate() {
+        if let Some(index) = matching_committee_event_index(&entry, committee, &used_committee) {
+            push_related_role_usage(index, committee, &mut used_committee, &mut timeline);
+            used_committee[index] = true;
+            timeline.push(ReplayTimelineEntry::Committee {
+                event: committee[index].clone(),
+            });
+        } else {
+            timeline.push(ReplayTimelineEntry::Transcript { entry, order });
+        }
+    }
+    for (index, event) in committee.iter().cloned().enumerate() {
+        if !used_committee[index] {
+            timeline.push(ReplayTimelineEntry::Committee { event });
+        }
+    }
+    timeline
+}
+
+fn push_related_role_usage(
+    event_index: usize,
+    committee: &[CommitteeReplayEvent],
+    used_committee: &mut [bool],
+    timeline: &mut Vec<ReplayTimelineEntry>,
+) {
+    let Some(role) = related_usage_role(&committee[event_index]) else {
+        return;
+    };
+    if let Some(index) = committee.iter().enumerate().position(|(idx, event)| {
+        !used_committee[idx]
+            && idx < event_index
+            && event.kind == "role_usage"
+            && event.raw.get("role").and_then(|value| value.as_str()) == Some(role)
+    }) {
+        used_committee[index] = true;
+        timeline.push(ReplayTimelineEntry::Committee {
+            event: committee[index].clone(),
+        });
+    }
+}
+
+fn related_usage_role(event: &CommitteeReplayEvent) -> Option<&'static str> {
+    match event.kind.as_str() {
+        "planner_plan_ready" => Some("planner"),
+        "reviewer_verdict" => Some("reviewer"),
+        _ => None,
+    }
+}
+
+fn matching_committee_event_index(
+    entry: &peridot_tui::TranscriptEntry,
+    committee: &[CommitteeReplayEvent],
+    used_committee: &[bool],
+) -> Option<usize> {
+    if entry.text.starts_with("committee planner ready:") {
+        return committee.iter().enumerate().position(|(index, event)| {
+            !used_committee[index] && event.kind == "planner_plan_ready"
+        });
+    }
+    if !entry.text.starts_with("committee reviewer (turn ") {
+        return None;
+    }
+    committee.iter().enumerate().position(|(index, event)| {
+        !used_committee[index]
+            && event.kind == "reviewer_verdict"
+            && entry.text.starts_with(&reviewer_text_prefix(event))
+    })
+}
+
+fn reviewer_text_prefix(event: &CommitteeReplayEvent) -> String {
+    let turn = event
+        .raw
+        .get("turn_index")
+        .and_then(|value| value.as_u64())
+        .unwrap_or_default();
+    let verdict = event
+        .raw
+        .get("verdict")
+        .and_then(|value| value.as_str())
+        .unwrap_or("unknown");
+    format!("committee reviewer (turn {turn}): {verdict}")
+}
+
+fn committee_marker(event: &CommitteeReplayEvent) -> &'static str {
+    match event.kind.as_str() {
+        "reviewer_verdict" => match event.raw.get("verdict").and_then(|value| value.as_str()) {
+            Some("approve") => "·",
+            Some("block") => "⚠",
+            _ => "⚠",
+        },
+        _ => "·",
+    }
+}
+
+fn committee_text(event: &CommitteeReplayEvent) -> String {
+    match event.kind.as_str() {
+        "planner_plan_ready" => format!(
+            "committee planner ready:\n{}",
+            event
+                .raw
+                .get("plan_text")
+                .and_then(|value| value.as_str())
+                .unwrap_or("")
+        ),
+        "role_usage" => {
+            let role = event
+                .raw
+                .get("role")
+                .and_then(|value| value.as_str())
+                .unwrap_or("unknown");
+            let cost = event
+                .raw
+                .get("cost_usd")
+                .and_then(|value| value.as_f64())
+                .unwrap_or_default();
+            let tokens = event
+                .raw
+                .get("tokens")
+                .and_then(|value| value.as_u64())
+                .unwrap_or_default();
+            format!("committee {role} usage: +${cost:.4} / +{tokens} tok")
+        }
+        "reviewer_verdict" => {
+            let prefix = reviewer_text_prefix(event);
+            let comments = event
+                .raw
+                .get("comments")
+                .and_then(|value| value.as_str())
+                .unwrap_or("");
+            if comments.is_empty() {
+                prefix
+            } else {
+                format!("{prefix} — {comments}")
+            }
+        }
+        other => format!("committee {other}"),
+    }
+}
+
+fn load_committee_replay_events(project_root: &Path, id: &str) -> Vec<CommitteeReplayEvent> {
+    let path = project_root
+        .join(".peridot")
+        .join("sessions")
+        .join(id)
+        .join("committee.ndjson");
+    let Ok(raw) = std::fs::read_to_string(&path) else {
+        return Vec::new();
+    };
+    raw.lines()
+        .filter(|line| !line.trim().is_empty())
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .enumerate()
+        .filter_map(|(order, raw)| {
+            let kind = raw.get("kind")?.as_str()?.to_string();
+            let ts = raw.get("ts").and_then(|value| value.as_u64()).unwrap_or(0);
+            Some(CommitteeReplayEvent {
+                ts,
+                kind,
+                order,
+                raw,
+            })
+        })
+        .collect()
 }
 
 /// Loads a session's transcript by preferring the canonical `tui_state.json`
@@ -1272,7 +1698,7 @@ fn load_session_transcript(
     Ok(entries)
 }
 
-fn replay_step_mode(entries: &[&peridot_tui::TranscriptEntry]) -> Result<()> {
+fn replay_step_mode(entries: &[&ReplayTimelineEntry]) -> Result<()> {
     use std::io::{BufRead, Write};
     let stdin = std::io::stdin();
     let mut stdin_lock = stdin.lock();
@@ -1280,8 +1706,13 @@ fn replay_step_mode(entries: &[&peridot_tui::TranscriptEntry]) -> Result<()> {
     let total = entries.len();
     let mut buffer = String::new();
     for (idx, entry) in entries.iter().enumerate() {
-        let marker = transcript_marker(entry.kind);
-        println!("[{}/{}] {marker} {}", idx + 1, total, entry.text);
+        println!(
+            "[{}/{}] {} {}",
+            idx + 1,
+            total,
+            entry.marker(),
+            entry.text()
+        );
         if idx + 1 < total {
             {
                 let mut handle = stdout.lock();

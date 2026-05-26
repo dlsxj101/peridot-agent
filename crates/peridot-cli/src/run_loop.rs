@@ -738,12 +738,15 @@ where
     } else {
         options.config.committee.reviewer_model.clone()
     };
+    let effective_executor_model =
+        effective_committee_executor_model(&options.model, options.config);
     let max_review_passes = options.config.committee.max_review_passes.max(1);
 
     let mut total_usage = peridot_llm::Usage::default();
     let accumulate_usage = peridot_core::accumulate_usage;
     let mut outcomes: Vec<peridot_core::AgentTurnOutcome> = Vec::new();
     let mut review_pass_counter: u32 = 0;
+    let mut diff_rejection_counts = std::collections::HashMap::new();
     let mut user_input_for_next: Option<String> = Some(options.task.clone());
     let mut stop_reason = StopReason::MaxTurns;
     let cancel_token = executor.cancel_token();
@@ -761,7 +764,7 @@ where
         events(AgentRunEvent::TurnStarted { turn_index });
         let turn_request = AgentTurnRequest {
             user_input: user_input_for_next.take(),
-            model: options.model.clone(),
+            model: effective_executor_model.clone(),
             max_tokens: 4096,
             reasoning_effort: options.reasoning_effort,
             service_tier: options.service_tier.clone(),
@@ -823,6 +826,13 @@ where
             .await
             {
                 Ok(verdict) => {
+                    let verdict = guarded_reviewer_verdict(
+                        verdict,
+                        &diff,
+                        max_review_passes,
+                        &mut review_pass_counter,
+                        &mut diff_rejection_counts,
+                    );
                     events(AgentRunEvent::ReviewerVerdict {
                         turn_index,
                         verdict: verdict.clone(),
@@ -838,22 +848,6 @@ where
                                     "Reviewer feedback for turn {turn_index}:\n{comments}\n\nAddress the feedback before declaring agent_done."
                                 ),
                             ));
-                            review_pass_counter += 1;
-                            if review_pass_counter >= max_review_passes {
-                                events(AgentRunEvent::Recovery {
-                                    message: format!(
-                                        "committee: reviewer requested changes {max_review_passes} consecutive turns; auto-blocking"
-                                    ),
-                                });
-                                if let Some(token) = cancel_token.as_ref() {
-                                    token.cancel();
-                                }
-                                stop_reason = StopReason::Interrupted;
-                                events(AgentRunEvent::Interrupted {
-                                    stage: "committee_review_loop".to_string(),
-                                });
-                                break;
-                            }
                         }
                         Verdict::Block { reason } => {
                             events(AgentRunEvent::Recovery {
@@ -880,6 +874,7 @@ where
                                 false
                             };
                             if overridden {
+                                review_pass_counter = 0;
                                 executor.context_mut().append(Entry::trusted(
                                     Source::PlanReminder,
                                     format!(
@@ -946,7 +941,7 @@ where
         &options.task,
         &options.config.memory,
         Some(provider),
-        &options.model,
+        &effective_executor_model,
     )
     .await
     {
@@ -1057,6 +1052,67 @@ fn truncate_diff(raw: &str, max_chars: usize) -> String {
     let mut out: String = raw.chars().take(max_chars.saturating_sub(80)).collect();
     out.push_str("\n... <diff truncated for reviewer context>");
     out
+}
+
+pub(super) fn effective_committee_executor_model(
+    requested_model: &str,
+    config: &PeridotConfig,
+) -> String {
+    if !config.committee.executor_model.is_empty() && requested_model == config.models.main {
+        config.committee.executor_model.clone()
+    } else {
+        requested_model.to_string()
+    }
+}
+
+pub(super) fn guarded_reviewer_verdict(
+    verdict: peridot_core::ReviewerVerdict,
+    diff: &str,
+    max_review_passes: u32,
+    consecutive_requests: &mut u32,
+    diff_rejection_counts: &mut std::collections::HashMap<String, u32>,
+) -> peridot_core::ReviewerVerdict {
+    let max_review_passes = max_review_passes.max(1);
+    let peridot_core::ReviewerVerdict::RequestChanges { comments } = verdict else {
+        if matches!(verdict, peridot_core::ReviewerVerdict::Approve) {
+            *consecutive_requests = 0;
+        }
+        return verdict;
+    };
+
+    *consecutive_requests = consecutive_requests.saturating_add(1);
+    let signature = committee_diff_signature(diff);
+    let diff_count = {
+        let count = diff_rejection_counts.entry(signature).or_insert(0);
+        *count = count.saturating_add(1);
+        *count
+    };
+    if diff_count >= max_review_passes {
+        return peridot_core::ReviewerVerdict::Block {
+            reason: format!(
+                "committee: reviewer requested changes for the same diff {diff_count} times; auto-blocking"
+            ),
+        };
+    }
+    if *consecutive_requests >= max_review_passes {
+        return peridot_core::ReviewerVerdict::Block {
+            reason: format!(
+                "committee: reviewer requested changes {max_review_passes} consecutive turns; auto-blocking"
+            ),
+        };
+    }
+    peridot_core::ReviewerVerdict::RequestChanges { comments }
+}
+
+fn committee_diff_signature(diff: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(diff.as_bytes());
+    hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 async fn run_reviewer_pass<F>(

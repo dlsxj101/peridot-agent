@@ -497,9 +497,8 @@ impl Default for AutoFixConfig {
 /// Provider-neutral reasoning intensity dial. Maps to: Anthropic
 /// `thinking: { type: enabled, budget_tokens }` with budget scaled by tier
 /// (Low ≈ 1k, Medium ≈ 4k, High ≈ 16k, XHigh ≈ 32k tokens); OpenAI
-/// `reasoning: { effort: "low|medium|high|xhigh" }` (gpt-5, o-series);
-/// Codex app-server forwards via the RPC envelope and handles the per-model
-/// mapping. Models without a reasoning channel simply ignore the field.
+/// `reasoning: { effort: "low|medium|high|xhigh" }` (gpt-5, o-series).
+/// Models without a reasoning channel simply ignore the field.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReasoningEffort {

@@ -614,6 +614,9 @@ pub struct TranscriptEntry {
     pub kind: TranscriptKind,
     /// Plain-text payload (no styling).
     pub text: String,
+    /// Unix timestamp for chronological replay across sidecar journals.
+    #[serde(default)]
+    pub ts: u64,
     /// Optional turn index this entry belongs to (used for grouping).
     #[serde(default)]
     pub parent_turn: Option<u32>,
@@ -625,6 +628,7 @@ impl TranscriptEntry {
         Self {
             kind,
             text: text.into(),
+            ts: current_unix_seconds(),
             parent_turn: None,
         }
     }

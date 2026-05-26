@@ -105,9 +105,9 @@ pub struct CompletionRequest {
     pub thinking: bool,
     /// Requested reasoning depth. Providers translate this to their native
     /// reasoning controls: Anthropic → `thinking: { type: enabled,
-    /// budget_tokens }`; OpenAI o-series / gpt-5 → `reasoning: { effort }`;
-    /// Codex → forwarded via app-server. `Off` (the default) disables
-    /// reasoning entirely so cheap chat-style models keep their cost.
+    /// budget_tokens }`; OpenAI o-series / gpt-5 → `reasoning: { effort }`.
+    /// `Off` (the default) disables reasoning entirely so cheap chat-style
+    /// models keep their cost.
     #[serde(default)]
     pub reasoning_effort: ReasoningEffort,
     /// Optional provider service tier such as `fast` / `priority`.

@@ -145,11 +145,7 @@ mod tests {
     use crate::state::TranscriptEntry;
 
     fn entry(kind: TranscriptKind, text: &str) -> TranscriptEntry {
-        TranscriptEntry {
-            kind,
-            text: text.to_string(),
-            parent_turn: None,
-        }
+        TranscriptEntry::new(kind, text)
     }
 
     #[test]

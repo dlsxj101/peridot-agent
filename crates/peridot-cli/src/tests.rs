@@ -12,7 +12,10 @@ use peridot_tui::{HeaderState, TuiState};
 use super::checkpoints::restore_latest_checkpoint;
 use super::interactive_io::*;
 use super::relax_security_for_approval;
-use super::run_loop::{normalize_model_service_tier, parse_reviewer_verdict};
+use super::run_loop::{
+    effective_committee_executor_model, guarded_reviewer_verdict, normalize_model_service_tier,
+    parse_reviewer_verdict,
+};
 use super::run_output::*;
 use super::run_state::*;
 use super::session_router::SessionRouter;
@@ -43,6 +46,90 @@ fn parse_reviewer_verdict_handles_each_outcome() {
     );
     assert!(parse_reviewer_verdict("not json at all").is_none());
     assert!(parse_reviewer_verdict(r#"{"unrelated":1}"#).is_none());
+}
+
+#[test]
+fn reviewer_guard_blocks_repeated_same_diff_rejections() {
+    use peridot_core::ReviewerVerdict;
+    let mut consecutive = 0;
+    let mut by_diff = std::collections::HashMap::new();
+    let first = guarded_reviewer_verdict(
+        ReviewerVerdict::RequestChanges {
+            comments: "fix it".to_string(),
+        },
+        "diff --git a/lib.rs b/lib.rs\n+bad",
+        2,
+        &mut consecutive,
+        &mut by_diff,
+    );
+    assert!(matches!(first, ReviewerVerdict::RequestChanges { .. }));
+
+    let second = guarded_reviewer_verdict(
+        ReviewerVerdict::RequestChanges {
+            comments: "still bad".to_string(),
+        },
+        "diff --git a/lib.rs b/lib.rs\n+bad",
+        2,
+        &mut consecutive,
+        &mut by_diff,
+    );
+
+    assert!(
+        matches!(second, ReviewerVerdict::Block { reason } if reason.contains("same diff 2 times"))
+    );
+}
+
+#[test]
+fn reviewer_guard_blocks_consecutive_rejections_through_block_path() {
+    use peridot_core::ReviewerVerdict;
+    let mut consecutive = 0;
+    let mut by_diff = std::collections::HashMap::new();
+    let first = guarded_reviewer_verdict(
+        ReviewerVerdict::RequestChanges {
+            comments: "fix first".to_string(),
+        },
+        "diff --git a/a b/a\n+one",
+        2,
+        &mut consecutive,
+        &mut by_diff,
+    );
+    assert!(matches!(first, ReviewerVerdict::RequestChanges { .. }));
+
+    let second = guarded_reviewer_verdict(
+        ReviewerVerdict::RequestChanges {
+            comments: "fix second".to_string(),
+        },
+        "diff --git a/b b/b\n+two",
+        2,
+        &mut consecutive,
+        &mut by_diff,
+    );
+
+    assert!(
+        matches!(second, ReviewerVerdict::Block { reason } if reason.contains("2 consecutive turns"))
+    );
+}
+
+#[test]
+fn committee_executor_model_applies_only_without_explicit_override() {
+    let mut config = PeridotConfig::default();
+    config.models.main = "main-model".to_string();
+    config.committee.executor_model = "executor-model".to_string();
+
+    assert_eq!(
+        effective_committee_executor_model("main-model", &config),
+        "executor-model"
+    );
+    assert_eq!(
+        effective_committee_executor_model("operator-model", &config),
+        "operator-model"
+    );
+
+    config.committee.executor_model.clear();
+    assert_eq!(
+        effective_committee_executor_model("main-model", &config),
+        "main-model"
+    );
 }
 
 #[test]

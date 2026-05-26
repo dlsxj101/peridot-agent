@@ -162,9 +162,9 @@ Each PR is reviewable in isolation and leaves the workspace fmt/clippy/test gree
 
 ## Outstanding (post-M-COM7)
 
-These items were called out during plan but deferred so the seven core PRs stay sized:
+These items were called out during plan but deferred so the seven core PRs stay sized. They have since landed:
 
-- **Replay weaving** — `peridot session replay` interleaves committee events with transcript chronologically. The data is on disk (`committee.ndjson`, `transcript.ndjson`); the CLI just needs to merge-sort by `ts` before printing.
-- **Diff-signature duplicate guard** — orthogonal to consecutive `RequestChanges`: detect when reviewer rejects the *same* diff signature N times even with gaps between, and auto-Block. Hash-based.
-- **Block prompt** — when `Block` fires, drop an `AskUser` panel so the operator can override and continue. Today the run halts cleanly via cancel token; the operator restarts manually.
-- **`AgentRole` for `models.executor`** — the planner / reviewer respect their own `models.*` keys, but the executor still uses `models.main` / per-session `/model`. Adding `models.executor` would let one project's committee run on a different executor model than `models.main` without slash.
+- **Replay weaving** — `peridot session replay` interleaves committee events with transcript rows through a unified timeline. New transcript rows carry `ts`; older rows fall back to stable transcript order with committee duplicates replaced by structured events.
+- **Diff-signature duplicate guard** — repeated `RequestChanges` verdicts for the same diff signature auto-Block through the existing reviewer block / AskUser override path.
+- **Block prompt** — reviewer `Block` verdicts now surface through the interactive `AskUser` port so the operator can override and continue.
+- **`committee.executor_model`** — committee executor turns use `committee.executor_model` as the project default unless the operator supplied an explicit model override.

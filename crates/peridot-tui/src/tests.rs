@@ -2208,6 +2208,15 @@ fn committee_events_drain_into_pending_journal_queue() {
 }
 
 #[test]
+fn transcript_entry_missing_timestamp_defaults_to_zero() {
+    let entry: TranscriptEntry =
+        serde_json::from_str(r#"{"kind":"system","text":"old row"}"#).unwrap();
+
+    assert_eq!(entry.ts, 0);
+    assert_eq!(entry.text, "old row");
+}
+
+#[test]
 fn committee_role_usage_event_accumulates_into_per_role_totals() {
     use peridot_common::CommitteeMode;
 
