@@ -430,6 +430,20 @@ textarea {
   max-width: 26ch;
 }
 
+.phase-chip {
+  display: inline-block;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-top: 2px;
+}
+.phase-gray { background: var(--peri-bg-elev-soft); color: var(--peri-fg-muted); }
+.phase-amber { background: rgba(216, 164, 64, 0.2); color: var(--peri-warn); }
+.phase-blue { background: rgba(64, 148, 216, 0.2); color: var(--vscode-textLink-foreground); }
+.phase-green { background: rgba(91, 212, 110, 0.15); color: var(--peri-accent-strong); }
+
 .header-actions {
   display: flex;
   align-items: center;

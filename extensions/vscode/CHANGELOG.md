@@ -1,5 +1,28 @@
 # Peridot Agent — Extension Changelog
 
+## [0.5.18] — 2026-05-26
+
+### Added — Cursor remote install workaround and settings polish
+
+- Added `scripts/install-cursor-remote.sh`, a remote-host installer for
+  Cursor builds that fail to update Marketplace VSIX packages served
+  with `Content-Encoding: gzip`. The script downloads the decoded VSIX
+  with `curl --compressed`, validates the ZIP header, and installs it
+  through the newest `~/.cursor-server/.../cursor-server` binary.
+- Documented the Cursor remote installer workaround in the Marketplace
+  README so affected users can recover from
+  `End of central directory record signature not found` without waiting
+  for a Cursor remote updater fix.
+- Localized the settings webview shell strings through VS Code `l10n`
+  and added Korean translations.
+
+### Changed — release metadata
+
+- Extension package 0.5.17 → 0.5.18.
+- Settings save/reload controls now expose in-flight save state,
+  unsaved-change confirmation, focus-visible toggle outlines, aria-live
+  save feedback, and a narrower mobile layout.
+
 ## [0.5.17] — 2026-05-25
 
 ### Added — settings webview, slash skills, schema-version handshake

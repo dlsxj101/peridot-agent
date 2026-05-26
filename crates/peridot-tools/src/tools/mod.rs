@@ -22,7 +22,7 @@ pub use git::{
 };
 pub use plan::{PlanCreateTool, PlanUpdateTool};
 pub use shell::ShellExecTool;
-pub use skill::{SkillListTool, SkillViewTool};
+pub use skill::{SkillListTool, SkillViewRefTool, SkillViewTool};
 pub use verify::{VerifyBuildTool, VerifyLintTool, VerifyTestTool};
 pub use web::{WebFetchTool, WebSearchTool};
 
@@ -65,6 +65,7 @@ pub fn register_builtin_tools(registry: &mut ToolRegistry) -> PeriResult<()> {
     registry.register(AgentMemorySearchTool)?;
     registry.register(SkillListTool)?;
     registry.register(SkillViewTool)?;
+    registry.register(SkillViewRefTool)?;
     registry.register(AgentDoneTool)?;
     Ok(())
 }

@@ -358,6 +358,16 @@ pub(crate) enum SkillCommand {
         #[arg(long)]
         llm: bool,
     },
+    /// Pin a skill so the Curator cannot archive it.
+    Pin {
+        /// Skill name.
+        name: String,
+    },
+    /// Unpin a skill, restoring it to Curator management.
+    Unpin {
+        /// Skill name.
+        name: String,
+    },
 }
 
 /// MCP server subcommands.

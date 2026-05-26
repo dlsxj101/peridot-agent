@@ -2547,6 +2547,12 @@ fn persist_session_snapshot(
     };
     let memory = MemoryStore::new(project_root.join(".peridot/memory.db"));
     let _ = memory.save_session_record(&record);
+    if matches!(
+        lifecycle,
+        SessionLifecycle::Done | SessionLifecycle::Failed | SessionLifecycle::Suspended
+    ) {
+        let _ = memory.set_meta("last_session_end_unix", &unix_timestamp().to_string());
+    }
 }
 
 /// Copies the parent session's `context.bin` to the child session's directory
@@ -3226,6 +3232,7 @@ fn env_truthy(name: &str) -> bool {
 /// acceptable cost of not delaying every CLI run by a network call.
 async fn maybe_run_idle_curator(config: &PeridotConfig, project_root: &Path) {
     const SEVEN_DAYS: u64 = 7 * 24 * 3600;
+    const TWO_HOURS: u64 = 2 * 3600;
     if !config.memory.auto_skills {
         return;
     }
@@ -3242,11 +3249,24 @@ async fn maybe_run_idle_curator(config: &PeridotConfig, project_root: &Path) {
         .flatten()
         .and_then(|raw| raw.parse().ok())
         .unwrap_or(0);
+    let last_session_end: u64 = store
+        .get_meta("last_session_end_unix")
+        .ok()
+        .flatten()
+        .and_then(|raw| raw.parse().ok())
+        .unwrap_or(0);
     let now = run_state::unix_timestamp();
     if now.saturating_sub(last_activity) < SEVEN_DAYS {
         return;
     }
     if now.saturating_sub(last_curator) < SEVEN_DAYS {
+        return;
+    }
+    // Hermes-aligned: require 2+ hours since the last session ended to
+    // avoid firing the Curator the instant a user reopens a project
+    // after a quiet week.
+    let idle_since = last_session_end.max(last_activity);
+    if now.saturating_sub(idle_since) < TWO_HOURS {
         return;
     }
 

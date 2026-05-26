@@ -151,6 +151,11 @@ select:focus {
   background: var(--vscode-button-foreground);
 }
 
+.toggle input:focus-visible + .slider {
+  outline: 2px solid var(--vscode-focusBorder);
+  outline-offset: 2px;
+}
+
 .panel-footer {
   display: flex;
   align-items: center;
@@ -159,6 +164,8 @@ select:focus {
   position: sticky;
   bottom: 0;
   background: var(--vscode-editor-background);
+  border-top: 1px solid var(--vscode-panel-border);
+  box-shadow: 0 -1px 3px rgba(0, 0, 0, 0.06);
 }
 
 button {
@@ -205,4 +212,14 @@ button.secondary:hover {
 
 .flash[data-kind='err'] {
   color: var(--vscode-errorForeground);
+}
+
+@media (max-width: 480px) {
+  .row {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  .control-cell {
+    justify-content: flex-start;
+  }
 }

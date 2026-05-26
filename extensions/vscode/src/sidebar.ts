@@ -265,6 +265,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       const from = stringField(event, 'from') ?? 'unknown';
       const to = stringField(event, 'to') ?? 'unknown';
       const reason = stringField(event, 'reason') ?? '';
+      this.state.phase = to;
       if (isNotablePhaseTransition(from, to)) {
         this.append({
           role: 'status',
@@ -488,6 +489,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
 
   public createNewSession(workspace?: string): void {
     this.saveActiveSession();
+    this.state.phase = undefined;
     this.loadDraftSessionIntoState(workspace);
     this.publish();
   }
@@ -883,6 +885,9 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         return;
       case 'registerProvider':
         await this.handlers.registerProvider(message.provider, message.params);
+        return;
+      case 'openSettings':
+        void vscode.commands.executeCommand('peridot.openSettings');
         return;
       case 'showLanding':
         this.state.view = 'landing';

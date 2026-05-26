@@ -40,12 +40,49 @@ const vscode = acquireVsCodeApi();
 // Local working copy. Mutated as the user edits; sent back wholesale on
 // save. Host owns the source of truth — we re-request on every panel
 // open / reload to avoid drift.
+interface UiStrings {
+  title: string;
+  save: string;
+  saving: string;
+  reload: string;
+  savedTo: string;
+  saveFailed: string;
+  loadError: string;
+  subtitleWith: string;
+  subtitleWithout: string;
+  unsavedConfirm: string;
+  valueReset: string;
+  valueClamped: string;
+}
+
+const defaultStrings: UiStrings = {
+  title: 'Peridot Settings',
+  save: 'Save',
+  saving: 'Saving…',
+  reload: 'Reload from disk',
+  savedTo: 'Saved to {0}',
+  saveFailed: 'Save failed: {0}',
+  loadError: "Couldn't load settings: {0}",
+  subtitleWith: 'Editing {0} — changes apply to new sessions started after Save.',
+  subtitleWithout: 'Changes apply to new sessions started after Save.',
+  unsavedConfirm: 'You have unsaved changes. Reload anyway?',
+  valueReset: 'Value reset to {0} (was empty)',
+  valueClamped: 'Value clamped to {0} (range: {1}–{2})',
+};
+
+let uiStrings: UiStrings = defaultStrings;
 let workingItems: SettingItem[] = [];
 let configPath = '';
+let saving = false;
+let dirty = false;
+
+function t(template: string, ...args: (string | number)[]): string {
+  return template.replace(/\{(\d+)\}/g, (_, i) => String(args[Number(i)] ?? ''));
+}
 
 window.addEventListener('message', (event) => {
   const msg = event.data as
-    | { type: 'load'; configPath: string; items: SettingItem[] }
+    | { type: 'load'; configPath: string; items: SettingItem[]; uiStrings?: UiStrings }
     | { type: 'load-error'; error: string }
     | { type: 'save-ok'; configPath: string }
     | { type: 'save-error'; error: string };
@@ -56,6 +93,9 @@ window.addEventListener('message', (event) => {
     case 'load':
       workingItems = msg.items;
       configPath = msg.configPath;
+      if (msg.uiStrings) uiStrings = msg.uiStrings;
+      dirty = false;
+      saving = false;
       render();
       break;
     case 'load-error':
@@ -63,10 +103,15 @@ window.addEventListener('message', (event) => {
       break;
     case 'save-ok':
       configPath = msg.configPath;
-      showFlash(`Saved to ${msg.configPath}`, 'ok');
+      saving = false;
+      dirty = false;
+      resetSaveButton();
+      showFlash(t(uiStrings.savedTo, msg.configPath), 'ok');
       break;
     case 'save-error':
-      showFlash(`Save failed: ${msg.error}`, 'err');
+      saving = false;
+      resetSaveButton();
+      showFlash(t(uiStrings.saveFailed, msg.error), 'err');
       break;
   }
 });
@@ -122,7 +167,7 @@ function renderError(message: string): void {
   app.innerHTML = '';
   const wrap = document.createElement('div');
   wrap.className = 'error';
-  wrap.textContent = `Couldn't load settings: ${message}`;
+  wrap.textContent = t(uiStrings.loadError, message);
   app.appendChild(wrap);
 }
 
@@ -130,12 +175,12 @@ function buildHeader(): HTMLElement {
   const wrap = document.createElement('header');
   wrap.className = 'panel-header';
   const title = document.createElement('h1');
-  title.textContent = 'Peridot Settings';
+  title.textContent = uiStrings.title;
   const sub = document.createElement('p');
   sub.className = 'subtitle';
   sub.textContent = configPath
-    ? `Editing ${configPath} — changes apply to new sessions started after Save.`
-    : 'Changes apply to new sessions started after Save.';
+    ? t(uiStrings.subtitleWith, configPath)
+    : uiStrings.subtitleWithout;
   wrap.appendChild(title);
   wrap.appendChild(sub);
   return wrap;
@@ -145,24 +190,40 @@ function buildFooter(): HTMLElement {
   const wrap = document.createElement('footer');
   wrap.className = 'panel-footer';
   const save = document.createElement('button');
+  save.id = 'save-btn';
   save.className = 'primary';
-  save.textContent = 'Save';
+  save.textContent = uiStrings.save;
   save.addEventListener('click', () => {
+    if (saving) return;
+    saving = true;
+    save.disabled = true;
+    save.textContent = uiStrings.saving;
     vscode.postMessage({ type: 'save', items: workingItems });
   });
   const reload = document.createElement('button');
   reload.className = 'secondary';
-  reload.textContent = 'Reload from disk';
+  reload.textContent = uiStrings.reload;
   reload.addEventListener('click', () => {
+    if (dirty && !confirm(uiStrings.unsavedConfirm)) return;
     vscode.postMessage({ type: 'reload' });
   });
   const flash = document.createElement('span');
   flash.id = 'flash';
   flash.className = 'flash';
+  flash.setAttribute('aria-live', 'polite');
+  flash.setAttribute('role', 'status');
   wrap.appendChild(save);
   wrap.appendChild(reload);
   wrap.appendChild(flash);
   return wrap;
+}
+
+function resetSaveButton(): void {
+  const btn = document.getElementById('save-btn') as HTMLButtonElement | null;
+  if (btn) {
+    btn.disabled = false;
+    btn.textContent = uiStrings.save;
+  }
 }
 
 function buildRow(item: SettingItem): HTMLElement {
@@ -202,11 +263,16 @@ function buildControl(item: SettingItem): HTMLElement {
       input.type = 'checkbox';
       input.id = fieldId;
       input.checked = item.value.data;
+      input.setAttribute('role', 'switch');
+      input.setAttribute('aria-checked', String(item.value.data));
       input.addEventListener('change', () => {
         item.value = { kind: 'Bool', data: input.checked };
+        input.setAttribute('aria-checked', String(input.checked));
+        dirty = true;
       });
       const slider = document.createElement('span');
       slider.className = 'slider';
+      slider.setAttribute('aria-hidden', 'true');
       wrap.appendChild(input);
       wrap.appendChild(slider);
       return wrap;
@@ -231,6 +297,7 @@ function buildControl(item: SettingItem): HTMLElement {
             data: { options, selected: Number(select.value) },
           };
         }
+        dirty = true;
       });
       return select;
     }
@@ -260,13 +327,26 @@ function buildNumberControl(item: SettingItem, fieldId: string): HTMLElement {
       return;
     }
     const clamped = Math.min(data.max, Math.max(data.min, raw));
-    // Preserve the discriminator on the original variant.
     if (item.value.kind === 'U32') {
       item.value = { kind: 'U32', data: { ...data, value: clamped } };
     } else if (item.value.kind === 'F64') {
       item.value = { kind: 'F64', data: { ...data, value: clamped } };
     } else if (item.value.kind === 'Usize') {
       item.value = { kind: 'Usize', data: { ...data, value: clamped } };
+    }
+    dirty = true;
+  });
+  input.addEventListener('blur', () => {
+    const raw = Number(input.value);
+    if (Number.isNaN(raw) || input.value.trim() === '') {
+      input.value = String(data.value);
+      showFlash(t(uiStrings.valueReset, data.value), 'err');
+      return;
+    }
+    const clamped = Math.min(data.max, Math.max(data.min, raw));
+    if (clamped !== raw) {
+      input.value = String(clamped);
+      showFlash(t(uiStrings.valueClamped, clamped, data.min, data.max), 'err');
     }
   });
   return input;
@@ -280,9 +360,10 @@ function showFlash(message: string, kind: 'ok' | 'err'): void {
   flash.textContent = message;
   flash.dataset.kind = kind;
   flash.classList.add('visible');
+  const delay = kind === 'err' ? 6000 : 3500;
   window.setTimeout(() => {
     flash.classList.remove('visible');
-  }, 3500);
+  }, delay);
 }
 
 function groupBy<T, K>(items: T[], keyer: (item: T) => K): Map<K, T[]> {

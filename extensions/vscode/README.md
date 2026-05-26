@@ -4,7 +4,7 @@ VS Code panel for [Peridot Agent](https://github.com/dlsxj101/peridot-agent) —
 a Rust CLI/TUI autonomous coding agent with multi-LLM committee mode,
 native tool calling, and 2-Tier context management.
 
-> **Status**: v0.5.17 adds an editor-area settings page (`Peridot: Open
+> **Status**: v0.5.18 adds an editor-area settings page (`Peridot: Open
 > Settings` + sidebar gear icon) backed by daemon `settings.list /
 > save` RPC, Hermes-style auto-skill invocation via `/skill-name`
 > slashes, and a daemon-handshake schema-version check. The sidebar
@@ -69,6 +69,37 @@ open a new session from the dropdown.
 |---|---|---|
 | `peridot.binaryPath` | (empty) | Absolute path to a `peridot` binary. Leave empty to use the bundled binary in the `.vsix` (default for Marketplace / Open VSX installs) or fall back to the system PATH (for sideloaded dev builds without a bundled binary). |
 
+## Cursor remote install workaround
+
+Some Cursor remote-server builds fail while updating Marketplace
+extensions whose VSIX response is transported with
+`Content-Encoding: gzip`. The Marketplace package is valid after HTTP
+decoding, but Cursor may cache the gzip transport body and then try to
+open it as a ZIP, reporting:
+
+```text
+End of central directory record signature not found. Either not a zip file, or file is truncated.
+```
+
+Install the decoded VSIX directly on the remote host:
+
+```bash
+cd extensions/vscode
+bash scripts/install-cursor-remote.sh 0.5.18
+```
+
+Or run the same workaround without a checkout:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/dlsxj101/peridot-agent/main/extensions/vscode/scripts/install-cursor-remote.sh \
+  | bash -s -- 0.5.18
+```
+
+The script downloads the Marketplace VSIX with `curl --compressed`,
+validates that the saved file is a decoded ZIP/VSIX, and installs it via
+the newest `~/.cursor-server/.../cursor-server` binary. Reload Cursor
+after it prints the successful install message.
+
 ## Local development
 
 Sideloading a `.vsix` you packaged yourself? `npm run package` produces a
@@ -109,7 +140,7 @@ fallback package.
   budget / context, inline plan panel, inline unified-diff cards,
   pre-approval diff preview for `file_write` / `file_patch`, and
   cached / reused-daemon status reads.
-- **v0.5.17** — ✅ Editor-area settings webview (form for
+- **v0.5.18** — ✅ Editor-area settings webview (form for
   `.peridot/config.toml`), Hermes-style `/skill-name` slash skill
   invocation, daemon `peridot.handshake` schema-version check,
   routine phase-transition filtering for a quieter transcript,

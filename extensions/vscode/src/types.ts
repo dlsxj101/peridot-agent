@@ -222,6 +222,7 @@ export interface SidebarState {
   pendingApproval?: TranscriptItem;
   authBusy: boolean;
   authError?: string;
+  phase?: string;
 }
 
 /** Identifier of the provider the user opts into from the landing UI. */
@@ -257,7 +258,8 @@ export type OutboundMessage =
   | { type: 'queueRemove'; id: string }
   | { type: 'queueEdit'; id: string; text: string }
   | { type: 'queueClear' }
-  | { type: 'dismissBranchPicker' };
+  | { type: 'dismissBranchPicker' }
+  | { type: 'openSettings' };
 
 /** Messages the extension host posts back to the webview. */
 export type InboundMessage = { type: 'state'; state: SidebarState };

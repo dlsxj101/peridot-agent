@@ -185,6 +185,35 @@ pub(crate) async fn run_skill_command(
                 }
             }
         }
+        SkillCommand::Pin { name } => {
+            let store = MemoryStore::new(project_root.join(".peridot/memory.db"));
+            let now = unix_timestamp();
+            let updated = store
+                .set_skill_pinned(name, now)
+                .with_context(|| format!("failed to pin {name}"))?;
+            if !updated {
+                anyhow::bail!("skill not found in DB: {name}");
+            }
+            print_json_or_text_result(
+                serde_json::json!({ "pinned": true, "name": name }),
+                format!("pinned skill {name}"),
+                output,
+            )?;
+        }
+        SkillCommand::Unpin { name } => {
+            let store = MemoryStore::new(project_root.join(".peridot/memory.db"));
+            let updated = store
+                .set_skill_pinned(name, 0)
+                .with_context(|| format!("failed to unpin {name}"))?;
+            if !updated {
+                anyhow::bail!("skill not found in DB: {name}");
+            }
+            print_json_or_text_result(
+                serde_json::json!({ "unpinned": true, "name": name }),
+                format!("unpinned skill {name}"),
+                output,
+            )?;
+        }
         SkillCommand::Remove { name } => {
             let skill = find_skill(project_root, name)?
                 .with_context(|| format!("skill not found: {name}"))?;

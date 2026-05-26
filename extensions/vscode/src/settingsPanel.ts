@@ -72,7 +72,7 @@ export class SettingsPanelManager {
     }
     const panel = vscode.window.createWebviewPanel(
       'peridot.settings',
-      'Peridot Settings',
+      vscode.l10n.t('Peridot Settings'),
       vscode.ViewColumn.Active,
       {
         enableScripts: true,
@@ -107,6 +107,20 @@ export class SettingsPanelManager {
         type: 'load',
         configPath: result.config_path,
         items: result.items,
+        uiStrings: {
+          title: vscode.l10n.t('Peridot Settings'),
+          save: vscode.l10n.t('Save'),
+          saving: vscode.l10n.t('Saving…'),
+          reload: vscode.l10n.t('Reload from disk'),
+          savedTo: vscode.l10n.t('Saved to {0}'),
+          saveFailed: vscode.l10n.t('Save failed: {0}'),
+          loadError: vscode.l10n.t("Couldn't load settings: {0}"),
+          subtitleWith: vscode.l10n.t('Editing {0} — changes apply to new sessions started after Save.'),
+          subtitleWithout: vscode.l10n.t('Changes apply to new sessions started after Save.'),
+          unsavedConfirm: vscode.l10n.t('You have unsaved changes. Reload anyway?'),
+          valueReset: vscode.l10n.t('Value reset to {0} (was empty)'),
+          valueClamped: vscode.l10n.t('Value clamped to {0} (range: {1}–{2})'),
+        },
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -177,12 +191,12 @@ export class SettingsPanelManager {
     content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';"
   >
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Peridot Settings</title>
+  <title>${vscode.l10n.t('Peridot Settings')}</title>
   <link href="${styleUri}" rel="stylesheet" />
 </head>
 <body>
   <div id="app">
-    <p class="loading">Loading settings…</p>
+    <p class="loading">${vscode.l10n.t('Loading settings…')}</p>
   </div>
   <script nonce="${nonce}" src="${scriptUri}"></script>
 </body>
