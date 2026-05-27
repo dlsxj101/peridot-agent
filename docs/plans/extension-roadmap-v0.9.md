@@ -859,6 +859,22 @@ shared daemon, TUI, and VS Code extension surfaces.
   for the operator. Once the trailing space is present, autocomplete
   closes so the search query remains unrestricted.
 
+### E71. Branch Subcommand Continuation Autocomplete
+
+- **Status**: landed.
+- **Goal**: keep branch DAG and snapshot workflows discoverable without
+  leaving operators at placeholder or invalid command text after accepting
+  autocomplete.
+- **Where**: shared slash catalog, TUI dynamic slash argument context,
+  TUI Tab acceptance path, and VS Code webview slash autocomplete helper.
+- **Result**: `/branch turn <turn-id>` is now advertised in the shared
+  catalog, matching the parser-supported command. Accepting
+  `/branch save|restore|turn|switch` completions in TUI or VS Code now
+  leaves a trailing argument slot (`/branch turn `, `/branch restore `,
+  etc.) so users can immediately type the required name, turn id, or DAG
+  limb index. `/branch list` and `/branch tree` remain plain runnable
+  commands.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

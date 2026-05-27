@@ -84,6 +84,8 @@ export function slashArgumentContext(
   if (mcpServerContext) return mcpServerContext;
   const mcpAddContext = mcpAddTransportArgumentContext(query);
   if (mcpAddContext) return mcpAddContext;
+  const branchSubcommandContext = branchSubcommandArgumentContext(query);
+  if (branchSubcommandContext) return branchSubcommandContext;
   const branchContext = branchSnapshotArgumentContext(query, branches);
   if (branchContext) return branchContext;
   const goalContext = goalControlArgumentContext(query);
@@ -344,6 +346,16 @@ function mcpAddTransportArgumentContext(query: string): SlashArgumentContext | u
     options,
     appendSpace: true,
   };
+}
+
+function branchSubcommandArgumentContext(query: string): SlashArgumentContext | undefined {
+  return staticSubcommandArgumentContext(
+    query,
+    '/branch',
+    ['save', 'restore', 'turn', 'switch'],
+    true,
+    false,
+  );
 }
 
 function skillNameArgumentContext(

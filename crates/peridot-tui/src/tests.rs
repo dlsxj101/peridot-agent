@@ -2048,6 +2048,26 @@ fn tab_autocompletes_branch_restore_arguments() {
 }
 
 #[test]
+fn tab_autocompletes_branch_subcommand_with_argument_slot() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+
+    for character in "/branch tu".chars() {
+        handle_key_event(
+            &mut state,
+            KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE),
+        );
+    }
+    handle_key_event(&mut state, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    assert_eq!(state.input, "/branch turn ");
+}
+
+#[test]
 fn tab_autocompletes_goal_and_notes_subcommands() {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 

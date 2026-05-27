@@ -62,6 +62,10 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
   in both TUI and VS Code.
 - **Branch snapshot autocomplete** now suggests saved `.peridot/branches`
   snapshot names for `/branch restore <name>` in both TUI and VS Code.
+- **Branch subcommand autocomplete** now exposes parser-supported
+  `/branch turn <turn-id>` in the shared catalog and completes
+  `/branch save|restore|turn|switch` with a trailing argument slot in both
+  TUI and VS Code.
 - **Goal and notes subcommand autocomplete** now suggests
   `/goal pause|resume|clear|status` and `/notes last` in both TUI and VS
   Code without interfering with free-form goal objectives or bare

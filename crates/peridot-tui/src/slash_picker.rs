@@ -358,6 +358,12 @@ pub fn slash_command_catalog() -> &'static [SlashCommandSpec] {
             category: "session",
         },
         SlashCommandSpec {
+            name: "/branch turn",
+            description: "fork the conversation at a past turn id",
+            arg_hint: Some("<turn-id>"),
+            category: "session",
+        },
+        SlashCommandSpec {
             name: "/branch switch",
             description: "swap the active path with a saved limb from the DAG journal",
             arg_hint: Some("<index>"),
@@ -586,6 +592,9 @@ pub(crate) fn slash_argument_context_with_dynamic(
         return Some(context);
     }
     if let Some(context) = mcp_add_transport_argument_context(query) {
+        return Some(context);
+    }
+    if let Some(context) = branch_subcommand_argument_context(query) {
         return Some(context);
     }
     if let Some(context) = branch_snapshot_argument_context(query, branches) {
@@ -868,6 +877,16 @@ fn session_target_argument_context(
         options,
         append_space: command_name == "/session rename",
     })
+}
+
+fn branch_subcommand_argument_context(query: &str) -> Option<SlashArgumentContext> {
+    static_subcommand_argument_context(
+        query,
+        "/branch",
+        &["save", "restore", "turn", "switch"],
+        true,
+        false,
+    )
 }
 
 fn branch_snapshot_argument_context(
@@ -1207,6 +1226,12 @@ mod tests {
             slash_command_arg_options(codemap),
             vec!["status", "refresh", "find", "locate", "outline", "refs"]
         );
+
+        let branch_turn = slash_command_catalog()
+            .iter()
+            .find(|spec| spec.name == "/branch turn")
+            .expect("branch turn command");
+        assert!(slash_command_arg_options(branch_turn).is_empty());
     }
 
     #[test]
@@ -1522,6 +1547,29 @@ mod tests {
                 &branches,
             )
             .is_none()
+        );
+    }
+
+    #[test]
+    fn branch_subcommand_argument_context_leaves_room_for_required_args() {
+        let context = slash_argument_context_with_dynamic("/branch tu", &[], &[], &[], &[], &[])
+            .expect("branch turn");
+        assert_eq!(context.command_name, "/branch");
+        assert_eq!(context.options, vec!["turn"]);
+        assert!(context.append_space);
+
+        let context =
+            slash_argument_context_with_dynamic("/branch switch", &[], &[], &[], &[], &[])
+                .expect("branch switch");
+        assert_eq!(context.options, vec!["switch"]);
+        assert!(context.append_space);
+
+        assert!(
+            slash_argument_context_with_dynamic("/branch switch ", &[], &[], &[], &[], &[])
+                .is_none()
+        );
+        assert!(
+            slash_argument_context_with_dynamic("/branch tree", &[], &[], &[], &[], &[]).is_none()
         );
     }
 

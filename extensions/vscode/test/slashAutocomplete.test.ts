@@ -57,6 +57,11 @@ const commands: SlashCommandSpec[] = [
     argOptions: ['status', 'refresh', 'find', 'locate', 'outline', 'refs'],
   },
   {
+    name: '/branch turn',
+    description: 'fork at a turn id',
+    argHint: '<turn-id>',
+  },
+  {
     name: '/skills',
     description: 'list stored skills',
   },
@@ -245,6 +250,21 @@ test('slashArgumentContext filters branch snapshot arguments', () => {
   );
 });
 
+test('slashArgumentContext leaves argument room after branch subcommands', () => {
+  const turn = slashArgumentContext('/branch tu', commands);
+
+  assert.equal(turn?.command.name, '/branch');
+  assert.deepEqual(turn?.options, ['turn']);
+  assert.equal(turn?.appendSpace, true);
+
+  const exact = slashArgumentContext('/branch switch', commands);
+  assert.equal(exact?.command.name, '/branch');
+  assert.deepEqual(exact?.options, ['switch']);
+  assert.equal(exact?.appendSpace, true);
+  assert.equal(slashArgumentContext('/branch switch ', commands), undefined);
+  assert.equal(slashArgumentContext('/branch tree', commands), undefined);
+});
+
 test('slashArgumentContext filters goal and notes subcommands', () => {
   assert.equal(slashArgumentContext('/goal', commands), undefined);
   const goal = slashArgumentContext('/goal p', commands);
@@ -326,6 +346,7 @@ test('slashPickerItemCount uses argument options when an argument picker is open
   assert.equal(slashPickerItemCount('/mcp test ', commands, [], mcpServers), 2);
   assert.equal(slashPickerItemCount('/model ', commands, [], [], modelSuggestions), 2);
   assert.equal(slashPickerItemCount('/branch restore ', commands, [], [], [], branchSnapshots), 2);
+  assert.equal(slashPickerItemCount('/branch tu', commands), 1);
   assert.equal(slashPickerItemCount('/goal ', commands), 4);
   assert.equal(slashPickerItemCount('/notes l', commands), 1);
   assert.equal(slashPickerItemCount('/think h', commands), 3);

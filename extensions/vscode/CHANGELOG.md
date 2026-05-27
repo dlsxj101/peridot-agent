@@ -40,6 +40,9 @@
   role models for `/model <name>` and `/subagent model <name|reset>`.
 - Branch snapshot autocomplete now fills saved `.peridot/branches` snapshot
   names for `/branch restore <name>` after status refresh.
+- Branch subcommand autocomplete now fills parser-supported
+  `/branch save|restore|turn|switch` forms with a trailing argument slot,
+  and `/branch turn <turn-id>` is now present in the shared catalog.
 - Goal and notes subcommand autocomplete now fills
   `/goal pause|resume|clear|status` and `/notes last` while preserving
   free-form goal objectives and bare `/notes`.
