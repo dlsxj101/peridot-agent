@@ -12,8 +12,9 @@ export function filteredSlashCommands(
   const query = input.trimEnd();
   if (!query.startsWith('/') || query.includes('\n')) return [];
   const needle = query.slice(1).trim().toLowerCase();
-  if (needle.length === 0) return slashCommands;
-  return slashCommands
+  const visibleCommands = slashCommands.filter((command) => command.archived !== true);
+  if (needle.length === 0) return visibleCommands;
+  return visibleCommands
     .filter((command) => {
       const name = command.name.slice(1).toLowerCase();
       const description = command.description.toLowerCase();
@@ -77,11 +78,12 @@ function skillNameArgumentContext(
     '/skills pin',
     '/skills unpin',
     '/skills archive',
+    '/skills restore',
   ]
     .filter((candidate) => query === candidate || query.startsWith(`${candidate} `))
     .sort((a, b) => b.length - a.length)[0];
   if (!commandName) return undefined;
-  const options = skillNameOptions(slashCommands);
+  const options = skillNameOptionsForCommand(commandName, slashCommands);
   if (options.length === 0) return undefined;
   const rest = query.slice(commandName.length).trim().replace(/^\/+/, '').toLowerCase();
   if (rest && options.some((option) => option.toLowerCase() === rest)) return undefined;
@@ -99,12 +101,19 @@ function skillNameArgumentContext(
   };
 }
 
-function skillNameOptions(slashCommands: SlashCommandSpec[]): string[] {
+function skillNameOptionsForCommand(commandName: string, slashCommands: SlashCommandSpec[]): string[] {
   const names = slashCommands
     .filter((command) => command.category === 'skill')
+    .filter((command) => skillAppliesToCommand(commandName, command.archived === true))
     .map((command) => command.name.trim().replace(/^\/+/, ''))
     .filter((name) => name.length > 0 && !name.startsWith('skills') && !name.includes(' '));
   return [...new Set(names)].sort((a, b) => a.localeCompare(b));
+}
+
+function skillAppliesToCommand(commandName: string, archived: boolean): boolean {
+  if (commandName === '/skills restore') return archived;
+  if (commandName === '/skills show' || commandName === '/skills view') return true;
+  return !archived;
 }
 
 export function slashArgumentOptions(command: SlashCommandSpec): string[] {

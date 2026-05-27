@@ -44,6 +44,9 @@ pub struct SkillSlashSuggestion {
     /// Short description shown in the picker.
     #[serde(default)]
     pub description: String,
+    /// Whether the skill is archived and therefore restore-only.
+    #[serde(default)]
+    pub archived: bool,
 }
 
 /// Render-ready slash suggestion, covering both built-ins and dynamic skills.
@@ -424,6 +427,9 @@ pub fn slash_suggestions(skills: &[SkillSlashSuggestion]) -> Vec<SlashSuggestion
         })
         .collect();
     for skill in skills {
+        if skill.archived {
+            continue;
+        }
         let name = format!("/{}", skill.name.trim_start_matches('/'));
         if suggestions.iter().any(|entry| entry.name == name) {
             continue;
@@ -593,12 +599,14 @@ fn skill_name_argument_context(
         "/skills pin",
         "/skills unpin",
         "/skills archive",
+        "/skills restore",
     ]
     .into_iter()
     .filter(|command| query == *command || query.starts_with(&format!("{command} ")))
     .max_by_key(|command| command.len())?;
     let mut options: Vec<String> = skills
         .iter()
+        .filter(|skill| skill_applies_to_command(command_name, skill.archived))
         .map(|skill| skill.name.trim_start_matches('/').trim().to_string())
         .filter(|name| !name.is_empty())
         .collect();
@@ -625,6 +633,14 @@ fn skill_name_argument_context(
         command_name: command_name.to_string(),
         options,
     })
+}
+
+fn skill_applies_to_command(command_name: &str, archived: bool) -> bool {
+    match command_name {
+        "/skills restore" => archived,
+        "/skills show" | "/skills view" => true,
+        _ => !archived,
+    }
 }
 
 /// Number of rows the slash picker would render for this query and skill list.
@@ -696,10 +712,18 @@ mod tests {
 
     #[test]
     fn filtered_suggestions_include_dynamic_skills() {
-        let skills = vec![SkillSlashSuggestion {
-            name: "auto-fix-parser".to_string(),
-            description: "repair parser tests".to_string(),
-        }];
+        let skills = vec![
+            SkillSlashSuggestion {
+                name: "auto-fix-parser".to_string(),
+                description: "repair parser tests".to_string(),
+                ..Default::default()
+            },
+            SkillSlashSuggestion {
+                name: "old-parser".to_string(),
+                archived: true,
+                ..Default::default()
+            },
+        ];
         let matches = filtered_suggestions("/auto-f", &skills);
         assert!(matches.iter().any(|entry| {
             entry.name == "/auto-fix-parser"
@@ -707,6 +731,7 @@ mod tests {
                 && entry.category == "skill"
                 && entry.skill
         }));
+        assert!(filtered_suggestions("/old", &skills).is_empty());
     }
 
     #[test]
@@ -714,6 +739,7 @@ mod tests {
         let skills = vec![SkillSlashSuggestion {
             name: "plan".to_string(),
             description: "shadowed".to_string(),
+            ..Default::default()
         }];
         let matches = filtered_suggestions("/plan", &skills);
         assert_eq!(
@@ -800,10 +826,17 @@ mod tests {
             SkillSlashSuggestion {
                 name: "auto-fix-parser".to_string(),
                 description: "repair parser tests".to_string(),
+                ..Default::default()
             },
             SkillSlashSuggestion {
                 name: "/test-writer".to_string(),
                 description: String::new(),
+                ..Default::default()
+            },
+            SkillSlashSuggestion {
+                name: "old-skill".to_string(),
+                archived: true,
+                ..Default::default()
             },
         ];
 
@@ -817,6 +850,15 @@ mod tests {
         assert_eq!(context.command_name, "/skills use");
         assert_eq!(context.options, vec!["test-writer"]);
 
+        let context =
+            slash_argument_context_with_skills("/skills restore old", &skills).expect("restore");
+        assert_eq!(context.command_name, "/skills restore");
+        assert_eq!(context.options, vec!["old-skill"]);
+
+        assert!(
+            slash_argument_context_with_skills("/skills restore auto", &skills).is_none(),
+            "restore should only suggest archived skills"
+        );
         assert!(
             slash_argument_context_with_skills("/skills archive auto-fix-parser", &skills)
                 .is_none()

@@ -378,7 +378,7 @@ async fn dispatch_request(state: &DaemonState, request: RpcRequest) -> Result<bo
             emit_response(
                 state,
                 request.id.unwrap_or(Value::Null),
-                skills_list_result(state),
+                skills_list_result(state, skills_list_include_archived(request.params.as_ref())),
             )?;
         }
         "session.list" => {
@@ -520,9 +520,23 @@ fn slash_help_items(surface: Option<&str>) -> Vec<Value> {
         .collect()
 }
 
-fn skills_list_result(state: &DaemonState) -> Value {
+fn skills_list_include_archived(params: Option<&Value>) -> bool {
+    params
+        .and_then(|params| params.get("include_archived"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn skills_list_result(state: &DaemonState, include_archived: bool) -> Value {
     let store = peridot_memory::MemoryStore::new(state.project_root.join(".peridot/memory.db"));
-    let skills = store.list_skills().unwrap_or_default();
+    let skills = if include_archived {
+        store
+            .list_skill_records()
+            .map(|records| records.into_iter().map(|record| record.skill).collect())
+            .unwrap_or_default()
+    } else {
+        store.list_skills().unwrap_or_default()
+    };
     let skills: Vec<Value> = skills
         .into_iter()
         .filter(|skill| skill.scope == "auto")
@@ -531,6 +545,8 @@ fn skills_list_result(state: &DaemonState) -> Value {
                 "name": skill.name,
                 "description": skill_description(&skill),
                 "scope": skill.scope,
+                "archived": skill.archived_at_unix > 0,
+                "archived_at_unix": skill.archived_at_unix,
             })
         })
         .collect();
@@ -5512,6 +5528,22 @@ mod tests {
         assert_eq!(skills.len(), 1);
         assert_eq!(skills[0]["name"], "auto-fix-parser");
         assert_eq!(skills[0]["description"], "repair parser tests");
+
+        let _ = dispatch_line(
+            &state,
+            r#"{"jsonrpc":"2.0","id":43,"method":"skills.list","params":{"include_archived":true}}"#,
+        )
+        .await
+        .unwrap();
+        let line = rx.try_recv().unwrap();
+        let value: Value = serde_json::from_str(&line).unwrap();
+        let skills = value["result"]["skills"].as_array().unwrap();
+        assert_eq!(skills.len(), 2);
+        assert!(
+            skills
+                .iter()
+                .any(|skill| skill["name"] == "archived-auto" && skill["archived"] == true)
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 

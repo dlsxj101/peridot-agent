@@ -38,8 +38,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
   waiting for the next agent run.
 - **Skill-name argument autocomplete** now works in both TUI and VS Code
   for skill management commands such as `/skills show <name>` and
-  `/skills use <name>`, reusing the same active auto-skill inventory as
-  `/skill-name` suggestions.
+  `/skills use <name>`, while `/skills restore <name>` completes archived
+  auto-skills without making them appear as direct `/skill-name`
+  invocations.
 - **VS Code per-session composer history** now mirrors the TUI input
   history ergonomics: ArrowUp/ArrowDown recall submitted prompts per
   sidebar session, while in-progress drafts stay isolated across session

@@ -39,6 +39,12 @@ const commands: SlashCommandSpec[] = [
     description: 'repair parser tests',
     category: 'skill',
   },
+  {
+    name: '/old-parser',
+    description: 'archived parser skill',
+    category: 'skill',
+    archived: true,
+  },
 ];
 
 test('filteredSlashCommands ranks prefixes before description matches', () => {
@@ -51,6 +57,7 @@ test('filteredSlashCommands includes dynamic skill slash commands', () => {
   const matches = filteredSlashCommands('/auto-f', commands);
 
   assert.deepEqual(matches.map((command) => command.name), ['/auto-fix-parser']);
+  assert.deepEqual(filteredSlashCommands('/old', commands).map((command) => command.name), []);
 });
 
 test('filteredSlashCommands includes status alias commands', () => {
@@ -87,6 +94,9 @@ test('slashArgumentContext filters skill-name arguments', () => {
   assert.equal(context?.command.name, '/skills show');
   assert.deepEqual(context?.options, ['auto-fix-parser']);
   assert.equal(slashArgumentContext('/skills use /auto-fix-parser', commands), undefined);
+  assert.deepEqual(slashArgumentContext('/skills restore old', commands)?.options, ['old-parser']);
+  assert.equal(slashArgumentContext('/skills restore auto', commands), undefined);
+  assert.equal(slashArgumentContext('/skills archive old', commands), undefined);
 });
 
 test('slashExactSelectionIsRunnable allows optional-arg exact commands only', () => {

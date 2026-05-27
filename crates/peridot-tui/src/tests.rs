@@ -1810,6 +1810,7 @@ fn tab_autocompletes_dynamic_skill_slash() {
     state.set_skill_suggestions(vec![SkillSlashSuggestion {
         name: "auto-fix-parser".to_string(),
         description: "repair parser tests".to_string(),
+        ..Default::default()
     }]);
 
     for character in "/auto-f".chars() {
@@ -1835,6 +1836,7 @@ fn tab_autocompletes_skill_name_arguments() {
     state.set_skill_suggestions(vec![SkillSlashSuggestion {
         name: "auto-fix-parser".to_string(),
         description: "repair parser tests".to_string(),
+        ..Default::default()
     }]);
 
     for character in "/skills show auto".chars() {
@@ -1846,6 +1848,39 @@ fn tab_autocompletes_skill_name_arguments() {
     handle_key_event(&mut state, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
 
     assert_eq!(state.input, "/skills show auto-fix-parser");
+}
+
+#[test]
+fn tab_autocompletes_archived_skill_restore_argument() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    state.set_skill_suggestions(vec![
+        SkillSlashSuggestion {
+            name: "auto-fix-parser".to_string(),
+            description: "repair parser tests".to_string(),
+            ..Default::default()
+        },
+        SkillSlashSuggestion {
+            name: "old-parser".to_string(),
+            archived: true,
+            ..Default::default()
+        },
+    ]);
+
+    for character in "/skills restore old".chars() {
+        handle_key_event(
+            &mut state,
+            KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE),
+        );
+    }
+    handle_key_event(&mut state, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+
+    assert_eq!(state.input, "/skills restore old-parser");
 }
 
 #[test]

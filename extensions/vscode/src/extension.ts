@@ -78,6 +78,8 @@ interface SkillsListResult {
     name?: string;
     description?: string;
     scope?: string;
+    archived?: boolean;
+    archived_at_unix?: number;
   }>;
 }
 
@@ -1932,7 +1934,7 @@ async function fetchSkillsList(
   output: vscode.OutputChannel,
 ): Promise<SkillsListResult> {
   try {
-    return (await daemon.send('skills.list')) as SkillsListResult;
+    return (await daemon.send('skills.list', { include_archived: true })) as SkillsListResult;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     output.appendLine(`[peridot] skills.list failed: ${message}`);
@@ -2008,6 +2010,9 @@ function normalizeSkillSlashEntries(result: SkillsListResult): SlashCommandSpec[
             ? entry.description.trim()
             : 'stored auto-skill',
         category: 'skill',
+        ...(entry.archived === true || (entry.archived_at_unix ?? 0) > 0
+          ? { archived: true }
+          : {}),
       };
     });
 }

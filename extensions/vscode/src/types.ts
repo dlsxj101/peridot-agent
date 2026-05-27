@@ -206,6 +206,7 @@ export interface SlashCommandSpec {
   argOptions?: string[];
   category?: string;
   surfaces?: string[];
+  archived?: boolean;
 }
 
 export interface CompactionDetailItem {

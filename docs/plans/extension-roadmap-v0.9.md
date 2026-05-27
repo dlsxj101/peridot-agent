@@ -686,9 +686,11 @@ shared daemon, TUI, and VS Code extension surfaces.
   webview slash autocomplete helper.
 - **Result**: `/skills show`, `/skills view`, `/skills use`,
   `/skills pin`, `/skills unpin`, and `/skills archive` now offer active
-  auto-skill names as argument completions. The suggestions reuse the
-  same live-refreshed skill inventory as `/skill-name` autocomplete, trim
-  a typed leading slash for matching, and close once the selected skill
+  auto-skill names as argument completions, while `/skills restore`
+  offers archived auto-skill names. The suggestions reuse the same
+  live-refreshed skill inventory as `/skill-name` autocomplete, trim a
+  typed leading slash for matching, keep archived skills out of direct
+  `/skill-name` invocation suggestions, and close once the selected skill
   name is exact so Enter submits the command normally.
 
 ## Notes

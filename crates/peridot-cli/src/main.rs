@@ -1698,13 +1698,15 @@ fn append_plan_reminder_to_context(
 
 fn load_auto_skill_suggestions(project_root: &Path) -> Vec<SkillSlashSuggestion> {
     let store = MemoryStore::new(project_root.join(".peridot/memory.db"));
-    let Ok(skills) = store.list_skills() else {
+    let Ok(records) = store.list_skill_records() else {
         return Vec::new();
     };
-    skills
+    records
         .into_iter()
+        .map(|record| record.skill)
         .filter(|skill| skill.scope == "auto")
         .map(|skill| SkillSlashSuggestion {
+            archived: skill.archived_at_unix > 0,
             description: skill_description(&skill),
             name: skill.name,
         })
