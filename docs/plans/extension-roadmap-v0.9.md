@@ -598,6 +598,20 @@ shared daemon, TUI, and VS Code extension surfaces.
   card before starting an optional task, so the subsequent `session.start`
   continues the same id instead of creating a separate daemon session.
 
+### E52. Session List Prune Reconcile
+
+- **Status**: landed.
+- **Goal**: keep VS Code sidebar sessions aligned when daemon-backed
+  sessions are deleted or cleared by another client or by a daemon
+  `session.list_changed` notification.
+- **Where**: VS Code sidebar session reconciliation, daemon session list
+  subscription handling.
+- **Result**: full daemon session inventories from `/session list`,
+  `session.list`, `session.subscribe_list`, and `session.list_changed`
+  now prune missing daemon-backed sidebar cards. Partial single-session
+  results such as save, switch, rename, and new remain additive so local
+  draft sessions are not removed by accident.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

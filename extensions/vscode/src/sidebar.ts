@@ -563,9 +563,13 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
     return true;
   }
 
-  public reconcileDaemonSessions(remoteSessions: DaemonSessionSummary[]): void {
-    if (remoteSessions.length === 0) return;
+  public reconcileDaemonSessions(
+    remoteSessions: DaemonSessionSummary[],
+    options: { pruneMissing?: boolean } = {},
+  ): void {
+    if (remoteSessions.length === 0 && options.pruneMissing !== true) return;
     this.saveActiveSession();
+    const remoteIds = new Set<string>();
     const byDaemonId = new Map<string, StoredChatSession>();
     for (const session of this.sessions.values()) {
       if (session.daemonSessionId) {
@@ -576,6 +580,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
     for (const remote of remoteSessions) {
       const daemonId = remote.id?.trim();
       if (!daemonId) continue;
+      remoteIds.add(daemonId);
       let session = byDaemonId.get(daemonId) ?? this.sessions.get(daemonId);
       if (!session) {
         session = this.createSession(remoteSessionTitle(remote));
@@ -596,8 +601,24 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       }
     }
 
+    if (options.pruneMissing === true) {
+      const staleIds = Array.from(this.sessions.values())
+        .filter((session) => session.daemonSessionId && !remoteIds.has(session.daemonSessionId))
+        .map((session) => session.id);
+      for (const id of staleIds) {
+        this.sessions.delete(id);
+      }
+    }
+
     if (this.state.activeChatId && this.sessions.has(this.state.activeChatId)) {
       this.loadSessionIntoState(this.state.activeChatId, false);
+    } else if (this.state.activeChatId) {
+      const next = this.sessions.values().next().value as StoredChatSession | undefined;
+      if (next) {
+        this.loadSessionIntoState(next.id, false);
+      } else {
+        this.loadDraftSessionIntoState(this.state.context.workspace);
+      }
     }
     this.publish();
   }
@@ -1354,7 +1375,9 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
 
   private applySessionMutationResult(result: CommandResultView): void {
     if (result.kind === 'session_list') {
-      this.reconcileDaemonSessions(Array.isArray(result.sessions) ? result.sessions : []);
+      this.reconcileDaemonSessions(Array.isArray(result.sessions) ? result.sessions : [], {
+        pruneMissing: true,
+      });
       return;
     }
     if (result.kind === 'session_save') {

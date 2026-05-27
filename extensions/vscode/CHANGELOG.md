@@ -39,6 +39,9 @@
   daemon result, keeping persisted status and usage metadata fresh.
 - `/session new [task]` now materializes a daemon-backed idle session id
   before VS Code selects the new card or starts the optional task.
+- Full daemon session inventories now prune missing daemon-backed VS Code
+  sidebar cards, so `session.list_changed` cannot leave deleted sessions
+  stale in the editor.
 
 ### Added — compaction snapshot details
 

@@ -56,6 +56,10 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **Daemon-backed `/session new [task]` materialization** now creates a
   persisted idle session id and lets VS Code select that same id before
   starting an optional task.
+- **VS Code daemon session list pruning** now removes missing
+  daemon-backed sidebar cards when full session inventories arrive from
+  `/session list`, `session.list`, subscriptions, or list-change
+  notifications.
 
 ### Added — skill-aware slash autocomplete
 

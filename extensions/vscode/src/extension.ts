@@ -475,7 +475,7 @@ async function subscribeSessionList(
   try {
     const result = (await run.daemon.send('session.subscribe_list')) as SessionListResult;
     run.keepAlive = true;
-    sidebar.reconcileDaemonSessions(normalizeDaemonSessions(result));
+    sidebar.reconcileDaemonSessions(normalizeDaemonSessions(result), { pruneMissing: true });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     output.appendLine(`[peridot] session.subscribe_list failed: ${message}`);
@@ -2037,7 +2037,7 @@ async function refreshSessionList(
   const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   if (!folder) return;
   const result = await fetchSessionList(folder, output);
-  sidebar.reconcileDaemonSessions(normalizeDaemonSessions(result));
+  sidebar.reconcileDaemonSessions(normalizeDaemonSessions(result), { pruneMissing: true });
 }
 
 async function fetchSessionList(
@@ -2697,7 +2697,9 @@ async function handleDaemonNotification(
   sidebar: PeridotSidebarProvider,
 ): Promise<void> {
   if (notification.method === 'session.list_changed') {
-    sidebar.reconcileDaemonSessions(normalizeDaemonSessions(notification.params));
+    sidebar.reconcileDaemonSessions(normalizeDaemonSessions(notification.params), {
+      pruneMissing: true,
+    });
     return;
   }
   if (notification.method !== 'event') {
