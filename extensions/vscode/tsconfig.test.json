@@ -9,6 +9,7 @@
   "include": [
     "src/localSlashAction.ts",
     "src/sessionReconcile.ts",
+    "webview/composerHistory.ts",
     "webview/slashAutocomplete.ts",
     "test/**/*.test.ts"
   ],

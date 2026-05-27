@@ -18,6 +18,11 @@ import type {
 } from '../src/types';
 import { diffStats, renderUnifiedDiff } from './diff';
 import {
+  ComposerHistory,
+  canNavigateComposerHistory,
+  type ComposerHistoryDirection,
+} from './composerHistory';
+import {
   filteredSlashCommands as filterSlashCommands,
   slashArgumentContext as resolveSlashArgumentContext,
   slashArgumentOptions as slashOptionsForCommand,
@@ -41,6 +46,8 @@ const mascotUri = root.dataset.mascot ?? '';
 // textarea while typing) survive a re-render.
 let state: SidebarState | undefined;
 let composerDraft = '';
+const composerDrafts = new Map<string, string>();
+const composerHistory = new ComposerHistory();
 let appliedComposerDraftVersion = 0;
 // Pending composer selections — captured pre-render so a state update
 // triggered by a streaming event doesn't reset the user's mid-edit
@@ -121,7 +128,12 @@ document.addEventListener('click', (event) => {
 function render(s: SidebarState): void {
   slashCommands = s.slashCommands;
   const composerSessionKey = s.view === 'session' ? s.activeChatId ?? s.sessionId ?? 'draft' : s.view;
+  const previousComposerSessionKey = lastComposerSessionKey;
   const composerSessionChanged = composerSessionKey !== lastComposerSessionKey;
+  const textarea = document.getElementById('composer-input') as HTMLTextAreaElement | null;
+  if (composerSessionChanged && textarea && previousComposerSessionKey) {
+    composerDrafts.set(previousComposerSessionKey, textarea.value);
+  }
   if (composerSessionChanged) {
     composerModeOverride = undefined;
     composerPermissionOverride = undefined;
@@ -130,13 +142,16 @@ function render(s: SidebarState): void {
   }
   // Preserve composer draft / selection across renders so streaming
   // events don't clobber what the user is typing or picking.
-  const textarea = document.getElementById('composer-input') as HTMLTextAreaElement | null;
   const requestedDraftVersion = s.composerDraftVersion ?? 0;
   if (requestedDraftVersion > appliedComposerDraftVersion) {
     composerDraft = s.composerDraft ?? '';
+    composerDrafts.set(composerSessionKey, composerDraft);
     appliedComposerDraftVersion = requestedDraftVersion;
-  } else if (textarea) {
+  } else if (textarea && !composerSessionChanged) {
     composerDraft = textarea.value;
+    composerDrafts.set(composerSessionKey, composerDraft);
+  } else {
+    composerDraft = composerDrafts.get(composerSessionKey) ?? '';
   }
   const modeEl = document.getElementById('composer-mode') as HTMLSelectElement | null;
   if (modeEl && !composerSessionChanged) composerModeOverride = modeEl.value;
@@ -3276,6 +3291,8 @@ function renderComposer(s: SidebarState): HTMLElement {
   textarea.value = composerDraft;
   textarea.addEventListener('input', () => {
     composerDraft = textarea.value;
+    composerDrafts.set(lastComposerSessionKey, composerDraft);
+    composerHistory.resetNavigation(lastComposerSessionKey);
     autoresize(textarea);
     updateSlashPicker(textarea, slashPicker);
   });
@@ -3305,6 +3322,34 @@ function renderComposer(s: SidebarState): HTMLElement {
         event.preventDefault();
         slashPicker.classList.add('hidden');
         return;
+      }
+    }
+    if (composerHistoryDirectionForEvent(event)) {
+      const direction = event.key === 'ArrowUp' ? 'previous' : 'next';
+      if (
+        canNavigateComposerHistory(
+          textarea.value,
+          textarea.selectionStart,
+          textarea.selectionEnd,
+          direction,
+        )
+      ) {
+        const historyDraft = composerHistory.navigate(
+          lastComposerSessionKey,
+          direction,
+          textarea.value,
+        );
+        if (historyDraft !== undefined) {
+          event.preventDefault();
+          textarea.value = historyDraft;
+          textarea.selectionStart = textarea.value.length;
+          textarea.selectionEnd = textarea.value.length;
+          composerDraft = textarea.value;
+          composerDrafts.set(lastComposerSessionKey, composerDraft);
+          autoresize(textarea);
+          updateSlashPicker(textarea, slashPicker);
+          return;
+        }
       }
     }
     if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
@@ -3351,6 +3396,7 @@ function renderComposer(s: SidebarState): HTMLElement {
     const value = textarea.value.trim();
     if (!value) return;
     pinTranscriptToBottomOnNextRender();
+    composerHistory.record(lastComposerSessionKey, value);
     if (s.running && !value.startsWith('/')) {
       vscode.postMessage({ type: 'queueAdd', task: value });
     } else {
@@ -3362,10 +3408,22 @@ function renderComposer(s: SidebarState): HTMLElement {
     }
     textarea.value = '';
     composerDraft = '';
+    composerDrafts.set(lastComposerSessionKey, composerDraft);
     autoresize(textarea);
   }
 
   return wrap;
+}
+
+function composerHistoryDirectionForEvent(
+  event: KeyboardEvent,
+): ComposerHistoryDirection | undefined {
+  if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || event.isComposing) {
+    return undefined;
+  }
+  if (event.key === 'ArrowUp') return 'previous';
+  if (event.key === 'ArrowDown') return 'next';
+  return undefined;
 }
 
 function filteredSlashCommands(input: string): SlashCommandSpec[] {

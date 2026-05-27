@@ -650,6 +650,19 @@ shared daemon, TUI, and VS Code extension surfaces.
   signature changes. VS Code keeps its file watcher path; both clients now
   refresh autocomplete without waiting for an agent run to finish.
 
+### E56. VS Code Per-Session Composer History
+
+- **Status**: landed.
+- **Goal**: bring the TUI's per-session input-history ergonomics to the
+  extension composer while preserving VS Code's multiline textarea
+  behavior.
+- **Where**: VS Code webview composer state and pure history helper tests.
+- **Result**: submitted prompts are recorded per sidebar session and can
+  be recalled with ArrowUp / ArrowDown when the caret is on the first or
+  last textarea line. In-progress drafts are stored per session as well,
+  so switching between sidebar sessions no longer carries one session's
+  unsent prompt into another.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

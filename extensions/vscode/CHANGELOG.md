@@ -19,6 +19,10 @@
 - Skill-aware slash autocomplete now refreshes when `.peridot/memory.db`
   changes and immediately after `/skills archive` or `/skills restore`, so
   `/skill-name` suggestions stay current without a manual status refresh.
+- The composer now keeps submitted prompt history per sidebar session.
+  ArrowUp / ArrowDown recall previous prompts when the caret is on the
+  first or last textarea line, and unsent drafts no longer leak across
+  session switches.
 - `/sidepanel` is now filtered out of VS Code slash autocomplete and
   `/help` because it only toggles the TUI status panel.
 - `/session new [task]` now applies the daemon's structured
