@@ -163,6 +163,10 @@ export interface CommandResultView {
   rewind_turn_id?: number | null;
   rewindTurnId?: number | null;
   source_totals?: Record<string, number>;
+  index_exists?: boolean;
+  stale?: boolean;
+  newest_source_mtime_unix?: number;
+  source_files?: number;
   symbol_count?: number;
   todo_count?: number;
   reference_count?: number;
@@ -389,6 +393,8 @@ export type OutboundMessage =
   | { type: 'queueClear' }
   | { type: 'dismissBranchPicker' }
   | { type: 'showCodeMap' }
+  | { type: 'showCodeMapStatus' }
+  | { type: 'refreshCodeMap' }
   | { type: 'searchCodeMap' }
   | { type: 'outlineCurrentFile' }
   | { type: 'findSymbolReferences' }

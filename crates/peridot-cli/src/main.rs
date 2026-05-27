@@ -1502,6 +1502,9 @@ fn apply_session_command(
         SessionCommandEvent::CodeMap => {
             handle_code_map(state, project_template, false);
         }
+        SessionCommandEvent::CodeMapStatus => {
+            handle_code_map_status(state, project_template);
+        }
         SessionCommandEvent::CodeMapRefresh => {
             handle_code_map(state, project_template, true);
         }
@@ -2295,6 +2298,13 @@ fn handle_code_map(state: &mut TuiState, project_root: &Path, refresh: bool) {
     state.push_transcript(render_code_map_text(&index));
 }
 
+fn handle_code_map_status(state: &mut TuiState, project_root: &Path) {
+    match commands::code_map_status(project_root) {
+        Ok(status) => state.push_transcript(render_code_map_status_text(&status)),
+        Err(_) => state.push_error("codemap: failed to check workspace code map status"),
+    }
+}
+
 fn handle_code_map_find(state: &mut TuiState, project_root: &Path, query: &str) {
     let index = commands::load_or_refresh_code_map_index(project_root, 120, 80);
     let Ok(index) = index else {
@@ -2563,6 +2573,36 @@ fn render_attachments_text(artifacts: &[commands::AttachmentArtifact]) -> String
 
 fn render_code_map_text(index: &commands::CodeMapIndex) -> String {
     render_code_map_report(&index.report, index.generated_at_unix, None)
+}
+
+fn render_code_map_status_text(status: &commands::CodeMapStatus) -> String {
+    let state = if !status.index_exists {
+        "missing"
+    } else if status.stale {
+        "stale"
+    } else {
+        "fresh"
+    };
+    let generated = status
+        .generated_at_unix
+        .map(|ts| ts.to_string())
+        .unwrap_or_else(|| "none".to_string());
+    let newest = status
+        .newest_source_mtime_unix
+        .map(|ts| ts.to_string())
+        .unwrap_or_else(|| "none".to_string());
+    format!(
+        "codemap: index {state} (indexed at {generated}, newest source {newest})\nsource files: {} · indexed files: {} · symbols: {} · TODOs: {}{}",
+        status.source_files,
+        status.walked_files,
+        status.symbol_count,
+        status.todo_count,
+        if status.stale {
+            "\nrun /codemap refresh to rebuild the workspace code map index"
+        } else {
+            ""
+        }
+    )
 }
 
 fn render_code_map_report(

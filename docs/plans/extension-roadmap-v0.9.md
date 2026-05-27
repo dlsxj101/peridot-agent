@@ -265,6 +265,21 @@ shared daemon, TUI, and VS Code extension surfaces.
   `Peridot: Find Workspace Symbol References` plus the sidebar references
   button render those rows in the existing code-map panel.
 
+### E27. Workspace Code Map Status
+
+- **Status**: landed.
+- **Goal**: make the persisted code map's freshness visible before adding
+  background file watching or incremental indexing.
+- **Where**: shared slash parser/catalog, code map status helper, TUI host
+  codemap handler, daemon `session.command`, VS Code sidebar header and
+  command palette.
+- **Result**: `/codemap status` checks `.peridot/codemap.json` without
+  creating it, compares its generated timestamp with indexable source-file
+  mtimes, and reports `missing`, `fresh`, or `stale` plus source/indexed
+  file counts. TUI prints the status in the transcript, daemon clients
+  receive a structured `codemap_status` result, and VS Code renders a
+  status card with a refresh action when the index is stale or missing.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

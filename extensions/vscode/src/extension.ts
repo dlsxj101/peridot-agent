@@ -129,6 +129,8 @@ export function activate(context: vscode.ExtensionContext) {
     loginOpenAi: async (): Promise<void> => loginOpenAi(output, sidebar),
     refreshStatus: async (): Promise<void> => refreshStatus(output, sidebar, { force: true }),
     showCodeMap: async (): Promise<void> => showWorkspaceCodeMap(output, sidebar, false),
+    showCodeMapStatus: async (): Promise<void> => showWorkspaceCodeMapStatus(output, sidebar),
+    refreshCodeMap: async (): Promise<void> => showWorkspaceCodeMap(output, sidebar, true),
     searchCodeMap: async (): Promise<void> => searchWorkspaceCodeMap(output, sidebar),
     outlineCurrentFile: async (): Promise<void> => outlineCurrentFile(output, sidebar),
     findSymbolReferences: async (): Promise<void> => findWorkspaceSymbolReferences(output, sidebar),
@@ -261,6 +263,12 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand('peridot.showCodeMap', async () => {
       await showWorkspaceCodeMap(output, sidebar, false);
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('peridot.showCodeMapStatus', async () => {
+      await showWorkspaceCodeMapStatus(output, sidebar);
     }),
   );
 
@@ -696,6 +704,31 @@ async function showGitHubPrStatus(
     output.appendLine(`[peridot] gh pr status failed: ${message}`);
     sidebar.appendError(message);
     await vscode.window.showErrorMessage(`GitHub PR status failed: ${message}`);
+  }
+}
+
+async function showWorkspaceCodeMapStatus(
+  output: vscode.OutputChannel,
+  sidebar: PeridotSidebarProvider,
+): Promise<void> {
+  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!folder) {
+    vscode.window.showWarningMessage('Open a workspace folder before checking the code map.');
+    return;
+  }
+  await vscode.commands.executeCommand('peridot.chatView.focus');
+  try {
+    const result = await runSlashCommand(
+      '/codemap status',
+      output,
+      sidebar,
+      sidebar.currentRunOptions(),
+    );
+    sidebar.appendCommandResult(result);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    output.appendLine(`[peridot] codemap status failed: ${message}`);
+    vscode.window.showErrorMessage(message);
   }
 }
 

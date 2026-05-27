@@ -1711,6 +1711,7 @@ async fn execute_session_command(
         SlashCommand::Undo => handle_command_undo(state, raw_command),
         SlashCommand::Todos => handle_command_todos(state, raw_command),
         SlashCommand::CodeMap => handle_command_codemap(state, raw_command, false),
+        SlashCommand::CodeMapStatus => handle_command_codemap_status(state, raw_command),
         SlashCommand::CodeMapRefresh => handle_command_codemap(state, raw_command, true),
         SlashCommand::CodeMapFind(query) => handle_command_codemap_find(state, raw_command, &query),
         SlashCommand::CodeMapLocate(query) => {
@@ -3589,6 +3590,12 @@ fn handle_command_codemap(
     ))
 }
 
+fn handle_command_codemap_status(state: &DaemonState, raw_command: &str) -> Result<Value, String> {
+    let status = crate::commands::code_map_status(state.project_root.as_ref())
+        .map_err(|err| format!("codemap: failed to check status: {err}"))?;
+    Ok(code_map_status_result(raw_command, &status))
+}
+
 fn handle_command_codemap_find(
     state: &DaemonState,
     raw_command: &str,
@@ -3664,6 +3671,48 @@ fn handle_command_codemap_refs(
         index.generated_at_unix,
         false,
     ))
+}
+
+fn code_map_status_result(raw_command: &str, status: &crate::commands::CodeMapStatus) -> Value {
+    let state = if !status.index_exists {
+        "missing"
+    } else if status.stale {
+        "stale"
+    } else {
+        "fresh"
+    };
+    let generated = status
+        .generated_at_unix
+        .map(|ts| ts.to_string())
+        .unwrap_or_else(|| "none".to_string());
+    let newest = status
+        .newest_source_mtime_unix
+        .map(|ts| ts.to_string())
+        .unwrap_or_else(|| "none".to_string());
+    let message =
+        format!("codemap: index {state} (indexed at {generated}, newest source {newest})");
+    serde_json::json!({
+        "kind": "codemap_status",
+        "title": "Workspace Code Map Status",
+        "message": message,
+        "severity": if status.stale { "warning" } else { "info" },
+        "command": raw_command,
+        "index_exists": status.index_exists,
+        "stale": status.stale,
+        "generated_at_unix": status.generated_at_unix,
+        "newest_source_mtime_unix": status.newest_source_mtime_unix,
+        "source_files": status.source_files,
+        "walked_files": status.walked_files,
+        "symbol_count": status.symbol_count,
+        "todo_count": status.todo_count,
+        "items": [
+            { "label": "state", "detail": state },
+            { "label": "source files", "detail": status.source_files.to_string() },
+            { "label": "indexed files", "detail": status.walked_files.to_string() },
+            { "label": "symbols", "detail": status.symbol_count.to_string() },
+            { "label": "TODOs", "detail": status.todo_count.to_string() },
+        ],
+    })
 }
 
 fn code_map_result(
@@ -6246,6 +6295,22 @@ mod tests {
                 .any(|item| item["source"] == "todo"
                     && item["detail"].as_str().unwrap().contains("TODO"))
         );
+
+        let status_line = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 421,
+            "method": "session.command",
+            "params": { "command": "/codemap status" }
+        })
+        .to_string();
+        let _ = dispatch_line(&state, &status_line).await.unwrap();
+        let status_response: Value = serde_json::from_str(&rx.recv().await.unwrap()).unwrap();
+        assert_eq!(status_response["id"], 421);
+        assert_eq!(status_response["result"]["kind"], "codemap_status");
+        assert_eq!(status_response["result"]["index_exists"], true);
+        assert_eq!(status_response["result"]["symbol_count"], 1);
+        assert_eq!(status_response["result"]["todo_count"], 1);
+        assert_eq!(status_response["result"]["source_files"], 1);
 
         let refresh_line = serde_json::json!({
             "jsonrpc": "2.0",

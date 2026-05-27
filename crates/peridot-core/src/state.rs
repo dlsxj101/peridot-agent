@@ -91,6 +91,7 @@ impl AgentState {
             | SlashCommand::McpTest(_)
             | SlashCommand::Todos
             | SlashCommand::CodeMap
+            | SlashCommand::CodeMapStatus
             | SlashCommand::CodeMapRefresh
             | SlashCommand::CodeMapFind(_)
             | SlashCommand::CodeMapLocate(_)

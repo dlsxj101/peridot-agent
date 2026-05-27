@@ -139,6 +139,8 @@ pub enum SlashCommand {
     Todos,
     /// Show a lightweight workspace code map: public symbols plus TODO markers.
     CodeMap,
+    /// Show whether the persisted workspace code map index is present or stale.
+    CodeMapStatus,
     /// Rebuild the persisted workspace code map index.
     CodeMapRefresh,
     /// Search the persisted workspace code map index.
@@ -503,6 +505,7 @@ pub fn parse_slash_command(input: &str) -> Option<SlashCommand> {
         },
         "todos" if rest.is_empty() => Some(SlashCommand::Todos),
         "codemap" if rest.is_empty() => Some(SlashCommand::CodeMap),
+        "codemap" if rest == "status" => Some(SlashCommand::CodeMapStatus),
         "codemap" if rest == "refresh" => Some(SlashCommand::CodeMapRefresh),
         "codemap" if rest.starts_with("find ") => {
             let query = rest.strip_prefix("find ").unwrap_or("").trim();
@@ -719,6 +722,10 @@ mod tests {
     #[test]
     fn parses_codemap_builtin() {
         assert_eq!(parse_slash_command("/codemap"), Some(SlashCommand::CodeMap));
+        assert_eq!(
+            parse_slash_command("/codemap status"),
+            Some(SlashCommand::CodeMapStatus)
+        );
         assert_eq!(
             parse_slash_command("/codemap refresh"),
             Some(SlashCommand::CodeMapRefresh)

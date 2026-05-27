@@ -907,6 +907,8 @@ pub enum SessionCommandEvent {
     ScanTodos,
     /// `/codemap` — scan source files for public symbols and TODO markers.
     CodeMap,
+    /// `/codemap status` — report whether the persisted code map index is stale.
+    CodeMapStatus,
     /// `/codemap refresh` — rebuild the persisted code map index.
     CodeMapRefresh,
     /// `/codemap find <query>` — search the persisted code map index.

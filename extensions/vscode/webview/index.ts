@@ -756,6 +756,7 @@ function renderHeader(s: SidebarState): HTMLElement {
   const right = el('div', 'header-actions');
   right.append(renderSessionMenu(s));
   right.append(iconButton('codemap', 'Workspace Code Map', () => vscode.postMessage({ type: 'showCodeMap' })));
+  right.append(iconButton('info', 'Workspace Code Map Status', () => vscode.postMessage({ type: 'showCodeMapStatus' })));
   right.append(iconButton('search', 'Search Workspace Code Map', () => vscode.postMessage({ type: 'searchCodeMap' })));
   right.append(iconButton('list-tree', 'Outline Current File', () => vscode.postMessage({ type: 'outlineCurrentFile' })));
   right.append(iconButton('references', 'Find Symbol References', () => vscode.postMessage({ type: 'findSymbolReferences' })));
@@ -2463,6 +2464,7 @@ function renderDiffBlock(item: TranscriptItem): HTMLElement {
 function renderCommandBlock(item: TranscriptItem): HTMLElement {
   const result = item.commandResult;
   if (result?.kind === 'codemap') return renderCodeMapBlock(item);
+  if (result?.kind === 'codemap_status') return renderCodeMapStatusBlock(item);
   if (result?.kind === 'attach') return renderAttachmentBlock(item);
   if (result?.kind === 'attachments') return renderAttachmentInventoryBlock(item);
   if (result?.kind === 'detach') return renderDetachBlock(item);
@@ -2819,6 +2821,42 @@ function renderCodeMapBlock(item: TranscriptItem): HTMLElement {
   renderRows();
   if (result?.truncated) {
     wrap.append(el('div', 'command-footnote', 'further code map entries truncated'));
+  }
+  return wrap;
+}
+
+function renderCodeMapStatusBlock(item: TranscriptItem): HTMLElement {
+  const result = item.commandResult;
+  const wrap = el('section', `command-block codemap-block ${result?.stale ? 'warning' : ''}`);
+  const header = el('div', 'codemap-header');
+  const title = el('div', 'codemap-title');
+  title.append(el('span', 'command-title', result?.title ?? 'Workspace Code Map Status'));
+  const chips = el('div', 'codemap-chips');
+  chips.append(el('span', 'command-chip', result?.index_exists ? 'indexed' : 'missing'));
+  chips.append(el('span', 'command-chip', result?.stale ? 'stale' : 'fresh'));
+  if (typeof result?.source_files === 'number') {
+    chips.append(el('span', 'command-chip', `${result.source_files} source files`));
+  }
+  if (typeof result?.walked_files === 'number') {
+    chips.append(el('span', 'command-chip', `${result.walked_files} indexed files`));
+  }
+  if (typeof result?.symbol_count === 'number') {
+    chips.append(el('span', 'command-chip', `${result.symbol_count} symbols`));
+  }
+  if (typeof result?.todo_count === 'number') {
+    chips.append(el('span', 'command-chip', `${result.todo_count} todos`));
+  }
+  title.append(chips);
+  header.append(title);
+  wrap.append(header);
+  if (result?.message) wrap.append(el('div', 'command-message', result.message));
+  if (result?.stale) {
+    const action = document.createElement('button');
+    action.type = 'button';
+    action.className = 'secondary-button';
+    action.textContent = 'Refresh index';
+    action.addEventListener('click', () => vscode.postMessage({ type: 'refreshCodeMap' }));
+    wrap.append(action);
   }
   return wrap;
 }

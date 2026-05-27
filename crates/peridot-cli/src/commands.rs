@@ -59,9 +59,9 @@ pub(crate) use auth::{
     run_logout_command,
 };
 pub(crate) use codemap::{
-    CodeMapIndex, CodeMapReport, build_code_map, find_code_map_references,
-    load_or_refresh_code_map_index, locate_code_map_symbols, outline_code_map_file,
-    refresh_code_map_index, search_code_map_index,
+    CodeMapIndex, CodeMapReport, CodeMapStatus, build_code_map, code_map_status,
+    find_code_map_references, load_or_refresh_code_map_index, locate_code_map_symbols,
+    outline_code_map_file, refresh_code_map_index, search_code_map_index,
 };
 use config::init_project_config_value;
 pub(crate) use config::{

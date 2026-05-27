@@ -161,6 +161,12 @@
         "icon": "$(symbol-misc)"
       },
       {
+        "command": "peridot.showCodeMapStatus",
+        "title": "Peridot: Show Workspace Code Map Status",
+        "category": "Peridot",
+        "icon": "$(info)"
+      },
+      {
         "command": "peridot.refreshCodeMap",
         "title": "Peridot: Refresh Workspace Code Map Index",
         "category": "Peridot",
@@ -244,6 +250,11 @@
           "command": "peridot.showCodeMap",
           "when": "view == peridot.chatView",
           "group": "navigation@2"
+        },
+        {
+          "command": "peridot.showCodeMapStatus",
+          "when": "view == peridot.chatView",
+          "group": "navigation@2.5"
         },
         {
           "command": "peridot.refreshCodeMap",

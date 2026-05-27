@@ -2187,6 +2187,21 @@ fn codemap_slash_queues_pending_command() {
             .contains("codemap: loading workspace")
     );
 
+    apply_slash_command(&mut state, SlashCommand::CodeMapStatus);
+
+    assert_eq!(
+        state.drain_pending_session_commands(),
+        vec![SessionCommandEvent::CodeMapStatus]
+    );
+    assert!(
+        state
+            .transcript
+            .last()
+            .unwrap()
+            .text
+            .contains("codemap: checking workspace code map status")
+    );
+
     apply_slash_command(&mut state, SlashCommand::CodeMapRefresh);
 
     assert_eq!(

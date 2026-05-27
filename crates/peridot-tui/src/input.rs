@@ -1260,6 +1260,10 @@ pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
             state.push_transcript("codemap: loading workspace code map index…");
             state.push_pending_session_command(SessionCommandEvent::CodeMap);
         }
+        SlashCommand::CodeMapStatus => {
+            state.push_transcript("codemap: checking workspace code map status…");
+            state.push_pending_session_command(SessionCommandEvent::CodeMapStatus);
+        }
         SlashCommand::CodeMapRefresh => {
             state.push_transcript("codemap: refreshing workspace code map index…");
             state.push_pending_session_command(SessionCommandEvent::CodeMapRefresh);

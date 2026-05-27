@@ -61,6 +61,18 @@ pub(crate) struct CodeMapReference {
     pub text: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+pub(crate) struct CodeMapStatus {
+    pub index_exists: bool,
+    pub stale: bool,
+    pub generated_at_unix: Option<u64>,
+    pub newest_source_mtime_unix: Option<u64>,
+    pub source_files: usize,
+    pub walked_files: usize,
+    pub symbol_count: usize,
+    pub todo_count: usize,
+}
+
 pub(crate) fn build_code_map(
     project_root: &Path,
     max_symbols: usize,
@@ -119,6 +131,37 @@ pub(crate) fn load_or_refresh_code_map_index(
         return Ok(index);
     }
     refresh_code_map_index(project_root, max_symbols, max_todos)
+}
+
+pub(crate) fn code_map_status(project_root: &Path) -> Result<CodeMapStatus> {
+    let index = load_code_map_index(project_root)?;
+    let mut source_status = SourceStatus::default();
+    walk_source_status(project_root, &mut source_status);
+    let generated_at_unix = index.as_ref().map(|index| index.generated_at_unix);
+    let stale = match (generated_at_unix, source_status.newest_mtime_unix) {
+        (None, _) => true,
+        (Some(_), None) => false,
+        (Some(generated), Some(newest)) => newest > generated,
+    };
+    Ok(CodeMapStatus {
+        index_exists: index.is_some(),
+        stale,
+        generated_at_unix,
+        newest_source_mtime_unix: source_status.newest_mtime_unix,
+        source_files: source_status.source_files,
+        walked_files: index
+            .as_ref()
+            .map(|index| index.report.walked_files)
+            .unwrap_or_default(),
+        symbol_count: index
+            .as_ref()
+            .map(|index| index.report.symbols.len())
+            .unwrap_or_default(),
+        todo_count: index
+            .as_ref()
+            .map(|index| index.report.todos.len())
+            .unwrap_or_default(),
+    })
 }
 
 pub(crate) fn search_code_map_index(index: &CodeMapIndex, query: &str) -> CodeMapReport {
@@ -276,6 +319,53 @@ fn write_code_map_index(project_root: &Path, index: &CodeMapIndex) -> Result<()>
     }
     let bytes = serde_json::to_vec_pretty(index).context("failed to serialize code map index")?;
     fs::write(&path, bytes).with_context(|| format!("failed to write {}", path.display()))
+}
+
+#[derive(Default)]
+struct SourceStatus {
+    source_files: usize,
+    newest_mtime_unix: Option<u64>,
+}
+
+fn walk_source_status(path: &Path, status: &mut SourceStatus) {
+    if path.is_dir() {
+        if should_skip_dir(path) {
+            return;
+        }
+        let Ok(entries) = fs::read_dir(path) else {
+            return;
+        };
+        let mut entries = entries
+            .flatten()
+            .map(|entry| entry.path())
+            .collect::<Vec<_>>();
+        entries.sort();
+        for entry in entries {
+            walk_source_status(&entry, status);
+        }
+        return;
+    }
+    if !is_source_file(path) {
+        return;
+    }
+    let Ok(metadata) = fs::metadata(path) else {
+        return;
+    };
+    if metadata.len() > MAX_SYMBOL_FILE_BYTES {
+        return;
+    }
+    status.source_files += 1;
+    let modified = metadata
+        .modified()
+        .ok()
+        .and_then(system_time_to_unix_seconds);
+    if let Some(modified) = modified {
+        status.newest_mtime_unix = Some(
+            status
+                .newest_mtime_unix
+                .map_or(modified, |newest| newest.max(modified)),
+        );
+    }
 }
 
 fn walk_code_map(
@@ -677,6 +767,12 @@ fn unix_seconds() -> u64 {
         .unwrap_or_default()
 }
 
+fn system_time_to_unix_seconds(time: SystemTime) -> Option<u64> {
+    time.duration_since(UNIX_EPOCH)
+        .ok()
+        .map(|duration| duration.as_secs())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -711,6 +807,42 @@ mod tests {
 
         let loaded = load_code_map_index(&root).unwrap().unwrap();
         assert_eq!(loaded.report.symbols[0].name, "indexed");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn status_reports_missing_index() {
+        let root = temp_project("status-missing");
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src/lib.rs"), "pub fn indexed() {}\n").unwrap();
+
+        let status = code_map_status(&root).unwrap();
+        assert!(!status.index_exists);
+        assert!(status.stale);
+        assert_eq!(status.generated_at_unix, None);
+        assert_eq!(status.source_files, 1);
+        assert_eq!(status.symbol_count, 0);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn status_reports_stale_index() {
+        let root = temp_project("status-stale");
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src/lib.rs"), "pub fn indexed() {}\n").unwrap();
+        let index = CodeMapIndex {
+            version: 1,
+            generated_at_unix: 1,
+            report: build_code_map(&root, 100, 100),
+        };
+        write_code_map_index(&root, &index).unwrap();
+
+        let status = code_map_status(&root).unwrap();
+        assert!(status.index_exists);
+        assert!(status.stale);
+        assert_eq!(status.generated_at_unix, Some(1));
+        assert_eq!(status.source_files, 1);
+        assert_eq!(status.symbol_count, 1);
         let _ = fs::remove_dir_all(root);
     }
 

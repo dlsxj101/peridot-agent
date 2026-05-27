@@ -28,6 +28,9 @@
 - `Peridot: Find Workspace Symbol References` and the sidebar references
   button run `/codemap refs <symbol>` and render matching source lines as
   a dedicated code-map references group.
+- `Peridot: Show Workspace Code Map Status` and the sidebar status button
+  run `/codemap status`, showing whether `.peridot/codemap.json` is
+  missing, fresh, or stale before a refresh.
 - GitHub PR workflow commands are available from VS Code: PR status,
   preview-and-confirm `peridot ship`, and confirm-before-merge
   `gh pr merge`.

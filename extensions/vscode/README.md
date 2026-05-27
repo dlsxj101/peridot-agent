@@ -25,6 +25,7 @@ native tool calling, and 2-Tier context management.
 | `Peridot: Login with ChatGPT` | Runs `peridot login openai-oauth` from the active workspace. |
 | `Peridot: Refresh Status` | Refreshes daemon workspace/provider/model/auth status. |
 | `Peridot: Show Workspace Code Map` | Runs the shared `/codemap` scan and appends public symbols plus TODO markers to the sidebar transcript. |
+| `Peridot: Show Workspace Code Map Status` | Runs `/codemap status` to show whether the persisted code map index is missing, fresh, or stale. |
 | `Peridot: Refresh Workspace Code Map Index` | Rebuilds `.peridot/codemap.json` through `/codemap refresh`. |
 | `Peridot: Search Workspace Code Map` | Prompts for a query and runs `/codemap find <query>` against the persisted index. |
 | `Peridot: Locate Workspace Symbol` | Prompts for a symbol, runs `/codemap locate <symbol>`, and opens the first indexed definition. |
