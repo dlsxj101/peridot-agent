@@ -43,6 +43,9 @@
 - Goal and notes subcommand autocomplete now fills
   `/goal pause|resume|clear|status` and `/notes last` while preserving
   free-form goal objectives and bare `/notes`.
+- Export artifact autocomplete now supports multi-artifact
+  `/export attachments notes timeline` composition and suggests only
+  remaining artifact classes after each accepted token.
 - The composer now keeps submitted prompt history per sidebar session.
   ArrowUp / ArrowDown recall previous prompts when the caret is on the
   first or last textarea line, and unsent drafts no longer leak across

@@ -88,6 +88,8 @@ export function slashArgumentContext(
   if (goalContext) return goalContext;
   const notesContext = notesLastArgumentContext(query);
   if (notesContext) return notesContext;
+  const exportContext = exportArtifactArgumentContext(query);
+  if (exportContext) return exportContext;
   const command = [...slashCommands]
     .sort((a, b) => b.name.length - a.name.length)
     .find(
@@ -118,6 +120,36 @@ function goalControlArgumentContext(query: string): SlashArgumentContext | undef
 
 function notesLastArgumentContext(query: string): SlashArgumentContext | undefined {
   return staticSubcommandArgumentContext(query, '/notes', ['last'], true, false);
+}
+
+const EXPORT_ARTIFACT_OPTIONS = ['attachments', 'notes', 'timeline', 'full'];
+
+function exportArtifactArgumentContext(query: string): SlashArgumentContext | undefined {
+  const commandName = '/export';
+  if (!query.startsWith(`${commandName} `)) return undefined;
+  const rest = query.slice(commandName.length).trimStart();
+  const hasTrailingSpace = /\s$/.test(rest);
+  const tokens = rest.split(/\s+/).filter((token) => token.length > 0);
+  const prefix = hasTrailingSpace ? '' : (tokens.pop() ?? '');
+  if (tokens.some((token) => !EXPORT_ARTIFACT_OPTIONS.includes(token.toLowerCase()))) return undefined;
+  if (prefix && EXPORT_ARTIFACT_OPTIONS.some((option) => option.toLowerCase() === prefix.toLowerCase())) {
+    return undefined;
+  }
+  const selected = new Set(tokens.map((token) => token.toLowerCase()));
+  const needle = prefix.toLowerCase();
+  const options = EXPORT_ARTIFACT_OPTIONS
+    .filter((option) => !selected.has(option))
+    .filter((option) => needle.length === 0 || option.startsWith(needle));
+  if (options.length === 0) return undefined;
+  return {
+    command: {
+      name: tokens.length === 0 ? commandName : `${commandName} ${tokens.join(' ')}`,
+      description: 'export artifact',
+      category: 'session',
+    },
+    options,
+    appendSpace: true,
+  };
 }
 
 function staticSubcommandArgumentContext(

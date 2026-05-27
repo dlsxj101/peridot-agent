@@ -66,6 +66,10 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
   `/goal pause|resume|clear|status` and `/notes last` in both TUI and VS
   Code without interfering with free-form goal objectives or bare
   `/notes`.
+- **Export artifact autocomplete** now supports multi-artifact
+  `/export attachments notes timeline` composition in both TUI and VS
+  Code, suggesting only remaining artifact classes after each accepted
+  token.
 - **VS Code per-session composer history** now mirrors the TUI input
   history ergonomics: ArrowUp/ArrowDown recall submitted prompts per
   sidebar session, while in-progress drafts stay isolated across session

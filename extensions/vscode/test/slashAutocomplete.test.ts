@@ -237,6 +237,26 @@ test('slashArgumentContext filters goal and notes subcommands', () => {
   assert.equal(slashArgumentContext('/notes last ', commands), undefined);
 });
 
+test('slashArgumentContext filters export artifact arguments across tokens', () => {
+  assert.equal(slashArgumentContext('/export', commands), undefined);
+  const first = slashArgumentContext('/export a', commands);
+
+  assert.equal(first?.command.name, '/export');
+  assert.deepEqual(first?.options, ['attachments']);
+  assert.equal(first?.appendSpace, true);
+  assert.equal(slashArgumentContext('/export attachments', commands), undefined);
+
+  const remaining = slashArgumentContext('/export attachments ', commands);
+  assert.equal(remaining?.command.name, '/export attachments');
+  assert.deepEqual(remaining?.options, ['notes', 'timeline', 'full']);
+  assert.equal(remaining?.appendSpace, true);
+
+  const filtered = slashArgumentContext('/export attachments n', commands);
+  assert.equal(filtered?.command.name, '/export attachments');
+  assert.deepEqual(filtered?.options, ['notes']);
+  assert.equal(slashArgumentContext('/export attachments bad', commands), undefined);
+});
+
 test('slashExactSelectionIsRunnable allows optional-arg exact commands only', () => {
   assert.equal(slashExactSelectionIsRunnable('/skills', commands, 0), true);
   assert.equal(slashExactSelectionIsRunnable('/reasoning', commands, 0), false);
@@ -250,4 +270,5 @@ test('slashPickerItemCount uses argument options when an argument picker is open
   assert.equal(slashPickerItemCount('/branch restore ', commands, [], [], [], branchSnapshots), 2);
   assert.equal(slashPickerItemCount('/goal ', commands), 4);
   assert.equal(slashPickerItemCount('/notes l', commands), 1);
+  assert.equal(slashPickerItemCount('/export attachments ', commands), 3);
 });

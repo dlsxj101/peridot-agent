@@ -809,6 +809,18 @@ shared daemon, TUI, and VS Code extension surfaces.
   autocompletes with a trailing space so the operator can immediately type
   the count.
 
+### E67. Export Artifact Multi-Argument Autocomplete
+
+- **Status**: landed.
+- **Goal**: make `/export` ergonomic when operators want a custom subset
+  of session artifact classes instead of the default bundle.
+- **Where**: TUI dynamic slash argument context, TUI Tab acceptance path,
+  and VS Code webview slash autocomplete helper.
+- **Result**: `/export <artifact...>` now autocompletes
+  `attachments`, `notes`, `timeline`, and `full` one token at a time.
+  Accepting an artifact leaves a trailing space for the next artifact, and
+  already-selected artifacts are hidden from the remaining suggestions.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

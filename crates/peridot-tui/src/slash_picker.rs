@@ -594,6 +594,9 @@ pub(crate) fn slash_argument_context_with_dynamic(
     if let Some(context) = notes_last_argument_context(query) {
         return Some(context);
     }
+    if let Some(context) = export_artifact_argument_context(query) {
+        return Some(context);
+    }
     let spec = slash_command_catalog()
         .iter()
         .filter(|spec| !finite_argument_options(spec).is_empty())
@@ -901,6 +904,60 @@ fn goal_control_argument_context(query: &str) -> Option<SlashArgumentContext> {
 fn notes_last_argument_context(query: &str) -> Option<SlashArgumentContext> {
     static_subcommand_argument_context(query, "/notes", &["last"], true, false)
 }
+
+fn export_artifact_argument_context(query: &str) -> Option<SlashArgumentContext> {
+    let command_name = "/export";
+    if !query.starts_with(&format!("{command_name} ")) {
+        return None;
+    }
+    let rest = query[command_name.len()..].trim_start();
+    let has_trailing_space = rest.chars().last().is_some_and(char::is_whitespace);
+    let mut tokens: Vec<&str> = rest.split_whitespace().collect();
+    let prefix = if has_trailing_space {
+        ""
+    } else {
+        tokens.pop().unwrap_or("")
+    };
+    if tokens
+        .iter()
+        .any(|token| !EXPORT_ARTIFACT_OPTIONS.contains(token))
+    {
+        return None;
+    }
+    if !prefix.is_empty()
+        && EXPORT_ARTIFACT_OPTIONS
+            .iter()
+            .any(|option| option.eq_ignore_ascii_case(prefix))
+    {
+        return None;
+    }
+    let prefix_lower = prefix.to_ascii_lowercase();
+    let options: Vec<String> = EXPORT_ARTIFACT_OPTIONS
+        .iter()
+        .filter(|option| {
+            !tokens
+                .iter()
+                .any(|token| token.eq_ignore_ascii_case(option))
+        })
+        .filter(|option| prefix_lower.is_empty() || option.starts_with(&prefix_lower))
+        .map(|option| (*option).to_string())
+        .collect();
+    if options.is_empty() {
+        return None;
+    }
+    let command_name = if tokens.is_empty() {
+        command_name.to_string()
+    } else {
+        format!("{command_name} {}", tokens.join(" "))
+    };
+    Some(SlashArgumentContext {
+        command_name,
+        options,
+        append_space: true,
+    })
+}
+
+const EXPORT_ARTIFACT_OPTIONS: &[&str] = &["attachments", "notes", "timeline", "full"];
 
 fn static_subcommand_argument_context(
     query: &str,
@@ -1435,6 +1492,51 @@ mod tests {
         assert!(context.append_space);
         assert!(
             slash_argument_context_with_dynamic("/notes last ", &[], &[], &[], &[], &[]).is_none()
+        );
+    }
+
+    #[test]
+    fn export_artifact_argument_context_filters_remaining_artifacts() {
+        assert!(
+            slash_argument_context_with_dynamic("/export", &[], &[], &[], &[], &[]).is_none(),
+            "bare /export remains runnable"
+        );
+
+        let context = slash_argument_context_with_dynamic("/export a", &[], &[], &[], &[], &[])
+            .expect("export artifact");
+        assert_eq!(context.command_name, "/export");
+        assert_eq!(context.options, vec!["attachments"]);
+        assert!(context.append_space);
+
+        assert!(
+            slash_argument_context_with_dynamic("/export attachments", &[], &[], &[], &[], &[])
+                .is_none(),
+            "exact single-artifact export remains runnable"
+        );
+
+        let context =
+            slash_argument_context_with_dynamic("/export attachments ", &[], &[], &[], &[], &[])
+                .expect("remaining artifacts");
+        assert_eq!(context.command_name, "/export attachments");
+        assert_eq!(context.options, vec!["notes", "timeline", "full"]);
+        assert!(context.append_space);
+
+        let context =
+            slash_argument_context_with_dynamic("/export attachments n", &[], &[], &[], &[], &[])
+                .expect("filtered remaining artifact");
+        assert_eq!(context.command_name, "/export attachments");
+        assert_eq!(context.options, vec!["notes"]);
+
+        assert!(
+            slash_argument_context_with_dynamic(
+                "/export attachments bad",
+                &[],
+                &[],
+                &[],
+                &[],
+                &[],
+            )
+            .is_none()
         );
     }
 
