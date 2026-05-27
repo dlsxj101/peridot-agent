@@ -21,6 +21,7 @@ import {
   ComposerHistory,
   canNavigateComposerHistory,
   type ComposerHistoryDirection,
+  type ComposerHistorySnapshot,
 } from './composerHistory';
 import {
   filteredSlashCommands as filterSlashCommands,
@@ -41,13 +42,16 @@ declare function acquireVsCodeApi(): {
 const vscode = acquireVsCodeApi();
 const root = document.getElementById('app') as HTMLElement;
 const mascotUri = root.dataset.mascot ?? '';
+const restoredComposerState = readComposerWebviewState(vscode.getState());
 
 // Last state snapshot — used so non-state-driven inputs (like the composer
 // textarea while typing) survive a re-render.
 let state: SidebarState | undefined;
 let composerDraft = '';
-const composerDrafts = new Map<string, string>();
-const composerHistory = new ComposerHistory();
+const composerDrafts = new Map<string, string>(
+  Object.entries(restoredComposerState.composerDrafts ?? {}),
+);
+const composerHistory = new ComposerHistory(restoredComposerState.composerHistory);
 let appliedComposerDraftVersion = 0;
 // Pending composer selections — captured pre-render so a state update
 // triggered by a streaming event doesn't reset the user's mid-edit
@@ -133,6 +137,7 @@ function render(s: SidebarState): void {
   const textarea = document.getElementById('composer-input') as HTMLTextAreaElement | null;
   if (composerSessionChanged && textarea && previousComposerSessionKey) {
     composerDrafts.set(previousComposerSessionKey, textarea.value);
+    persistComposerWebviewState();
   }
   if (composerSessionChanged) {
     composerModeOverride = undefined;
@@ -147,9 +152,11 @@ function render(s: SidebarState): void {
     composerDraft = s.composerDraft ?? '';
     composerDrafts.set(composerSessionKey, composerDraft);
     appliedComposerDraftVersion = requestedDraftVersion;
+    persistComposerWebviewState();
   } else if (textarea && !composerSessionChanged) {
     composerDraft = textarea.value;
     composerDrafts.set(composerSessionKey, composerDraft);
+    persistComposerWebviewState();
   } else {
     composerDraft = composerDrafts.get(composerSessionKey) ?? '';
   }
@@ -3293,6 +3300,7 @@ function renderComposer(s: SidebarState): HTMLElement {
     composerDraft = textarea.value;
     composerDrafts.set(lastComposerSessionKey, composerDraft);
     composerHistory.resetNavigation(lastComposerSessionKey);
+    persistComposerWebviewState();
     autoresize(textarea);
     updateSlashPicker(textarea, slashPicker);
   });
@@ -3346,6 +3354,7 @@ function renderComposer(s: SidebarState): HTMLElement {
           textarea.selectionEnd = textarea.value.length;
           composerDraft = textarea.value;
           composerDrafts.set(lastComposerSessionKey, composerDraft);
+          persistComposerWebviewState();
           autoresize(textarea);
           updateSlashPicker(textarea, slashPicker);
           return;
@@ -3397,6 +3406,7 @@ function renderComposer(s: SidebarState): HTMLElement {
     if (!value) return;
     pinTranscriptToBottomOnNextRender();
     composerHistory.record(lastComposerSessionKey, value);
+    persistComposerWebviewState();
     if (s.running && !value.startsWith('/')) {
       vscode.postMessage({ type: 'queueAdd', task: value });
     } else {
@@ -3409,10 +3419,43 @@ function renderComposer(s: SidebarState): HTMLElement {
     textarea.value = '';
     composerDraft = '';
     composerDrafts.set(lastComposerSessionKey, composerDraft);
+    persistComposerWebviewState();
     autoresize(textarea);
   }
 
   return wrap;
+}
+
+interface ComposerWebviewState {
+  composerDrafts?: Record<string, string>;
+  composerHistory?: ComposerHistorySnapshot;
+}
+
+function readComposerWebviewState(raw: unknown): ComposerWebviewState {
+  if (!isRecord(raw)) return {};
+  const drafts = isRecord(raw.composerDrafts)
+    ? Object.fromEntries(
+        Object.entries(raw.composerDrafts).filter(
+          (entry): entry is [string, string] => typeof entry[1] === 'string',
+        ),
+      )
+    : undefined;
+  const history = isRecord(raw.composerHistory)
+    ? (raw.composerHistory as ComposerHistorySnapshot)
+    : undefined;
+  return {
+    ...(drafts ? { composerDrafts: drafts } : {}),
+    ...(history ? { composerHistory: history } : {}),
+  };
+}
+
+function persistComposerWebviewState(): void {
+  vscode.setState({
+    composerDrafts: Object.fromEntries(
+      [...composerDrafts.entries()].filter(([, draft]) => draft.length > 0),
+    ),
+    composerHistory: composerHistory.snapshot(),
+  });
 }
 
 function composerHistoryDirectionForEvent(

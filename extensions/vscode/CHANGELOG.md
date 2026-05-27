@@ -22,7 +22,8 @@
 - The composer now keeps submitted prompt history per sidebar session.
   ArrowUp / ArrowDown recall previous prompts when the caret is on the
   first or last textarea line, and unsent drafts no longer leak across
-  session switches.
+  session switches. The history and drafts are restored from VS Code
+  webview state after a webview reload.
 - `/sidepanel` is now filtered out of VS Code slash autocomplete and
   `/help` because it only toggles the TUI status panel.
 - `/session new [task]` now applies the daemon's structured

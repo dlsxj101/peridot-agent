@@ -661,7 +661,9 @@ shared daemon, TUI, and VS Code extension surfaces.
   be recalled with ArrowUp / ArrowDown when the caret is on the first or
   last textarea line. In-progress drafts are stored per session as well,
   so switching between sidebar sessions no longer carries one session's
-  unsent prompt into another.
+  unsent prompt into another. Both history and drafts are serialized into
+  VS Code webview state, so they survive webview reloads without involving
+  daemon or workspace storage.
 
 ## Notes
 

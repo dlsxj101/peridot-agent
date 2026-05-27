@@ -39,7 +39,7 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **VS Code per-session composer history** now mirrors the TUI input
   history ergonomics: ArrowUp/ArrowDown recall submitted prompts per
   sidebar session, while in-progress drafts stay isolated across session
-  switches.
+  switches and survive webview reloads through VS Code webview state.
 - **`/sidepanel` surface metadata** now marks the command as TUI-only so
   VS Code autocomplete and `/help` no longer advertise a terminal status
   panel toggle.

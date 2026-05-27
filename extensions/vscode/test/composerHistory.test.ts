@@ -38,6 +38,23 @@ test('ComposerHistory deduplicates repeated commands by moving them to the end',
   assert.deepEqual(history.entries('session-a'), ['second task', 'first task']);
 });
 
+test('ComposerHistory restores sanitized persisted snapshots', () => {
+  const history = new ComposerHistory({
+    entriesBySession: {
+      'session-a': ['  first task  ', '', 'second task'],
+      'session-b': Array.from({ length: 55 }, (_, index) => `task ${index}`),
+    },
+  });
+
+  assert.deepEqual(history.entries('session-a'), ['first task', 'second task']);
+  assert.equal(history.entries('session-b').length, 50);
+  assert.equal(history.entries('session-b')[0], 'task 5');
+  assert.deepEqual(history.snapshot().entriesBySession?.['session-a'], [
+    'first task',
+    'second task',
+  ]);
+});
+
 test('canNavigateComposerHistory only captures arrows at textarea boundaries', () => {
   assert.equal(canNavigateComposerHistory('one line', 3, 3, 'previous'), true);
   assert.equal(canNavigateComposerHistory('one line', 3, 3, 'next'), true);

@@ -2,10 +2,25 @@ export type ComposerHistoryDirection = 'previous' | 'next';
 
 const MAX_HISTORY_ENTRIES = 50;
 
+export interface ComposerHistorySnapshot {
+  entriesBySession?: Record<string, string[]>;
+}
+
 export class ComposerHistory {
   private readonly entriesBySession = new Map<string, string[]>();
   private readonly cursorBySession = new Map<string, number>();
   private readonly draftBySession = new Map<string, string>();
+
+  constructor(snapshot?: ComposerHistorySnapshot) {
+    for (const [sessionKey, entries] of Object.entries(snapshot?.entriesBySession ?? {})) {
+      const sanitized = entries
+        .filter((entry) => typeof entry === 'string' && entry.trim().length > 0)
+        .map((entry) => entry.trim());
+      if (sanitized.length > 0) {
+        this.entriesBySession.set(sessionKey, sanitized.slice(-MAX_HISTORY_ENTRIES));
+      }
+    }
+  }
 
   record(sessionKey: string, value: string): void {
     const entry = value.trim();
@@ -57,6 +72,14 @@ export class ComposerHistory {
 
   entries(sessionKey: string): string[] {
     return [...(this.entriesBySession.get(sessionKey) ?? [])];
+  }
+
+  snapshot(): ComposerHistorySnapshot {
+    return {
+      entriesBySession: Object.fromEntries(
+        [...this.entriesBySession.entries()].filter(([, entries]) => entries.length > 0),
+      ),
+    };
   }
 }
 
