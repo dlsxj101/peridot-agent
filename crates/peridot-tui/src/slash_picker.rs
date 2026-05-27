@@ -19,6 +19,17 @@ pub struct SlashCommandSpec {
     pub category: &'static str,
 }
 
+/// Returns the client surfaces where a slash command is meaningful.
+///
+/// The TUI catalog remains the source of truth for accepted commands; editor
+/// clients use this additive metadata to avoid suggesting TUI-only controls.
+pub fn slash_command_surfaces(spec: &SlashCommandSpec) -> &'static [&'static str] {
+    match spec.name {
+        "/collapse" | "/lang" => &["tui"],
+        _ => &["tui", "vscode"],
+    }
+}
+
 /// Dynamic auto-skill entry surfaced as a slash suggestion.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct SkillSlashSuggestion {
@@ -642,6 +653,21 @@ mod tests {
                 .iter()
                 .any(|entry| entry.name == "/plan" && !entry.skill)
         );
+    }
+
+    #[test]
+    fn slash_command_surfaces_mark_tui_only_controls() {
+        let collapse = slash_command_catalog()
+            .iter()
+            .find(|spec| spec.name == "/collapse")
+            .expect("collapse command");
+        assert_eq!(slash_command_surfaces(collapse), &["tui"]);
+
+        let plan = slash_command_catalog()
+            .iter()
+            .find(|spec| spec.name == "/plan")
+            .expect("plan command");
+        assert_eq!(slash_command_surfaces(plan), &["tui", "vscode"]);
     }
 
     #[test]

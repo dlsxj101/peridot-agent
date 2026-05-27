@@ -14,6 +14,13 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 
 ## Unreleased
 
+### Added — surface-aware slash catalog
+
+- **Slash command catalog surface metadata** now marks which clients a
+  command belongs to. VS Code keeps backward compatibility with older
+  daemons but hides TUI-only composer suggestions such as `/collapse` and
+  `/lang` when the daemon provides the metadata.
+
 ### Added — skill-aware slash autocomplete
 
 - **`skills.list` daemon RPC** exposes active auto-skills for editor

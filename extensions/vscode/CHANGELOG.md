@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Added — surface-aware slash autocomplete
+
+- Slash catalog entries may now carry client surface metadata. The VS
+  Code composer still accepts older daemon catalogs, but filters out
+  TUI-only suggestions such as `/collapse` and `/lang` when the metadata
+  is present.
+
 ### Added — compaction snapshot details
 
 - `Context compacted` transcript rows now expand into a structured

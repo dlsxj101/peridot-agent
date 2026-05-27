@@ -434,6 +434,18 @@ shared daemon, TUI, and VS Code extension surfaces.
   clients, and VS Code renders note lists as structured cards with copy
   actions.
 
+### E39. Surface-Aware Slash Catalog
+
+- **Status**: landed.
+- **Goal**: keep the shared slash catalog authoritative while preventing
+  editor users from seeing TUI-only composer suggestions.
+- **Where**: TUI slash catalog metadata, daemon `session.command_catalog`,
+  VS Code catalog normalization.
+- **Result**: command catalog rows now include additive `surfaces`
+  metadata. VS Code keeps accepting older catalogs without that field, but
+  filters out TUI-only commands such as `/collapse` and `/lang` when the
+  metadata is available.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

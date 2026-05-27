@@ -461,6 +461,7 @@ fn slash_command_catalog_result() -> Value {
                 "description": spec.description,
                 "arg_hint": spec.arg_hint,
                 "category": spec.category,
+                "surfaces": peridot_tui::slash_command_surfaces(spec),
             })
         })
         .collect();
@@ -5198,12 +5199,22 @@ mod tests {
             assert_eq!(actual["name"], expected.name);
             assert_eq!(actual["description"], expected.description);
             assert_eq!(actual["category"], expected.category);
+            let surfaces: Vec<&str> = actual["surfaces"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|value| value.as_str().unwrap())
+                .collect();
+            assert_eq!(surfaces, peridot_tui::slash_command_surfaces(expected));
             assert_eq!(
                 actual["arg_hint"].as_str().unwrap_or(""),
                 expected.arg_hint.unwrap_or("")
             );
         }
         assert!(commands.iter().any(|entry| entry["name"] == "/plan"));
+        assert!(commands.iter().any(|entry| {
+            entry["name"] == "/collapse" && entry["surfaces"] == serde_json::json!(["tui"])
+        }));
         assert!(
             commands
                 .iter()

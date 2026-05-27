@@ -65,7 +65,7 @@ pub use session_directory::{
 pub use session_picker::SessionPickerState;
 pub use slash_picker::{
     SkillSlashSuggestion, SlashCommandSpec, SlashSuggestion, filtered_specs, first_match,
-    slash_command_catalog,
+    slash_command_catalog, slash_command_surfaces,
 };
 
 pub use ask_user::{

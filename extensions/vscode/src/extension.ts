@@ -68,6 +68,7 @@ interface SlashCommandCatalogResult {
     description?: string;
     arg_hint?: string | null;
     category?: string;
+    surfaces?: unknown;
   }>;
 }
 
@@ -1939,12 +1940,33 @@ function normalizeSlashCatalog(result: SlashCommandCatalogResult): SlashCommandS
   const commands = Array.isArray(result.commands) ? result.commands : [];
   return commands
     .filter((entry) => typeof entry.name === 'string' && typeof entry.description === 'string')
+    .filter((entry) => slashCommandSupportsSurface(entry, 'vscode'))
     .map((entry) => ({
       name: entry.name as string,
       description: entry.description as string,
       ...(typeof entry.arg_hint === 'string' ? { argHint: entry.arg_hint } : {}),
       ...(typeof entry.category === 'string' ? { category: entry.category } : {}),
+      ...slashCommandSurfacesField(entry),
     }));
+}
+
+function slashCommandSupportsSurface(
+  entry: { surfaces?: unknown },
+  surface: string,
+): boolean {
+  const surfaces = normalizeSlashCommandSurfaces(entry);
+  return surfaces.length === 0 || surfaces.includes(surface);
+}
+
+function slashCommandSurfacesField(entry: { surfaces?: unknown }): Pick<SlashCommandSpec, 'surfaces'> {
+  const surfaces = normalizeSlashCommandSurfaces(entry);
+  return surfaces.length > 0 ? { surfaces } : {};
+}
+
+function normalizeSlashCommandSurfaces(entry: { surfaces?: unknown }): string[] {
+  return Array.isArray(entry.surfaces)
+    ? entry.surfaces.filter((surface): surface is string => typeof surface === 'string')
+    : [];
 }
 
 function normalizeSkillSlashEntries(result: SkillsListResult): SlashCommandSpec[] {

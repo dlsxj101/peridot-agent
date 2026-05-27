@@ -203,6 +203,7 @@ export interface SlashCommandSpec {
   description: string;
   argHint?: string;
   category?: string;
+  surfaces?: string[];
 }
 
 export interface CompactionDetailItem {
