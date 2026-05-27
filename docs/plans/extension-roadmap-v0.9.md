@@ -110,6 +110,18 @@ shared daemon, TUI, and VS Code extension surfaces.
   done/total counts, current-step metadata, and one command row per plan
   step. TUI keeps its existing local side-panel rendering.
 
+### E16. Session Save Slash Parity
+
+- **Status**: landed.
+- **Goal**: make `/session save` an actual daemon-backed persistence
+  command from the VS Code composer.
+- **Where**: daemon `session.command`, session record persistence, VS
+  Code command-result typing.
+- **Result**: `/session save` now persists the active daemon session
+  record immediately and returns a structured `session_save` command
+  result. Live token, cost, and turn totals are copied from the daemon's
+  session tracker so explicit saves are useful before a run finishes.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

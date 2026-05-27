@@ -127,6 +127,8 @@ export interface CommandResultView {
   workspace?: string;
   workspace_root?: string;
   status?: string;
+  summary?: string;
+  updated_at_unix?: number;
   session_count?: number;
   current_cost_usd?: number;
   current_tokens?: number;

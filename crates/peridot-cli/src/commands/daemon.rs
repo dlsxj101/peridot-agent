@@ -24,7 +24,7 @@ use peridot_core::{
     StopReason, SubagentModelChange, parse_slash_command, slash_state_delta,
 };
 use peridot_git::GitManager;
-use peridot_memory::{MemoryStore, SessionLifecycle, SessionRecord};
+use peridot_memory::{MemoryStore, SessionLifecycle, SessionRecord, SessionSummary};
 use peridot_tools::AskUserPort;
 use peridot_tui::SettingItem;
 use serde::{Deserialize, Serialize};
@@ -942,8 +942,24 @@ async fn save_daemon_session_record(
             + summary.usage.reasoning_output_tokens;
         record.total_cost_usd = summary.usage.estimated_cost_usd;
         record.turns_used = summary.turns.len() as u32;
+    } else if let Some(usage) = live_session_usage_snapshot(state, session_id).await {
+        record.total_tokens = record.total_tokens.max(usage.total_tokens);
+        record.total_cost_usd = record.total_cost_usd.max(usage.cost_usd);
+        record.turns_used = record.turns_used.max(usage.turns_used);
     }
     let _ = store.save_session_record(&record);
+}
+
+async fn live_session_usage_snapshot(
+    state: &DaemonState,
+    session_id: &str,
+) -> Option<LiveSessionUsage> {
+    state
+        .sessions
+        .lock()
+        .await
+        .get(session_id)
+        .map(|entry| entry.usage.lock().unwrap().clone())
 }
 
 async fn update_daemon_session_lifecycle(
@@ -1580,6 +1596,9 @@ async fn execute_session_command(
         SlashCommand::Cost => handle_command_cost(state, session_id, raw_command).await,
         SlashCommand::Info => handle_command_info(state, session_id, raw_command).await,
         SlashCommand::PlanShow => handle_command_plan_show(state, session_id, raw_command).await,
+        SlashCommand::SessionSave => {
+            handle_command_session_save(state, session_id, raw_command).await
+        }
         SlashCommand::Skill { name, args } => {
             // Try the project's skill store. If the name exists, inject
             // the body as a PlanReminder-style context entry so the
@@ -1639,8 +1658,7 @@ async fn execute_session_command(
             "severity": "info",
             "command": raw_command,
         })),
-        SlashCommand::SessionSave
-        | SlashCommand::SidepanelToggle
+        SlashCommand::SidepanelToggle
         | SlashCommand::Collapse
         | SlashCommand::Rewind
         | SlashCommand::SessionNew(_)
@@ -1877,6 +1895,72 @@ fn handle_command_session_count(state: &DaemonState, raw_command: &str) -> Resul
         "suspended": summary.suspended,
         "done": summary.done,
         "failed": summary.failed,
+    }))
+}
+
+async fn handle_command_session_save(
+    state: &DaemonState,
+    session_id: Option<&str>,
+    raw_command: &str,
+) -> Result<Value, String> {
+    let Some(session_id) = session_id else {
+        return Err("session save requires an active session".to_string());
+    };
+    let live_spec = state
+        .sessions
+        .lock()
+        .await
+        .get(session_id)
+        .map(|entry| entry.spec.clone());
+    let store = MemoryStore::new(state.project_root.join(".peridot/memory.db"));
+    if let Some(spec) = live_spec.as_ref() {
+        save_daemon_session_record(state, session_id, spec, SessionLifecycle::Running, None).await;
+    } else if let Some(mut record) = store
+        .get_session_record(session_id)
+        .map_err(|err| format!("failed to read session record: {err}"))?
+    {
+        record.updated_at_unix = crate::run_state::unix_timestamp();
+        store
+            .save_session_record(&record)
+            .map_err(|err| format!("failed to save session record: {err}"))?;
+    } else {
+        return Err(format!("session not found: {session_id}"));
+    }
+    let record = store
+        .get_session_record(session_id)
+        .map_err(|err| format!("failed to read saved session record: {err}"))?
+        .ok_or_else(|| format!("session not found after save: {session_id}"))?;
+    let title = record_title(&record);
+    store
+        .save_session(&SessionSummary {
+            id: record.id.clone(),
+            summary: if record.summary.trim().is_empty() {
+                title.clone()
+            } else {
+                record.summary.clone()
+            },
+        })
+        .map_err(|err| format!("failed to save legacy session summary: {err}"))?;
+    Ok(serde_json::json!({
+        "kind": "session_save",
+        "title": "Session Saved",
+        "message": format!("session saved: {session_id}"),
+        "severity": "info",
+        "command": raw_command,
+        "session_id": session_id,
+        "status": format!("{:?}", record.status).to_ascii_lowercase(),
+        "summary": record.summary,
+        "label": title,
+        "updated_at_unix": record.updated_at_unix,
+        "total_tokens": record.total_tokens,
+        "total_cost_usd": record.total_cost_usd,
+        "turns_used": record.turns_used,
+        "items": [
+            { "label": "session", "detail": session_id },
+            { "label": "status", "detail": format!("{:?}", record.status).to_ascii_lowercase() },
+            { "label": "tokens", "detail": record.total_tokens.to_string() },
+            { "label": "cost", "detail": format!("${:.4}", record.total_cost_usd) },
+        ],
     }))
 }
 
@@ -4420,6 +4504,68 @@ mod tests {
         assert_eq!(result["items"][0]["detail"], "done");
         assert_eq!(result["items"][1]["detail"], "in_progress");
         assert_eq!(result["steps"][1]["text"], "apply patch");
+        shutdown_sessions(&state).await;
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn session_command_save_persists_live_session_record() {
+        let root = test_project("session-command-save");
+        let (tx, _rx) = mpsc::unbounded_channel::<String>();
+        let state = DaemonState::new(
+            root.clone(),
+            PeridotConfig::default(),
+            test_options(None),
+            tx,
+        );
+        state.sessions.lock().await.insert(
+            "session-save".to_string(),
+            SessionEntry {
+                cancel: CancelToken::new(),
+                compact_request: Arc::new(AtomicBool::new(false)),
+                task: None,
+                spec: SessionRunSpec {
+                    task: "save this session".to_string(),
+                    mode: ExecutionMode::Execute,
+                    permission: PermissionMode::Auto,
+                    model: None,
+                    reasoning_effort: None,
+                    service_tier: None,
+                    config: PeridotConfig::default(),
+                },
+                usage: Arc::new(StdMutex::new(LiveSessionUsage {
+                    total_tokens: 1500,
+                    cost_usd: 0.08,
+                    turns_used: 4,
+                    ..LiveSessionUsage::default()
+                })),
+                plan: Arc::new(StdMutex::new(LiveSessionPlan::default())),
+                approval_grants: Vec::new(),
+                waiting_approval: None,
+            },
+        );
+
+        let result = execute_session_command(
+            &state,
+            Some("session-save"),
+            "/session save",
+            SlashCommand::SessionSave,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result["kind"], "session_save");
+        assert_eq!(result["session_id"], "session-save");
+        assert_eq!(result["status"], "running");
+        assert_eq!(result["total_tokens"], 1500);
+        assert_eq!(result["turns_used"], 4);
+        assert!((result["total_cost_usd"].as_f64().unwrap() - 0.08).abs() < 1e-9);
+        let store = MemoryStore::new(root.join(".peridot/memory.db"));
+        let record = store.get_session_record("session-save").unwrap().unwrap();
+        assert_eq!(record.last_task.as_deref(), Some("save this session"));
+        assert_eq!(record.total_tokens, 1500);
+        assert_eq!(record.turns_used, 4);
+        assert!(store.get_session("session-save").unwrap().is_some());
         shutdown_sessions(&state).await;
         let _ = std::fs::remove_dir_all(root);
     }

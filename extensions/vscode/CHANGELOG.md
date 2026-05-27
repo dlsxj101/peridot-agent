@@ -52,6 +52,9 @@
   totals, including the active budget limit when available.
 - `/plan show` now runs through the daemon-backed slash path and returns
   the live plan snapshot as structured command rows.
+- `/session save` now runs through the daemon-backed slash path and
+  persists the active daemon session record immediately, including live
+  token, cost, and turn totals.
 - `/codemap` now uses a persisted `.peridot/codemap.json` index, and
   `Peridot: Refresh Workspace Code Map Index` rebuilds it explicitly.
 - `Peridot: Search Workspace Code Map` runs `/codemap find <query>`
