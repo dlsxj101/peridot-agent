@@ -576,6 +576,9 @@ pub(crate) fn slash_argument_context_with_dynamic(
     if let Some(context) = skill_name_argument_context(query, skills) {
         return Some(context);
     }
+    if let Some(context) = skills_search_argument_context(query) {
+        return Some(context);
+    }
     if let Some(context) = session_target_argument_context(query, sessions) {
         return Some(context);
     }
@@ -734,6 +737,10 @@ fn skill_applies_to_command(command_name: &str, archived: bool) -> bool {
         "/skills show" | "/skills view" => true,
         _ => !archived,
     }
+}
+
+fn skills_search_argument_context(query: &str) -> Option<SlashArgumentContext> {
+    static_subcommand_argument_context(query, "/skills", &["search"], true, false)
 }
 
 fn mcp_add_transport_argument_context(query: &str) -> Option<SlashArgumentContext> {
@@ -1313,6 +1320,27 @@ mod tests {
         assert!(
             slash_argument_context_with_skills("/skills archive auto-fix-parser", &skills)
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn skills_search_argument_context_leaves_room_for_query() {
+        let context = slash_argument_context_with_dynamic("/skills se", &[], &[], &[], &[], &[])
+            .expect("skills search option");
+        assert_eq!(context.command_name, "/skills");
+        assert_eq!(context.options, vec!["search"]);
+        assert!(context.append_space);
+
+        let context =
+            slash_argument_context_with_dynamic("/skills search", &[], &[], &[], &[], &[])
+                .expect("exact search should still complete to a query slot");
+        assert_eq!(context.options, vec!["search"]);
+        assert!(context.append_space);
+
+        assert!(
+            slash_argument_context_with_dynamic("/skills search ", &[], &[], &[], &[], &[])
+                .is_none(),
+            "query slot is free-form after the trailing space"
         );
     }
 

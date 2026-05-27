@@ -51,6 +51,8 @@
 - Fast and autofix autocomplete now suggests parser-supported aliases such
   as `/fast standard` and `/autofix false` while keeping numeric autofix
   limits free-form.
+- Skills search autocomplete now accepts `/skills se` into
+  `/skills search ` so users can immediately type the free-form query.
 - The composer now keeps submitted prompt history per sidebar session.
   ArrowUp / ArrowDown recall previous prompts when the caret is on the
   first or last textarea line, and unsent drafts no longer leak across

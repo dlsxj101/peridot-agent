@@ -847,6 +847,18 @@ shared daemon, TUI, and VS Code extension surfaces.
   runnable, and `/autofix <N>` still submits as a free-form max-attempts
   value.
 
+### E70. Skills Search Continuation Autocomplete
+
+- **Status**: landed.
+- **Goal**: make `/skills search` autocomplete stop at a valid editing
+  position instead of accepting an invalid bare command.
+- **Where**: TUI dynamic slash argument context, TUI Tab acceptance path,
+  and VS Code webview slash autocomplete helper.
+- **Result**: accepting `/skills se` now fills `/skills search ` with a
+  trailing space in both clients, leaving the free-form query slot ready
+  for the operator. Once the trailing space is present, autocomplete
+  closes so the search query remains unrestricted.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

@@ -76,6 +76,8 @@ export function slashArgumentContext(
   if (modelContext) return modelContext;
   const skillContext = skillNameArgumentContext(query, slashCommands);
   if (skillContext) return skillContext;
+  const skillSearchContext = skillsSearchArgumentContext(query);
+  if (skillSearchContext) return skillSearchContext;
   const sessionContext = sessionTargetArgumentContext(query, sessionTargets);
   if (sessionContext) return sessionContext;
   const mcpServerContext = mcpServerArgumentContext(query, mcpServers);
@@ -391,6 +393,10 @@ function skillAppliesToCommand(commandName: string, archived: boolean): boolean 
   if (commandName === '/skills restore') return archived;
   if (commandName === '/skills show' || commandName === '/skills view') return true;
   return !archived;
+}
+
+function skillsSearchArgumentContext(query: string): SlashArgumentContext | undefined {
+  return staticSubcommandArgumentContext(query, '/skills', ['search'], true, false);
 }
 
 export function slashArgumentOptions(command: SlashCommandSpec): string[] {
