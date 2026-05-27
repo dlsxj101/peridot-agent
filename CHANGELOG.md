@@ -26,6 +26,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **`session.command_catalog` surface filtering** lets editor clients ask
   the daemon for only `vscode` commands while callers without params keep
   receiving the full TUI catalog.
+- **Daemon-backed `/help` for editor clients** now returns structured,
+  surface-filtered command rows instead of relying on VS Code to format a
+  local help message.
 
 ### Added — skill-aware slash autocomplete
 

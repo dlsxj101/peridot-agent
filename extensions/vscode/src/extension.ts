@@ -646,6 +646,7 @@ async function runSlashCommand(
   const sessionId = liveRun?.sessionId ?? sidebar.currentDaemonSessionId();
   const params = {
     command,
+    surface: 'vscode',
     ...(sessionId ? { session_id: sessionId } : {}),
   };
   if (liveRun?.daemon) {

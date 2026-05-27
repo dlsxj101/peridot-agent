@@ -1191,10 +1191,6 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       this.updateRunOptions({ ...options, mode: 'goal' }, 'mode: goal');
       return;
     }
-    if (command === 'help' && rest.length === 0) {
-      this.append({ role: 'assistant', text: slashHelpText(this.state.slashCommands) });
-      return;
-    }
     await this.executeDaemonSlash(input, options);
   }
 
@@ -1837,19 +1833,6 @@ function remoteSessionStatus(session: DaemonSessionSummary): string {
   const status = session.status?.trim();
   if (!status) return session.running ? 'Running' : 'Idle';
   return status.charAt(0).toUpperCase() + status.slice(1);
-}
-
-function slashHelpText(commands: SlashCommandSpec[]): string {
-  if (commands.length === 0) {
-    return 'Slash commands are loading from the Peridot daemon.';
-  }
-  return [
-    'Slash commands:',
-    ...commands.map((command) => {
-      const hint = command.argHint ? ` ${command.argHint}` : '';
-      return `- \`${command.name}${hint}\` - ${command.description}`;
-    }),
-  ].join('\n');
 }
 
 function parseReasoningEffort(value: string): RunOptions['reasoningEffort'] | undefined {

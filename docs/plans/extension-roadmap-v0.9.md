@@ -471,6 +471,18 @@ shared daemon, TUI, and VS Code extension surfaces.
   `vscode` surface explicitly and retains client-side filtering as an
   older-daemon compatibility guard.
 
+### E42. Help Slash Catalog Parity
+
+- **Status**: landed.
+- **Goal**: make `/help` use the same daemon-backed slash metadata as the
+  composer picker instead of formatting a VS Code-local help message.
+- **Where**: daemon `session.command`, VS Code sidebar slash dispatch,
+  generic command-result rendering.
+- **Result**: `/help` now returns a structured `help` command result with
+  one row per surface-filtered slash command. VS Code sends
+  `surface: "vscode"` through `session.command`, so the help list and
+  composer autocomplete are derived from the same filtered catalog.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

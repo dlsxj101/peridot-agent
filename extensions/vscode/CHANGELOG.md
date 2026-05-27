@@ -14,6 +14,8 @@
 - The extension now requests `session.command_catalog` with
   `surface: "vscode"`, so modern daemons filter editor-inapplicable
   commands before the catalog reaches the webview.
+- `/help` now runs through daemon `session.command` and renders the same
+  structured, surface-filtered catalog rows as other command results.
 
 ### Added — compaction snapshot details
 

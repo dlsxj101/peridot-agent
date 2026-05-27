@@ -481,6 +481,45 @@ fn slash_command_catalog_result(surface: Option<&str>) -> Value {
     serde_json::json!({ "commands": commands })
 }
 
+fn handle_command_help(raw_command: &str, surface: Option<&str>) -> Value {
+    let items = slash_help_items(surface);
+    let total = items.len();
+    let mut result = serde_json::json!({
+        "kind": "help",
+        "title": "Slash Commands",
+        "message": format!("{total} slash command(s) available"),
+        "severity": "info",
+        "command": raw_command,
+        "items": items,
+        "total": total,
+    });
+    if let Some(surface) = surface {
+        result["surface"] = Value::String(surface.to_string());
+    }
+    result
+}
+
+fn slash_help_items(surface: Option<&str>) -> Vec<Value> {
+    peridot_tui::slash_command_catalog()
+        .iter()
+        .filter(|spec| {
+            surface
+                .is_none_or(|surface| peridot_tui::slash_command_surfaces(spec).contains(&surface))
+        })
+        .map(|spec| {
+            let label = match spec.arg_hint {
+                Some(hint) => format!("{} {}", spec.name, hint),
+                None => spec.name.to_string(),
+            };
+            serde_json::json!({
+                "label": label,
+                "detail": spec.description,
+                "source": spec.category,
+            })
+        })
+        .collect()
+}
+
 fn skills_list_result(state: &DaemonState) -> Value {
     let store = peridot_memory::MemoryStore::new(state.project_root.join(".peridot/memory.db"));
     let skills = store.list_skills().unwrap_or_default();
@@ -1469,8 +1508,15 @@ async fn handle_session_command(
         return Ok(());
     };
     let session_id = optional_str(&params, "session_id").map(str::to_string);
+    let surface = optional_str(&params, "surface").map(str::to_string);
 
-    match execute_session_command(state, session_id.as_deref(), &command_text, command).await {
+    let result = if matches!(command, SlashCommand::Help) {
+        Ok(handle_command_help(&command_text, surface.as_deref()))
+    } else {
+        execute_session_command(state, session_id.as_deref(), &command_text, command).await
+    };
+
+    match result {
         Ok(result) => {
             if let Some(session_id) = session_id.as_deref() {
                 emit_event(
@@ -1619,13 +1665,7 @@ async fn execute_session_command(
             "info",
             &state_delta,
         )),
-        SlashCommand::Help => Ok(serde_json::json!({
-            "kind": "help",
-            "title": "Slash Commands",
-            "message": "Use the extension picker to select a command. Commands that touch project state are executed through the Peridot daemon.",
-            "severity": "info",
-            "command": raw_command,
-        })),
+        SlashCommand::Help => Ok(handle_command_help(raw_command, None)),
         SlashCommand::SkillList => handle_command_skill_list(state, raw_command),
         SlashCommand::SkillShow(name) => handle_command_skill_show(state, raw_command, &name),
         SlashCommand::SkillSearch(query) => handle_command_skill_search(state, raw_command, &query),
@@ -5273,6 +5313,23 @@ mod tests {
                 .iter()
                 .any(|surface| surface == "vscode")
         }));
+    }
+
+    #[tokio::test]
+    async fn session_command_help_returns_surface_filtered_catalog_rows() {
+        let out = dispatch_and_collect(
+            r#"{"jsonrpc":"2.0","id":11,"method":"session.command","params":{"command":"/help","surface":"vscode"}}"#,
+        )
+        .await;
+        assert_eq!(out[0]["jsonrpc"], "2.0");
+        let result = &out[0]["result"];
+        assert_eq!(result["kind"], "help");
+        assert_eq!(result["surface"], "vscode");
+        let items = result["items"].as_array().unwrap();
+        assert!(items.iter().any(|entry| entry["label"] == "/plan"));
+        assert!(!items.iter().any(|entry| entry["label"] == "/collapse"));
+        assert!(!items.iter().any(|entry| entry["label"] == "/lang <en|ko>"));
+        assert_eq!(result["total"].as_u64().unwrap(), items.len() as u64);
     }
 
     #[tokio::test]
