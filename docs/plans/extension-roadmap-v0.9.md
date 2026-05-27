@@ -507,6 +507,18 @@ shared daemon, TUI, and VS Code extension surfaces.
   panel toggle semantics. TUI keeps accepting the command, while VS Code's
   surface-filtered autocomplete and `/help` output no longer suggest it.
 
+### E45. Session New Slash Intent Parity
+
+- **Status**: landed.
+- **Goal**: stop requiring VS Code to locally re-parse `/session new`
+  after the daemon has already parsed the shared slash command.
+- **Where**: daemon `session.command`, VS Code sidebar slash result
+  application.
+- **Result**: `/session new [task]` now returns a structured
+  `session_new` command result with an optional task. VS Code creates the
+  new local session from that daemon result and starts the task when one is
+  present, while retaining the old local fallback for older daemons.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

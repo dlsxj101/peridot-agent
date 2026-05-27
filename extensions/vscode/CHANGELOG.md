@@ -21,6 +21,9 @@
   `/skill-name` suggestions stay current without a manual status refresh.
 - `/sidepanel` is now filtered out of VS Code slash autocomplete and
   `/help` because it only toggles the TUI status panel.
+- `/session new [task]` now applies the daemon's structured
+  `session_new` result, so the extension no longer has to re-parse that
+  slash command on modern daemons.
 
 ### Added — compaction snapshot details
 

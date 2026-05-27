@@ -1335,8 +1335,9 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       if (slashCommandChangesSkillCatalog(input)) {
         await this.handlers.refreshSlashCatalog();
       }
-      if (result.kind === 'start_task' && result.task) {
-        await this.handlers.runTask(result.task, this.state.runOptions);
+      const task = taskStartedByCommandResult(result);
+      if (task) {
+        await this.handlers.runTask(task, this.state.runOptions);
       }
     } catch (err) {
       this.appendError(err instanceof Error ? err.message : String(err));
@@ -1408,6 +1409,10 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
   }
 
   private applySessionMutationResult(result: CommandResultView): void {
+    if (result.kind === 'session_new') {
+      this.createNewSession(this.state.context.workspace);
+      return;
+    }
     if (result.kind === 'session_switch' && result.switched === true) {
       const session = this.ensureSessionFromSwitchResult(result);
       if (session) {
@@ -1889,6 +1894,12 @@ function slashCommandChangesSkillCatalog(input: string): boolean {
     .split(/\s+/)
     .map((part) => part.toLowerCase());
   return command === 'skills' && (subcommand === 'archive' || subcommand === 'restore');
+}
+
+function taskStartedByCommandResult(result: CommandResultView): string | undefined {
+  if (result.kind !== 'start_task' && result.kind !== 'session_new') return undefined;
+  const task = result.task?.trim();
+  return task && task.length > 0 ? task : undefined;
 }
 
 function applyRunOptionDelta(

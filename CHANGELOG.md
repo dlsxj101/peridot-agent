@@ -35,6 +35,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **`/sidepanel` surface metadata** now marks the command as TUI-only so
   VS Code autocomplete and `/help` no longer advertise a terminal status
   panel toggle.
+- **Daemon-backed `/session new [task]` intent** now lets VS Code apply a
+  structured `session_new` result instead of locally re-parsing the slash
+  command after daemon parsing.
 
 ### Added — skill-aware slash autocomplete
 

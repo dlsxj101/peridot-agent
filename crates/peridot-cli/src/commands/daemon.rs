@@ -1742,19 +1742,18 @@ async fn execute_session_command(
             }))
         }
         SlashCommand::Clear => handle_command_clear(state, session_id, raw_command).await,
-        SlashCommand::SidepanelToggle | SlashCommand::Collapse | SlashCommand::SessionNew(_) => {
-            Ok(with_state_delta(
-                serde_json::json!({
-                    "kind": "client_action",
-                    "action": "local",
-                    "title": "Handled by Extension",
-                    "message": format!("{raw_command}: handled by the extension UI"),
-                    "severity": "info",
-                    "command": raw_command,
-                }),
-                &state_delta,
-            ))
-        }
+        SlashCommand::SidepanelToggle | SlashCommand::Collapse => Ok(with_state_delta(
+            serde_json::json!({
+                "kind": "client_action",
+                "action": "local",
+                "title": "Handled by Extension",
+                "message": format!("{raw_command}: handled by the extension UI"),
+                "severity": "info",
+                "command": raw_command,
+            }),
+            &state_delta,
+        )),
+        SlashCommand::SessionNew(task) => Ok(handle_command_session_new(raw_command, task)),
         SlashCommand::GoalStart(goal) => Ok(with_state_delta(
             start_task_result("goal", goal),
             &state_delta,
@@ -1923,6 +1922,26 @@ fn start_task_result(label: &str, task: String) -> Value {
         "task": task,
         "label": label,
         "severity": "info",
+    })
+}
+
+fn handle_command_session_new(raw_command: &str, task: Option<String>) -> Value {
+    let trimmed_task = task
+        .as_deref()
+        .map(str::trim)
+        .filter(|task| !task.is_empty());
+    serde_json::json!({
+        "kind": "session_new",
+        "title": "New Session",
+        "message": if trimmed_task.is_some() {
+            "session new: opening and starting task"
+        } else {
+            "session new: opened"
+        },
+        "severity": "info",
+        "command": raw_command,
+        "task": trimmed_task,
+        "has_task": trimmed_task.is_some(),
     })
 }
 
@@ -6061,6 +6080,40 @@ mod tests {
         assert_eq!(result["label"], "goal");
         assert_eq!(result["task"], "ship release");
         assert_eq!(result["state_delta"]["mode"], "goal");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn session_command_new_returns_structured_client_intent() {
+        let (tx, _rx) = mpsc::unbounded_channel::<String>();
+        let root = test_project("session-command-new");
+        let state = DaemonState::new(
+            root.clone(),
+            PeridotConfig::default(),
+            test_options(None),
+            tx,
+        );
+
+        let empty =
+            execute_session_command(&state, None, "/session new", SlashCommand::SessionNew(None))
+                .await
+                .unwrap();
+        assert_eq!(empty["kind"], "session_new");
+        assert_eq!(empty["has_task"], false);
+        assert!(empty.get("task").is_none_or(Value::is_null));
+
+        let with_task = execute_session_command(
+            &state,
+            None,
+            "/session new fix tests",
+            SlashCommand::SessionNew(Some("fix tests".into())),
+        )
+        .await
+        .unwrap();
+        assert_eq!(with_task["kind"], "session_new");
+        assert_eq!(with_task["task"], "fix tests");
+        assert_eq!(with_task["has_task"], true);
+        assert_ne!(with_task["action"], "local");
         let _ = std::fs::remove_dir_all(root);
     }
 
