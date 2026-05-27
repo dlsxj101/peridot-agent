@@ -763,6 +763,7 @@ function renderHeader(s: SidebarState): HTMLElement {
   right.append(iconButton('skills', 'Show Skills', () => vscode.postMessage({ type: 'showSkills' })));
   right.append(iconButton('archive', 'Show Archived Skills', () => vscode.postMessage({ type: 'showArchivedSkills' })));
   right.append(iconButton('search', 'Search Skills', () => vscode.postMessage({ type: 'searchSkills' })));
+  right.append(iconButton('search-archive', 'Search Archived Skills', () => vscode.postMessage({ type: 'searchArchivedSkills' })));
   right.append(iconButton('attach', 'Attach File', () => vscode.postMessage({ type: 'attachFile' })));
   right.append(iconButton('export', 'Export Session Artifacts', () => vscode.postMessage({ type: 'exportSessionArtifacts' })));
   right.append(iconButton('pr', 'GitHub PR Status', () => vscode.postMessage({ type: 'showPrStatus' })));
@@ -984,6 +985,10 @@ function iconSvg(kind: string): string {
       return `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4.5h4l1.5 2h5.5v6.5h-11z"/><path d="M4.5 9h7"/><path d="M4.5 11h4"/><path d="M5 2.5h5"/></svg>`;
     case 'skills':
       return `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3.5h10"/><path d="M3 8h10"/><path d="M3 12.5h10"/><path d="M5.5 2.2v2.6"/><path d="M9.5 6.7v2.6"/><path d="M6.8 11.2v2.6"/></svg>`;
+    case 'search':
+      return `<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="7" cy="7" r="4.2"/><path d="M10.2 10.2 14 14"/></svg>`;
+    case 'search-archive':
+      return `<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4.5h7.4v6.8h-7.4z"/><path d="M1.8 2.5h8.8v2h-8.8z"/><path d="M4.7 7.3h3"/><circle cx="11" cy="11" r="2.1"/><path d="M12.5 12.5 14 14"/></svg>`;
     case 'pin':
       return `<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5.5 2.5h5l-1 4 2.5 2.5H4l2.5-2.5z"/><path d="M8 9v4.5"/></svg>`;
     case 'unpin':
@@ -2794,6 +2799,9 @@ function renderSkillsBlock(item: TranscriptItem): HTMLElement {
     const command = String(label);
     const name = command.replace(/^\/+/, '');
     if (archived) {
+      actions.append(iconButton('open', `Show ${command}`, () => {
+        vscode.postMessage({ type: 'showSkill', name });
+      }));
       actions.append(iconButton('restore', `Restore ${command}`, () => {
         vscode.postMessage({ type: 'restoreSkill', name });
       }));
@@ -2829,6 +2837,10 @@ function renderSkillDetailBlock(item: TranscriptItem): HTMLElement {
   const result = item.commandResult;
   const label = result?.label ?? (result?.name ? `/${result.name}` : 'skill');
   const body = typeof result?.body === 'string' ? result.body : '';
+  const archived = result?.archived === true;
+  const archivedAt = typeof result?.archived_at_unix === 'number'
+    ? result.archived_at_unix
+    : result?.archivedAtUnix;
   const lastUsed = typeof result?.last_used_at_unix === 'number'
     ? result.last_used_at_unix
     : result?.lastUsedAtUnix;
@@ -2838,7 +2850,11 @@ function renderSkillDetailBlock(item: TranscriptItem): HTMLElement {
   title.append(el('span', 'command-title', result?.title ?? label));
   const chips = el('div', 'attachment-chips');
   if (result?.scope) chips.append(el('span', 'command-chip', result.scope));
+  if (archived) chips.append(el('span', 'command-chip', 'archived'));
   if (result?.pinned) chips.append(el('span', 'command-chip', 'pinned'));
+  if (typeof archivedAt === 'number' && archivedAt > 0) {
+    chips.append(el('span', 'command-chip', `archived ${archivedAt}`));
+  }
   if (typeof lastUsed === 'number' && lastUsed > 0) {
     chips.append(el('span', 'command-chip', `used ${lastUsed}`));
   }
@@ -2847,9 +2863,15 @@ function renderSkillDetailBlock(item: TranscriptItem): HTMLElement {
   const actions = el('div', 'attachment-actions');
   const command = String(label);
   const name = command.replace(/^\/+/, '');
-  actions.append(iconButton('send', `Use ${command}`, () => {
-    vscode.postMessage({ type: 'useSkill', name });
-  }));
+  if (archived) {
+    actions.append(iconButton('restore', `Restore ${command}`, () => {
+      vscode.postMessage({ type: 'restoreSkill', name });
+    }));
+  } else {
+    actions.append(iconButton('send', `Use ${command}`, () => {
+      vscode.postMessage({ type: 'useSkill', name });
+    }));
+  }
   const copy = iconButton('copy', `Copy ${command}`, () => {
     void markCopied(copy, command);
   });
@@ -2860,9 +2882,11 @@ function renderSkillDetailBlock(item: TranscriptItem): HTMLElement {
     });
     actions.append(copyBody);
   }
-  actions.append(iconButton('archive', `Archive ${command}`, () => {
-    vscode.postMessage({ type: 'archiveSkill', name });
-  }));
+  if (!archived) {
+    actions.append(iconButton('archive', `Archive ${command}`, () => {
+      vscode.postMessage({ type: 'archiveSkill', name });
+    }));
+  }
   header.append(actions);
   wrap.append(header);
   if (result?.detail) wrap.append(el('div', 'command-message', result.detail));

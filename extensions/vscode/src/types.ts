@@ -418,6 +418,7 @@ export type OutboundMessage =
   | { type: 'showSkills' }
   | { type: 'showArchivedSkills' }
   | { type: 'searchSkills' }
+  | { type: 'searchArchivedSkills' }
   | { type: 'showSkill'; name: string }
   | { type: 'useSkill'; name: string }
   | { type: 'toggleSkillPin'; name: string; pinned: boolean }

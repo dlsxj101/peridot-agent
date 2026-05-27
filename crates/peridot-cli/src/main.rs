@@ -1998,14 +1998,18 @@ fn handle_skill_list(state: &mut TuiState, project_root: &Path) {
 
 fn handle_skill_show(state: &mut TuiState, project_root: &Path, name: &str) {
     let store = MemoryStore::new(project_root.join(".peridot/memory.db"));
-    let active = match store.list_skills() {
-        Ok(skills) => skills,
+    let records = match store.list_skill_records() {
+        Ok(records) => records,
         Err(err) => {
             state.push_error(format!("skills: failed to read skill store: {err}"));
             return;
         }
     };
-    let Some(skill) = active.into_iter().find(|skill| skill.name == name) else {
+    let Some(skill) = records
+        .into_iter()
+        .map(|record| record.skill)
+        .find(|skill| skill.name == name)
+    else {
         state.push_error(format!("skill not found: {name}"));
         return;
     };
@@ -2014,11 +2018,17 @@ fn handle_skill_show(state: &mut TuiState, project_root: &Path, name: &str) {
     } else {
         ""
     };
+    let archived = if skill.archived_at_unix > 0 {
+        format!(" · archived {}", skill.archived_at_unix)
+    } else {
+        String::new()
+    };
     state.push_transcript(format!(
-        "skill `{}`\nscope: {}{}\ndescription: {}\n\n{}",
+        "skill `{}`\nscope: {}{}{}\ndescription: {}\n\n{}",
         skill.name,
         skill.scope,
         pinned,
+        archived,
         skill_description(&skill),
         skill.body.trim()
     ));

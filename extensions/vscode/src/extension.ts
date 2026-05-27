@@ -137,6 +137,7 @@ export function activate(context: vscode.ExtensionContext) {
     showSkills: async (): Promise<void> => showSkills(output, sidebar),
     showArchivedSkills: async (): Promise<void> => showArchivedSkills(output, sidebar),
     searchSkills: async (): Promise<void> => searchSkills(output, sidebar),
+    searchArchivedSkills: async (): Promise<void> => searchArchivedSkills(output, sidebar),
     showSkill: async (name: string): Promise<void> => showSkill(name, output, sidebar),
     useSkill: async (name: string): Promise<void> => useSkill(name, output, sidebar),
     toggleSkillPin: async (name: string, pinned: boolean): Promise<void> =>
@@ -326,6 +327,12 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand('peridot.searchSkills', async () => {
       await searchSkills(output, sidebar);
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('peridot.searchArchivedSkills', async () => {
+      await searchArchivedSkills(output, sidebar);
     }),
   );
 
@@ -1066,6 +1073,42 @@ async function searchSkills(
     output.appendLine(`[peridot] skills search failed: ${message}`);
     sidebar.appendError(message);
     await vscode.window.showErrorMessage(`Peridot skill search failed: ${message}`);
+  }
+}
+
+async function searchArchivedSkills(
+  output: vscode.OutputChannel,
+  sidebar: PeridotSidebarProvider,
+): Promise<void> {
+  const query = await vscode.window.showInputBox({
+    title: 'Search Archived Peridot Skills',
+    prompt: 'Search archived stored skills by name or body text',
+    placeHolder: 'parser release rust',
+    ignoreFocusOut: true,
+  });
+  const trimmed = query?.trim();
+  if (!trimmed) return;
+  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!folder) {
+    const message = 'Open a workspace folder before searching archived Peridot skills.';
+    sidebar.setWorkspaceProblem(message);
+    await vscode.window.showWarningMessage(message);
+    return;
+  }
+  await vscode.commands.executeCommand('peridot.chatView.focus');
+  try {
+    const result = await runSlashCommand(
+      `/skills archived ${trimmed}`,
+      output,
+      sidebar,
+      sidebar.currentRunOptions(),
+    );
+    sidebar.appendCommandResult(result);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    output.appendLine(`[peridot] archived skills search failed: ${message}`);
+    sidebar.appendError(message);
+    await vscode.window.showErrorMessage(`Peridot archived skill search failed: ${message}`);
   }
 }
 

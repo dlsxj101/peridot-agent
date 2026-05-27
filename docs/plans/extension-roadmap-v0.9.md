@@ -406,6 +406,20 @@ shared daemon, TUI, and VS Code extension surfaces.
   VS Code. The extension exposes an Archived Skills toolbar/command item
   and Restore buttons for archived rows.
 
+### E37. Archived Skill Inspection Polish
+
+- **Status**: landed.
+- **Goal**: make archived skill review practical before restoring a
+  record, so operators can inspect stale skill bodies instead of
+  restoring blindly.
+- **Where**: TUI/daemon `/skills show <name>` fallback lookup, VS Code
+  command palette/sidebar actions, skill inventory/detail rendering.
+- **Result**: `/skills show <name>` now renders archived skill bodies
+  with archived metadata when the active inventory has no row. VS Code
+  adds Search Archived Skills and archived rows expose both Show and
+  Restore actions; archived skill detail cards render Restore instead
+  of Use/Archive.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

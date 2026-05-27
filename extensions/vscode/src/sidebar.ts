@@ -50,6 +50,7 @@ export interface SidebarHandlers {
   showSkills: () => Promise<void>;
   showArchivedSkills: () => Promise<void>;
   searchSkills: () => Promise<void>;
+  searchArchivedSkills: () => Promise<void>;
   showSkill: (name: string) => Promise<void>;
   useSkill: (name: string) => Promise<void>;
   toggleSkillPin: (name: string, pinned: boolean) => Promise<void>;
@@ -953,6 +954,9 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         return;
       case 'searchSkills':
         await this.handlers.searchSkills();
+        return;
+      case 'searchArchivedSkills':
+        await this.handlers.searchArchivedSkills();
         return;
       case 'showSkill':
         await this.handlers.showSkill(message.name);
