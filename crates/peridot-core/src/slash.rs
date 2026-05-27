@@ -75,6 +75,8 @@ pub enum SlashCommand {
     Committee(CommitteeMode),
     /// Append a free-form note to the current session's notes.ndjson.
     Note(String),
+    /// List operator notes attached to the current session.
+    Notes(Option<usize>),
     /// Attach a workspace file to the current session context.
     Attach(String),
     /// Print a one-shot summary of the current session (model, provider,
@@ -441,6 +443,13 @@ pub fn parse_slash_command(input: &str) -> Option<SlashCommand> {
             .ok()
             .map(SlashCommand::Committee),
         "note" if !rest.is_empty() => Some(SlashCommand::Note(rest.to_string())),
+        "note" => None,
+        "notes" if rest.is_empty() => Some(SlashCommand::Notes(None)),
+        "notes" if rest.starts_with("last ") => {
+            let count = rest.strip_prefix("last ")?.trim().parse().ok()?;
+            Some(SlashCommand::Notes(Some(count)))
+        }
+        "notes" => None,
         "attach" if !rest.is_empty() => Some(SlashCommand::Attach(rest.to_string())),
         "attach" => None,
         "detach" if !rest.is_empty() => Some(SlashCommand::Detach(rest.to_string())),
@@ -901,6 +910,25 @@ mod tests {
             Some(SlashCommand::Detach("src/lib.rs".to_string()))
         );
         assert_eq!(parse_slash_command("/detach"), None);
+    }
+
+    #[test]
+    fn parses_notes_builtin() {
+        assert_eq!(
+            parse_slash_command("/note checkpoint verified"),
+            Some(SlashCommand::Note("checkpoint verified".to_string()))
+        );
+        assert_eq!(parse_slash_command("/note"), None);
+        assert_eq!(
+            parse_slash_command("/notes"),
+            Some(SlashCommand::Notes(None))
+        );
+        assert_eq!(
+            parse_slash_command("/notes last 3"),
+            Some(SlashCommand::Notes(Some(3)))
+        );
+        assert_eq!(parse_slash_command("/notes recent"), None);
+        assert_eq!(parse_slash_command("/notes last nope"), None);
     }
 
     #[test]

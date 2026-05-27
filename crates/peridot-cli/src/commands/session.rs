@@ -570,42 +570,85 @@ fn read_notes_summary(project_root: &Path, id: &str) -> (usize, Option<String>) 
     (count, last)
 }
 
+fn session_notes_path(project_root: &Path, id: &str) -> PathBuf {
+    project_root
+        .join(".peridot")
+        .join("sessions")
+        .join(id)
+        .join("notes.ndjson")
+}
+
+pub(crate) fn append_session_note(
+    project_root: &Path,
+    id: &str,
+    body: &str,
+) -> Result<serde_json::Value> {
+    let body = body.trim();
+    if body.is_empty() {
+        anyhow::bail!("note text must not be empty");
+    }
+    let notes_path = session_notes_path(project_root, id);
+    if let Some(parent) = notes_path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or_default();
+    let line = serde_json::json!({
+        "ts": timestamp,
+        "text": body,
+    });
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&notes_path)
+        .with_context(|| format!("failed to open {}", notes_path.display()))?;
+    writeln!(file, "{}", serde_json::to_string(&line)?)?;
+    Ok(line)
+}
+
+pub(crate) fn read_session_notes(
+    project_root: &Path,
+    id: &str,
+    last: Option<usize>,
+) -> Result<(Vec<serde_json::Value>, usize)> {
+    let notes_path = session_notes_path(project_root, id);
+    let raw = match std::fs::read_to_string(&notes_path) {
+        Ok(v) => v,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(err) => return Err(err).context(format!("failed to read {}", notes_path.display())),
+    };
+    let mut notes = Vec::new();
+    for line in raw.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(line) {
+            notes.push(value);
+        }
+    }
+    let total = notes.len();
+    if let Some(limit) = last {
+        let start = total.saturating_sub(limit);
+        notes = notes.split_off(start);
+    }
+    Ok((notes, total))
+}
+
 fn handle_session_note(
     project_root: &Path,
     id: &str,
     action: &SessionNoteAction,
     output: OutputFormat,
 ) -> Result<()> {
-    let notes_path = project_root
-        .join(".peridot")
-        .join("sessions")
-        .join(id)
-        .join("notes.ndjson");
     match action {
         SessionNoteAction::Add { text } => {
             let body = text.join(" ").trim().to_string();
-            if body.is_empty() {
-                anyhow::bail!("note text must not be empty");
-            }
-            if let Some(parent) = notes_path.parent() {
-                std::fs::create_dir_all(parent)
-                    .with_context(|| format!("failed to create {}", parent.display()))?;
-            }
-            let timestamp = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or_default();
-            let line = serde_json::json!({
-                "ts": timestamp,
-                "text": body,
-            });
-            use std::io::Write;
-            let mut file = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&notes_path)
-                .with_context(|| format!("failed to open {}", notes_path.display()))?;
-            writeln!(file, "{}", serde_json::to_string(&line)?)?;
+            let line = append_session_note(project_root, id, &body)?;
+            let timestamp = line["ts"].as_u64().unwrap_or_default();
             print_json_or_text_result(
                 serde_json::json!({"added": true, "id": id, "ts": timestamp, "text": body}),
                 format!("added note to {id}: {body}"),
@@ -613,29 +656,7 @@ fn handle_session_note(
             )?;
         }
         SessionNoteAction::List { last } => {
-            let raw = match std::fs::read_to_string(&notes_path) {
-                Ok(v) => v,
-                Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
-                Err(err) => {
-                    return Err(err).context(format!("failed to read {}", notes_path.display()));
-                }
-            };
-            let mut notes = Vec::new();
-            for line in raw.lines() {
-                if line.trim().is_empty() {
-                    continue;
-                }
-                if let Ok(value) = serde_json::from_str::<serde_json::Value>(line) {
-                    notes.push(value);
-                }
-            }
-            let total = notes.len();
-            let trimmed: Vec<&serde_json::Value> = if let Some(limit) = last {
-                let start = total.saturating_sub(*limit);
-                notes[start..].iter().collect()
-            } else {
-                notes.iter().collect()
-            };
+            let (trimmed, total) = read_session_notes(project_root, id, *last)?;
             match output {
                 OutputFormat::Json => {
                     println!(
@@ -668,6 +689,7 @@ fn handle_session_note(
             }
         }
         SessionNoteAction::Clear => {
+            let notes_path = session_notes_path(project_root, id);
             let removed = std::fs::remove_file(&notes_path).is_ok();
             print_json_or_text_result(
                 serde_json::json!({"cleared": removed, "id": id}),

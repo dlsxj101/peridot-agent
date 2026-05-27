@@ -74,8 +74,8 @@ pub(crate) use mcp::run_mcp_command;
 use output::print_json_or_text_result;
 pub(crate) use project::print_scan;
 pub(crate) use session::{
-    SessionCountSummary, SessionExportReport, export_session_artifacts, rewind_context_entries,
-    run_session_command, session_count_summary,
+    SessionCountSummary, SessionExportReport, append_session_note, export_session_artifacts,
+    read_session_notes, rewind_context_entries, run_session_command, session_count_summary,
 };
 pub(crate) use settings::run_setting_command;
 pub(crate) use setup::run_setup_command;

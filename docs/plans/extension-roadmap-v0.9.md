@@ -420,6 +420,20 @@ shared daemon, TUI, and VS Code extension surfaces.
   Restore actions; archived skill detail cards render Restore instead
   of Use/Archive.
 
+### E38. Session Notes Slash Parity
+
+- **Status**: landed.
+- **Goal**: make operator notes durable and inspectable from VS Code the
+  same way they already are in TUI sessions.
+- **Where**: shared slash parser/catalog, TUI pending session commands,
+  daemon `session.command`, reusable session notes helpers, VS Code
+  command-result rendering.
+- **Result**: daemon-backed `/note <text>` now appends to the active
+  session's `notes.ndjson`, matching the TUI persistence path. New
+  `/notes [last N]` reads those persisted notes for TUI and daemon
+  clients, and VS Code renders note lists as structured cards with copy
+  actions.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

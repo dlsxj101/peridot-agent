@@ -11,7 +11,7 @@ use commands::{
     AgentsCommand, AuthProvider, ConfigCommand, EnvCommand, McpCommand, OutputFormat,
     SessionCommand, SessionExportArtifact, SkillCommand, export_session_artifacts,
     load_effective_config, maybe_print_update_notice, maybe_run_first_launch_wizard,
-    move_auto_skill_to_archive, print_scan, read_stored_api_key,
+    move_auto_skill_to_archive, print_scan, read_session_notes, read_stored_api_key,
     read_stored_openai_oauth_credentials, restore_archived_skill, run_agents_command,
     run_config_command, run_doctor_command, run_env_command, run_login_command, run_logout_command,
     run_mcp_command, run_session_command, run_setting_command, run_setup_command, run_ship_command,
@@ -1562,6 +1562,9 @@ fn apply_session_command(
         SessionCommandEvent::Skill { name, args } => {
             handle_skill_load(state, project_template, &name, &args);
         }
+        SessionCommandEvent::Notes(last) => {
+            handle_notes_list(state, project_template, last);
+        }
         SessionCommandEvent::SkillList => {
             handle_skill_list(state, project_template);
         }
@@ -1962,6 +1965,36 @@ fn handle_skill_load(state: &mut TuiState, project_root: &Path, name: &str, args
         format!(" with args `{}`", args.trim())
     };
     state.push_transcript(format!("Loaded skill `{}`{args_note}", skill.name));
+}
+
+fn handle_notes_list(state: &mut TuiState, project_root: &Path, last: Option<usize>) {
+    let session_id = state.current_session_id.clone();
+    if session_id.is_empty() {
+        state.push_error("notes: no active session".to_string());
+        return;
+    }
+    let (notes, total) = match read_session_notes(project_root, &session_id, last) {
+        Ok(result) => result,
+        Err(err) => {
+            state.push_error(format!("notes: failed to read session notes: {err}"));
+            return;
+        }
+    };
+    if notes.is_empty() {
+        state.push_transcript(format!("notes: none for {session_id}"));
+        return;
+    }
+    let mut lines = vec![format!(
+        "notes: {} of {} for {session_id}",
+        notes.len(),
+        total
+    )];
+    for note in notes {
+        let ts = note["ts"].as_u64().unwrap_or_default();
+        let text = note["text"].as_str().unwrap_or("");
+        lines.push(format!("  [{ts}] {text}"));
+    }
+    state.push_transcript(lines.join("\n"));
 }
 
 fn handle_skill_list(state: &mut TuiState, project_root: &Path) {

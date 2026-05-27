@@ -2487,6 +2487,7 @@ function renderCommandBlock(item: TranscriptItem): HTMLElement {
   if (result?.kind === 'attachments') return renderAttachmentInventoryBlock(item);
   if (result?.kind === 'detach') return renderDetachBlock(item);
   if (result?.kind === 'session_export') return renderSessionExportBlock(item);
+  if (result?.kind === 'note' || result?.kind === 'notes') return renderNotesBlock(item);
   if (result?.kind === 'skills') return renderSkillsBlock(item);
   if (result?.kind === 'skill_detail') return renderSkillDetailBlock(item);
   const wrap = el('section', `command-block ${result?.severity === 'error' ? 'error' : ''}`);
@@ -2745,6 +2746,49 @@ function renderSessionExportBlock(item: TranscriptItem): HTMLElement {
     });
     wrap.append(list);
   }
+  return wrap;
+}
+
+function renderNotesBlock(item: TranscriptItem): HTMLElement {
+  const result = item.commandResult;
+  const notes = Array.isArray(result?.items) ? result.items : [];
+  const wrap = el('section', 'command-block attachment-block');
+  const header = el('div', 'attachment-header');
+  const title = el('div', 'attachment-title');
+  title.append(el('span', 'command-title', result?.title ?? 'Session Notes'));
+  const chips = el('div', 'attachment-chips');
+  if (typeof result?.total === 'number') chips.append(el('span', 'command-chip', `${result.total} total`));
+  if (result?.session_id) chips.append(el('span', 'command-chip', result.session_id));
+  title.append(chips);
+  header.append(title);
+  wrap.append(header);
+  if (result?.message) wrap.append(el('div', 'command-message', result.message));
+  if (notes.length === 0) {
+    wrap.append(el('div', 'attachment-placeholder', 'No notes for this session.'));
+    return wrap;
+  }
+  const list = el('div', 'attachment-list');
+  notes.forEach((note) => {
+    const row = el('div', 'attachment-inventory-row');
+    const main = el('div', 'attachment-row-main');
+    const top = el('div', 'attachment-path-row');
+    const ts = typeof note.ts === 'number' ? note.ts : 0;
+    const text = note.text ?? note.detail ?? '';
+    top.append(el('span', 'command-row-label', ts > 0 ? `[${ts}]` : 'note'));
+    main.append(top);
+    if (text) main.append(el('div', 'command-row-detail', text));
+    row.append(main);
+    if (text) {
+      const actions = el('div', 'attachment-actions');
+      const copy = iconButton('copy', 'Copy note', () => {
+        void markCopied(copy, text);
+      });
+      actions.append(copy);
+      row.append(actions);
+    }
+    list.append(row);
+  });
+  wrap.append(list);
   return wrap;
 }
 

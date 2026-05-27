@@ -65,6 +65,8 @@ export interface CommandResultItem {
   bytes?: number;
   turn_id?: number;
   source?: string;
+  ts?: number;
+  text?: string;
   scope?: string;
   transport?: string;
   media_type?: string;

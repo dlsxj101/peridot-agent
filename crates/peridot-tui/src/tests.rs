@@ -2877,6 +2877,28 @@ fn note_slash_queues_pending_note_and_records_transcript() {
 }
 
 #[test]
+fn notes_slash_queues_note_inventory_load() {
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+
+    apply_slash_command(&mut state, SlashCommand::Notes(Some(2)));
+
+    assert_eq!(
+        state.drain_pending_session_commands(),
+        vec![SessionCommandEvent::Notes(Some(2))]
+    );
+    assert!(
+        state
+            .transcript
+            .iter()
+            .any(|line| line.text.contains("notes: loading"))
+    );
+}
+
+#[test]
 fn info_slash_command_summarises_session_metadata() {
     let mut state = TuiState::new(HeaderState::new(
         ExecutionMode::Execute,

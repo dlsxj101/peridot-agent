@@ -81,6 +81,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **Archived skill inspection polish** lets `/skills show <name>` render
   archived skill bodies, and adds VS Code archived-skill search plus
   archived detail Restore actions.
+- **Session notes slash parity** persists VS Code `/note <text>` through
+  the daemon and adds `/notes [last N]` so TUI and VS Code can inspect
+  the active session's operator notes from the shared slash surface.
 - **Reflection noise filtering** now drops single-tool repeat n-grams
   before the Curator LLM call and stamps them as handled, so historical
   `file_read|file_read`-style rows do not burn review budget.

@@ -56,6 +56,8 @@
   palette, with Restore actions backed by `/skills restore <name>`.
 - Archived skill search is available from the sidebar and command
   palette, and archived skill detail cards show Restore instead of Use.
+- `/note <text>` now persists through the daemon for VS Code sessions,
+  and `/notes [last N]` renders a structured session notes card.
 - GitHub PR workflow commands are available from VS Code: PR status,
   preview-and-confirm `peridot ship`, and confirm-before-merge
   `gh pr merge`.

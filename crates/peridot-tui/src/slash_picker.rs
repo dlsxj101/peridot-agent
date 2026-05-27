@@ -102,6 +102,12 @@ pub fn slash_command_catalog() -> &'static [SlashCommandSpec] {
             category: "session",
         },
         SlashCommandSpec {
+            name: "/notes",
+            description: "list operator notes attached to the current session",
+            arg_hint: Some("[last <N>]"),
+            category: "session",
+        },
+        SlashCommandSpec {
             name: "/info",
             description: "print a one-shot summary of the current session",
             arg_hint: None,
