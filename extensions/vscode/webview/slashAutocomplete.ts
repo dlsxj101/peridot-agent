@@ -39,8 +39,9 @@ export function slashPickerItemCount(
   sessionTargets: SlashSessionTarget[] = [],
   mcpServers: SlashMcpServerTarget[] = [],
   models: string[] = [],
+  branches: string[] = [],
 ): number {
-  const argumentContext = slashArgumentContext(input, slashCommands, sessionTargets, mcpServers, models);
+  const argumentContext = slashArgumentContext(input, slashCommands, sessionTargets, mcpServers, models, branches);
   if (argumentContext) return argumentContext.options.length;
   return filteredSlashCommands(input, slashCommands).length;
 }
@@ -52,8 +53,9 @@ export function slashExactSelectionIsRunnable(
   sessionTargets: SlashSessionTarget[] = [],
   mcpServers: SlashMcpServerTarget[] = [],
   models: string[] = [],
+  branches: string[] = [],
 ): boolean {
-  if (slashArgumentContext(input, slashCommands, sessionTargets, mcpServers, models)) return false;
+  if (slashArgumentContext(input, slashCommands, sessionTargets, mcpServers, models, branches)) return false;
   const matches = filteredSlashCommands(input, slashCommands);
   const command = matches[selected];
   if (!command) return false;
@@ -66,6 +68,7 @@ export function slashArgumentContext(
   sessionTargets: SlashSessionTarget[] = [],
   mcpServers: SlashMcpServerTarget[] = [],
   models: string[] = [],
+  branches: string[] = [],
 ): SlashArgumentContext | undefined {
   const query = input;
   if (!query.startsWith('/') || query.includes('\n')) return undefined;
@@ -79,6 +82,8 @@ export function slashArgumentContext(
   if (mcpServerContext) return mcpServerContext;
   const mcpAddContext = mcpAddTransportArgumentContext(query);
   if (mcpAddContext) return mcpAddContext;
+  const branchContext = branchSnapshotArgumentContext(query, branches);
+  if (branchContext) return branchContext;
   const command = [...slashCommands]
     .sort((a, b) => b.name.length - a.name.length)
     .find(
@@ -95,6 +100,32 @@ export function slashArgumentContext(
     ? options.filter((option) => option.toLowerCase().startsWith(rest))
     : options;
   return { command, options: filtered };
+}
+
+function branchSnapshotArgumentContext(
+  query: string,
+  branches: string[],
+): SlashArgumentContext | undefined {
+  const commandName = '/branch restore';
+  if (query !== commandName && !query.startsWith(`${commandName} `)) return undefined;
+  const needle = query.slice(commandName.length).trim().toLowerCase();
+  if (/\s/.test(needle)) return undefined;
+  const options = [...new Set(
+    branches
+      .map((branch) => branch.trim())
+      .filter((branch) => branch.length > 0)
+      .filter((branch) => needle.length === 0 || branch.toLowerCase().startsWith(needle)),
+  )].sort((a, b) => a.localeCompare(b));
+  if (needle && options.some((option) => option.toLowerCase() === needle)) return undefined;
+  if (options.length === 0) return undefined;
+  return {
+    command: {
+      name: commandName,
+      description: 'branch snapshot',
+      category: 'branch',
+    },
+    options,
+  };
 }
 
 function modelNameArgumentContext(

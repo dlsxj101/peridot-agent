@@ -38,6 +38,8 @@
   `/mcp remove <name>` and `/mcp test <name>` after status refresh.
 - Model-name autocomplete now fills configured main, subagent, and committee
   role models for `/model <name>` and `/subagent model <name|reset>`.
+- Branch snapshot autocomplete now fills saved `.peridot/branches` snapshot
+  names for `/branch restore <name>` after status refresh.
 - The composer now keeps submitted prompt history per sidebar session.
   ArrowUp / ArrowDown recall previous prompts when the caret is on the
   first or last textarea line, and unsent drafts no longer leak across

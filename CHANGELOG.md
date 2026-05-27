@@ -60,6 +60,8 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **Model-name autocomplete** now suggests configured main, subagent, and
   committee role models for `/model <name>` and `/subagent model <name|reset>`
   in both TUI and VS Code.
+- **Branch snapshot autocomplete** now suggests saved `.peridot/branches`
+  snapshot names for `/branch restore <name>` in both TUI and VS Code.
 - **VS Code per-session composer history** now mirrors the TUI input
   history ergonomics: ArrowUp/ArrowDown recall submitted prompts per
   sidebar session, while in-progress drafts stay isolated across session

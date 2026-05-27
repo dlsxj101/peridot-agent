@@ -1230,6 +1230,9 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       if (slashCommandChangesSkillCatalog(input)) {
         await this.handlers.refreshSlashCatalog();
       }
+      if (slashCommandChangesBranchSnapshots(input)) {
+        await this.handlers.refreshStatus();
+      }
       const task = taskStartedByCommandResult(result);
       if (task) {
         await this.handlers.runTask(task, this.state.runOptions);
@@ -1808,6 +1811,15 @@ function slashCommandChangesSkillCatalog(input: string): boolean {
     .split(/\s+/)
     .map((part) => part.toLowerCase());
   return command === 'skills' && (subcommand === 'archive' || subcommand === 'restore');
+}
+
+function slashCommandChangesBranchSnapshots(input: string): boolean {
+  const [command, subcommand] = input
+    .slice(1)
+    .trim()
+    .split(/\s+/)
+    .map((part) => part.toLowerCase());
+  return command === 'branch' && subcommand === 'save';
 }
 
 function taskStartedByCommandResult(result: CommandResultView): string | undefined {

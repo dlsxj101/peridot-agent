@@ -555,16 +555,17 @@ fn slash_argument_context_with_skills(
     query: &str,
     skills: &[SkillSlashSuggestion],
 ) -> Option<SlashArgumentContext> {
-    slash_argument_context_with_dynamic(query, skills, &[], &[], &[])
+    slash_argument_context_with_dynamic(query, skills, &[], &[], &[], &[])
 }
 
-/// Returns the active argument picker, including dynamic skill/session/model options.
+/// Returns the active argument picker, including dynamic skill/session/MCP/model/branch options.
 pub(crate) fn slash_argument_context_with_dynamic(
     query: &str,
     skills: &[SkillSlashSuggestion],
     sessions: &[crate::session_directory::SessionDirectoryItem],
     mcp_servers: &[crate::state::McpServerSummary],
     models: &[String],
+    branches: &[String],
 ) -> Option<SlashArgumentContext> {
     if !query.starts_with('/') || query.contains('\n') {
         return None;
@@ -582,6 +583,9 @@ pub(crate) fn slash_argument_context_with_dynamic(
         return Some(context);
     }
     if let Some(context) = mcp_add_transport_argument_context(query) {
+        return Some(context);
+    }
+    if let Some(context) = branch_snapshot_argument_context(query, branches) {
         return Some(context);
     }
     let spec = slash_command_catalog()
@@ -841,6 +845,43 @@ fn session_target_argument_context(
     })
 }
 
+fn branch_snapshot_argument_context(
+    query: &str,
+    branches: &[String],
+) -> Option<SlashArgumentContext> {
+    let command_name = "/branch restore";
+    if query != command_name && !query.starts_with(&format!("{command_name} ")) {
+        return None;
+    }
+    let rest = query[command_name.len()..].trim().to_ascii_lowercase();
+    if rest.contains(char::is_whitespace) {
+        return None;
+    }
+    let mut options: Vec<String> = branches
+        .iter()
+        .map(|branch| branch.trim().to_string())
+        .filter(|branch| !branch.is_empty())
+        .filter(|branch| rest.is_empty() || branch.to_ascii_lowercase().starts_with(&rest))
+        .collect();
+    options.sort();
+    options.dedup();
+    if !rest.is_empty()
+        && options
+            .iter()
+            .any(|option| option.eq_ignore_ascii_case(&rest))
+    {
+        return None;
+    }
+    if options.is_empty() {
+        return None;
+    }
+    Some(SlashArgumentContext {
+        command_name: command_name.to_string(),
+        options,
+        append_space: false,
+    })
+}
+
 /// Number of rows the slash picker would render with all dynamic option sets.
 pub(crate) fn picker_len_with_dynamic(
     query: &str,
@@ -848,8 +889,9 @@ pub(crate) fn picker_len_with_dynamic(
     sessions: &[crate::session_directory::SessionDirectoryItem],
     mcp_servers: &[crate::state::McpServerSummary],
     models: &[String],
+    branches: &[String],
 ) -> usize {
-    slash_argument_context_with_dynamic(query, skills, sessions, mcp_servers, models)
+    slash_argument_context_with_dynamic(query, skills, sessions, mcp_servers, models, branches)
         .map(|context| context.options.len())
         .unwrap_or_else(|| filtered_suggestions(query, skills).len())
 }
@@ -1124,27 +1166,42 @@ mod tests {
             &sessions,
             &[],
             &[],
+            &[],
         )
         .expect("session target");
         assert_eq!(context.command_name, "/session switch");
         assert_eq!(context.options, vec!["s-2"]);
         assert!(!context.append_space);
 
-        let context =
-            slash_argument_context_with_dynamic("/session rename parser", &[], &sessions, &[], &[])
-                .expect("rename target");
+        let context = slash_argument_context_with_dynamic(
+            "/session rename parser",
+            &[],
+            &sessions,
+            &[],
+            &[],
+            &[],
+        )
+        .expect("rename target");
         assert_eq!(context.options, vec!["s-1"]);
         assert!(context.append_space);
 
         assert!(
-            slash_argument_context_with_dynamic("/session switch s-2", &[], &sessions, &[], &[])
-                .is_none()
+            slash_argument_context_with_dynamic(
+                "/session switch s-2",
+                &[],
+                &sessions,
+                &[],
+                &[],
+                &[],
+            )
+            .is_none()
         );
         assert!(
             slash_argument_context_with_dynamic(
                 "/session rename s-1 new title",
                 &[],
                 &sessions,
+                &[],
                 &[],
                 &[]
             )
@@ -1167,22 +1224,31 @@ mod tests {
             },
         ];
 
-        let context = slash_argument_context_with_dynamic("/mcp test g", &[], &[], &servers, &[])
-            .expect("mcp server");
+        let context =
+            slash_argument_context_with_dynamic("/mcp test g", &[], &[], &servers, &[], &[])
+                .expect("mcp server");
         assert_eq!(context.command_name, "/mcp test");
         assert_eq!(context.options, vec!["github"]);
         assert!(!context.append_space);
 
-        let context = slash_argument_context_with_dynamic("/mcp remove ", &[], &[], &servers, &[])
-            .expect("mcp remove");
+        let context =
+            slash_argument_context_with_dynamic("/mcp remove ", &[], &[], &servers, &[], &[])
+                .expect("mcp remove");
         assert_eq!(context.options, vec!["filesystem", "github"]);
         assert!(
-            slash_argument_context_with_dynamic("/mcp test github", &[], &[], &servers, &[])
+            slash_argument_context_with_dynamic("/mcp test github", &[], &[], &servers, &[], &[])
                 .is_none()
         );
         assert!(
-            slash_argument_context_with_dynamic("/mcp test github extra", &[], &[], &servers, &[])
-                .is_none()
+            slash_argument_context_with_dynamic(
+                "/mcp test github extra",
+                &[],
+                &[],
+                &servers,
+                &[],
+                &[],
+            )
+            .is_none()
         );
     }
 
@@ -1190,22 +1256,29 @@ mod tests {
     fn model_name_argument_context_filters_configured_models() {
         let models = vec!["claude-sonnet-4-6".to_string(), "gpt-5.1-codex".to_string()];
 
-        let context =
-            slash_argument_context_with_dynamic("/model g", &[], &[], &[], &models).expect("model");
+        let context = slash_argument_context_with_dynamic("/model g", &[], &[], &[], &models, &[])
+            .expect("model");
         assert_eq!(context.command_name, "/model");
         assert_eq!(context.options, vec!["gpt-5.1-codex"]);
         assert!(!context.append_space);
 
         let context =
-            slash_argument_context_with_dynamic("/subagent model ", &[], &[], &[], &models)
+            slash_argument_context_with_dynamic("/subagent model ", &[], &[], &[], &models, &[])
                 .expect("subagent model");
         assert_eq!(
             context.options,
             vec!["claude-sonnet-4-6", "gpt-5.1-codex", "reset"]
         );
         assert!(
-            slash_argument_context_with_dynamic("/model gpt-5.1-codex", &[], &[], &[], &models)
-                .is_none()
+            slash_argument_context_with_dynamic(
+                "/model gpt-5.1-codex",
+                &[],
+                &[],
+                &[],
+                &models,
+                &[],
+            )
+            .is_none()
         );
         assert!(
             slash_argument_context_with_dynamic(
@@ -1213,7 +1286,49 @@ mod tests {
                 &[],
                 &[],
                 &[],
-                &models
+                &models,
+                &[],
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn branch_snapshot_argument_context_filters_saved_branches() {
+        let branches = vec!["parser-snapshot".to_string(), "release-branch".to_string()];
+
+        let context = slash_argument_context_with_dynamic(
+            "/branch restore rel",
+            &[],
+            &[],
+            &[],
+            &[],
+            &branches,
+        )
+        .expect("branch restore");
+        assert_eq!(context.command_name, "/branch restore");
+        assert_eq!(context.options, vec!["release-branch"]);
+        assert!(!context.append_space);
+
+        assert!(
+            slash_argument_context_with_dynamic(
+                "/branch restore release-branch",
+                &[],
+                &[],
+                &[],
+                &[],
+                &branches,
+            )
+            .is_none()
+        );
+        assert!(
+            slash_argument_context_with_dynamic(
+                "/branch restore release-branch extra",
+                &[],
+                &[],
+                &[],
+                &[],
+                &branches,
             )
             .is_none()
         );

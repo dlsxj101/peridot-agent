@@ -696,6 +696,7 @@ async fn main() -> Result<()> {
                                 &config,
                                 Some(&state.header.model),
                             ));
+                            state.set_branch_suggestions(branch_snapshot_names(&project_root));
                             state.set_skill_suggestions(load_auto_skill_suggestions(&project_root));
                             state.push_notice(format!("session: restored {id} from disk"));
                             state
@@ -710,6 +711,7 @@ async fn main() -> Result<()> {
                                 &config,
                                 Some(&model),
                             ));
+                            state.set_branch_suggestions(branch_snapshot_names(&project_root));
                             // Warm the `@file` picker index up-front so the
                             // first `@` keystroke gets an instant suggestion
                             // list instead of having to walk the project
@@ -2436,6 +2438,23 @@ fn validate_branch_name(name: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Returns saved branch snapshot names under `.peridot/branches`.
+pub(crate) fn branch_snapshot_names(project_root: &Path) -> Vec<String> {
+    let dir = project_root.join(".peridot/branches");
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = entries
+        .flatten()
+        .filter(|entry| entry.path().is_dir())
+        .map(|entry| entry.file_name().to_string_lossy().trim().to_string())
+        .filter(|name| !name.is_empty())
+        .collect();
+    names.sort();
+    names.dedup();
+    names
+}
+
 /// Copies the live session's `context.bin` snapshot into
 /// `.peridot/branches/<name>/context.bin` so it can be restored later.
 /// Refuses to overwrite an existing branch — operators must remove the
@@ -2476,6 +2495,7 @@ fn handle_branch_save(state: &mut TuiState, project_root: &Path, name: &str) {
         state.push_error(format!("branch save: copy: {err}"));
         return;
     }
+    state.add_branch_suggestion(name);
     state.push_transcript(format!("branch: saved '{name}' from session {session_id}"));
 }
 

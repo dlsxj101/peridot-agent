@@ -741,6 +741,9 @@ pub struct TuiState {
     /// Model names discovered from project config for slash autocomplete.
     #[serde(default, skip)]
     pub model_suggestions: Vec<String>,
+    /// Saved branch snapshot names discovered under `.peridot/branches`.
+    #[serde(default, skip)]
+    pub branch_suggestions: Vec<String>,
     /// Append-only log of parsed thinking text (for debug toggle re-render).
     #[serde(default)]
     pub thinking_log: Vec<String>,
@@ -1106,6 +1109,7 @@ impl TuiState {
             slash_picker: None,
             skill_suggestions: Vec::new(),
             model_suggestions: Vec::new(),
+            branch_suggestions: Vec::new(),
             thinking_log: Vec::new(),
             last_session_save_unix: 0,
             current_turn: 0,
@@ -1238,6 +1242,27 @@ impl TuiState {
     pub fn set_model_suggestions(&mut self, models: Vec<String>) {
         self.model_suggestions = dedupe_sorted_nonempty(models);
         self.refresh_slash_picker();
+    }
+
+    /// Replaces branch snapshot slash suggestions.
+    pub fn set_branch_suggestions(&mut self, branches: Vec<String>) {
+        self.branch_suggestions = dedupe_sorted_nonempty(branches);
+        self.refresh_slash_picker();
+    }
+
+    /// Adds one branch snapshot slash suggestion when it is not already present.
+    pub fn add_branch_suggestion(&mut self, branch: &str) {
+        let branch = branch.trim();
+        if branch.is_empty()
+            || self
+                .branch_suggestions
+                .iter()
+                .any(|entry| entry.eq_ignore_ascii_case(branch))
+        {
+            return;
+        }
+        self.branch_suggestions.push(branch.to_string());
+        self.branch_suggestions.sort();
     }
 
     /// Adds one model-name slash suggestion when it is not already present.
@@ -1603,6 +1628,7 @@ impl TuiState {
             &self.sessions,
             &self.side_panel.mcp_status,
             &self.model_suggestions,
+            &self.branch_suggestions,
         );
         if len == 0 {
             self.slash_picker = None;
@@ -1630,6 +1656,7 @@ impl TuiState {
             &self.sessions,
             &self.side_panel.mcp_status,
             &self.model_suggestions,
+            &self.branch_suggestions,
         );
         if len == 0 {
             picker.selected = 0;
@@ -1652,6 +1679,7 @@ impl TuiState {
             &self.sessions,
             &self.side_panel.mcp_status,
             &self.model_suggestions,
+            &self.branch_suggestions,
         ) {
             let Some(option) = context
                 .options
@@ -1698,6 +1726,7 @@ impl TuiState {
             &self.sessions,
             &self.side_panel.mcp_status,
             &self.model_suggestions,
+            &self.branch_suggestions,
         )
         .is_some()
         {

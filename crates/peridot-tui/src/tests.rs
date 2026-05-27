@@ -2004,6 +2004,30 @@ fn tab_autocompletes_model_name_arguments() {
 }
 
 #[test]
+fn tab_autocompletes_branch_restore_arguments() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    state.set_branch_suggestions(vec![
+        "parser-snapshot".to_string(),
+        "release-branch".to_string(),
+    ]);
+
+    for character in "/branch restore rel".chars() {
+        handle_key_event(
+            &mut state,
+            KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE),
+        );
+    }
+    handle_key_event(&mut state, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    assert_eq!(state.input, "/branch restore release-branch");
+}
+
+#[test]
 fn skills_slash_queues_skill_inventory_load() {
     let mut state = TuiState::new(HeaderState::new(
         ExecutionMode::Execute,

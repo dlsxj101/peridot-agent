@@ -32,6 +32,7 @@ use serde_json::Value;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::{Mutex, mpsc, oneshot};
 
+use crate::branch_snapshot_names;
 use crate::checkpoints::restore_latest_checkpoint;
 use crate::commands::{
     AuthProvider, append_session_note, move_auto_skill_to_archive, read_managed_env_var,
@@ -669,6 +670,7 @@ async fn handle_status(state: &DaemonState, id: Value) -> Result<()> {
     let worktree_cleanup = reconcile_stale_worktrees(state.project_root.as_ref());
     let model_suggestions =
         configured_model_suggestions(config, Some(state.run_template.model.as_str()));
+    let branch_snapshots = branch_snapshot_names(state.project_root.as_ref());
     let mcp: Vec<Value> = config
         .mcp
         .iter()
@@ -688,6 +690,7 @@ async fn handle_status(state: &DaemonState, id: Value) -> Result<()> {
             "provider": config.auth.primary,
             "model": config.models.main,
             "model_suggestions": model_suggestions,
+            "branch_snapshots": branch_snapshots,
             "reasoning_effort": format!("{:?}", config.models.reasoning_effort),
             "mode": format!("{:?}", config.defaults.mode),
             "permission": format!("{:?}", state.run_template.permission),
@@ -5352,6 +5355,7 @@ mod tests {
                 .as_array()
                 .is_some_and(|models| models.iter().any(|model| model == "claude-sonnet-4-6"))
         );
+        assert!(out[0]["result"]["branch_snapshots"].as_array().is_some());
         assert!(out[0]["result"]["project_root"].as_str().is_some());
         assert_eq!(out[0]["result"]["auth"]["provider"], "claude-api");
         assert_eq!(out[0]["result"]["auth"]["method"], "api_key");

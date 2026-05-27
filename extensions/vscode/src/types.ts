@@ -278,6 +278,7 @@ export interface SidebarContext {
   running?: boolean;
   mcpServers?: McpServerSummary[];
   modelSuggestions?: string[];
+  branchSnapshots?: string[];
 }
 
 export interface McpServerSummary {

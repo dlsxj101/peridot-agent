@@ -35,6 +35,7 @@ interface DaemonStatusResult {
   provider: string;
   model: string;
   model_suggestions?: unknown;
+  branch_snapshots?: unknown;
   reasoning_effort?: string;
   mode?: string;
   permission?: string;
@@ -1855,6 +1856,7 @@ async function refreshStatus(
       authSource: result.auth?.source,
       mcpServers: normalizeMcpServers(result.mcp),
       modelSuggestions: normalizeStringList(result.model_suggestions),
+      branchSnapshots: normalizeStringList(result.branch_snapshots),
       status: cleanupProblem ? 'Needs attention' : activeRunCount() > 0 ? 'Running' : 'Idle',
       problem: cleanupProblem,
       running: activeRunCount() > 0,

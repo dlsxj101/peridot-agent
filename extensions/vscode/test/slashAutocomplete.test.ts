@@ -66,6 +66,7 @@ const sessions = [
 
 const mcpServers = [{ name: 'filesystem' }, { name: 'github' }];
 const modelSuggestions = ['claude-sonnet-4-6', 'gpt-5.1-codex'];
+const branchSnapshots = ['parser-snapshot', 'release-branch'];
 
 test('filteredSlashCommands ranks prefixes before description matches', () => {
   const matches = filteredSlashCommands('/switch', commands);
@@ -185,6 +186,33 @@ test('slashArgumentContext filters model-name arguments', () => {
   );
 });
 
+test('slashArgumentContext filters branch snapshot arguments', () => {
+  const context = slashArgumentContext(
+    '/branch restore rel',
+    commands,
+    [],
+    [],
+    [],
+    branchSnapshots,
+  );
+
+  assert.equal(context?.command.name, '/branch restore');
+  assert.deepEqual(context?.options, ['release-branch']);
+  assert.equal(context?.appendSpace, undefined);
+  assert.equal(
+    slashArgumentContext('/branch restore release-branch', commands, [], [], [], branchSnapshots),
+    undefined,
+  );
+  assert.equal(
+    slashArgumentContext('/branch restore release-branch extra', commands, [], [], [], branchSnapshots),
+    undefined,
+  );
+  assert.deepEqual(
+    slashArgumentContext('/branch restore ', commands, [], [], [], branchSnapshots)?.options,
+    ['parser-snapshot', 'release-branch'],
+  );
+});
+
 test('slashExactSelectionIsRunnable allows optional-arg exact commands only', () => {
   assert.equal(slashExactSelectionIsRunnable('/skills', commands, 0), true);
   assert.equal(slashExactSelectionIsRunnable('/reasoning', commands, 0), false);
@@ -195,4 +223,5 @@ test('slashPickerItemCount uses argument options when an argument picker is open
   assert.equal(slashPickerItemCount('/session switch ', commands, sessions), 2);
   assert.equal(slashPickerItemCount('/mcp test ', commands, [], mcpServers), 2);
   assert.equal(slashPickerItemCount('/model ', commands, [], [], modelSuggestions), 2);
+  assert.equal(slashPickerItemCount('/branch restore ', commands, [], [], [], branchSnapshots), 2);
 });

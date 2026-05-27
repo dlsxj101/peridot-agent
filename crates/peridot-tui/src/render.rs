@@ -1842,6 +1842,7 @@ fn render_slash_picker(frame: &mut Frame<'_>, state: &TuiState, input_area: Rect
         &state.sessions,
         &state.side_panel.mcp_status,
         &state.model_suggestions,
+        &state.branch_suggestions,
     ) {
         let selected = picker.selected.min(context.options.len().saturating_sub(1));
         let visible_limit = 6usize;

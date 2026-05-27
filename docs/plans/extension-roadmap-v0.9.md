@@ -778,6 +778,23 @@ shared daemon, TUI, and VS Code extension surfaces.
   refresh and appends newly selected runtime models from slash state deltas.
   `/subagent model` also keeps `reset` as a first-class completion.
 
+### E65. Branch Restore Snapshot Autocomplete
+
+- **Status**: landed.
+- **Goal**: make branch snapshot restore less error-prone from both TUI
+  and VS Code by completing saved snapshot names instead of requiring
+  operators to copy them from `/branch list`.
+- **Where**: shared branch snapshot discovery, TUI startup/saved-branch
+  suggestion state, daemon `peridot.status`, extension status context,
+  TUI dynamic slash argument context, and VS Code webview slash
+  autocomplete helper.
+- **Result**: `/branch restore <name>` now suggests saved
+  `.peridot/branches/<name>` snapshot directories. TUI seeds the picker at
+  startup and adds newly saved branches immediately after `/branch save`,
+  while VS Code receives snapshot names during status refresh. Exact names
+  and commands with extra arguments close the picker so Enter submits
+  normally.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.
