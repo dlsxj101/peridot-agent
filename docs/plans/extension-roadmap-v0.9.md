@@ -706,6 +706,20 @@ shared daemon, TUI, and VS Code extension surfaces.
   the stable session id. Rename completions leave a trailing space so the
   operator can immediately type the new title.
 
+### E60. Provider Argument Autocomplete
+
+- **Status**: landed.
+- **Goal**: make provider switching discoverable from both TUI and VS Code
+  without requiring operators to memorize the exact `auth.primary` ids.
+- **Where**: shared slash catalog `arg_options`, daemon
+  `session.command_catalog`, TUI finite-argument picker, and VS Code
+  composer autocomplete.
+- **Result**: `/provider` now advertises the supported live provider ids
+  (`claude-api`, `openai-api`, `openrouter-api`, `openai-oauth`) as
+  structured argument options. TUI and VS Code filter those ids as the
+  operator types and close the argument picker once an exact provider id is
+  present so Enter submits the command normally.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

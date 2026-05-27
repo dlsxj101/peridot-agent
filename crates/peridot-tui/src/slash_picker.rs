@@ -111,8 +111,8 @@ pub fn slash_command_catalog() -> &'static [SlashCommandSpec] {
         },
         SlashCommandSpec {
             name: "/provider",
-            description: "switch the active provider (claude-api, openai-api, openrouter-api, ...)",
-            arg_hint: Some("<name>"),
+            description: "switch the active provider",
+            arg_hint: Some("<claude-api|openai-api|openrouter-api|openai-oauth>"),
             category: "session",
         },
         SlashCommandSpec {
@@ -865,6 +865,15 @@ mod tests {
             .find(|spec| spec.name == "/model")
             .expect("model command");
         assert!(slash_command_arg_options(model).is_empty());
+
+        let provider = slash_command_catalog()
+            .iter()
+            .find(|spec| spec.name == "/provider")
+            .expect("provider command");
+        assert_eq!(
+            slash_command_arg_options(provider),
+            vec!["claude-api", "openai-api", "openrouter-api", "openai-oauth"]
+        );
     }
 
     #[test]
@@ -887,6 +896,14 @@ mod tests {
         let context = slash_argument_context("/subagent model ").expect("reset option");
         assert_eq!(context.command_name, "/subagent model");
         assert_eq!(context.options, vec!["reset"]);
+
+        let context = slash_argument_context("/provider open").expect("provider options");
+        assert_eq!(context.command_name, "/provider");
+        assert_eq!(
+            context.options,
+            vec!["openai-api", "openrouter-api", "openai-oauth"]
+        );
+        assert!(slash_argument_context("/provider openai-oauth").is_none());
     }
 
     #[test]

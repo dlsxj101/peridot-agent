@@ -27,6 +27,12 @@ const commands: SlashCommandSpec[] = [
     argOptions: ['off', 'low', 'medium', 'high', 'xhigh'],
   },
   {
+    name: '/provider',
+    description: 'switch provider',
+    argHint: '<claude-api|openai-api|openrouter-api|openai-oauth>',
+    argOptions: ['claude-api', 'openai-api', 'openrouter-api', 'openai-oauth'],
+  },
+  {
     name: '/skills',
     description: 'list stored skills',
   },
@@ -91,6 +97,11 @@ test('slashArgumentContext filters finite options and closes after exact option'
   assert.equal(context?.command.name, '/reasoning');
   assert.deepEqual(context?.options, ['xhigh']);
   assert.equal(slashArgumentContext('/reasoning xhigh', commands), undefined);
+
+  const providers = slashArgumentContext('/provider open', commands);
+  assert.equal(providers?.command.name, '/provider');
+  assert.deepEqual(providers?.options, ['openai-api', 'openrouter-api', 'openai-oauth']);
+  assert.equal(slashArgumentContext('/provider openai-oauth', commands), undefined);
 });
 
 test('slashArgumentContext filters skill-name arguments', () => {

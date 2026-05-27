@@ -5424,6 +5424,16 @@ mod tests {
                 && entry["arg_options"]
                     == serde_json::json!(["off", "low", "medium", "high", "xhigh"])
         }));
+        assert!(commands.iter().any(|entry| {
+            entry["name"] == "/provider"
+                && entry["arg_options"]
+                    == serde_json::json!([
+                        "claude-api",
+                        "openai-api",
+                        "openrouter-api",
+                        "openai-oauth"
+                    ])
+        }));
         assert!(
             commands
                 .iter()

@@ -27,6 +27,9 @@
 - Session-target argument autocomplete now fills stable session ids for
   `/session switch|close|delete|rename`, including matches from visible
   session titles.
+- Provider argument autocomplete now fills supported provider ids for
+  `/provider <claude-api|openai-api|openrouter-api|openai-oauth>` from the
+  shared daemon slash catalog.
 - The composer now keeps submitted prompt history per sidebar session.
   ArrowUp / ArrowDown recall previous prompts when the caret is on the
   first or last textarea line, and unsent drafts no longer leak across
