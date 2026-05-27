@@ -33,7 +33,8 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
   TODO markers, works in both TUI and VS Code through the shared daemon
   command catalog, renders structured rows in the extension, and is also
   available as `Peridot: Show Workspace Code Map` from the VS Code command
-  palette/sidebar.
+  palette/sidebar. The sidebar renders code map results as a grouped,
+  filterable symbol/TODO panel.
 - **Reflection noise filtering** now drops single-tool repeat n-grams
   before the Curator LLM call and stamps them as handled, so historical
   `file_read|file_read`-style rows do not burn review budget.

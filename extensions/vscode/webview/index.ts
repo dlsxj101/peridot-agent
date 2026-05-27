@@ -4,6 +4,7 @@ import MarkdownIt from 'markdown-it';
 import type {
   CompactionDetailItem,
   CompactionSnapshotView,
+  CommandResultItem,
   InboundMessage,
   OutboundMessage,
   PlanSlice,
@@ -2433,6 +2434,7 @@ function renderDiffBlock(item: TranscriptItem): HTMLElement {
 
 function renderCommandBlock(item: TranscriptItem): HTMLElement {
   const result = item.commandResult;
+  if (result?.kind === 'codemap') return renderCodeMapBlock(item);
   const wrap = el('section', `command-block ${result?.severity === 'error' ? 'error' : ''}`);
   const header = el('div', 'command-header');
   header.append(el('span', 'command-title', result?.title ?? result?.kind ?? 'Command'));
@@ -2479,6 +2481,100 @@ function renderCommandBlock(item: TranscriptItem): HTMLElement {
     if (result.truncated) wrap.append(el('div', 'command-footnote', 'further hits truncated'));
   }
   return wrap;
+}
+
+function renderCodeMapBlock(item: TranscriptItem): HTMLElement {
+  const result = item.commandResult;
+  const rows = Array.isArray(result?.items) ? result.items : [];
+  const symbols = rows.filter((row) => row.source === 'symbol');
+  const todos = rows.filter((row) => row.source === 'todo');
+  const wrap = el('section', 'command-block codemap-block');
+  const header = el('div', 'codemap-header');
+  const title = el('div', 'codemap-title');
+  title.append(el('span', 'command-title', result?.title ?? 'Workspace Code Map'));
+  const chips = el('div', 'codemap-chips');
+  chips.append(el('span', 'command-chip', `${result?.symbol_count ?? symbols.length} symbols`));
+  chips.append(el('span', 'command-chip', `${result?.todo_count ?? todos.length} todos`));
+  if (typeof result?.walked_files === 'number') {
+    chips.append(el('span', 'command-chip', `${result.walked_files} files`));
+  }
+  title.append(chips);
+  header.append(title);
+  wrap.append(header);
+  if (result?.message) wrap.append(el('div', 'command-message', result.message));
+
+  const controls = el('div', 'codemap-controls');
+  const filter = document.createElement('input');
+  filter.type = 'search';
+  filter.className = 'codemap-filter';
+  filter.placeholder = 'Filter symbols, TODOs, or paths';
+  filter.setAttribute('aria-label', 'Filter workspace code map');
+  controls.append(filter);
+  wrap.append(controls);
+
+  const body = el('div', 'codemap-body');
+  wrap.append(body);
+
+  const renderRows = () => {
+    const query = filter.value.trim().toLowerCase();
+    const symbolMatches = symbols.filter((row) => codemapRowMatches(row, query));
+    const todoMatches = todos.filter((row) => codemapRowMatches(row, query));
+    body.replaceChildren();
+    appendCodeMapGroup(body, 'Symbols', symbolMatches);
+    appendCodeMapGroup(body, 'TODO Markers', todoMatches);
+    if (symbolMatches.length === 0 && todoMatches.length === 0) {
+      body.append(el('div', 'codemap-empty', 'No code map entries match this filter.'));
+    }
+  };
+
+  filter.addEventListener('input', renderRows);
+  renderRows();
+  if (result?.truncated) {
+    wrap.append(el('div', 'command-footnote', 'further code map entries truncated'));
+  }
+  return wrap;
+}
+
+function appendCodeMapGroup(parent: HTMLElement, title: string, rows: CommandResultItem[]): void {
+  if (rows.length === 0) return;
+  const group = el('section', 'codemap-group');
+  group.append(el('div', 'codemap-group-title', `${title} · ${rows.length}`));
+  const list = el('div', 'codemap-list');
+  rows.forEach((row) => list.append(renderCodeMapRow(row)));
+  group.append(list);
+  parent.append(group);
+}
+
+function renderCodeMapRow(row: CommandResultItem): HTMLElement {
+  const line = el('div', `codemap-row codemap-row-${row.source ?? 'entry'}`);
+  line.append(el('span', 'codemap-source', row.source === 'todo' ? 'todo' : 'symbol'));
+  const main = el('div', 'codemap-row-main');
+  const top = el('div', 'codemap-row-top');
+  if (row.path) {
+    top.append(renderFilePathButton(row.path, 'command-path', row.line, row.column));
+  }
+  if (row.label && row.label !== row.path) {
+    top.append(el('span', 'command-row-label', row.label));
+  }
+  const meta = [
+    typeof row.line === 'number' ? `:${row.line}` : '',
+    row.transport,
+    typeof row.turn_id === 'number' ? `turn ${row.turn_id}` : '',
+  ].filter(Boolean);
+  if (meta.length > 0) top.append(el('span', 'command-row-meta', meta.join(' · ')));
+  main.append(top);
+  if (row.detail) main.append(el('div', 'command-row-detail', row.detail));
+  line.append(main);
+  return line;
+}
+
+function codemapRowMatches(row: CommandResultItem, query: string): boolean {
+  if (!query) return true;
+  const haystack = [row.source, row.label, row.detail, row.path, row.transport]
+    .filter((value): value is string => typeof value === 'string')
+    .join(' ')
+    .toLowerCase();
+  return haystack.includes(query);
 }
 
 function renderBranchPicker(s: SidebarState): HTMLElement {

@@ -17,6 +17,8 @@
   workspace public symbols plus TODO markers as structured command rows.
 - `Peridot: Show Workspace Code Map` and the sidebar header code-map
   button run that shared `/codemap` scan without typing the slash command.
+- Code map results now render as a grouped symbol/TODO panel with an
+  inline filter instead of a generic command-row list.
 - The sidebar subscribes to the daemon's session list and reconciles
   `.peridot/memory.db` session records, so sessions started or finished
   from another VS Code window can appear in the local session menu after

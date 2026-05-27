@@ -19,13 +19,13 @@ and compaction visualization have landed.
 
 ### E2. Code Map Panel Polish
 
-- **Status**: next.
+- **Status**: landed.
 - **Goal**: promote `codemap` rows from generic command rows into a
   compact symbol/TODO explorer with source chips and file-open affordance.
 - **Where**: `extensions/vscode/webview/index.ts`,
   `extensions/vscode/webview/style.css`
-- **Done when**: symbols and TODOs are visually grouped, searchable in
-  the panel, and still use the existing `openFile` bridge.
+- **Result**: symbols and TODOs are visually grouped, searchable in the
+  panel, and still use the existing `openFile` bridge.
 
 ### E3. Extension PR Workflow Surface
 

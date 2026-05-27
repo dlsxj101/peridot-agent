@@ -84,6 +84,9 @@ export interface CommandResultView {
   diff?: string;
   items?: CommandResultItem[];
   source_totals?: Record<string, number>;
+  symbol_count?: number;
+  todo_count?: number;
+  walked_files?: number;
   truncated?: boolean;
   state_delta?: SlashStateDeltaView;
   stateDelta?: SlashStateDeltaView;
