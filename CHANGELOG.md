@@ -50,6 +50,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **Codemap commands now auto-refresh stale indexes** before search,
   locate, outline, reference, or overview results are rendered, so TUI
   and VS Code do not silently show old symbol data after file changes.
+- **Codemap stale checks now catch source-file deletion/addition** by
+  comparing the current indexable source inventory with the persisted
+  walked-file count, preventing removed symbols from lingering.
 - **Reflection noise filtering** now drops single-tool repeat n-grams
   before the Curator LLM call and stamps them as handled, so historical
   `file_read|file_read`-style rows do not burn review budget.

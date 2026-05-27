@@ -161,11 +161,10 @@ pub(crate) fn code_map_status(project_root: &Path) -> Result<CodeMapStatus> {
     let mut source_status = SourceStatus::default();
     walk_source_status(project_root, &mut source_status);
     let generated_at_unix = index.as_ref().map(|index| index.generated_at_unix);
-    let stale = match (generated_at_unix, source_status.newest_mtime_unix) {
-        (None, _) => true,
-        (Some(_), None) => false,
-        (Some(generated), Some(newest)) => newest > generated,
-    };
+    let stale = index
+        .as_ref()
+        .map(|index| code_map_index_is_stale_from_status(index, &source_status))
+        .unwrap_or(true);
     Ok(CodeMapStatus {
         index_exists: index.is_some(),
         stale,
@@ -347,6 +346,13 @@ fn write_code_map_index(project_root: &Path, index: &CodeMapIndex) -> Result<()>
 fn code_map_index_is_stale(project_root: &Path, index: &CodeMapIndex) -> bool {
     let mut source_status = SourceStatus::default();
     walk_source_status(project_root, &mut source_status);
+    code_map_index_is_stale_from_status(index, &source_status)
+}
+
+fn code_map_index_is_stale_from_status(index: &CodeMapIndex, source_status: &SourceStatus) -> bool {
+    if source_status.source_files != index.report.walked_files {
+        return true;
+    }
     source_status
         .newest_mtime_unix
         .is_some_and(|newest| newest > index.generated_at_unix)
@@ -383,6 +389,9 @@ fn walk_source_status(path: &Path, status: &mut SourceStatus) {
         return;
     };
     if metadata.len() > MAX_SYMBOL_FILE_BYTES {
+        return;
+    }
+    if fs::read_to_string(path).is_err() {
         return;
     }
     status.source_files += 1;
@@ -905,6 +914,43 @@ mod tests {
                 .symbols
                 .iter()
                 .any(|symbol| symbol.name == "fresh_symbol")
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn load_or_refresh_rebuilds_when_indexed_file_was_deleted() {
+        let root = temp_project("deleted-load");
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src/lib.rs"), "pub fn keep_me() {}\n").unwrap();
+        fs::write(root.join("src/old.rs"), "pub fn remove_me() {}\n").unwrap();
+
+        let index = refresh_code_map_index(&root, 100, 100).unwrap();
+        assert_eq!(index.report.walked_files, 2);
+        fs::remove_file(root.join("src/old.rs")).unwrap();
+
+        let status = code_map_status(&root).unwrap();
+        assert!(status.stale);
+        assert_eq!(status.source_files, 1);
+        assert_eq!(status.walked_files, 2);
+
+        let load = load_or_refresh_code_map_index_with_status(&root, 100, 100).unwrap();
+        assert!(load.refreshed);
+        assert_eq!(load.index.report.walked_files, 1);
+        assert!(
+            load.index
+                .report
+                .symbols
+                .iter()
+                .any(|symbol| symbol.name == "keep_me")
+        );
+        assert!(
+            !load
+                .index
+                .report
+                .symbols
+                .iter()
+                .any(|symbol| symbol.name == "remove_me")
         );
         let _ = fs::remove_dir_all(root);
     }

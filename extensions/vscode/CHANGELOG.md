@@ -34,6 +34,8 @@
 - Workspace code-map commands now auto-refresh stale `.peridot/codemap.json`
   indexes before returning overview, search, locate, outline, or reference
   rows, and the sidebar chip reflects the refresh.
+- Stale detection also catches added or deleted source files, so removed
+  symbols do not linger in VS Code code-map results.
 - GitHub PR workflow commands are available from VS Code: PR status,
   preview-and-confirm `peridot ship`, and confirm-before-merge
   `gh pr merge`.

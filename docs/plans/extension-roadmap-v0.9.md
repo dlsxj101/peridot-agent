@@ -289,8 +289,9 @@ shared daemon, TUI, and VS Code extension surfaces.
   host codemap handlers, VS Code code-map result chips.
 - **Result**: `/codemap`, `/codemap find`, `/codemap locate`, `/codemap
   outline`, and `/codemap refs` now compare the persisted index timestamp
-  with indexable source-file mtimes before returning results. Missing or
-  stale indexes are rebuilt automatically through the shared loader, while
+  plus walked-file count with the current indexable source inventory before
+  returning results. Missing or stale indexes are rebuilt automatically
+  through the shared loader, including after source-file deletion, while
   explicit `/codemap status` remains a non-mutating check.
 
 ## Notes
