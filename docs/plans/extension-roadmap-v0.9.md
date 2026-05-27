@@ -390,6 +390,22 @@ shared daemon, TUI, and VS Code extension surfaces.
   VS Code skill inventory/detail rows expose a confirm-before-archive
   action.
 
+### E36. Archived Skill Restore Surface
+
+- **Status**: landed.
+- **Goal**: make archive reversible from the same shared skill inventory
+  surfaces instead of requiring the standalone `peridot skill restore`
+  command.
+- **Where**: shared slash parser/catalog, TUI pending session commands,
+  daemon `session.command`, existing archived-skill DB/file restore
+  helper, VS Code sidebar command palette and inventory rows.
+- **Result**: `/skills archived [query]` lists archived skill records and
+  `/skills restore <name>` clears `archived_at_unix`, moves archived auto
+  skill files back under `.peridot/skills/auto/` when present, refreshes
+  TUI slash suggestions, and returns an updated active skill inventory to
+  VS Code. The extension exposes an Archived Skills toolbar/command item
+  and Restore buttons for archived rows.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

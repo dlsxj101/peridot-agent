@@ -67,48 +67,14 @@ pub(crate) async fn run_skill_command(
         }
         SkillCommand::Restore { name } => {
             let store = MemoryStore::new(project_root.join(".peridot/memory.db"));
-            let cleared = store
-                .set_skill_archived(name, 0)
-                .with_context(|| format!("failed to clear archived_at_unix for {name}"))?;
-            let archive_path = project_root
-                .join(".peridot/skills/archive")
-                .join(format!("{name}.md"));
-            let archive_dir = project_root.join(".peridot/skills/archive").join(name);
-            let restored_file = if archive_path.exists() {
-                let target_dir = project_root.join(".peridot/skills/auto");
-                fs::create_dir_all(&target_dir)?;
-                let target = target_dir.join(format!("{name}.md"));
-                fs::rename(&archive_path, &target).with_context(|| {
-                    format!("rename {} -> {}", archive_path.display(), target.display())
-                })?;
-                Some(target)
-            } else if archive_dir.join("SKILL.md").is_file() {
-                let target_dir = project_root.join(".peridot/skills/auto");
-                fs::create_dir_all(&target_dir)?;
-                let target = target_dir.join(name);
-                if target.exists() {
-                    anyhow::bail!(
-                        "target skill directory already exists: {}",
-                        target.display()
-                    );
-                }
-                fs::rename(&archive_dir, &target).with_context(|| {
-                    format!("rename {} -> {}", archive_dir.display(), target.display())
-                })?;
-                Some(target.join("SKILL.md"))
-            } else {
-                None
-            };
-            if !cleared && restored_file.is_none() {
-                anyhow::bail!("no archived skill named {name}");
-            }
+            let restored = restore_archived_skill(&store, project_root, name)?;
             print_json_or_text_result(
                 serde_json::json!({
                     "restored": true,
                     "name": name,
-                    "db_row_updated": cleared,
-                    "file_moved": restored_file.is_some(),
-                    "path": restored_file,
+                    "db_row_updated": restored.db_row_updated,
+                    "file_moved": restored.path.is_some(),
+                    "path": restored.path,
                 }),
                 format!("restored skill {name}"),
                 output,
@@ -481,6 +447,58 @@ pub(crate) fn move_auto_skill_to_archive(project_root: &Path, name: &str) -> Res
             .with_context(|| format!("rename {} -> {}", source_dir.display(), target.display()))?;
     }
     Ok(())
+}
+
+pub(crate) struct RestoredSkill {
+    pub(crate) db_row_updated: bool,
+    pub(crate) path: Option<PathBuf>,
+}
+
+/// Restores an archived skill row and moves its archived auto-skill file
+/// or directory back under `.peridot/skills/auto/` when present.
+pub(crate) fn restore_archived_skill(
+    store: &MemoryStore,
+    project_root: &Path,
+    name: &str,
+) -> Result<RestoredSkill> {
+    let cleared = store
+        .set_skill_archived(name, 0)
+        .with_context(|| format!("failed to clear archived_at_unix for {name}"))?;
+    let archive_path = project_root
+        .join(".peridot/skills/archive")
+        .join(format!("{name}.md"));
+    let archive_dir = project_root.join(".peridot/skills/archive").join(name);
+    let restored_file = if archive_path.exists() {
+        let target_dir = project_root.join(".peridot/skills/auto");
+        fs::create_dir_all(&target_dir)?;
+        let target = target_dir.join(format!("{name}.md"));
+        fs::rename(&archive_path, &target).with_context(|| {
+            format!("rename {} -> {}", archive_path.display(), target.display())
+        })?;
+        Some(target)
+    } else if archive_dir.join("SKILL.md").is_file() {
+        let target_dir = project_root.join(".peridot/skills/auto");
+        fs::create_dir_all(&target_dir)?;
+        let target = target_dir.join(name);
+        if target.exists() {
+            anyhow::bail!(
+                "target skill directory already exists: {}",
+                target.display()
+            );
+        }
+        fs::rename(&archive_dir, &target)
+            .with_context(|| format!("rename {} -> {}", archive_dir.display(), target.display()))?;
+        Some(target.join("SKILL.md"))
+    } else {
+        None
+    };
+    if !cleared && restored_file.is_none() {
+        anyhow::bail!("no archived skill named {name}");
+    }
+    Ok(RestoredSkill {
+        db_row_updated: cleared,
+        path: restored_file,
+    })
 }
 
 pub(super) fn skill_json(skill: &SkillEntry) -> serde_json::Value {

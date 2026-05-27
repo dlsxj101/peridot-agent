@@ -80,7 +80,7 @@ pub(crate) use session::{
 pub(crate) use settings::run_setting_command;
 pub(crate) use setup::run_setup_command;
 pub(crate) use ship::{ShipOptions, run_ship_command};
-pub(crate) use skills::{move_auto_skill_to_archive, run_skill_command};
+pub(crate) use skills::{move_auto_skill_to_archive, restore_archived_skill, run_skill_command};
 pub(crate) use update::{maybe_print_update_notice, run_update_command};
 pub(crate) use verify::run_verify_command;
 

@@ -978,6 +978,10 @@ pub enum SessionCommandEvent {
     SkillUnpin(String),
     /// `/skills archive <name>` — hide an active stored skill from inventory.
     SkillArchive(String),
+    /// `/skills restore <name>` — restore an archived stored skill.
+    SkillRestore(String),
+    /// `/skills archived [query]` — list archived stored skills.
+    SkillArchived(String),
     /// `/context top` — render the largest entries from the persisted
     /// context snapshot so operators can see what is consuming the window.
     ContextTop,

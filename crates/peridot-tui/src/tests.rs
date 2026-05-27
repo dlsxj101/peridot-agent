@@ -1836,6 +1836,14 @@ fn skills_pin_slash_queues_skill_pin_update() {
         &mut state,
         SlashCommand::SkillArchive("auto-fix-parser".to_string()),
     );
+    apply_slash_command(
+        &mut state,
+        SlashCommand::SkillRestore("auto-fix-parser".to_string()),
+    );
+    apply_slash_command(
+        &mut state,
+        SlashCommand::SkillArchived("parser".to_string()),
+    );
 
     assert_eq!(
         state.drain_pending_session_commands(),
@@ -1849,6 +1857,8 @@ fn skills_pin_slash_queues_skill_pin_update() {
             SessionCommandEvent::SkillPin("auto-fix-parser".to_string()),
             SessionCommandEvent::SkillUnpin("auto-fix-parser".to_string()),
             SessionCommandEvent::SkillArchive("auto-fix-parser".to_string()),
+            SessionCommandEvent::SkillRestore("auto-fix-parser".to_string()),
+            SessionCommandEvent::SkillArchived("parser".to_string()),
         ]
     );
 }

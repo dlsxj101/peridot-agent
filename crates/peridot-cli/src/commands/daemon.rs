@@ -35,7 +35,7 @@ use tokio::sync::{Mutex, mpsc, oneshot};
 use crate::checkpoints::restore_latest_checkpoint;
 use crate::commands::{
     AuthProvider, move_auto_skill_to_archive, read_managed_env_var, read_stored_api_key,
-    read_stored_openai_oauth_credentials, session_count_summary,
+    read_stored_openai_oauth_credentials, restore_archived_skill, session_count_summary,
 };
 use crate::run_loop::{AgentTaskOptions, MessageBusHookup, run_task_with_events};
 use crate::session_router::{RouterMessageBus, SessionHandle, SessionRouter, WorkspaceIsolation};
@@ -1618,11 +1618,15 @@ async fn execute_session_command(
         SlashCommand::SkillList => handle_command_skill_list(state, raw_command),
         SlashCommand::SkillShow(name) => handle_command_skill_show(state, raw_command, &name),
         SlashCommand::SkillSearch(query) => handle_command_skill_search(state, raw_command, &query),
+        SlashCommand::SkillArchived(query) => {
+            handle_command_skill_archived(state, raw_command, &query)
+        }
         SlashCommand::SkillPin(name) => handle_command_skill_pin(state, raw_command, &name, true),
         SlashCommand::SkillUnpin(name) => {
             handle_command_skill_pin(state, raw_command, &name, false)
         }
         SlashCommand::SkillArchive(name) => handle_command_skill_archive(state, raw_command, &name),
+        SlashCommand::SkillRestore(name) => handle_command_skill_restore(state, raw_command, &name),
         SlashCommand::Cost => handle_command_cost(state, session_id, raw_command).await,
         SlashCommand::Info => handle_command_info(state, session_id, raw_command).await,
         SlashCommand::PlanShow => handle_command_plan_show(state, session_id, raw_command).await,
@@ -3439,6 +3443,56 @@ fn handle_command_skill_search(
     }))
 }
 
+fn handle_command_skill_archived(
+    state: &DaemonState,
+    raw_command: &str,
+    query: &str,
+) -> Result<Value, String> {
+    let query = query.trim();
+    let store = peridot_memory::MemoryStore::new(state.project_root.join(".peridot/memory.db"));
+    let mut archived: Vec<_> = store
+        .list_skill_records()
+        .map_err(|err| format!("skills: failed to read skill store: {err}"))?
+        .into_iter()
+        .filter(|record| record.skill.archived_at_unix > 0)
+        .filter(|record| {
+            query.is_empty()
+                || record.skill.name.contains(query)
+                || record.skill.body.contains(query)
+                || record.skill.description.contains(query)
+        })
+        .collect();
+    archived.sort_by(|a, b| {
+        a.skill
+            .scope
+            .cmp(&b.skill.scope)
+            .then_with(|| a.skill.name.cmp(&b.skill.name))
+    });
+    let rows = archived_skill_inventory_rows(&archived);
+    let message = if rows.is_empty() {
+        if query.is_empty() {
+            "skills: no archived skills".to_string()
+        } else {
+            format!("skills: no archived matches for `{query}`")
+        }
+    } else if query.is_empty() {
+        format!("skills: {} archived", rows.len())
+    } else {
+        format!("skills: {} archived match(es) for `{query}`", rows.len())
+    };
+    Ok(serde_json::json!({
+        "kind": "skills",
+        "title": "Archived Skills",
+        "message": message,
+        "severity": "info",
+        "command": raw_command,
+        "query": query,
+        "archived": true,
+        "total": rows.len(),
+        "items": rows,
+    }))
+}
+
 fn handle_command_skill_pin(
     state: &DaemonState,
     raw_command: &str,
@@ -3479,6 +3533,17 @@ fn handle_command_skill_archive(
     command_skill_list_result(state, raw_command, Some(format!("archived skill `{name}`")))
 }
 
+fn handle_command_skill_restore(
+    state: &DaemonState,
+    raw_command: &str,
+    name: &str,
+) -> Result<Value, String> {
+    let store = peridot_memory::MemoryStore::new(state.project_root.join(".peridot/memory.db"));
+    restore_archived_skill(&store, &state.project_root, name)
+        .map_err(|err| format!("skills: failed to restore `{name}`: {err}"))?;
+    command_skill_list_result(state, raw_command, Some(format!("restored skill `{name}`")))
+}
+
 fn command_skill_list_result(
     state: &DaemonState,
     raw_command: &str,
@@ -3516,6 +3581,25 @@ fn skill_inventory_rows(skills: &[peridot_memory::StoredSkill]) -> Vec<Value> {
                 "source": "skill",
                 "scope": skill.scope,
                 "last_used_at_unix": skill.last_used_at_unix,
+                "pinned": skill.pinned_at_unix > 0,
+            })
+        })
+        .collect()
+}
+
+fn archived_skill_inventory_rows(records: &[peridot_memory::SkillRecord]) -> Vec<Value> {
+    records
+        .iter()
+        .map(|record| {
+            let skill = &record.skill;
+            serde_json::json!({
+                "label": format!("/{}", skill.name),
+                "detail": skill_description(skill),
+                "source": "skill",
+                "scope": skill.scope,
+                "last_used_at_unix": skill.last_used_at_unix,
+                "archived_at_unix": skill.archived_at_unix,
+                "archived": true,
                 "pinned": skill.pinned_at_unix > 0,
             })
         })
@@ -5375,6 +5459,42 @@ mod tests {
         assert!(store.list_skills().unwrap().is_empty());
         assert!(
             root.join(".peridot/skills/archive/auto-fix-parser.md")
+                .is_file()
+        );
+
+        let _ = dispatch_line(
+            &state,
+            r#"{"jsonrpc":"2.0","id":45,"method":"session.command","params":{"command":"/skills archived parser"}}"#,
+        )
+        .await
+        .unwrap();
+
+        let line = rx.try_recv().unwrap();
+        let value: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(value["result"]["kind"], "skills");
+        assert_eq!(value["result"]["archived"], true);
+        assert_eq!(value["result"]["total"], 1);
+        assert_eq!(value["result"]["items"][0]["label"], "/auto-fix-parser");
+        assert_eq!(value["result"]["items"][0]["archived"], true);
+
+        let _ = dispatch_line(
+            &state,
+            r#"{"jsonrpc":"2.0","id":46,"method":"session.command","params":{"command":"/skills restore auto-fix-parser"}}"#,
+        )
+        .await
+        .unwrap();
+
+        let line = rx.try_recv().unwrap();
+        let value: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(value["result"]["kind"], "skills");
+        assert_eq!(
+            value["result"]["message"],
+            "restored skill `auto-fix-parser`"
+        );
+        assert_eq!(value["result"]["total"], 1);
+        assert_eq!(store.list_skills().unwrap().len(), 1);
+        assert!(
+            root.join(".peridot/skills/auto/auto-fix-parser.md")
                 .is_file()
         );
         let _ = std::fs::remove_dir_all(root);

@@ -135,12 +135,14 @@ export function activate(context: vscode.ExtensionContext) {
     outlineCurrentFile: async (): Promise<void> => outlineCurrentFile(output, sidebar),
     findSymbolReferences: async (): Promise<void> => findWorkspaceSymbolReferences(output, sidebar),
     showSkills: async (): Promise<void> => showSkills(output, sidebar),
+    showArchivedSkills: async (): Promise<void> => showArchivedSkills(output, sidebar),
     searchSkills: async (): Promise<void> => searchSkills(output, sidebar),
     showSkill: async (name: string): Promise<void> => showSkill(name, output, sidebar),
     useSkill: async (name: string): Promise<void> => useSkill(name, output, sidebar),
     toggleSkillPin: async (name: string, pinned: boolean): Promise<void> =>
       toggleSkillPin(name, pinned, output, sidebar),
     archiveSkill: async (name: string): Promise<void> => archiveSkill(name, output, sidebar),
+    restoreSkill: async (name: string): Promise<void> => restoreSkill(name, output, sidebar),
     attachFile: async (): Promise<void> => attachFileToSession(output, sidebar),
     detachAttachment: async (path: string): Promise<void> =>
       detachAttachmentFromSession(path, output, sidebar),
@@ -312,6 +314,12 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand('peridot.showSkills', async () => {
       await showSkills(output, sidebar);
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('peridot.showArchivedSkills', async () => {
+      await showArchivedSkills(output, sidebar);
     }),
   );
 
@@ -996,6 +1004,35 @@ async function showSkills(
   }
 }
 
+async function showArchivedSkills(
+  output: vscode.OutputChannel,
+  sidebar: PeridotSidebarProvider,
+): Promise<void> {
+  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!folder) {
+    const message = 'Open a workspace folder before listing archived Peridot skills.';
+    sidebar.setWorkspaceProblem(message);
+    await vscode.window.showWarningMessage(message);
+    return;
+  }
+  await vscode.commands.executeCommand('peridot.chatView.focus');
+  try {
+    const result = await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Window,
+        title: 'Peridot: loading archived skills',
+      },
+      async () => runSlashCommand('/skills archived', output, sidebar, sidebar.currentRunOptions()),
+    );
+    sidebar.appendCommandResult(result);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    output.appendLine(`[peridot] archived skills failed: ${message}`);
+    sidebar.appendError(message);
+    await vscode.window.showErrorMessage(`Peridot archived skills failed: ${message}`);
+  }
+}
+
 async function searchSkills(
   output: vscode.OutputChannel,
   sidebar: PeridotSidebarProvider,
@@ -1161,6 +1198,37 @@ async function archiveSkill(
     output.appendLine(`[peridot] skill archive failed: ${message}`);
     sidebar.appendError(message);
     await vscode.window.showErrorMessage(`Peridot skill archive failed: ${message}`);
+  }
+}
+
+async function restoreSkill(
+  skillName: string,
+  output: vscode.OutputChannel,
+  sidebar: PeridotSidebarProvider,
+): Promise<void> {
+  const name = skillName.trim().replace(/^\/+/, '');
+  if (!name) return;
+  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!folder) {
+    const message = 'Open a workspace folder before restoring Peridot skills.';
+    sidebar.setWorkspaceProblem(message);
+    await vscode.window.showWarningMessage(message);
+    return;
+  }
+  await vscode.commands.executeCommand('peridot.chatView.focus');
+  try {
+    const result = await runSlashCommand(
+      `/skills restore ${name}`,
+      output,
+      sidebar,
+      sidebar.currentRunOptions(),
+    );
+    sidebar.appendCommandResult(result);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    output.appendLine(`[peridot] skill restore failed: ${message}`);
+    sidebar.appendError(message);
+    await vscode.window.showErrorMessage(`Peridot skill restore failed: ${message}`);
   }
 }
 

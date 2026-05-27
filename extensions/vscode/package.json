@@ -203,6 +203,12 @@
         "icon": "$(list-filter)"
       },
       {
+        "command": "peridot.showArchivedSkills",
+        "title": "Peridot: Show Archived Skills",
+        "category": "Peridot",
+        "icon": "$(archive)"
+      },
+      {
         "command": "peridot.searchSkills",
         "title": "Peridot: Search Skills",
         "category": "Peridot",
@@ -297,6 +303,11 @@
           "command": "peridot.showSkills",
           "when": "view == peridot.chatView",
           "group": "navigation@4.8"
+        },
+        {
+          "command": "peridot.showArchivedSkills",
+          "when": "view == peridot.chatView",
+          "group": "navigation@4.85"
         },
         {
           "command": "peridot.searchSkills",

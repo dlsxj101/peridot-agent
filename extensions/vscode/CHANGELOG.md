@@ -52,6 +52,8 @@
   `/skills use <name>`, loading the stored skill into session context.
 - Skill inventory and detail cards now include a confirm-before-archive
   action backed by `/skills archive <name>`.
+- Archived skill inventory is available from the sidebar and command
+  palette, with Restore actions backed by `/skills restore <name>`.
 - GitHub PR workflow commands are available from VS Code: PR status,
   preview-and-confirm `peridot ship`, and confirm-before-merge
   `gh pr merge`.

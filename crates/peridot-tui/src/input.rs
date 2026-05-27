@@ -1373,6 +1373,15 @@ pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
             state.push_transcript(format!("skills: searching `{query}`..."));
             state.push_pending_session_command(SessionCommandEvent::SkillSearch(query));
         }
+        SlashCommand::SkillArchived(query) => {
+            let suffix = if query.trim().is_empty() {
+                String::new()
+            } else {
+                format!(" matching `{}`", query.trim())
+            };
+            state.push_transcript(format!("skills: listing archived{suffix}..."));
+            state.push_pending_session_command(SessionCommandEvent::SkillArchived(query));
+        }
         SlashCommand::SkillPin(name) => {
             state.push_transcript(format!("skill `{name}`: pinning..."));
             state.push_pending_session_command(SessionCommandEvent::SkillPin(name));
@@ -1384,6 +1393,10 @@ pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
         SlashCommand::SkillArchive(name) => {
             state.push_transcript(format!("skill `{name}`: archiving..."));
             state.push_pending_session_command(SessionCommandEvent::SkillArchive(name));
+        }
+        SlashCommand::SkillRestore(name) => {
+            state.push_transcript(format!("skill `{name}`: restoring..."));
+            state.push_pending_session_command(SessionCommandEvent::SkillRestore(name));
         }
     }
 }

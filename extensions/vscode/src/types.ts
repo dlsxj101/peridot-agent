@@ -71,6 +71,9 @@ export interface CommandResultItem {
   mediaType?: string;
   inlined?: boolean;
   pinned?: boolean;
+  archived?: boolean;
+  archived_at_unix?: number;
+  archivedAtUnix?: number;
   last_used_at_unix?: number;
   lastUsedAtUnix?: number;
 }
@@ -120,6 +123,9 @@ export interface CommandResultView {
   body?: string;
   scope?: string;
   pinned?: boolean;
+  archived?: boolean;
+  archived_at_unix?: number;
+  archivedAtUnix?: number;
   last_used_at_unix?: number;
   lastUsedAtUnix?: number;
   diff?: string;
@@ -410,11 +416,13 @@ export type OutboundMessage =
   | { type: 'outlineCurrentFile' }
   | { type: 'findSymbolReferences' }
   | { type: 'showSkills' }
+  | { type: 'showArchivedSkills' }
   | { type: 'searchSkills' }
   | { type: 'showSkill'; name: string }
   | { type: 'useSkill'; name: string }
   | { type: 'toggleSkillPin'; name: string; pinned: boolean }
   | { type: 'archiveSkill'; name: string }
+  | { type: 'restoreSkill'; name: string }
   | { type: 'attachFile' }
   | { type: 'detachAttachment'; path: string }
   | { type: 'exportSessionArtifacts' }

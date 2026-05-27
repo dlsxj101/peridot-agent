@@ -48,11 +48,13 @@ export interface SidebarHandlers {
   outlineCurrentFile: () => Promise<void>;
   findSymbolReferences: () => Promise<void>;
   showSkills: () => Promise<void>;
+  showArchivedSkills: () => Promise<void>;
   searchSkills: () => Promise<void>;
   showSkill: (name: string) => Promise<void>;
   useSkill: (name: string) => Promise<void>;
   toggleSkillPin: (name: string, pinned: boolean) => Promise<void>;
   archiveSkill: (name: string) => Promise<void>;
+  restoreSkill: (name: string) => Promise<void>;
   attachFile: () => Promise<void>;
   detachAttachment: (path: string) => Promise<void>;
   showAttachments: () => Promise<void>;
@@ -946,6 +948,9 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       case 'showSkills':
         await this.handlers.showSkills();
         return;
+      case 'showArchivedSkills':
+        await this.handlers.showArchivedSkills();
+        return;
       case 'searchSkills':
         await this.handlers.searchSkills();
         return;
@@ -960,6 +965,9 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         return;
       case 'archiveSkill':
         await this.handlers.archiveSkill(message.name);
+        return;
+      case 'restoreSkill':
+        await this.handlers.restoreSkill(message.name);
         return;
       case 'attachFile':
         await this.handlers.attachFile();

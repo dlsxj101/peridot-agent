@@ -29,12 +29,16 @@ pub enum SlashCommand {
     SkillShow(String),
     /// Search active stored skills by name or body text.
     SkillSearch(String),
+    /// List archived stored skills, optionally filtered by text.
+    SkillArchived(String),
     /// Pin an active stored skill so automated curation cannot archive it.
     SkillPin(String),
     /// Clear the pinned marker from an active stored skill.
     SkillUnpin(String),
     /// Archive an active stored skill so it no longer appears in active inventory.
     SkillArchive(String),
+    /// Restore an archived stored skill to active inventory.
+    SkillRestore(String),
     /// Switch to plan mode.
     Plan,
     /// Switch to execute mode.
@@ -400,6 +404,10 @@ pub fn parse_slash_command(input: &str) -> Option<SlashCommand> {
             let query = rest.strip_prefix("search ")?.trim();
             (!query.is_empty()).then(|| SlashCommand::SkillSearch(query.to_string()))
         }
+        "skills" if rest == "archived" || rest.starts_with("archived ") => {
+            let query = rest.strip_prefix("archived").unwrap_or("").trim();
+            Some(SlashCommand::SkillArchived(query.to_string()))
+        }
         "skills" if rest.starts_with("use ") => {
             let request = rest.strip_prefix("use ")?.trim();
             parse_skill_use(request)
@@ -415,6 +423,10 @@ pub fn parse_slash_command(input: &str) -> Option<SlashCommand> {
         "skills" if rest.starts_with("archive ") => {
             let name = rest.strip_prefix("archive ")?.trim();
             (!name.is_empty()).then(|| SlashCommand::SkillArchive(name.to_string()))
+        }
+        "skills" if rest.starts_with("restore ") => {
+            let name = rest.strip_prefix("restore ")?.trim();
+            (!name.is_empty()).then(|| SlashCommand::SkillRestore(name.to_string()))
         }
         "skills" => None,
         "cost" if rest.is_empty() => Some(SlashCommand::Cost),
@@ -796,6 +808,14 @@ mod tests {
             Some(SlashCommand::SkillSearch("parser tests".to_string()))
         );
         assert_eq!(
+            parse_slash_command("/skills archived"),
+            Some(SlashCommand::SkillArchived(String::new()))
+        );
+        assert_eq!(
+            parse_slash_command("/skills archived parser tests"),
+            Some(SlashCommand::SkillArchived("parser tests".to_string()))
+        );
+        assert_eq!(
             parse_slash_command("/skills use auto-fix-parser --dry"),
             Some(SlashCommand::Skill {
                 name: "auto-fix-parser".to_string(),
@@ -821,6 +841,10 @@ mod tests {
             parse_slash_command("/skills archive auto-fix-parser"),
             Some(SlashCommand::SkillArchive("auto-fix-parser".to_string()))
         );
+        assert_eq!(
+            parse_slash_command("/skills restore auto-fix-parser"),
+            Some(SlashCommand::SkillRestore("auto-fix-parser".to_string()))
+        );
         assert_eq!(parse_slash_command("/skills bogus"), None);
         assert_eq!(parse_slash_command("/skills show"), None);
         assert_eq!(parse_slash_command("/skills search"), None);
@@ -828,6 +852,7 @@ mod tests {
         assert_eq!(parse_slash_command("/skills use bad_name"), None);
         assert_eq!(parse_slash_command("/skills pin"), None);
         assert_eq!(parse_slash_command("/skills archive"), None);
+        assert_eq!(parse_slash_command("/skills restore"), None);
     }
 
     #[test]

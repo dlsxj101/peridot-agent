@@ -12,9 +12,9 @@ use commands::{
     SessionCommand, SessionExportArtifact, SkillCommand, export_session_artifacts,
     load_effective_config, maybe_print_update_notice, maybe_run_first_launch_wizard,
     move_auto_skill_to_archive, print_scan, read_stored_api_key,
-    read_stored_openai_oauth_credentials, run_agents_command, run_config_command,
-    run_doctor_command, run_env_command, run_login_command, run_logout_command, run_mcp_command,
-    run_session_command, run_setting_command, run_setup_command, run_ship_command,
+    read_stored_openai_oauth_credentials, restore_archived_skill, run_agents_command,
+    run_config_command, run_doctor_command, run_env_command, run_login_command, run_logout_command,
+    run_mcp_command, run_session_command, run_setting_command, run_setup_command, run_ship_command,
     run_skill_command, run_update_command, run_verify_command, session_count_summary,
 };
 use peridot_common::{
@@ -1571,6 +1571,9 @@ fn apply_session_command(
         SessionCommandEvent::SkillSearch(query) => {
             handle_skill_search(state, project_template, &query);
         }
+        SessionCommandEvent::SkillArchived(query) => {
+            handle_skill_archived(state, project_template, &query);
+        }
         SessionCommandEvent::SkillPin(name) => {
             handle_skill_pin(state, project_template, &name, true);
         }
@@ -1579,6 +1582,9 @@ fn apply_session_command(
         }
         SessionCommandEvent::SkillArchive(name) => {
             handle_skill_archive(state, project_template, &name);
+        }
+        SessionCommandEvent::SkillRestore(name) => {
+            handle_skill_restore(state, project_template, &name);
         }
         SessionCommandEvent::ContextTop => {
             handle_context_top(state, project_template);
@@ -2054,6 +2060,55 @@ fn handle_skill_search(state: &mut TuiState, project_root: &Path, query: &str) {
     state.push_transcript(lines.join("\n"));
 }
 
+fn handle_skill_archived(state: &mut TuiState, project_root: &Path, query: &str) {
+    let store = MemoryStore::new(project_root.join(".peridot/memory.db"));
+    let mut archived: Vec<_> = match store.list_skill_records() {
+        Ok(records) => records
+            .into_iter()
+            .filter(|record| record.skill.archived_at_unix > 0)
+            .filter(|record| {
+                let query = query.trim();
+                query.is_empty()
+                    || record.skill.name.contains(query)
+                    || record.skill.body.contains(query)
+                    || record.skill.description.contains(query)
+            })
+            .collect(),
+        Err(err) => {
+            state.push_error(format!("skills: failed to read skill store: {err}"));
+            return;
+        }
+    };
+    archived.sort_by(|a, b| {
+        a.skill
+            .scope
+            .cmp(&b.skill.scope)
+            .then_with(|| a.skill.name.cmp(&b.skill.name))
+    });
+    if archived.is_empty() {
+        if query.trim().is_empty() {
+            state.push_transcript("skills: no archived skills");
+        } else {
+            state.push_transcript(format!(
+                "skills: no archived matches for `{}`",
+                query.trim()
+            ));
+        }
+        return;
+    }
+    let mut lines = vec![format!("skills: {} archived", archived.len())];
+    for record in archived {
+        lines.push(format!(
+            "  /{}  ·  {} [{} · archived {}]",
+            record.skill.name,
+            skill_description(&record.skill),
+            record.skill.scope,
+            record.skill.archived_at_unix,
+        ));
+    }
+    state.push_transcript(lines.join("\n"));
+}
+
 fn handle_skill_pin(state: &mut TuiState, project_root: &Path, name: &str, pinned: bool) {
     let store = MemoryStore::new(project_root.join(".peridot/memory.db"));
     let ts = if pinned { unix_timestamp() } else { 0 };
@@ -2086,6 +2141,17 @@ fn handle_skill_archive(state: &mut TuiState, project_root: &Path, name: &str) {
         }
         Ok(false) => state.push_error(format!("skill not found: {name}")),
         Err(err) => state.push_error(format!("skills: failed to archive `{name}`: {err}")),
+    }
+}
+
+fn handle_skill_restore(state: &mut TuiState, project_root: &Path, name: &str) {
+    let store = MemoryStore::new(project_root.join(".peridot/memory.db"));
+    match restore_archived_skill(&store, project_root, name) {
+        Ok(_) => {
+            state.set_skill_suggestions(load_auto_skill_suggestions(project_root));
+            state.push_transcript(format!("restored skill `{name}`"));
+        }
+        Err(err) => state.push_error(format!("skills: failed to restore `{name}`: {err}")),
     }
 }
 
