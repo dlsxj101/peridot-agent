@@ -49,6 +49,8 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **Daemon-backed `/cost` parity** returns current and aggregate usage
   for editor clients, including live running-session usage, persisted
   background sessions, committee role totals, and the active budget cap.
+- **Daemon-backed `/plan show` parity** returns the live plan snapshot
+  as structured command rows for editor clients.
 - **VS Code Get Started walkthrough** guides first-time users through
   opening the sidebar, connecting a provider, reviewing settings, and
   running a first task using existing Peridot commands and view

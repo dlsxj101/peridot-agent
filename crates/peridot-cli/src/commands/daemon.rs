@@ -20,8 +20,8 @@ use peridot_common::{
 };
 use peridot_context::{BranchJournal, ContextEntry, ContextSource, estimate_tokens_for_text};
 use peridot_core::{
-    AgentRunEvent, AutoFixAction, ExportArtifact, SlashCommand, SlashStateDelta, StopReason,
-    SubagentModelChange, parse_slash_command, slash_state_delta,
+    AgentRunEvent, AutoFixAction, ExportArtifact, PlanStepUpdate, SlashCommand, SlashStateDelta,
+    StopReason, SubagentModelChange, parse_slash_command, slash_state_delta,
 };
 use peridot_git::GitManager;
 use peridot_memory::{MemoryStore, SessionLifecycle, SessionRecord};
@@ -91,6 +91,7 @@ struct SessionEntry {
     task: Option<tokio::task::JoinHandle<()>>,
     spec: SessionRunSpec,
     usage: Arc<StdMutex<LiveSessionUsage>>,
+    plan: Arc<StdMutex<LiveSessionPlan>>,
     approval_grants: Vec<ApprovalGrant>,
     waiting_approval: Option<ApprovalRequestSnapshot>,
 }
@@ -148,6 +149,12 @@ impl LiveSessionUsage {
             _ => {}
         }
     }
+}
+
+#[derive(Clone, Debug, Default)]
+struct LiveSessionPlan {
+    steps: Vec<PlanStepUpdate>,
+    current: Option<u32>,
 }
 
 #[derive(Clone)]
@@ -789,6 +796,8 @@ async fn handle_session_start(state: &DaemonState, id: Value, params: Option<Val
     let spec_for_task = spec.clone();
     let usage = Arc::new(StdMutex::new(LiveSessionUsage::default()));
     let usage_for_task = usage.clone();
+    let plan = Arc::new(StdMutex::new(LiveSessionPlan::default()));
+    let plan_for_task = plan.clone();
     let (start_tx, start_rx) = oneshot::channel::<()>();
 
     let handle = tokio::spawn(async move {
@@ -800,6 +809,7 @@ async fn handle_session_start(state: &DaemonState, id: Value, params: Option<Val
             cancel_for_task,
             compact_request_for_task,
             usage_for_task,
+            plan_for_task,
         )
         .await;
     });
@@ -812,6 +822,7 @@ async fn handle_session_start(state: &DaemonState, id: Value, params: Option<Val
             task: Some(handle),
             spec: spec.clone(),
             usage,
+            plan,
             approval_grants: Vec::new(),
             waiting_approval: None,
         },
@@ -1120,6 +1131,7 @@ async fn run_session_task(
     cancel: CancelToken,
     compact_request: Arc<AtomicBool>,
     usage: Arc<StdMutex<LiveSessionUsage>>,
+    plan: Arc<StdMutex<LiveSessionPlan>>,
 ) {
     let mut options = (*state.run_template).clone();
     options.permission = spec.permission;
@@ -1153,6 +1165,7 @@ async fn run_session_task(
         Arc::new(std::sync::Mutex::new(None));
     let approval_snapshot_for_events = approval_snapshot.clone();
     let usage_for_events = usage.clone();
+    let plan_for_events = plan.clone();
     let session_id_inner = session_id.clone();
     let state_inner = state.clone();
     let result = run_task_with_events(
@@ -1187,6 +1200,12 @@ async fn run_session_task(
                 });
             }
             usage_for_events.lock().unwrap().record_event(&event);
+            if let AgentRunEvent::PlanUpdated { steps, current } = &event {
+                *plan_for_events.lock().unwrap() = LiveSessionPlan {
+                    steps: steps.clone(),
+                    current: *current,
+                };
+            }
             let value = serde_json::to_value(&event).unwrap_or(Value::Null);
             emit_event(&state_inner, &session_id_inner, value);
         },
@@ -1560,6 +1579,7 @@ async fn execute_session_command(
         })),
         SlashCommand::Cost => handle_command_cost(state, session_id, raw_command).await,
         SlashCommand::Info => handle_command_info(state, session_id, raw_command).await,
+        SlashCommand::PlanShow => handle_command_plan_show(state, session_id, raw_command).await,
         SlashCommand::Skill { name, args } => {
             // Try the project's skill store. If the name exists, inject
             // the body as a PlanReminder-style context entry so the
@@ -1619,8 +1639,7 @@ async fn execute_session_command(
             "severity": "info",
             "command": raw_command,
         })),
-        SlashCommand::PlanShow
-        | SlashCommand::SessionSave
+        SlashCommand::SessionSave
         | SlashCommand::SidepanelToggle
         | SlashCommand::Collapse
         | SlashCommand::Rewind
@@ -1858,6 +1877,87 @@ fn handle_command_session_count(state: &DaemonState, raw_command: &str) -> Resul
         "suspended": summary.suspended,
         "done": summary.done,
         "failed": summary.failed,
+    }))
+}
+
+async fn handle_command_plan_show(
+    state: &DaemonState,
+    session_id: Option<&str>,
+    raw_command: &str,
+) -> Result<Value, String> {
+    let plan = if let Some(session_id) = session_id {
+        state
+            .sessions
+            .lock()
+            .await
+            .get(session_id)
+            .map(|entry| entry.plan.lock().unwrap().clone())
+    } else {
+        None
+    }
+    .unwrap_or_default();
+    let done = plan.steps.iter().filter(|step| step.done).count();
+    let total = plan.steps.len();
+    let items: Vec<Value> = plan
+        .steps
+        .iter()
+        .enumerate()
+        .map(|(index, step)| {
+            let current = plan.current == Some(index as u32);
+            let status = if step.done {
+                "done"
+            } else if current {
+                "in_progress"
+            } else {
+                "pending"
+            };
+            serde_json::json!({
+                "label": format!("{}. {}", index + 1, step.label),
+                "detail": status,
+                "source": status,
+                "step_index": index,
+                "done": step.done,
+                "current": current,
+            })
+        })
+        .collect();
+    Ok(serde_json::json!({
+        "kind": "plan",
+        "title": "Plan",
+        "message": if total == 0 {
+            "plan: <empty>".to_string()
+        } else {
+            format!("plan: {done}/{total} steps")
+        },
+        "severity": "info",
+        "command": raw_command,
+        "items": items,
+        "session_id": session_id,
+        "steps": plan
+            .steps
+            .iter()
+            .enumerate()
+            .map(|(index, step)| {
+                let current = plan.current == Some(index as u32);
+                let status = if step.done {
+                    "done"
+                } else if current {
+                    "in_progress"
+                } else {
+                    "pending"
+                };
+                serde_json::json!({
+                    "text": step.label,
+                    "label": step.label,
+                    "done": step.done,
+                    "status": status,
+                    "current": current,
+                })
+            })
+            .collect::<Vec<_>>(),
+        "current": plan.current,
+        "done": done,
+        "total": total,
     }))
 }
 
@@ -2305,7 +2405,7 @@ async fn handle_approval_respond(
         return Ok(());
     }
 
-    let (spec, cancel_for_task, compact_request, usage, parameters_overridden) = {
+    let (spec, cancel_for_task, compact_request, usage, plan, parameters_overridden) = {
         let mut sessions = state.sessions.lock().await;
         let Some(entry) = sessions.get_mut(session_id) else {
             emit_response(
@@ -2357,7 +2457,15 @@ async fn handle_approval_respond(
         }
         let spec = entry.spec.clone();
         let usage = entry.usage.clone();
-        (spec, cancel, compact_request, usage, parameters_overridden)
+        let plan = entry.plan.clone();
+        (
+            spec,
+            cancel,
+            compact_request,
+            usage,
+            plan,
+            parameters_overridden,
+        )
     };
 
     if parameters_overridden {
@@ -2375,6 +2483,7 @@ async fn handle_approval_respond(
             cancel_for_task,
             compact_request,
             usage,
+            plan,
         )
         .await;
     });
@@ -4221,6 +4330,7 @@ mod tests {
                     config: PeridotConfig::default(),
                 },
                 usage,
+                plan: Arc::new(StdMutex::new(LiveSessionPlan::default())),
                 approval_grants: Vec::new(),
                 waiting_approval: None,
             },
@@ -4244,6 +4354,72 @@ mod tests {
         assert!((result["committee_cost_usd"].as_f64().unwrap() - 0.02).abs() < 1e-9);
         assert_eq!(result["budget_limit_usd"], 0.5);
         assert_eq!(result["items"].as_array().unwrap().len(), 2);
+        shutdown_sessions(&state).await;
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn session_command_plan_show_returns_live_plan_snapshot() {
+        let root = test_project("session-command-plan-show");
+        let (tx, _rx) = mpsc::unbounded_channel::<String>();
+        let state = DaemonState::new(
+            root.clone(),
+            PeridotConfig::default(),
+            test_options(None),
+            tx,
+        );
+        let plan = Arc::new(StdMutex::new(LiveSessionPlan {
+            steps: vec![
+                PlanStepUpdate {
+                    label: "scan workspace".to_string(),
+                    done: true,
+                },
+                PlanStepUpdate {
+                    label: "apply patch".to_string(),
+                    done: false,
+                },
+            ],
+            current: Some(1),
+        }));
+        state.sessions.lock().await.insert(
+            "session-plan".to_string(),
+            SessionEntry {
+                cancel: CancelToken::new(),
+                compact_request: Arc::new(AtomicBool::new(false)),
+                task: None,
+                spec: SessionRunSpec {
+                    task: "ship plan".to_string(),
+                    mode: ExecutionMode::Execute,
+                    permission: PermissionMode::Auto,
+                    model: None,
+                    reasoning_effort: None,
+                    service_tier: None,
+                    config: PeridotConfig::default(),
+                },
+                usage: Arc::new(StdMutex::new(LiveSessionUsage::default())),
+                plan,
+                approval_grants: Vec::new(),
+                waiting_approval: None,
+            },
+        );
+
+        let result = execute_session_command(
+            &state,
+            Some("session-plan"),
+            "/plan show",
+            SlashCommand::PlanShow,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result["kind"], "plan");
+        assert_eq!(result["message"], "plan: 1/2 steps");
+        assert_eq!(result["done"], 1);
+        assert_eq!(result["total"], 2);
+        assert_eq!(result["current"], 1);
+        assert_eq!(result["items"][0]["detail"], "done");
+        assert_eq!(result["items"][1]["detail"], "in_progress");
+        assert_eq!(result["steps"][1]["text"], "apply patch");
         shutdown_sessions(&state).await;
         let _ = std::fs::remove_dir_all(root);
     }
@@ -4283,6 +4459,7 @@ mod tests {
                     config: spec_config,
                 },
                 usage: Arc::new(StdMutex::new(LiveSessionUsage::default())),
+                plan: Arc::new(StdMutex::new(LiveSessionPlan::default())),
                 approval_grants: Vec::new(),
                 waiting_approval: None,
             },
@@ -5124,6 +5301,7 @@ mod tests {
                     config: PeridotConfig::default(),
                 },
                 usage: Arc::new(StdMutex::new(LiveSessionUsage::default())),
+                plan: Arc::new(StdMutex::new(LiveSessionPlan::default())),
                 approval_grants: Vec::new(),
                 waiting_approval: None,
             },

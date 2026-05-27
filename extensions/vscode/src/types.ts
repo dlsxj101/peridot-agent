@@ -59,6 +59,9 @@ export interface CommandResultItem {
   committee_cost_usd?: number;
   turns_used?: number;
   last_task?: string;
+  step_index?: number;
+  done?: boolean;
+  current?: boolean;
   bytes?: number;
   turn_id?: number;
   source?: string;
@@ -136,6 +139,9 @@ export interface CommandResultView {
   committee_cost_usd?: number;
   budget_limit_usd?: number | null;
   budget_pct?: number | null;
+  steps?: PlanStepView[];
+  current?: number | null;
+  done?: number;
   source_totals?: Record<string, number>;
   symbol_count?: number;
   todo_count?: number;

@@ -98,6 +98,18 @@ shared daemon, TUI, and VS Code extension surfaces.
   `UsageUpdated`, `BudgetUpdated`, and `CommitteeRoleUsage` events so
   editor clients do not have to wait for persisted records at run end.
 
+### E15. Plan Show Slash Parity
+
+- **Status**: landed.
+- **Goal**: make `/plan show` useful from the VS Code composer instead
+  of returning a local-placeholder command result.
+- **Where**: daemon live plan bookkeeping, `session.command`, VS Code
+  command-result typing.
+- **Result**: running daemon sessions now keep the latest `PlanUpdated`
+  snapshot. `/plan show` returns a structured `plan` command result with
+  done/total counts, current-step metadata, and one command row per plan
+  step. TUI keeps its existing local side-panel rendering.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.
