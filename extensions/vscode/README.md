@@ -125,9 +125,10 @@ after it prints the successful install message.
 ## Local development
 
 Sideloading a `.vsix` you packaged yourself? `npm run package` produces a
-universal build. Unless you stage binaries under `resources/bin/<target>/`
-first, Peridot falls back to `peridot` on your PATH. To exercise a
-single-platform bundled-binary path locally:
+universal build and runs the extension unit tests through VSCE's
+`vscode:prepublish` hook. Unless you stage binaries under
+`resources/bin/<target>/` first, Peridot falls back to `peridot` on your
+PATH. To exercise a single-platform bundled-binary path locally:
 
 ```bash
 cargo build --release -p peridot-cli

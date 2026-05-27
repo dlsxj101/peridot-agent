@@ -67,6 +67,11 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
   suggestions, structured argument options, and exact-command submission.
 - **VS Code CI test gate** now runs `npm test` in extension CI and release
   packaging before building or publishing VSIX artifacts.
+- **VS Code local package test gate** now runs `npm test` from
+  `vscode:prepublish`, so locally packaged VSIX builds use the same unit
+  test guard.
+- **VS Code VSIX ignore rules** exclude extension test output and
+  source-only development files from packaged artifacts.
 
 ### Added — skill-aware slash autocomplete
 

@@ -49,6 +49,10 @@
 - VS Code CI and release packaging now run `npm test` before building or
   publishing the extension, so webview/sidebar unit regressions block the
   pipeline.
+- Local VSIX packaging now runs `npm test` through the `vscode:prepublish`
+  hook before creating a package.
+- VSIX packaging now excludes TypeScript test outputs and source-only
+  development files so `npm test` does not leak `out-test/` into packages.
 
 ### Added — compaction snapshot details
 

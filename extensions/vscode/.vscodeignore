@@ -2,6 +2,8 @@
 .vscode-test/**
 .peridot/**
 node_modules/**
+out-test/**
+test/**
 src/**
 webview/**
 scripts/**
@@ -15,3 +17,6 @@ esbuild.config.mjs
 !dist/**/*.js
 !dist/**/*.css
 !dist/**/*.js.map
+*.vsix
+package-lock.json
+resources/bin-raw/**
