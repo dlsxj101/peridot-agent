@@ -46,6 +46,9 @@
   empty authoritative inventories and local draft preservation.
 - Slash autocomplete filtering and finite-argument picker behavior now live
   in a tested pure helper shared by the VS Code webview.
+- VS Code CI and release packaging now run `npm test` before building or
+  publishing the extension, so webview/sidebar unit regressions block the
+  pipeline.
 
 ### Added — compaction snapshot details
 

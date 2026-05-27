@@ -34,8 +34,11 @@ jobs:
       - name: Install
         run: npm ci || npm install
 
-      - name: Compile
-        run: npm run compile
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
 
       - name: Package (.vsix)
         run: npx vsce package --no-dependencies

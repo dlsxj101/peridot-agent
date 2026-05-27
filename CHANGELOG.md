@@ -65,6 +65,8 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
   caught by `npm test`.
 - **VS Code slash autocomplete tests** cover command ranking, dynamic skill
   suggestions, structured argument options, and exact-command submission.
+- **VS Code CI test gate** now runs `npm test` in extension CI and release
+  packaging before building or publishing VSIX artifacts.
 
 ### Added — skill-aware slash autocomplete
 

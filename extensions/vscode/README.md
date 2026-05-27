@@ -141,6 +141,7 @@ For WSL/Cursor extension development, install extension dependencies first:
 ```bash
 cd extensions/vscode
 npm install
+npm test
 ```
 
 Then use the VS Code/Cursor launch configuration **Peridot: Run Extension
