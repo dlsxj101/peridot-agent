@@ -77,6 +77,10 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
   `/fast true|false|1|0|standard` and `/autofix true|false|1|0`
   aliases in both TUI and VS Code while keeping numeric autofix limits
   free-form.
+- **Committee runbook follow-up status** now labels replay weaving,
+  duplicate-diff guard, Block prompt, and `committee.executor_model` as
+  landed post-M-COM7 work instead of leaving them under an Outstanding
+  heading.
 - **VS Code per-session composer history** now mirrors the TUI input
   history ergonomics: ArrowUp/ArrowDown recall submitted prompts per
   sidebar session, while in-progress drafts stay isolated across session

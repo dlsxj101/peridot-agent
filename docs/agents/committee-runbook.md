@@ -160,9 +160,11 @@ mode = "planner"` or `"full"` in project config).
 
 Each PR is reviewable in isolation and leaves the workspace fmt/clippy/test green.
 
-## Outstanding (post-M-COM7)
+## Post-M-COM7 Follow-Ups
 
-These items were called out during plan but deferred so the seven core PRs stay sized. They have since landed:
+These items were called out during planning but deferred so the seven core
+PRs stayed reviewable. They have since landed; this section is retained as a
+handoff trail, not an open work list.
 
 - **Replay weaving** — `peridot session replay` interleaves committee events with transcript rows through a unified timeline. New transcript rows carry `ts`; older rows fall back to stable transcript order with committee duplicates replaced by structured events.
 - **Diff-signature duplicate guard** — repeated `RequestChanges` verdicts for the same diff signature auto-Block through the existing reviewer block / AskUser override path.
