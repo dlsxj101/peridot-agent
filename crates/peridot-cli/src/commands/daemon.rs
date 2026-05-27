@@ -1592,6 +1592,7 @@ async fn execute_session_command(
         SlashCommand::Undo => handle_command_undo(state, raw_command),
         SlashCommand::Todos => handle_command_todos(state, raw_command),
         SlashCommand::CodeMap => handle_command_codemap(state, raw_command),
+        SlashCommand::Attach(path) => handle_command_attach(state, session_id, raw_command, &path),
         SlashCommand::McpList => handle_command_mcp_list(state, raw_command),
         SlashCommand::McpAdd {
             name,
@@ -2430,6 +2431,36 @@ fn handle_command_codemap(state: &DaemonState, raw_command: &str) -> Result<Valu
         "todo_count": report.todos.len(),
         "walked_files": report.walked_files,
         "truncated": truncated,
+    }))
+}
+
+fn handle_command_attach(
+    state: &DaemonState,
+    session_id: Option<&str>,
+    raw_command: &str,
+    path: &str,
+) -> Result<Value, String> {
+    const MAX_ATTACHMENT_BYTES: usize = 64 * 1024;
+    let session_id = require_session_id(session_id, "attach")?;
+    let attachment =
+        crate::commands::load_text_attachment(&state.project_root, path, MAX_ATTACHMENT_BYTES)?;
+    append_plan_reminder_to_context(
+        state,
+        &session_id,
+        crate::commands::attachment_plan_reminder(&attachment),
+    )?;
+    Ok(serde_json::json!({
+        "kind": "attach",
+        "title": "Attachment",
+        "message": format!("attach: added {} ({} bytes) to session context", attachment.path, attachment.bytes),
+        "severity": "info",
+        "command": raw_command,
+        "items": [{
+            "source": "attachment",
+            "label": attachment.path,
+            "path": attachment.path,
+            "detail": format!("{} bytes", attachment.bytes),
+        }],
     }))
 }
 
@@ -3430,6 +3461,44 @@ mod tests {
         assert!(last.content.contains("[skill:auto-fix-parser]"));
         assert!(last.content.contains("Operator passed args: --dry"));
         assert!(last.content.contains("Run parser tests"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn session_command_attach_appends_file_context() {
+        let root = test_project("attach-command");
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/lib.rs"), "pub fn attached() {}\n").unwrap();
+        let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+        let state = DaemonState::new(
+            root.clone(),
+            PeridotConfig::default(),
+            test_options(None),
+            tx,
+        );
+
+        let _ = dispatch_line(
+            &state,
+            r#"{"jsonrpc":"2.0","id":44,"method":"session.command","params":{"session_id":"session-attach","command":"/attach src/lib.rs"}}"#,
+        )
+        .await
+        .unwrap();
+
+        let mut values = Vec::new();
+        while let Ok(line) = rx.try_recv() {
+            values.push(serde_json::from_str::<Value>(&line).unwrap());
+        }
+        assert!(
+            values
+                .iter()
+                .any(|value| { value["id"] == 44 && value["result"]["kind"] == "attach" })
+        );
+        let entries = read_context_snapshot(&state, "session-attach").unwrap();
+        let last = entries.last().unwrap();
+        assert_eq!(last.source, ContextSource::PlanReminder);
+        assert!(last.content.contains("[attachment]"));
+        assert!(last.content.contains("path: src/lib.rs"));
+        assert!(last.content.contains("pub fn attached()"));
         let _ = std::fs::remove_dir_all(root);
     }
 

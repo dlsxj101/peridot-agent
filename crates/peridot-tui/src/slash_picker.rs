@@ -264,6 +264,12 @@ pub fn slash_command_catalog() -> &'static [SlashCommandSpec] {
             category: "plan",
         },
         SlashCommandSpec {
+            name: "/attach",
+            description: "attach a workspace file to the current session context",
+            arg_hint: Some("<path>"),
+            category: "session",
+        },
+        SlashCommandSpec {
             name: "/rewind",
             description: "pop the last user-agent exchange and restore the prompt to the input box",
             arg_hint: None,

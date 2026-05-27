@@ -54,6 +54,10 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
   merge commands. Ship uses the new `peridot ship --dry-run` preview
   before asking for confirmation; merge prompts for strategy and branch
   cleanup before running `gh pr merge`.
+- **File attachment context** adds `/attach <path>` plus a VS Code file
+  picker. Workspace-local UTF-8 files are inlined into the current
+  session context, while image files use a metadata placeholder until
+  provider-level multimodal input lands.
 
 ### Changed — TUI borderless transcript
 

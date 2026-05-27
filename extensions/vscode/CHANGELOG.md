@@ -22,6 +22,9 @@
 - GitHub PR workflow commands are available from VS Code: PR status,
   preview-and-confirm `peridot ship`, and confirm-before-merge
   `gh pr merge`.
+- File attachments are available through `/attach <path>` and the VS
+  Code file picker. UTF-8 files are inlined into session context; image
+  files are represented with a metadata placeholder.
 - The sidebar subscribes to the daemon's session list and reconciles
   `.peridot/memory.db` session records, so sessions started or finished
   from another VS Code window can appear in the local session menu after

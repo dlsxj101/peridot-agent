@@ -161,6 +161,12 @@
         "icon": "$(symbol-misc)"
       },
       {
+        "command": "peridot.attachFile",
+        "title": "Peridot: Attach File to Session",
+        "category": "Peridot",
+        "icon": "$(link)"
+      },
+      {
         "command": "peridot.prStatus",
         "title": "Peridot: Show GitHub PR Status",
         "category": "Peridot",
@@ -198,19 +204,24 @@
           "group": "navigation@2"
         },
         {
-          "command": "peridot.prStatus",
+          "command": "peridot.attachFile",
           "when": "view == peridot.chatView",
           "group": "navigation@3"
         },
         {
-          "command": "peridot.shipChanges",
+          "command": "peridot.prStatus",
           "when": "view == peridot.chatView",
           "group": "navigation@4"
         },
         {
-          "command": "peridot.mergePr",
+          "command": "peridot.shipChanges",
           "when": "view == peridot.chatView",
           "group": "navigation@5"
+        },
+        {
+          "command": "peridot.mergePr",
+          "when": "view == peridot.chatView",
+          "group": "navigation@6"
         }
       ]
     },

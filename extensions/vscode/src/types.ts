@@ -303,6 +303,7 @@ export type OutboundMessage =
   | { type: 'queueClear' }
   | { type: 'dismissBranchPicker' }
   | { type: 'showCodeMap' }
+  | { type: 'attachFile' }
   | { type: 'showPrStatus' }
   | { type: 'shipChanges' }
   | { type: 'mergePr' }

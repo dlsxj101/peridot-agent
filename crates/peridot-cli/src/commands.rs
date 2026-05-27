@@ -26,6 +26,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 mod agents;
+mod attach;
 mod auth;
 mod codemap;
 mod config;
@@ -47,6 +48,7 @@ mod verify;
 
 pub(crate) use agents::run_agents_command;
 use agents::{agents_draft, find_agents_instruction};
+pub(crate) use attach::{attachment_plan_reminder, load_text_attachment};
 use auth::unix_timestamp;
 pub(crate) use auth::{
     OpenAiOAuthCredentials, openai_oauth_access_token_identity, read_managed_env_var,

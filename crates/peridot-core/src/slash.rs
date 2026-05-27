@@ -59,6 +59,8 @@ pub enum SlashCommand {
     Committee(CommitteeMode),
     /// Append a free-form note to the current session's notes.ndjson.
     Note(String),
+    /// Attach a workspace file to the current session context.
+    Attach(String),
     /// Print a one-shot summary of the current session (model, provider,
     /// workspace, session id, mode, permission, turn, tokens, cost).
     Info,
@@ -338,6 +340,8 @@ pub fn parse_slash_command(input: &str) -> Option<SlashCommand> {
             .ok()
             .map(SlashCommand::Committee),
         "note" if !rest.is_empty() => Some(SlashCommand::Note(rest.to_string())),
+        "attach" if !rest.is_empty() => Some(SlashCommand::Attach(rest.to_string())),
+        "attach" => None,
         "info" if rest.is_empty() => Some(SlashCommand::Info),
         "context" if rest.is_empty() || rest == "top" => Some(SlashCommand::ContextTop),
         "lang" if !rest.is_empty() => Locale::from_str(rest).ok().map(SlashCommand::Lang),
@@ -614,6 +618,15 @@ mod tests {
     fn parses_codemap_builtin() {
         assert_eq!(parse_slash_command("/codemap"), Some(SlashCommand::CodeMap));
         assert_eq!(parse_slash_command("/codemap src"), None);
+    }
+
+    #[test]
+    fn parses_attach_with_path() {
+        assert_eq!(
+            parse_slash_command("/attach src/lib.rs"),
+            Some(SlashCommand::Attach("src/lib.rs".to_string()))
+        );
+        assert_eq!(parse_slash_command("/attach"), None);
     }
 
     #[test]

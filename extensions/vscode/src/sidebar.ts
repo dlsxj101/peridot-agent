@@ -42,6 +42,7 @@ export interface SidebarHandlers {
   loginOpenAi: () => Promise<void>;
   refreshStatus: () => Promise<void>;
   showCodeMap: () => Promise<void>;
+  attachFile: () => Promise<void>;
   showPrStatus: () => Promise<void>;
   shipChanges: () => Promise<void>;
   mergePr: () => Promise<void>;
@@ -910,6 +911,9 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         return;
       case 'showCodeMap':
         await this.handlers.showCodeMap();
+        return;
+      case 'attachFile':
+        await this.handlers.attachFile();
         return;
       case 'showPrStatus':
         await this.handlers.showPrStatus();

@@ -1468,6 +1468,9 @@ fn apply_session_command(
         SessionCommandEvent::CodeMap => {
             handle_code_map(state, project_template);
         }
+        SessionCommandEvent::Attach(path) => {
+            handle_attach(state, project_template, &path);
+        }
         SessionCommandEvent::BranchSave(name) => {
             handle_branch_save(state, project_template, &name);
         }
@@ -2220,6 +2223,28 @@ fn handle_code_map(state: &mut TuiState, project_root: &Path) {
         return;
     }
     state.push_transcript(render_code_map_text(&report));
+}
+
+fn handle_attach(state: &mut TuiState, project_root: &Path, path: &str) {
+    const MAX_ATTACHMENT_BYTES: usize = 64 * 1024;
+    match commands::load_text_attachment(project_root, path, MAX_ATTACHMENT_BYTES) {
+        Ok(attachment) => {
+            if state.current_session_id.is_empty() {
+                state.push_error("attach: no active session".to_string());
+                return;
+            }
+            let reminder = commands::attachment_plan_reminder(&attachment);
+            match append_plan_reminder_to_context(project_root, &state.current_session_id, reminder)
+            {
+                Ok(()) => state.push_transcript(format!(
+                    "attach: added {} ({} bytes) to session context",
+                    attachment.path, attachment.bytes
+                )),
+                Err(err) => state.push_error(format!("attach: failed to update context: {err}")),
+            }
+        }
+        Err(err) => state.push_error(err),
+    }
 }
 
 fn render_code_map_text(report: &commands::CodeMapReport) -> String {

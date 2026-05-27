@@ -905,6 +905,9 @@ pub enum SessionCommandEvent {
     ScanTodos,
     /// `/codemap` — scan source files for public symbols and TODO markers.
     CodeMap,
+    /// `/attach <path>` — read a workspace file into the active session
+    /// context as an operator-provided attachment.
+    Attach(String),
     /// `/branch save <name>` — copy the active session's context
     /// snapshot under `.peridot/branches/<name>/` for later restore.
     BranchSave(String),

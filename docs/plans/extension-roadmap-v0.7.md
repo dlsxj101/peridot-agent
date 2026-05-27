@@ -40,13 +40,14 @@ and compaction visualization have landed.
 
 ### E4. Attachment UX Spike
 
-- **Status**: planned.
+- **Status**: landed.
 - **Goal**: design the extension side of `/attach <path>` and image/file
   paste before the provider-level multimodal project starts.
 - **Where**: composer webview, daemon payload schema, persisted session
   transcript
-- **Done when**: text-only attachments work as explicit context entries
-  and image attachments have a schema-compatible placeholder.
+- **Result**: `/attach <path>` and `Peridot: Attach File to Session`
+  add workspace-local UTF-8 files to session context; image files use a
+  metadata placeholder rather than inlining binary content.
 
 ## Notes
 

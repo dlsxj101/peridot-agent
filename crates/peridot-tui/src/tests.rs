@@ -2162,6 +2162,30 @@ fn codemap_slash_queues_pending_command() {
 }
 
 #[test]
+fn attach_slash_queues_pending_command() {
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+
+    apply_slash_command(&mut state, SlashCommand::Attach("src/lib.rs".to_string()));
+
+    assert_eq!(
+        state.drain_pending_session_commands(),
+        vec![SessionCommandEvent::Attach("src/lib.rs".to_string())]
+    );
+    assert!(
+        state
+            .transcript
+            .last()
+            .unwrap()
+            .text
+            .contains("attach: loading src/lib.rs")
+    );
+}
+
+#[test]
 fn session_switch_and_close_slashes_queue_router_intents() {
     let mut state = TuiState::new(HeaderState::new(
         ExecutionMode::Execute,

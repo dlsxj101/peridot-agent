@@ -4,6 +4,7 @@
 // task execution over JSON-RPC.
 
 import * as childProcess from 'child_process';
+import * as path from 'path';
 import * as vscode from 'vscode';
 import { EXPECTED_AGENT_RUN_EVENT_SCHEMA_VERSION, PeridotDaemon, RpcNotification } from './daemon';
 import { resetBinaryCache, resolvePeridotBinary } from './peridotBin';
@@ -110,6 +111,7 @@ export function activate(context: vscode.ExtensionContext) {
     loginOpenAi: async (): Promise<void> => loginOpenAi(output, sidebar),
     refreshStatus: async (): Promise<void> => refreshStatus(output, sidebar, { force: true }),
     showCodeMap: async (): Promise<void> => showWorkspaceCodeMap(output, sidebar),
+    attachFile: async (): Promise<void> => attachFileToSession(output, sidebar),
     showPrStatus: async (): Promise<void> => showGitHubPrStatus(output, sidebar),
     shipChanges: async (): Promise<void> => shipChangesToPr(output, sidebar),
     mergePr: async (): Promise<void> => mergeGitHubPr(output, sidebar),
@@ -229,6 +231,12 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand('peridot.showCodeMap', async () => {
       await showWorkspaceCodeMap(output, sidebar);
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('peridot.attachFile', async () => {
+      await attachFileToSession(output, sidebar);
     }),
   );
 
@@ -603,6 +611,47 @@ async function showGitHubPrStatus(
     output.appendLine(`[peridot] gh pr status failed: ${message}`);
     sidebar.appendError(message);
     await vscode.window.showErrorMessage(`GitHub PR status failed: ${message}`);
+  }
+}
+
+async function attachFileToSession(
+  output: vscode.OutputChannel,
+  sidebar: PeridotSidebarProvider,
+): Promise<void> {
+  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!folder) {
+    const message = 'Open a workspace folder before attaching a file.';
+    sidebar.setWorkspaceProblem(message);
+    await vscode.window.showWarningMessage(message);
+    return;
+  }
+  if (!sidebar.currentDaemonSessionId()) {
+    await vscode.window.showWarningMessage('Start or select a Peridot session before attaching a file.');
+    return;
+  }
+  const picked = await vscode.window.showOpenDialog({
+    title: 'Peridot: Attach File',
+    canSelectFiles: true,
+    canSelectFolders: false,
+    canSelectMany: false,
+    defaultUri: vscode.Uri.file(folder),
+  });
+  const file = picked?.[0];
+  if (!file) return;
+  const relative = path.relative(folder, file.fsPath).replace(/\\/g, '/');
+  if (relative.startsWith('..') || path.isAbsolute(relative)) {
+    await vscode.window.showWarningMessage('Peridot only attaches files inside the workspace.');
+    return;
+  }
+  await vscode.commands.executeCommand('peridot.chatView.focus');
+  try {
+    const result = await runSlashCommand(`/attach ${relative}`, output, sidebar, sidebar.currentRunOptions());
+    sidebar.appendCommandResult(result);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    output.appendLine(`[peridot] attach failed: ${message}`);
+    sidebar.appendError(message);
+    await vscode.window.showErrorMessage(`Peridot attach failed: ${message}`);
   }
 }
 
