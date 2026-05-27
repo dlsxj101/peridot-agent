@@ -103,6 +103,30 @@ pub(crate) fn attachments_from_context(entries: &[ContextEntry]) -> Vec<Attachme
         .collect()
 }
 
+pub(crate) fn detach_attachments_from_context(
+    entries: Vec<ContextEntry>,
+    path: &str,
+) -> (Vec<ContextEntry>, Vec<AttachmentArtifact>) {
+    let target = normalize_attachment_path(path);
+    let mut kept = Vec::with_capacity(entries.len());
+    let mut removed = Vec::new();
+    for entry in entries {
+        let artifact = if entry.source == ContextSource::PlanReminder {
+            attachment_from_plan_reminder(&entry.content)
+        } else {
+            None
+        };
+        if let Some(artifact) = artifact
+            && normalize_attachment_path(&artifact.path) == target
+        {
+            removed.push(artifact);
+            continue;
+        }
+        kept.push(entry);
+    }
+    (kept, removed)
+}
+
 fn attachment_from_plan_reminder(content: &str) -> Option<AttachmentArtifact> {
     if !content.starts_with("[attachment]\n") {
         return None;
@@ -121,6 +145,14 @@ fn attachment_from_plan_reminder(content: &str) -> Option<AttachmentArtifact> {
         inlined: text.is_some(),
         content: text,
     })
+}
+
+fn normalize_attachment_path(path: &str) -> String {
+    let mut value = path.trim().replace('\\', "/");
+    while let Some(rest) = value.strip_prefix("./") {
+        value = rest.to_string();
+    }
+    value
 }
 
 fn attachment_header_value(content: &str, prefix: &str) -> Option<String> {
@@ -231,6 +263,28 @@ mod tests {
         assert_eq!(artifacts[1].media_type, "image/png");
         assert!(!artifacts[1].inlined);
         assert!(artifacts[1].content.is_none());
+    }
+
+    #[test]
+    fn detach_removes_matching_attachment_entries_only() {
+        let entries = vec![
+            ContextEntry::trusted(ContextSource::User, "keep user"),
+            ContextEntry::trusted(
+                ContextSource::PlanReminder,
+                "[attachment]\npath: src/lib.rs\nbytes: 19\n\n```text\npub fn demo() {}\n```",
+            ),
+            ContextEntry::trusted(
+                ContextSource::PlanReminder,
+                "[attachment]\npath: screen.png\nbytes: 4\nmedia_type: image/png\ncontent: <not inlined; image attachment placeholder>",
+            ),
+        ];
+
+        let (kept, removed) = detach_attachments_from_context(entries, "./src/lib.rs");
+        assert_eq!(removed.len(), 1);
+        assert_eq!(removed[0].path, "src/lib.rs");
+        assert_eq!(kept.len(), 2);
+        assert_eq!(attachments_from_context(&kept).len(), 1);
+        assert_eq!(attachments_from_context(&kept)[0].path, "screen.png");
     }
 
     fn temp_project(name: &str) -> PathBuf {

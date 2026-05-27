@@ -276,6 +276,12 @@ pub fn slash_command_catalog() -> &'static [SlashCommandSpec] {
             category: "session",
         },
         SlashCommandSpec {
+            name: "/detach",
+            description: "remove an attached file from the current session context",
+            arg_hint: Some("<path>"),
+            category: "session",
+        },
+        SlashCommandSpec {
             name: "/rewind",
             description: "pop the last user-agent exchange and restore the prompt to the input box",
             arg_hint: None,

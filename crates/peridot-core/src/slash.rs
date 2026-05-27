@@ -143,6 +143,8 @@ pub enum SlashCommand {
     CodeMapFind(String),
     /// List attachment artifacts already loaded into the current session context.
     Attachments,
+    /// Remove attachment artifacts from the current session context by path.
+    Detach(String),
     /// Pop the last user-agent exchange off the visible transcript and
     /// reload the user's previous prompt into the input buffer so the
     /// operator can edit and re-submit. Context is NOT rolled back — the
@@ -348,6 +350,8 @@ pub fn parse_slash_command(input: &str) -> Option<SlashCommand> {
         "note" if !rest.is_empty() => Some(SlashCommand::Note(rest.to_string())),
         "attach" if !rest.is_empty() => Some(SlashCommand::Attach(rest.to_string())),
         "attach" => None,
+        "detach" if !rest.is_empty() => Some(SlashCommand::Detach(rest.to_string())),
+        "detach" => None,
         "info" if rest.is_empty() => Some(SlashCommand::Info),
         "context" if rest.is_empty() || rest == "top" => Some(SlashCommand::ContextTop),
         "lang" if !rest.is_empty() => Locale::from_str(rest).ok().map(SlashCommand::Lang),
@@ -653,6 +657,11 @@ mod tests {
             Some(SlashCommand::Attach("src/lib.rs".to_string()))
         );
         assert_eq!(parse_slash_command("/attach"), None);
+        assert_eq!(
+            parse_slash_command("/detach src/lib.rs"),
+            Some(SlashCommand::Detach("src/lib.rs".to_string()))
+        );
+        assert_eq!(parse_slash_command("/detach"), None);
     }
 
     #[test]

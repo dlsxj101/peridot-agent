@@ -2157,6 +2157,10 @@ textarea {
   min-width: 0;
 }
 
+.attachment-removed-row {
+  opacity: 0.72;
+}
+
 .codemap-block {
   gap: 10px;
 }

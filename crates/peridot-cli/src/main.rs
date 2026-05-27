@@ -1480,6 +1480,9 @@ fn apply_session_command(
         SessionCommandEvent::Attachments => {
             handle_attachments(state, project_template);
         }
+        SessionCommandEvent::Detach(path) => {
+            handle_detach(state, project_template, &path);
+        }
         SessionCommandEvent::BranchSave(name) => {
             handle_branch_save(state, project_template, &name);
         }
@@ -2297,6 +2300,31 @@ fn handle_attachments(state: &mut TuiState, project_root: &Path) {
             state.push_transcript(render_attachments_text(&artifacts));
         }
         Err(err) => state.push_error(format!("attachments: failed to read context: {err}")),
+    }
+}
+
+fn handle_detach(state: &mut TuiState, project_root: &Path, path: &str) {
+    if state.current_session_id.is_empty() {
+        state.push_error("detach: no active session".to_string());
+        return;
+    }
+    match read_context_snapshot(project_root, &state.current_session_id) {
+        Ok(entries) => {
+            let (kept, removed) = commands::detach_attachments_from_context(entries, path);
+            if removed.is_empty() {
+                state.push_transcript(format!("detach: no attachment matched {path}"));
+                return;
+            }
+            match write_context_snapshot(project_root, &state.current_session_id, &kept) {
+                Ok(()) => state.push_transcript(format!(
+                    "detach: removed {} attachment(s) matching {}",
+                    removed.len(),
+                    path
+                )),
+                Err(err) => state.push_error(format!("detach: failed to update context: {err}")),
+            }
+        }
+        Err(err) => state.push_error(format!("detach: failed to read context: {err}")),
     }
 }
 

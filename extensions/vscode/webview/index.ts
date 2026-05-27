@@ -2453,6 +2453,7 @@ function renderCommandBlock(item: TranscriptItem): HTMLElement {
   if (result?.kind === 'codemap') return renderCodeMapBlock(item);
   if (result?.kind === 'attach') return renderAttachmentBlock(item);
   if (result?.kind === 'attachments') return renderAttachmentInventoryBlock(item);
+  if (result?.kind === 'detach') return renderDetachBlock(item);
   const wrap = el('section', `command-block ${result?.severity === 'error' ? 'error' : ''}`);
   const header = el('div', 'command-header');
   header.append(el('span', 'command-title', result?.title ?? result?.kind ?? 'Command'));
@@ -2535,6 +2536,9 @@ function renderAttachmentBlock(item: TranscriptItem): HTMLElement {
     });
     actions.append(copyContent);
   }
+  actions.append(iconButton('remove', `Detach ${path}`, () => {
+    vscode.postMessage({ type: 'detachAttachment', path });
+  }));
   header.append(actions);
   wrap.append(header);
 
@@ -2550,6 +2554,57 @@ function renderAttachmentBlock(item: TranscriptItem): HTMLElement {
     wrap.append(el('div', 'attachment-placeholder', `${mediaType} attachment placeholder`));
   }
   return wrap;
+}
+
+function renderDetachBlock(item: TranscriptItem): HTMLElement {
+  const result = item.commandResult;
+  const wrap = el('section', 'command-block attachment-block attachment-inventory-block');
+  const header = el('div', 'attachment-header');
+  const title = el('div', 'attachment-title');
+  title.append(el('span', 'command-title', result?.title ?? 'Detach Attachment'));
+  const chips = el('div', 'attachment-chips');
+  const removed = result?.removed_count ?? result?.removedCount ?? 0;
+  const remaining = result?.remaining_count ?? result?.remainingCount;
+  chips.append(el('span', 'command-chip', `${removed} removed`));
+  if (typeof remaining === 'number') chips.append(el('span', 'command-chip', `${remaining} remaining`));
+  title.append(chips);
+  header.append(title);
+  wrap.append(header);
+  if (result?.message) wrap.append(el('div', 'command-message', result.message));
+  const removedItems = Array.isArray(result?.removed) ? result.removed : [];
+  if (removedItems.length > 0) {
+    const removedList = el('div', 'attachment-list');
+    removedItems.forEach((attachment) => {
+      removedList.append(renderRemovedAttachmentRow(attachment));
+    });
+    wrap.append(removedList);
+  }
+  const remainingItems = attachmentsFromResult(result);
+  if (remainingItems.length > 0) {
+    const remainingTitle = el('div', 'codemap-group-title', `Remaining · ${remainingItems.length}`);
+    wrap.append(remainingTitle);
+    const remainingList = el('div', 'attachment-list');
+    remainingItems.forEach((attachment) => {
+      remainingList.append(renderAttachmentInventoryRow(attachment));
+    });
+    wrap.append(remainingList);
+  }
+  return wrap;
+}
+
+function renderRemovedAttachmentRow(attachment: AttachmentView): HTMLElement {
+  const path = attachment.path ?? 'attachment';
+  const bytes = typeof attachment.bytes === 'number' ? `${attachment.bytes} bytes` : '';
+  const mediaType = attachment.media_type ?? attachment.mediaType ?? 'text/plain';
+  const row = el('div', 'attachment-inventory-row attachment-removed-row');
+  const main = el('div', 'attachment-row-main');
+  const top = el('div', 'attachment-path-row');
+  top.append(el('span', 'command-row-label', path));
+  const meta = [bytes, mediaType, 'removed'].filter(Boolean).join(' · ');
+  if (meta) top.append(el('span', 'command-row-meta', meta));
+  main.append(top);
+  row.append(main);
+  return row;
 }
 
 function renderAttachmentInventoryBlock(item: TranscriptItem): HTMLElement {
@@ -2605,6 +2660,9 @@ function renderAttachmentInventoryRow(attachment: AttachmentView): HTMLElement {
     });
     actions.append(copyContent);
   }
+  actions.append(iconButton('remove', `Detach ${path}`, () => {
+    vscode.postMessage({ type: 'detachAttachment', path });
+  }));
   row.append(actions);
   return row;
 }

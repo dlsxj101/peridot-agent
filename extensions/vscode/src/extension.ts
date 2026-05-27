@@ -113,6 +113,8 @@ export function activate(context: vscode.ExtensionContext) {
     showCodeMap: async (): Promise<void> => showWorkspaceCodeMap(output, sidebar, false),
     searchCodeMap: async (): Promise<void> => searchWorkspaceCodeMap(output, sidebar),
     attachFile: async (): Promise<void> => attachFileToSession(output, sidebar),
+    detachAttachment: async (path: string): Promise<void> =>
+      detachAttachmentFromSession(path, output, sidebar),
     showAttachments: async (): Promise<void> => showSessionAttachments(output, sidebar),
     showPrStatus: async (): Promise<void> => showGitHubPrStatus(output, sidebar),
     shipChanges: async (): Promise<void> => shipChangesToPr(output, sidebar),
@@ -720,6 +722,35 @@ async function showSessionAttachments(
     output.appendLine(`[peridot] attachments failed: ${message}`);
     sidebar.appendError(message);
     await vscode.window.showErrorMessage(`Peridot attachments failed: ${message}`);
+  }
+}
+
+async function detachAttachmentFromSession(
+  attachmentPath: string,
+  output: vscode.OutputChannel,
+  sidebar: PeridotSidebarProvider,
+): Promise<void> {
+  const path = attachmentPath.trim();
+  if (!path) return;
+  if (!sidebar.currentDaemonSessionId()) {
+    await vscode.window.showWarningMessage('Start or select a Peridot session before detaching a file.');
+    return;
+  }
+  const confirmed = await vscode.window.showWarningMessage(
+    `Detach ${path} from this Peridot session context?`,
+    { modal: true },
+    'Detach',
+  );
+  if (confirmed !== 'Detach') return;
+  await vscode.commands.executeCommand('peridot.chatView.focus');
+  try {
+    const result = await runSlashCommand(`/detach ${path}`, output, sidebar, sidebar.currentRunOptions());
+    sidebar.appendCommandResult(result);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    output.appendLine(`[peridot] detach failed: ${message}`);
+    sidebar.appendError(message);
+    await vscode.window.showErrorMessage(`Peridot detach failed: ${message}`);
   }
 }
 

@@ -29,6 +29,9 @@
   and copy actions, including image-placeholder metadata.
 - `Peridot: Show Session Attachments` runs `/attachments` and renders
   the current session's attachment inventory with open/copy actions.
+- Attachment cards now include a confirm-before-detach action backed by
+  `/detach <path>`, so stale session context can be removed from the
+  sidebar.
 - `/codemap` now uses a persisted `.peridot/codemap.json` index, and
   `Peridot: Refresh Workspace Code Map Index` rebuilds it explicitly.
 - `Peridot: Search Workspace Code Map` runs `/codemap find <query>`

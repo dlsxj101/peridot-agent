@@ -98,6 +98,11 @@ export interface CommandResultView {
   items?: CommandResultItem[];
   attachment?: AttachmentView;
   attachments?: AttachmentView[];
+  removed?: AttachmentView[];
+  removed_count?: number;
+  removedCount?: number;
+  remaining_count?: number;
+  remainingCount?: number;
   total?: number;
   source_totals?: Record<string, number>;
   symbol_count?: number;
@@ -324,6 +329,7 @@ export type OutboundMessage =
   | { type: 'showCodeMap' }
   | { type: 'searchCodeMap' }
   | { type: 'attachFile' }
+  | { type: 'detachAttachment'; path: string }
   | { type: 'showPrStatus' }
   | { type: 'shipChanges' }
   | { type: 'mergePr' }

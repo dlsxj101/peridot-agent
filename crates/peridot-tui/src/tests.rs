@@ -2228,6 +2228,21 @@ fn attach_slash_queues_pending_command() {
             .text
             .contains("attachments: loading session attachment inventory")
     );
+
+    apply_slash_command(&mut state, SlashCommand::Detach("src/lib.rs".to_string()));
+
+    assert_eq!(
+        state.drain_pending_session_commands(),
+        vec![SessionCommandEvent::Detach("src/lib.rs".to_string())]
+    );
+    assert!(
+        state
+            .transcript
+            .last()
+            .unwrap()
+            .text
+            .contains("detach: removing src/lib.rs")
+    );
 }
 
 #[test]

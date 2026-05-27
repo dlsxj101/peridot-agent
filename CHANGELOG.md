@@ -71,6 +71,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **Session attachment inventory** adds `/attachments` to list files
   already loaded into the active session context. TUI prints a compact
   inventory and VS Code renders a reusable attachment list.
+- **Attachment detach** adds `/detach <path>` for removing stale
+  attachment context entries. VS Code attachment cards include a
+  confirm-before-detach action and show the remaining inventory.
 
 ### Changed — TUI borderless transcript
 

@@ -914,6 +914,8 @@ pub enum SessionCommandEvent {
     /// `/attach <path>` — read a workspace file into the active session
     /// context as an operator-provided attachment.
     Attach(String),
+    /// `/detach <path>` — remove matching attachment entries from context.
+    Detach(String),
     /// `/branch save <name>` — copy the active session's context
     /// snapshot under `.peridot/branches/<name>/` for later restore.
     BranchSave(String),

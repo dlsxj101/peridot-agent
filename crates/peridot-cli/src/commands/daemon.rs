@@ -1596,6 +1596,7 @@ async fn execute_session_command(
         SlashCommand::CodeMapFind(query) => handle_command_codemap_find(state, raw_command, &query),
         SlashCommand::Attach(path) => handle_command_attach(state, session_id, raw_command, &path),
         SlashCommand::Attachments => handle_command_attachments(state, session_id, raw_command),
+        SlashCommand::Detach(path) => handle_command_detach(state, session_id, raw_command, &path),
         SlashCommand::McpList => handle_command_mcp_list(state, raw_command),
         SlashCommand::McpAdd {
             name,
@@ -2591,6 +2592,56 @@ fn handle_command_attachments(
         "attachments": attachments,
         "items": items,
         "total": items.len(),
+    }))
+}
+
+fn handle_command_detach(
+    state: &DaemonState,
+    session_id: Option<&str>,
+    raw_command: &str,
+    path: &str,
+) -> Result<Value, String> {
+    let session_id = require_session_id(session_id, "detach")?;
+    let entries = read_context_snapshot(state, &session_id)?;
+    let (kept, removed) = crate::commands::detach_attachments_from_context(entries, path);
+    if removed.is_empty() {
+        return Ok(serde_json::json!({
+            "kind": "detach",
+            "title": "Detach Attachment",
+            "message": format!("detach: no attachment matched {path}"),
+            "severity": "info",
+            "command": raw_command,
+            "removed_count": 0,
+            "items": [],
+        }));
+    }
+    write_context_snapshot(state, &session_id, &kept)?;
+    let remaining = crate::commands::attachments_from_context(&kept);
+    let items: Vec<Value> = removed
+        .iter()
+        .map(|attachment| {
+            serde_json::json!({
+                "source": "attachment",
+                "label": attachment.path,
+                "path": attachment.path,
+                "detail": format!("{} bytes · removed", attachment.bytes),
+                "bytes": attachment.bytes,
+                "media_type": attachment.media_type,
+                "inlined": attachment.inlined,
+            })
+        })
+        .collect();
+    Ok(serde_json::json!({
+        "kind": "detach",
+        "title": "Detach Attachment",
+        "message": format!("detach: removed {} attachment(s) matching {path}", removed.len()),
+        "severity": "info",
+        "command": raw_command,
+        "removed_count": removed.len(),
+        "remaining_count": remaining.len(),
+        "removed": removed,
+        "attachments": remaining,
+        "items": items,
     }))
 }
 
@@ -3690,6 +3741,37 @@ mod tests {
             list_response["result"]["attachments"][1]["media_type"],
             "image/png"
         );
+
+        let _ = dispatch_line(
+            &state,
+            r#"{"jsonrpc":"2.0","id":47,"method":"session.command","params":{"session_id":"session-attach","command":"/detach ./src/lib.rs"}}"#,
+        )
+        .await
+        .unwrap();
+        let mut detach_response = None;
+        while let Ok(line) = rx.try_recv() {
+            let value: Value = serde_json::from_str(&line).unwrap();
+            if value["id"] == 47 {
+                detach_response = Some(value);
+                break;
+            }
+        }
+        let detach_response = detach_response.expect("detach response");
+        assert_eq!(detach_response["result"]["kind"], "detach");
+        assert_eq!(detach_response["result"]["removed_count"], 1);
+        assert_eq!(detach_response["result"]["remaining_count"], 1);
+        assert_eq!(
+            detach_response["result"]["removed"][0]["path"],
+            "src/lib.rs"
+        );
+        assert_eq!(
+            detach_response["result"]["attachments"][0]["path"],
+            "screen.png"
+        );
+        let entries = read_context_snapshot(&state, "session-attach").unwrap();
+        let remaining = crate::commands::attachments_from_context(&entries);
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].path, "screen.png");
 
         let _ = std::fs::remove_dir_all(root);
     }

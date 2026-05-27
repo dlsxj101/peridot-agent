@@ -22,14 +22,26 @@ shared daemon, TUI, and VS Code extension surfaces.
 
 ### E9. Attachment Lifecycle Controls
 
-- **Status**: next.
+- **Status**: landed.
 - **Goal**: let operators remove stale attachments from the active
   session context without manually editing `.peridot/sessions`.
 - **Where**: context snapshot mutation helpers, daemon slash command
   handling, TUI transcript confirmation, extension attachment inventory.
-- **Done when**: `/detach <path>` removes matching attachment
-  PlanReminder entries from the current session context and both TUI and
-  VS Code show the updated inventory.
+- **Result**: `/detach <path>` removes matching attachment PlanReminder
+  entries from the current session context. TUI reports removals, daemon
+  JSON returns removed and remaining artifacts, and VS Code attachment
+  cards expose a confirm-before-detach action.
+
+### E10. Session Artifact Export
+
+- **Status**: next.
+- **Goal**: let operators export session artifacts such as attachments,
+  notes, and replay timeline data into a portable directory without
+  hand-copying files from `.peridot/sessions`.
+- **Where**: `peridot session export`, daemon command results, VS Code
+  command palette/sidebar affordances.
+- **Done when**: the CLI can export selected artifact classes and VS
+  Code can trigger the export and open the output directory.
 
 ## Notes
 

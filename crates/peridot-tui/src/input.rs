@@ -1274,6 +1274,10 @@ pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
             state.push_transcript(format!("attach: loading {path}…"));
             state.push_pending_session_command(SessionCommandEvent::Attach(path));
         }
+        SlashCommand::Detach(path) => {
+            state.push_transcript(format!("detach: removing {path} from session context…"));
+            state.push_pending_session_command(SessionCommandEvent::Detach(path));
+        }
         SlashCommand::Rewind => apply_rewind(state),
         SlashCommand::BranchSave(name) => {
             state.push_transcript(format!("branch: saving '{name}'…"));
