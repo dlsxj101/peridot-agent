@@ -81,6 +81,14 @@ test('slashArgumentContext filters finite options and closes after exact option'
   assert.equal(slashArgumentContext('/reasoning xhigh', commands), undefined);
 });
 
+test('slashArgumentContext filters skill-name arguments', () => {
+  const context = slashArgumentContext('/skills show auto', commands);
+
+  assert.equal(context?.command.name, '/skills show');
+  assert.deepEqual(context?.options, ['auto-fix-parser']);
+  assert.equal(slashArgumentContext('/skills use /auto-fix-parser', commands), undefined);
+});
+
 test('slashExactSelectionIsRunnable allows optional-arg exact commands only', () => {
   assert.equal(slashExactSelectionIsRunnable('/skills', commands, 0), true);
   assert.equal(slashExactSelectionIsRunnable('/reasoning', commands, 0), false);

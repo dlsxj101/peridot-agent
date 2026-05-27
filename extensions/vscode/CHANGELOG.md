@@ -19,6 +19,10 @@
 - Skill-aware slash autocomplete now refreshes when `.peridot/memory.db`
   changes and immediately after `/skills archive` or `/skills restore`, so
   `/skill-name` suggestions stay current without a manual status refresh.
+- Skill-aware argument autocomplete now fills active skill names for
+  commands such as `/skills show <name>`, `/skills use <name>`, and
+  `/skills archive <name>`, using the same refreshed skill inventory as
+  `/skill-name` suggestions.
 - The composer now keeps submitted prompt history per sidebar session.
   ArrowUp / ArrowDown recall previous prompts when the caret is on the
   first or last textarea line, and unsent drafts no longer leak across

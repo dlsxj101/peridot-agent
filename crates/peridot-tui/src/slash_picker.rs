@@ -445,10 +445,10 @@ pub fn slash_suggestions(skills: &[SkillSlashSuggestion]) -> Vec<SlashSuggestion
 
 /// Finite argument options for a command such as `<off|low>` or `[on|off]`.
 pub(crate) struct SlashArgumentContext {
-    /// Command whose first argument is being selected.
-    pub spec: &'static SlashCommandSpec,
+    /// Command whose argument is being selected.
+    pub command_name: String,
     /// Filtered options matching the current typed argument prefix.
-    pub options: Vec<&'static str>,
+    pub options: Vec<String>,
 }
 
 /// Filters the catalog by prefix. Empty query returns the whole catalog.
@@ -532,9 +532,21 @@ pub(crate) fn finite_argument_options_from_hint(hint: Option<&str>) -> Vec<&str>
 }
 
 /// Returns the active finite-argument picker, if the input is inside one.
-pub(crate) fn slash_argument_context(query: &str) -> Option<SlashArgumentContext> {
+#[cfg(test)]
+fn slash_argument_context(query: &str) -> Option<SlashArgumentContext> {
+    slash_argument_context_with_skills(query, &[])
+}
+
+/// Returns the active argument picker, including dynamic skill-name options.
+pub(crate) fn slash_argument_context_with_skills(
+    query: &str,
+    skills: &[SkillSlashSuggestion],
+) -> Option<SlashArgumentContext> {
     if !query.starts_with('/') || query.contains('\n') {
         return None;
+    }
+    if let Some(context) = skill_name_argument_context(query, skills) {
+        return Some(context);
     }
     let spec = slash_command_catalog()
         .iter()
@@ -564,12 +576,60 @@ pub(crate) fn slash_argument_context(query: &str) -> Option<SlashArgumentContext
     if options.is_empty() {
         return None;
     }
-    Some(SlashArgumentContext { spec, options })
+    Some(SlashArgumentContext {
+        command_name: spec.name.to_string(),
+        options: options.into_iter().map(str::to_string).collect(),
+    })
+}
+
+fn skill_name_argument_context(
+    query: &str,
+    skills: &[SkillSlashSuggestion],
+) -> Option<SlashArgumentContext> {
+    let command_name = [
+        "/skills show",
+        "/skills view",
+        "/skills use",
+        "/skills pin",
+        "/skills unpin",
+        "/skills archive",
+    ]
+    .into_iter()
+    .filter(|command| query == *command || query.starts_with(&format!("{command} ")))
+    .max_by_key(|command| command.len())?;
+    let mut options: Vec<String> = skills
+        .iter()
+        .map(|skill| skill.name.trim_start_matches('/').trim().to_string())
+        .filter(|name| !name.is_empty())
+        .collect();
+    options.sort();
+    options.dedup();
+    let rest = query[command_name.len()..]
+        .trim()
+        .trim_start_matches('/')
+        .to_ascii_lowercase();
+    if !rest.is_empty()
+        && options
+            .iter()
+            .any(|option| option.eq_ignore_ascii_case(&rest))
+    {
+        return None;
+    }
+    if !rest.is_empty() {
+        options.retain(|option| option.to_ascii_lowercase().starts_with(&rest));
+    }
+    if options.is_empty() {
+        return None;
+    }
+    Some(SlashArgumentContext {
+        command_name: command_name.to_string(),
+        options,
+    })
 }
 
 /// Number of rows the slash picker would render for this query and skill list.
 pub(crate) fn picker_len_with_skills(query: &str, skills: &[SkillSlashSuggestion]) -> usize {
-    slash_argument_context(query)
+    slash_argument_context_with_skills(query, skills)
         .map(|context| context.options.len())
         .unwrap_or_else(|| filtered_suggestions(query, skills).len())
 }
@@ -715,7 +775,7 @@ mod tests {
     #[test]
     fn finite_argument_context_filters_real_options() {
         let context = slash_argument_context("/reasoning ").expect("reasoning options");
-        assert_eq!(context.spec.name, "/reasoning");
+        assert_eq!(context.command_name, "/reasoning");
         assert_eq!(
             context.options,
             vec!["off", "low", "medium", "high", "xhigh"]
@@ -730,8 +790,37 @@ mod tests {
         assert!(slash_argument_context("/autofix").is_none());
 
         let context = slash_argument_context("/subagent model ").expect("reset option");
-        assert_eq!(context.spec.name, "/subagent model");
+        assert_eq!(context.command_name, "/subagent model");
         assert_eq!(context.options, vec!["reset"]);
+    }
+
+    #[test]
+    fn skill_name_argument_context_filters_dynamic_skills() {
+        let skills = vec![
+            SkillSlashSuggestion {
+                name: "auto-fix-parser".to_string(),
+                description: "repair parser tests".to_string(),
+            },
+            SkillSlashSuggestion {
+                name: "/test-writer".to_string(),
+                description: String::new(),
+            },
+        ];
+
+        let context = slash_argument_context_with_skills("/skills show auto", &skills)
+            .expect("skill options");
+        assert_eq!(context.command_name, "/skills show");
+        assert_eq!(context.options, vec!["auto-fix-parser"]);
+
+        let context =
+            slash_argument_context_with_skills("/skills use /test", &skills).expect("slash trim");
+        assert_eq!(context.command_name, "/skills use");
+        assert_eq!(context.options, vec!["test-writer"]);
+
+        assert!(
+            slash_argument_context_with_skills("/skills archive auto-fix-parser", &skills)
+                .is_none()
+        );
     }
 
     #[test]

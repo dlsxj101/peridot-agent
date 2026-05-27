@@ -46,6 +46,8 @@ export function slashArgumentContext(
 ): SlashArgumentContext | undefined {
   const query = input;
   if (!query.startsWith('/') || query.includes('\n')) return undefined;
+  const skillContext = skillNameArgumentContext(query, slashCommands);
+  if (skillContext) return skillContext;
   const command = [...slashCommands]
     .sort((a, b) => b.name.length - a.name.length)
     .find(
@@ -62,6 +64,47 @@ export function slashArgumentContext(
     ? options.filter((option) => option.toLowerCase().startsWith(rest))
     : options;
   return { command, options: filtered };
+}
+
+function skillNameArgumentContext(
+  query: string,
+  slashCommands: SlashCommandSpec[],
+): SlashArgumentContext | undefined {
+  const commandName = [
+    '/skills show',
+    '/skills view',
+    '/skills use',
+    '/skills pin',
+    '/skills unpin',
+    '/skills archive',
+  ]
+    .filter((candidate) => query === candidate || query.startsWith(`${candidate} `))
+    .sort((a, b) => b.length - a.length)[0];
+  if (!commandName) return undefined;
+  const options = skillNameOptions(slashCommands);
+  if (options.length === 0) return undefined;
+  const rest = query.slice(commandName.length).trim().replace(/^\/+/, '').toLowerCase();
+  if (rest && options.some((option) => option.toLowerCase() === rest)) return undefined;
+  const filtered = rest
+    ? options.filter((option) => option.toLowerCase().startsWith(rest))
+    : options;
+  if (filtered.length === 0) return undefined;
+  return {
+    command: {
+      name: commandName,
+      description: 'stored skill',
+      category: 'skill',
+    },
+    options: filtered,
+  };
+}
+
+function skillNameOptions(slashCommands: SlashCommandSpec[]): string[] {
+  const names = slashCommands
+    .filter((command) => command.category === 'skill')
+    .map((command) => command.name.trim().replace(/^\/+/, ''))
+    .filter((name) => name.length > 0 && !name.startsWith('skills') && !name.includes(' '));
+  return [...new Set(names)].sort((a, b) => a.localeCompare(b));
 }
 
 export function slashArgumentOptions(command: SlashCommandSpec): string[] {

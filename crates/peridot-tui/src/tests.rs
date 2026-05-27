@@ -1824,6 +1824,31 @@ fn tab_autocompletes_dynamic_skill_slash() {
 }
 
 #[test]
+fn tab_autocompletes_skill_name_arguments() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    state.set_skill_suggestions(vec![SkillSlashSuggestion {
+        name: "auto-fix-parser".to_string(),
+        description: "repair parser tests".to_string(),
+    }]);
+
+    for character in "/skills show auto".chars() {
+        handle_key_event(
+            &mut state,
+            KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE),
+        );
+    }
+    handle_key_event(&mut state, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+
+    assert_eq!(state.input, "/skills show auto-fix-parser");
+}
+
+#[test]
 fn skills_slash_queues_skill_inventory_load() {
     let mut state = TuiState::new(HeaderState::new(
         ExecutionMode::Execute,

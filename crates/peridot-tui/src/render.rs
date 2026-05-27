@@ -1836,7 +1836,10 @@ fn render_slash_picker(frame: &mut Frame<'_>, state: &TuiState, input_area: Rect
     if state.menu.is_some() || state.approval.is_some() || state.ask_user.is_some() {
         return;
     }
-    if let Some(context) = crate::slash_picker::slash_argument_context(&picker.query) {
+    if let Some(context) = crate::slash_picker::slash_argument_context_with_skills(
+        &picker.query,
+        &state.skill_suggestions,
+    ) {
         let selected = picker.selected.min(context.options.len().saturating_sub(1));
         let visible_limit = 6usize;
         let start = selected
@@ -1867,9 +1870,9 @@ fn render_slash_picker(frame: &mut Frame<'_>, state: &TuiState, input_area: Rect
                 };
                 Line::from(vec![
                     Span::styled(format!("{marker} "), label_style),
-                    Span::styled((*option).to_string(), label_style),
+                    Span::styled(option.to_string(), label_style),
                     Span::raw("  "),
-                    Span::styled(context.spec.name.to_string(), desc_style),
+                    Span::styled(context.command_name.clone(), desc_style),
                 ])
             })
             .collect();
@@ -1887,7 +1890,7 @@ fn render_slash_picker(frame: &mut Frame<'_>, state: &TuiState, input_area: Rect
         frame.render_widget(
             Paragraph::new(lines).block(
                 Block::default()
-                    .title(format!("options: {}", context.spec.name))
+                    .title(format!("options: {}", context.command_name))
                     .borders(Borders::ALL),
             ),
             area,

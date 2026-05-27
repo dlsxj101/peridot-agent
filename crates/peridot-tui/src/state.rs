@@ -1610,14 +1610,16 @@ impl TuiState {
         };
         let query = picker.query.clone();
         let selected = picker.selected;
-        if let Some(context) = crate::slash_picker::slash_argument_context(&query) {
+        if let Some(context) =
+            crate::slash_picker::slash_argument_context_with_skills(&query, &self.skill_suggestions)
+        {
             let Some(option) = context
                 .options
                 .get(selected.min(context.options.len().saturating_sub(1)))
             else {
                 return;
             };
-            self.input = format!("{} {option}", context.spec.name);
+            self.input = format!("{} {option}", context.command_name);
             self.input_cursor = self.input.chars().count();
             self.refresh_input_pickers();
             return;
@@ -1646,7 +1648,12 @@ impl TuiState {
         let Some(picker) = self.slash_picker.as_ref() else {
             return false;
         };
-        if crate::slash_picker::slash_argument_context(&picker.query).is_some() {
+        if crate::slash_picker::slash_argument_context_with_skills(
+            &picker.query,
+            &self.skill_suggestions,
+        )
+        .is_some()
+        {
             return false;
         }
         let matches =

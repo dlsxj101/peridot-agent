@@ -677,6 +677,20 @@ shared daemon, TUI, and VS Code extension surfaces.
   recent entries, matching the VS Code composer history policy while
   preserving per-session state swaps.
 
+### E58. Skill-Name Argument Autocomplete
+
+- **Status**: landed.
+- **Goal**: make skill-management slashes feel as skill-aware as direct
+  `/skill-name` invocation in both TUI and VS Code.
+- **Where**: shared TUI slash picker argument context and VS Code
+  webview slash autocomplete helper.
+- **Result**: `/skills show`, `/skills view`, `/skills use`,
+  `/skills pin`, `/skills unpin`, and `/skills archive` now offer active
+  auto-skill names as argument completions. The suggestions reuse the
+  same live-refreshed skill inventory as `/skill-name` autocomplete, trim
+  a typed leading slash for matching, and close once the selected skill
+  name is exact so Enter submits the command normally.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.
