@@ -35,6 +35,7 @@ use tokio::sync::{Mutex, mpsc, oneshot};
 use crate::checkpoints::restore_latest_checkpoint;
 use crate::commands::{
     AuthProvider, read_managed_env_var, read_stored_api_key, read_stored_openai_oauth_credentials,
+    session_count_summary,
 };
 use crate::run_loop::{AgentTaskOptions, MessageBusHookup, run_task_with_events};
 use crate::session_router::{RouterMessageBus, SessionHandle, SessionRouter, WorkspaceIsolation};
@@ -1565,7 +1566,6 @@ async fn execute_session_command(
         | SlashCommand::SessionClose(_)
         | SlashCommand::SessionDelete(_)
         | SlashCommand::SessionRename { .. }
-        | SlashCommand::SessionList
         | SlashCommand::GoalStart(_)
         | SlashCommand::GoalPause
         | SlashCommand::GoalResume
@@ -1603,6 +1603,8 @@ async fn execute_session_command(
         SlashCommand::Export(artifacts) => {
             handle_command_export(state, session_id, raw_command, &artifacts)
         }
+        SlashCommand::SessionList => handle_command_session_list(state, raw_command).await,
+        SlashCommand::SessionCount => handle_command_session_count(state, raw_command),
         SlashCommand::McpList => handle_command_mcp_list(state, raw_command),
         SlashCommand::McpAdd {
             name,
@@ -1720,6 +1722,77 @@ fn start_task_result(label: &str, task: String) -> Value {
         "label": label,
         "severity": "info",
     })
+}
+
+async fn handle_command_session_list(
+    state: &DaemonState,
+    raw_command: &str,
+) -> Result<Value, String> {
+    let result = session_list_result(state).await;
+    let sessions = result["sessions"].as_array().cloned().unwrap_or_default();
+    let items: Vec<Value> = sessions
+        .iter()
+        .map(|session| {
+            let id = session["id"].as_str().unwrap_or_default();
+            let title = session["title"]
+                .as_str()
+                .or_else(|| session["summary"].as_str())
+                .unwrap_or(id);
+            let status = session["status"].as_str().unwrap_or("idle");
+            let detail = match session["last_task"].as_str() {
+                Some(task) if !task.trim().is_empty() => task,
+                _ => status,
+            };
+            serde_json::json!({
+                "label": title,
+                "detail": detail,
+                "source": status,
+                "session_id": id,
+            })
+        })
+        .collect();
+    Ok(serde_json::json!({
+        "kind": "session_list",
+        "title": "Sessions",
+        "message": if items.is_empty() { "sessions: <none>".to_string() } else { format!("sessions: {} total", items.len()) },
+        "severity": "info",
+        "command": raw_command,
+        "items": items,
+        "sessions": sessions,
+        "total": items.len(),
+    }))
+}
+
+fn handle_command_session_count(state: &DaemonState, raw_command: &str) -> Result<Value, String> {
+    let store = MemoryStore::new(state.project_root.join(".peridot/memory.db"));
+    let records = store
+        .list_session_records()
+        .map_err(|err| format!("failed to read session records: {err}"))?;
+    let summary = session_count_summary(&records);
+    let items = vec![
+        serde_json::json!({ "label": "idle", "detail": summary.idle.to_string() }),
+        serde_json::json!({ "label": "running", "detail": summary.running.to_string() }),
+        serde_json::json!({ "label": "suspended", "detail": summary.suspended.to_string() }),
+        serde_json::json!({ "label": "done", "detail": summary.done.to_string() }),
+        serde_json::json!({ "label": "failed", "detail": summary.failed.to_string() }),
+    ];
+    Ok(serde_json::json!({
+        "kind": "session_count",
+        "title": "Session Count",
+        "message": format!(
+            "session count: {} total ({} running, {} suspended, {} done, {} failed)",
+            summary.total, summary.running, summary.suspended, summary.done, summary.failed
+        ),
+        "severity": "info",
+        "command": raw_command,
+        "items": items,
+        "total": summary.total,
+        "idle": summary.idle,
+        "running": summary.running,
+        "suspended": summary.suspended,
+        "done": summary.done,
+        "failed": summary.failed,
+    }))
 }
 
 async fn handle_interaction_respond(
@@ -3677,6 +3750,49 @@ mod tests {
         assert_eq!(sessions[0]["id"], "session-recorded");
         assert_eq!(sessions[0]["title"], "recorded task");
         assert_eq!(sessions[0]["status"], "suspended");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn session_command_count_returns_lifecycle_breakdown() {
+        let root = test_project("session-command-count");
+        let store = MemoryStore::new(root.join(".peridot/memory.db"));
+        for (id, status) in [
+            ("idle-one", SessionLifecycle::Idle),
+            ("running-one", SessionLifecycle::Running),
+            ("done-one", SessionLifecycle::Done),
+            ("done-two", SessionLifecycle::Done),
+            ("failed-one", SessionLifecycle::Failed),
+        ] {
+            let mut record = SessionRecord::new(id, &root);
+            record.status = status;
+            store.save_session_record(&record).unwrap();
+        }
+        let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+        let state = DaemonState::new(
+            root.clone(),
+            PeridotConfig::default(),
+            test_options(None),
+            tx,
+        );
+
+        dispatch_line(
+            &state,
+            r#"{"jsonrpc":"2.0","id":45,"method":"session.command","params":{"command":"/session count"}}"#,
+        )
+        .await
+        .unwrap();
+
+        let line = rx.try_recv().unwrap();
+        let value: Value = serde_json::from_str(&line).unwrap();
+        let result = &value["result"];
+        assert_eq!(result["kind"], "session_count");
+        assert_eq!(result["total"], 5);
+        assert_eq!(result["idle"], 1);
+        assert_eq!(result["running"], 1);
+        assert_eq!(result["done"], 2);
+        assert_eq!(result["failed"], 1);
+        assert_eq!(result["items"].as_array().unwrap().len(), 5);
         let _ = std::fs::remove_dir_all(root);
     }
 

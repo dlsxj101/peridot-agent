@@ -1196,6 +1196,10 @@ pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
                 state.push_transcript(format!("sessions:\n{summary}"));
             }
         }
+        SlashCommand::SessionCount => {
+            state.push_transcript("session count: loading lifecycle totals...");
+            state.push_pending_session_command(SessionCommandEvent::SessionCount);
+        }
         SlashCommand::SubagentModel(change) => match change {
             peridot_core::SubagentModelChange::Set(name) => {
                 let from = previous_subagent_model

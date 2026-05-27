@@ -41,6 +41,9 @@
 - Daemon status now reports stale Peridot worktree reconciliation. Clean
   orphaned worktrees are removed automatically; dirty preserved
   worktrees surface as a sidebar warning instead of staying invisible.
+- `/session count` is available through the shared slash catalog and
+  returns the persisted lifecycle breakdown as a structured command
+  card.
 - `/codemap` now uses a persisted `.peridot/codemap.json` index, and
   `Peridot: Refresh Workspace Code Map Index` rebuilds it explicitly.
 - `Peridot: Search Workspace Code Map` runs `/codemap find <query>`

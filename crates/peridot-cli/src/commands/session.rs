@@ -326,48 +326,53 @@ pub(crate) fn run_session_command(
         }
         SessionCommand::Count => {
             let records = store.list_session_records().unwrap_or_default();
-            let total = records.len();
-            let mut idle = 0usize;
-            let mut running = 0usize;
-            let mut suspended = 0usize;
-            let mut done = 0usize;
-            let mut failed = 0usize;
-            for record in &records {
-                use peridot_memory::SessionLifecycle;
-                match record.status {
-                    SessionLifecycle::Idle => idle += 1,
-                    SessionLifecycle::Running => running += 1,
-                    SessionLifecycle::Suspended => suspended += 1,
-                    SessionLifecycle::Done => done += 1,
-                    SessionLifecycle::Failed => failed += 1,
-                }
-            }
+            let summary = session_count_summary(&records);
             match output {
                 OutputFormat::Json => {
-                    println!(
-                        "{}",
-                        serde_json::to_string_pretty(&serde_json::json!({
-                            "total": total,
-                            "idle": idle,
-                            "running": running,
-                            "suspended": suspended,
-                            "done": done,
-                            "failed": failed,
-                        }))?
-                    );
+                    println!("{}", serde_json::to_string_pretty(&summary)?);
                 }
                 OutputFormat::Text => {
-                    println!("total:     {total}");
-                    println!("idle:      {idle}");
-                    println!("running:   {running}");
-                    println!("suspended: {suspended}");
-                    println!("done:      {done}");
-                    println!("failed:    {failed}");
+                    println!("total:     {}", summary.total);
+                    println!("idle:      {}", summary.idle);
+                    println!("running:   {}", summary.running);
+                    println!("suspended: {}", summary.suspended);
+                    println!("done:      {}", summary.done);
+                    println!("failed:    {}", summary.failed);
                 }
             }
         }
     }
     Ok(())
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, serde::Serialize)]
+pub(crate) struct SessionCountSummary {
+    pub total: usize,
+    pub idle: usize,
+    pub running: usize,
+    pub suspended: usize,
+    pub done: usize,
+    pub failed: usize,
+}
+
+pub(crate) fn session_count_summary(
+    records: &[peridot_memory::SessionRecord],
+) -> SessionCountSummary {
+    let mut summary = SessionCountSummary {
+        total: records.len(),
+        ..Default::default()
+    };
+    for record in records {
+        use peridot_memory::SessionLifecycle;
+        match record.status {
+            SessionLifecycle::Idle => summary.idle += 1,
+            SessionLifecycle::Running => summary.running += 1,
+            SessionLifecycle::Suspended => summary.suspended += 1,
+            SessionLifecycle::Done => summary.done += 1,
+            SessionLifecycle::Failed => summary.failed += 1,
+        }
+    }
+    summary
 }
 
 fn delete_persisted_session(store: &MemoryStore, project_root: &Path, id: &str) -> Result<bool> {

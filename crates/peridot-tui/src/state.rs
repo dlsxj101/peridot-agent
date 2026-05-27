@@ -869,6 +869,8 @@ pub enum SessionCommandEvent {
         /// New display title.
         title: String,
     },
+    /// `/session count` — show persisted lifecycle counts.
+    SessionCount,
     /// `/fork <task>` — spawn a single-turn Fork subagent inline.
     Fork(String),
     /// `/teammate <task>` — spawn a worktree-isolated Teammate subagent.

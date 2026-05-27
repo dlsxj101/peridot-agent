@@ -85,6 +85,10 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
   status checks. Sessions left `running` by a crashed process are
   marked `suspended`; clean Peridot-managed worktrees are removed,
   dirty ones are preserved with a visible TUI / VS Code warning.
+- **`/session count` slash parity** exposes the existing lifecycle
+  breakdown in both the TUI transcript and VS Code composer results,
+  returning total / idle / running / suspended / done / failed counts
+  through the shared daemon command path.
 
 ### Changed — TUI borderless transcript
 

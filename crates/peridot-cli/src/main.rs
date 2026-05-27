@@ -15,7 +15,7 @@ use commands::{
     read_stored_openai_oauth_credentials, run_agents_command, run_config_command,
     run_doctor_command, run_env_command, run_login_command, run_logout_command, run_mcp_command,
     run_session_command, run_setting_command, run_setup_command, run_ship_command,
-    run_skill_command, run_update_command, run_verify_command,
+    run_skill_command, run_update_command, run_verify_command, session_count_summary,
 };
 use peridot_common::{
     AskUserAnswer, AskUserRequest, ContextConfig, ExecutionMode, MemoryConfig, PeriError,
@@ -1391,6 +1391,20 @@ fn apply_session_command(
             } else {
                 state.push_error(format!("session: no session matching '{target}'"));
             }
+        }
+        SessionCommandEvent::SessionCount => {
+            let store = MemoryStore::new(project_template.join(".peridot/memory.db"));
+            let records = store.list_session_records().unwrap_or_default();
+            let summary = session_count_summary(&records);
+            state.push_transcript(format!(
+                "session count:\n  total: {}\n  idle: {}\n  running: {}\n  suspended: {}\n  done: {}\n  failed: {}",
+                summary.total,
+                summary.idle,
+                summary.running,
+                summary.suspended,
+                summary.done,
+                summary.failed
+            ));
         }
         SessionCommandEvent::Fork(task) => {
             let new_id = format!("fork-{}-{}", std::process::id(), unix_timestamp());

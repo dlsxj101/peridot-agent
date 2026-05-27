@@ -60,6 +60,17 @@ shared daemon, TUI, and VS Code extension surfaces.
   `.peridot/worktrees/` are removed automatically, missing worktree records are
   reconciled, and dirty worktrees are preserved with a TUI / VS Code warning.
 
+### E12. Session Lifecycle Count Slash
+
+- **Status**: landed.
+- **Goal**: let operators check persisted session lifecycle totals from the
+  same composer/slash surface they use for session list and export.
+- **Where**: `peridot session count`, shared slash catalog, TUI host command
+  handling, daemon `session.command`, VS Code command-result rendering.
+- **Result**: `/session count` now reports total / idle / running /
+  suspended / done / failed counts in the TUI transcript and returns a
+  structured `session_count` command result for VS Code.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

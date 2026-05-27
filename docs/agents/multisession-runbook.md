@@ -52,7 +52,7 @@ Remaining scoped polish: none currently tracked in this runbook.
 - `/teammate` and `/worktree <branch>` materialise a real `git worktree` under `<workspace_root>/.peridot/worktrees/<session_id>` via `peridot_git::GitManager::add_worktree`. Branch defaults to `peridot/teammate-<session_id>` when not specified.
 - `/session close` (and Esc-driven cancel) calls `GitManager::remove_worktree` so the worktree is torn down even when the agent loop ends abnormally.
 - Two `Shared` sessions on the same cwd raise a transcript warning so silent file-write collisions are visible.
-- Outstanding for the next milestone: handle process crash mid-run so leftover worktrees are pruned on startup.
+- Later M39 startup reconciliation handles process crashes by suspending stale records, removing clean leftover worktrees, and preserving dirty ones with a warning.
 
 ### M3 — Persistence round-trip + crash recovery (landed)
 - TUI loop calls `on_persist(&TuiState)` every tick; the CLI host throttles to one snapshot per second per session and writes `tui_state.json` atomically under `<project_root>/.peridot/sessions/<id>/` via `save_session_blob`.
@@ -103,6 +103,9 @@ Remaining scoped polish: none currently tracked in this runbook.
 
 ### M37 — `peridot session count` lifecycle breakdown (landed)
 - One-shot tally of `SessionRecord`s grouped by `SessionLifecycle`: total / idle / running / suspended / done / failed. Useful for "is anything still in flight" or "do I have stale Running records the startup scan missed" without paging through `peridot session list`.
+- `/session count` exposes the same breakdown inside the TUI and through the
+  daemon-backed VS Code composer, so editor clients no longer need a separate
+  terminal command for lifecycle counts.
 
 ### M36 — Input box title carries character count (landed)
 - Once the user starts typing, the input box's border title reads `" N chars "` (using the Unicode character count, so emoji/multibyte input is counted correctly). An empty buffer keeps the box title blank so the idle state stays clean.
