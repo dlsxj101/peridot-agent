@@ -47,6 +47,11 @@ const commands: SlashCommandSpec[] = [
   },
 ];
 
+const sessions = [
+  { id: 's-1', title: 'parser cleanup' },
+  { id: 's-2', title: 'release prep' },
+];
+
 test('filteredSlashCommands ranks prefixes before description matches', () => {
   const matches = filteredSlashCommands('/switch', commands);
 
@@ -99,6 +104,21 @@ test('slashArgumentContext filters skill-name arguments', () => {
   assert.equal(slashArgumentContext('/skills archive old', commands), undefined);
 });
 
+test('slashArgumentContext filters session target arguments', () => {
+  const context = slashArgumentContext('/session switch release', commands, sessions);
+
+  assert.equal(context?.command.name, '/session switch');
+  assert.deepEqual(context?.options, ['s-2']);
+  assert.equal(context?.appendSpace, false);
+  assert.equal(slashArgumentContext('/session switch s-2', commands, sessions), undefined);
+
+  const rename = slashArgumentContext('/session rename parser', commands, sessions);
+  assert.equal(rename?.command.name, '/session rename');
+  assert.deepEqual(rename?.options, ['s-1']);
+  assert.equal(rename?.appendSpace, true);
+  assert.equal(slashArgumentContext('/session rename s-1 new title', commands, sessions), undefined);
+});
+
 test('slashExactSelectionIsRunnable allows optional-arg exact commands only', () => {
   assert.equal(slashExactSelectionIsRunnable('/skills', commands, 0), true);
   assert.equal(slashExactSelectionIsRunnable('/reasoning', commands, 0), false);
@@ -106,4 +126,5 @@ test('slashExactSelectionIsRunnable allows optional-arg exact commands only', ()
 
 test('slashPickerItemCount uses argument options when an argument picker is open', () => {
   assert.equal(slashPickerItemCount('/reasoning ', commands), 5);
+  assert.equal(slashPickerItemCount('/session switch ', commands, sessions), 2);
 });

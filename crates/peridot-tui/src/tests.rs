@@ -1884,6 +1884,40 @@ fn tab_autocompletes_archived_skill_restore_argument() {
 }
 
 #[test]
+fn tab_autocompletes_session_target_arguments() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    state.sessions = vec![
+        crate::session_directory::SessionDirectoryItem::new("s-1", "parser cleanup"),
+        crate::session_directory::SessionDirectoryItem::new("s-2", "release prep"),
+    ];
+
+    for character in "/session switch release".chars() {
+        handle_key_event(
+            &mut state,
+            KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE),
+        );
+    }
+    handle_key_event(&mut state, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    assert_eq!(state.input, "/session switch s-2");
+
+    state.clear_input();
+    for character in "/session rename parser".chars() {
+        handle_key_event(
+            &mut state,
+            KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE),
+        );
+    }
+    handle_key_event(&mut state, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    assert_eq!(state.input, "/session rename s-1 ");
+}
+
+#[test]
 fn skills_slash_queues_skill_inventory_load() {
     let mut state = TuiState::new(HeaderState::new(
         ExecutionMode::Execute,

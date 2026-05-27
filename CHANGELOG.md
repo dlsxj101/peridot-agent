@@ -41,6 +41,10 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
   `/skills use <name>`, while `/skills restore <name>` completes archived
   auto-skills without making them appear as direct `/skill-name`
   invocations.
+- **Session-target argument autocomplete** now works in both TUI and VS
+  Code for `/session switch|close|delete|rename`, matching typed title
+  prefixes to stable session ids and leaving room for the new title after
+  `/session rename`.
 - **VS Code per-session composer history** now mirrors the TUI input
   history ergonomics: ArrowUp/ArrowDown recall submitted prompts per
   sidebar session, while in-progress drafts stay isolated across session

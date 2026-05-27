@@ -3474,7 +3474,7 @@ function filteredSlashCommands(input: string): SlashCommandSpec[] {
 }
 
 function slashPickerItemCount(input: string): number {
-  return countSlashPickerItems(input, slashCommands);
+  return countSlashPickerItems(input, slashCommands, state?.sessions ?? []);
 }
 
 function updateSlashPicker(textarea: HTMLTextAreaElement, picker: HTMLElement): void {
@@ -3558,7 +3558,7 @@ function acceptSlashSelection(textarea: HTMLTextAreaElement, picker: HTMLElement
     const optionIndex = Math.min(slashPickerSelected, argumentContext.options.length - 1);
     const option = argumentContext.options[optionIndex];
     if (!option) return;
-    textarea.value = `${argumentContext.command.name} ${option}`;
+    textarea.value = `${argumentContext.command.name} ${option}${argumentContext.appendSpace ? ' ' : ''}`;
     textarea.selectionStart = textarea.value.length;
     textarea.selectionEnd = textarea.value.length;
     composerDraft = textarea.value;
@@ -3589,11 +3589,11 @@ function acceptSlashSelection(textarea: HTMLTextAreaElement, picker: HTMLElement
 }
 
 function slashExactSelectionIsRunnable(input: string): boolean {
-  return isSlashExactSelectionRunnable(input, slashCommands, slashPickerSelected);
+  return isSlashExactSelectionRunnable(input, slashCommands, slashPickerSelected, state?.sessions ?? []);
 }
 
 function slashArgumentContext(input: string): SlashArgumentContext | undefined {
-  return resolveSlashArgumentContext(input, slashCommands);
+  return resolveSlashArgumentContext(input, slashCommands, state?.sessions ?? []);
 }
 
 function slashArgumentOptions(command: SlashCommandSpec): string[] {

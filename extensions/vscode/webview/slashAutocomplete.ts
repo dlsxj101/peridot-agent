@@ -3,6 +3,12 @@ import type { SlashCommandSpec } from '../src/types';
 export interface SlashArgumentContext {
   command: SlashCommandSpec;
   options: string[];
+  appendSpace?: boolean;
+}
+
+export interface SlashSessionTarget {
+  id: string;
+  title?: string;
 }
 
 export function filteredSlashCommands(
@@ -23,8 +29,12 @@ export function filteredSlashCommands(
     .sort((a, b) => slashCommandRank(a, needle) - slashCommandRank(b, needle) || a.name.localeCompare(b.name));
 }
 
-export function slashPickerItemCount(input: string, slashCommands: SlashCommandSpec[]): number {
-  const argumentContext = slashArgumentContext(input, slashCommands);
+export function slashPickerItemCount(
+  input: string,
+  slashCommands: SlashCommandSpec[],
+  sessionTargets: SlashSessionTarget[] = [],
+): number {
+  const argumentContext = slashArgumentContext(input, slashCommands, sessionTargets);
   if (argumentContext) return argumentContext.options.length;
   return filteredSlashCommands(input, slashCommands).length;
 }
@@ -33,8 +43,9 @@ export function slashExactSelectionIsRunnable(
   input: string,
   slashCommands: SlashCommandSpec[],
   selected: number,
+  sessionTargets: SlashSessionTarget[] = [],
 ): boolean {
-  if (slashArgumentContext(input, slashCommands)) return false;
+  if (slashArgumentContext(input, slashCommands, sessionTargets)) return false;
   const matches = filteredSlashCommands(input, slashCommands);
   const command = matches[selected];
   if (!command) return false;
@@ -44,11 +55,14 @@ export function slashExactSelectionIsRunnable(
 export function slashArgumentContext(
   input: string,
   slashCommands: SlashCommandSpec[],
+  sessionTargets: SlashSessionTarget[] = [],
 ): SlashArgumentContext | undefined {
   const query = input;
   if (!query.startsWith('/') || query.includes('\n')) return undefined;
   const skillContext = skillNameArgumentContext(query, slashCommands);
   if (skillContext) return skillContext;
+  const sessionContext = sessionTargetArgumentContext(query, sessionTargets);
+  if (sessionContext) return sessionContext;
   const command = [...slashCommands]
     .sort((a, b) => b.name.length - a.name.length)
     .find(
@@ -65,6 +79,41 @@ export function slashArgumentContext(
     ? options.filter((option) => option.toLowerCase().startsWith(rest))
     : options;
   return { command, options: filtered };
+}
+
+function sessionTargetArgumentContext(
+  query: string,
+  sessionTargets: SlashSessionTarget[],
+): SlashArgumentContext | undefined {
+  const commandName = ['/session switch', '/session close', '/session delete', '/session rename']
+    .filter((candidate) => query === candidate || query.startsWith(`${candidate} `))
+    .sort((a, b) => b.length - a.length)[0];
+  if (!commandName) return undefined;
+  const rest = query.slice(commandName.length).trim();
+  if (commandName === '/session rename' && /\s/.test(rest)) return undefined;
+  const needle = rest.toLowerCase();
+  const options = [...new Set(
+    sessionTargets
+      .filter((session) => session.id.trim().length > 0)
+      .filter(
+        (session) =>
+          needle.length === 0 ||
+          session.id.toLowerCase().startsWith(needle) ||
+          (session.title ?? '').toLowerCase().startsWith(needle),
+      )
+      .map((session) => session.id.trim()),
+  )].sort((a, b) => a.localeCompare(b));
+  if (needle && options.some((option) => option.toLowerCase() === needle)) return undefined;
+  if (options.length === 0) return undefined;
+  return {
+    command: {
+      name: commandName,
+      description: 'session target',
+      category: 'session',
+    },
+    options,
+    appendSpace: commandName === '/session rename',
+  };
 }
 
 function skillNameArgumentContext(

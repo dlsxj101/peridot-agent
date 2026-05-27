@@ -693,6 +693,19 @@ shared daemon, TUI, and VS Code extension surfaces.
   `/skill-name` invocation suggestions, and close once the selected skill
   name is exact so Enter submits the command normally.
 
+### E59. Session-Target Argument Autocomplete
+
+- **Status**: landed.
+- **Goal**: make session lifecycle slash commands easier to use from both
+  TUI and VS Code without copying opaque session ids from a separate list.
+- **Where**: TUI slash picker dynamic argument context and VS Code
+  webview slash autocomplete helper.
+- **Result**: `/session switch`, `/session close`, `/session delete`, and
+  `/session rename` now offer session-id completions from the visible
+  session list. Typed title prefixes also match, but the accepted value is
+  the stable session id. Rename completions leave a trailing space so the
+  operator can immediately type the new title.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

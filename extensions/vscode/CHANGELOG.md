@@ -24,6 +24,9 @@
   `/skills archive <name>`, and fills archived skill names for
   `/skills restore <name>` without showing archived skills as direct
   `/skill-name` suggestions.
+- Session-target argument autocomplete now fills stable session ids for
+  `/session switch|close|delete|rename`, including matches from visible
+  session titles.
 - The composer now keeps submitted prompt history per sidebar session.
   ArrowUp / ArrowDown recall previous prompts when the caret is on the
   first or last textarea line, and unsent drafts no longer leak across

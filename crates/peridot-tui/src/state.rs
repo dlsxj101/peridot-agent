@@ -1572,7 +1572,11 @@ impl TuiState {
             self.slash_picker = None;
             return;
         }
-        let len = crate::slash_picker::picker_len_with_skills(&query, &self.skill_suggestions);
+        let len = crate::slash_picker::picker_len_with_dynamic(
+            &query,
+            &self.skill_suggestions,
+            &self.sessions,
+        );
         if len == 0 {
             self.slash_picker = None;
             return;
@@ -1593,8 +1597,11 @@ impl TuiState {
         let Some(picker) = self.slash_picker.as_mut() else {
             return;
         };
-        let len =
-            crate::slash_picker::picker_len_with_skills(&picker.query, &self.skill_suggestions);
+        let len = crate::slash_picker::picker_len_with_dynamic(
+            &picker.query,
+            &self.skill_suggestions,
+            &self.sessions,
+        );
         if len == 0 {
             picker.selected = 0;
             return;
@@ -1610,16 +1617,22 @@ impl TuiState {
         };
         let query = picker.query.clone();
         let selected = picker.selected;
-        if let Some(context) =
-            crate::slash_picker::slash_argument_context_with_skills(&query, &self.skill_suggestions)
-        {
+        if let Some(context) = crate::slash_picker::slash_argument_context_with_dynamic(
+            &query,
+            &self.skill_suggestions,
+            &self.sessions,
+        ) {
             let Some(option) = context
                 .options
                 .get(selected.min(context.options.len().saturating_sub(1)))
             else {
                 return;
             };
-            self.input = format!("{} {option}", context.command_name);
+            self.input = format!(
+                "{} {option}{}",
+                context.command_name,
+                if context.append_space { " " } else { "" }
+            );
             self.input_cursor = self.input.chars().count();
             self.refresh_input_pickers();
             return;
@@ -1648,9 +1661,10 @@ impl TuiState {
         let Some(picker) = self.slash_picker.as_ref() else {
             return false;
         };
-        if crate::slash_picker::slash_argument_context_with_skills(
+        if crate::slash_picker::slash_argument_context_with_dynamic(
             &picker.query,
             &self.skill_suggestions,
+            &self.sessions,
         )
         .is_some()
         {

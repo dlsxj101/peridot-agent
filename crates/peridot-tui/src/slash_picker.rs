@@ -455,6 +455,9 @@ pub(crate) struct SlashArgumentContext {
     pub command_name: String,
     /// Filtered options matching the current typed argument prefix.
     pub options: Vec<String>,
+    /// Whether accepting an option should leave a trailing space for the
+    /// next free-form argument.
+    pub append_space: bool,
 }
 
 /// Filters the catalog by prefix. Empty query returns the whole catalog.
@@ -544,14 +547,27 @@ fn slash_argument_context(query: &str) -> Option<SlashArgumentContext> {
 }
 
 /// Returns the active argument picker, including dynamic skill-name options.
-pub(crate) fn slash_argument_context_with_skills(
+#[cfg(test)]
+fn slash_argument_context_with_skills(
     query: &str,
     skills: &[SkillSlashSuggestion],
+) -> Option<SlashArgumentContext> {
+    slash_argument_context_with_dynamic(query, skills, &[])
+}
+
+/// Returns the active argument picker, including dynamic skill/session options.
+pub(crate) fn slash_argument_context_with_dynamic(
+    query: &str,
+    skills: &[SkillSlashSuggestion],
+    sessions: &[crate::session_directory::SessionDirectoryItem],
 ) -> Option<SlashArgumentContext> {
     if !query.starts_with('/') || query.contains('\n') {
         return None;
     }
     if let Some(context) = skill_name_argument_context(query, skills) {
+        return Some(context);
+    }
+    if let Some(context) = session_target_argument_context(query, sessions) {
         return Some(context);
     }
     let spec = slash_command_catalog()
@@ -585,6 +601,7 @@ pub(crate) fn slash_argument_context_with_skills(
     Some(SlashArgumentContext {
         command_name: spec.name.to_string(),
         options: options.into_iter().map(str::to_string).collect(),
+        append_space: false,
     })
 }
 
@@ -632,6 +649,7 @@ fn skill_name_argument_context(
     Some(SlashArgumentContext {
         command_name: command_name.to_string(),
         options,
+        append_space: false,
     })
 }
 
@@ -643,9 +661,60 @@ fn skill_applies_to_command(command_name: &str, archived: bool) -> bool {
     }
 }
 
-/// Number of rows the slash picker would render for this query and skill list.
-pub(crate) fn picker_len_with_skills(query: &str, skills: &[SkillSlashSuggestion]) -> usize {
-    slash_argument_context_with_skills(query, skills)
+fn session_target_argument_context(
+    query: &str,
+    sessions: &[crate::session_directory::SessionDirectoryItem],
+) -> Option<SlashArgumentContext> {
+    let command_name = [
+        "/session switch",
+        "/session close",
+        "/session delete",
+        "/session rename",
+    ]
+    .into_iter()
+    .filter(|command| query == *command || query.starts_with(&format!("{command} ")))
+    .max_by_key(|command| command.len())?;
+    let rest = query[command_name.len()..].trim();
+    if command_name == "/session rename" && rest.contains(char::is_whitespace) {
+        return None;
+    }
+    let rest_lower = rest.to_ascii_lowercase();
+    let mut options: Vec<String> = sessions
+        .iter()
+        .filter(|session| !session.id.trim().is_empty())
+        .filter(|session| {
+            rest_lower.is_empty()
+                || session.id.to_ascii_lowercase().starts_with(&rest_lower)
+                || session.title.to_ascii_lowercase().starts_with(&rest_lower)
+        })
+        .map(|session| session.id.trim().to_string())
+        .collect();
+    options.sort();
+    options.dedup();
+    if !rest_lower.is_empty()
+        && options
+            .iter()
+            .any(|option| option.eq_ignore_ascii_case(&rest_lower))
+    {
+        return None;
+    }
+    if options.is_empty() {
+        return None;
+    }
+    Some(SlashArgumentContext {
+        command_name: command_name.to_string(),
+        options,
+        append_space: command_name == "/session rename",
+    })
+}
+
+/// Number of rows the slash picker would render with all dynamic option sets.
+pub(crate) fn picker_len_with_dynamic(
+    query: &str,
+    skills: &[SkillSlashSuggestion],
+    sessions: &[crate::session_directory::SessionDirectoryItem],
+) -> usize {
+    slash_argument_context_with_dynamic(query, skills, sessions)
         .map(|context| context.options.len())
         .unwrap_or_else(|| filtered_suggestions(query, skills).len())
 }
@@ -861,6 +930,34 @@ mod tests {
         );
         assert!(
             slash_argument_context_with_skills("/skills archive auto-fix-parser", &skills)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn session_target_argument_context_filters_directory_items() {
+        let sessions = vec![
+            crate::session_directory::SessionDirectoryItem::new("s-1", "parser cleanup"),
+            crate::session_directory::SessionDirectoryItem::new("s-2", "release prep"),
+        ];
+
+        let context =
+            slash_argument_context_with_dynamic("/session switch release", &[], &sessions)
+                .expect("session target");
+        assert_eq!(context.command_name, "/session switch");
+        assert_eq!(context.options, vec!["s-2"]);
+        assert!(!context.append_space);
+
+        let context = slash_argument_context_with_dynamic("/session rename parser", &[], &sessions)
+            .expect("rename target");
+        assert_eq!(context.options, vec!["s-1"]);
+        assert!(context.append_space);
+
+        assert!(
+            slash_argument_context_with_dynamic("/session switch s-2", &[], &sessions).is_none()
+        );
+        assert!(
+            slash_argument_context_with_dynamic("/session rename s-1 new title", &[], &sessions)
                 .is_none()
         );
     }
