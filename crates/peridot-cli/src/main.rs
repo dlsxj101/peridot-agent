@@ -1565,6 +1565,9 @@ fn apply_session_command(
         SessionCommandEvent::SkillList => {
             handle_skill_list(state, project_template);
         }
+        SessionCommandEvent::SkillShow(name) => {
+            handle_skill_show(state, project_template, &name);
+        }
         SessionCommandEvent::SkillPin(name) => {
             handle_skill_pin(state, project_template, &name, true);
         }
@@ -1979,6 +1982,34 @@ fn handle_skill_list(state: &mut TuiState, project_root: &Path) {
         ));
     }
     state.push_transcript(lines.join("\n"));
+}
+
+fn handle_skill_show(state: &mut TuiState, project_root: &Path, name: &str) {
+    let store = MemoryStore::new(project_root.join(".peridot/memory.db"));
+    let active = match store.list_skills() {
+        Ok(skills) => skills,
+        Err(err) => {
+            state.push_error(format!("skills: failed to read skill store: {err}"));
+            return;
+        }
+    };
+    let Some(skill) = active.into_iter().find(|skill| skill.name == name) else {
+        state.push_error(format!("skill not found: {name}"));
+        return;
+    };
+    let pinned = if skill.pinned_at_unix > 0 {
+        " · pinned"
+    } else {
+        ""
+    };
+    state.push_transcript(format!(
+        "skill `{}`\nscope: {}{}\ndescription: {}\n\n{}",
+        skill.name,
+        skill.scope,
+        pinned,
+        skill_description(&skill),
+        skill.body.trim()
+    ));
 }
 
 fn handle_skill_pin(state: &mut TuiState, project_root: &Path, name: &str, pinned: bool) {

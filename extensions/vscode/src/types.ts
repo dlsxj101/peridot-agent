@@ -115,6 +115,13 @@ export interface CommandResultView {
   action?: string;
   task?: string;
   label?: string;
+  name?: string;
+  detail?: string;
+  body?: string;
+  scope?: string;
+  pinned?: boolean;
+  last_used_at_unix?: number;
+  lastUsedAtUnix?: number;
   diff?: string;
   items?: CommandResultItem[];
   attachment?: AttachmentView;
@@ -403,6 +410,7 @@ export type OutboundMessage =
   | { type: 'outlineCurrentFile' }
   | { type: 'findSymbolReferences' }
   | { type: 'showSkills' }
+  | { type: 'showSkill'; name: string }
   | { type: 'toggleSkillPin'; name: string; pinned: boolean }
   | { type: 'attachFile' }
   | { type: 'detachAttachment'; path: string }

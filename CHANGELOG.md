@@ -63,6 +63,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **Skill pin controls** add `/skills pin <name>` and `/skills unpin
   <name>` to the shared slash path, with TUI transcript feedback and VS
   Code skill-row pin/unpin buttons.
+- **Skill detail view** adds `/skills show <name>` / `/skills view
+  <name>` plus a VS Code skill-row detail button for inspecting stored
+  skill bodies without leaving the inventory flow.
 - **Reflection noise filtering** now drops single-tool repeat n-grams
   before the Curator LLM call and stamps them as handled, so historical
   `file_read|file_read`-style rows do not burn review budget.

@@ -2477,6 +2477,7 @@ function renderCommandBlock(item: TranscriptItem): HTMLElement {
   if (result?.kind === 'detach') return renderDetachBlock(item);
   if (result?.kind === 'session_export') return renderSessionExportBlock(item);
   if (result?.kind === 'skills') return renderSkillsBlock(item);
+  if (result?.kind === 'skill_detail') return renderSkillDetailBlock(item);
   const wrap = el('section', `command-block ${result?.severity === 'error' ? 'error' : ''}`);
   const header = el('div', 'command-header');
   header.append(el('span', 'command-title', result?.title ?? result?.kind ?? 'Command'));
@@ -2777,6 +2778,9 @@ function renderSkillsBlock(item: TranscriptItem): HTMLElement {
     const actions = el('div', 'attachment-actions');
     const command = String(label);
     const name = command.replace(/^\/+/, '');
+    actions.append(iconButton('open', `Show ${command}`, () => {
+      vscode.postMessage({ type: 'showSkill', name });
+    }));
     const pin = iconButton(skill.pinned ? 'unpin' : 'pin', skill.pinned ? `Unpin ${command}` : `Pin ${command}`, () => {
       vscode.postMessage({ type: 'toggleSkillPin', name, pinned: !skill.pinned });
     });
@@ -2789,6 +2793,46 @@ function renderSkillsBlock(item: TranscriptItem): HTMLElement {
     list.append(row);
   });
   wrap.append(list);
+  return wrap;
+}
+
+function renderSkillDetailBlock(item: TranscriptItem): HTMLElement {
+  const result = item.commandResult;
+  const label = result?.label ?? (result?.name ? `/${result.name}` : 'skill');
+  const body = typeof result?.body === 'string' ? result.body : '';
+  const lastUsed = typeof result?.last_used_at_unix === 'number'
+    ? result.last_used_at_unix
+    : result?.lastUsedAtUnix;
+  const wrap = el('section', 'command-block attachment-block');
+  const header = el('div', 'attachment-header');
+  const title = el('div', 'attachment-title');
+  title.append(el('span', 'command-title', result?.title ?? label));
+  const chips = el('div', 'attachment-chips');
+  if (result?.scope) chips.append(el('span', 'command-chip', result.scope));
+  if (result?.pinned) chips.append(el('span', 'command-chip', 'pinned'));
+  if (typeof lastUsed === 'number' && lastUsed > 0) {
+    chips.append(el('span', 'command-chip', `used ${lastUsed}`));
+  }
+  title.append(chips);
+  header.append(title);
+  const actions = el('div', 'attachment-actions');
+  const command = String(label);
+  const copy = iconButton('copy', `Copy ${command}`, () => {
+    void markCopied(copy, command);
+  });
+  actions.append(copy);
+  if (body) {
+    const copyBody = iconButton('copy', `Copy ${command} body`, () => {
+      void markCopied(copyBody, body);
+    });
+    actions.append(copyBody);
+  }
+  header.append(actions);
+  wrap.append(header);
+  if (result?.detail) wrap.append(el('div', 'command-message', result.detail));
+  const pre = el('pre', 'attachment-preview');
+  pre.textContent = body.trim() || '(empty skill body)';
+  wrap.append(pre);
   return wrap;
 }
 

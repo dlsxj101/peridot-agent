@@ -44,6 +44,8 @@
   through the same `/skills` daemon path.
 - Skill inventory rows now include pin/unpin buttons backed by
   `/skills pin <name>` and `/skills unpin <name>`.
+- Skill inventory rows now include a detail button backed by `/skills
+  show <name>`, rendering the stored skill body in a dedicated card.
 - GitHub PR workflow commands are available from VS Code: PR status,
   preview-and-confirm `peridot ship`, and confirm-before-merge
   `gh pr merge`.

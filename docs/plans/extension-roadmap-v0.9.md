@@ -333,6 +333,20 @@ shared daemon, TUI, and VS Code extension surfaces.
   refreshed structured `skills` result, and VS Code skill rows expose
   pin/unpin buttons next to the existing copy action.
 
+### E32. Skill Detail View
+
+- **Status**: landed.
+- **Goal**: let operators inspect a stored skill body from the same
+  inventory flow that discovers and pins it.
+- **Where**: shared slash parser/catalog, TUI host skill command queue,
+  daemon `session.command`, VS Code skill inventory card actions.
+- **Result**: `/skills show <name>` (alias `/skills view <name>`) now
+  returns one skill's description, scope, pinned state, last-used
+  timestamp, and body through the shared slash path. TUI prints the
+  detail in the transcript, daemon clients receive a structured
+  `skill_detail` result, and VS Code skill rows expose a detail button
+  with a dedicated body preview card.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

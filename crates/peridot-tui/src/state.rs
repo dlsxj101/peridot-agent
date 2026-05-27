@@ -968,6 +968,8 @@ pub enum SessionCommandEvent {
     },
     /// `/skills` — list active stored skills available to slash invocation.
     SkillList,
+    /// `/skills show <name>` — show details for one stored skill.
+    SkillShow(String),
     /// `/skills pin <name>` — protect an active stored skill from curation.
     SkillPin(String),
     /// `/skills unpin <name>` — remove the curation protection marker.

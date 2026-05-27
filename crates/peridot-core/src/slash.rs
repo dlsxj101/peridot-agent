@@ -25,6 +25,8 @@ pub enum SlashCommand {
     },
     /// List active stored skills available to slash invocation.
     SkillList,
+    /// Show details for an active stored skill.
+    SkillShow(String),
     /// Pin an active stored skill so automated curation cannot archive it.
     SkillPin(String),
     /// Clear the pinned marker from an active stored skill.
@@ -382,6 +384,14 @@ pub fn parse_slash_command(input: &str) -> Option<SlashCommand> {
         "clear" if rest.is_empty() => Some(SlashCommand::Clear),
         "help" if rest.is_empty() => Some(SlashCommand::Help),
         "skills" if rest.is_empty() || rest == "list" => Some(SlashCommand::SkillList),
+        "skills" if rest.starts_with("show ") => {
+            let name = rest.strip_prefix("show ")?.trim();
+            (!name.is_empty()).then(|| SlashCommand::SkillShow(name.to_string()))
+        }
+        "skills" if rest.starts_with("view ") => {
+            let name = rest.strip_prefix("view ")?.trim();
+            (!name.is_empty()).then(|| SlashCommand::SkillShow(name.to_string()))
+        }
         "skills" if rest.starts_with("pin ") => {
             let name = rest.strip_prefix("pin ")?.trim();
             (!name.is_empty()).then(|| SlashCommand::SkillPin(name.to_string()))
@@ -746,6 +756,14 @@ mod tests {
             Some(SlashCommand::SkillList)
         );
         assert_eq!(
+            parse_slash_command("/skills show auto-fix-parser"),
+            Some(SlashCommand::SkillShow("auto-fix-parser".to_string()))
+        );
+        assert_eq!(
+            parse_slash_command("/skills view auto-fix-parser"),
+            Some(SlashCommand::SkillShow("auto-fix-parser".to_string()))
+        );
+        assert_eq!(
             parse_slash_command("/skills pin auto-fix-parser"),
             Some(SlashCommand::SkillPin("auto-fix-parser".to_string()))
         );
@@ -754,6 +772,7 @@ mod tests {
             Some(SlashCommand::SkillUnpin("auto-fix-parser".to_string()))
         );
         assert_eq!(parse_slash_command("/skills bogus"), None);
+        assert_eq!(parse_slash_command("/skills show"), None);
         assert_eq!(parse_slash_command("/skills pin"), None);
     }
 
