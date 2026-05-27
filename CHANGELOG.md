@@ -54,6 +54,8 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **Daemon-backed `/session save` parity** lets editor clients persist
   the active daemon session record on demand, including live token, cost,
   and turn totals.
+- **Daemon-backed goal control parity** returns structured goal state
+  for `/goal pause`, `/goal resume`, `/goal clear`, and `/goal status`.
 - **VS Code Get Started walkthrough** guides first-time users through
   opening the sidebar, connecting a provider, reviewing settings, and
   running a first task using existing Peridot commands and view

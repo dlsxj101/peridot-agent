@@ -129,6 +129,8 @@ export interface CommandResultView {
   status?: string;
   summary?: string;
   updated_at_unix?: number;
+  objective?: string | null;
+  started_at_unix?: number | null;
   session_count?: number;
   current_cost_usd?: number;
   current_tokens?: number;

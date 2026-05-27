@@ -20,8 +20,8 @@ use peridot_common::{
 };
 use peridot_context::{BranchJournal, ContextEntry, ContextSource, estimate_tokens_for_text};
 use peridot_core::{
-    AgentRunEvent, AutoFixAction, ExportArtifact, PlanStepUpdate, SlashCommand, SlashStateDelta,
-    StopReason, SubagentModelChange, parse_slash_command, slash_state_delta,
+    AgentRunEvent, AutoFixAction, ExportArtifact, GoalStatus, PlanStepUpdate, SlashCommand,
+    SlashStateDelta, StopReason, SubagentModelChange, parse_slash_command, slash_state_delta,
 };
 use peridot_git::GitManager;
 use peridot_memory::{MemoryStore, SessionLifecycle, SessionRecord, SessionSummary};
@@ -92,6 +92,7 @@ struct SessionEntry {
     spec: SessionRunSpec,
     usage: Arc<StdMutex<LiveSessionUsage>>,
     plan: Arc<StdMutex<LiveSessionPlan>>,
+    goal: Arc<StdMutex<LiveSessionGoal>>,
     approval_grants: Vec<ApprovalGrant>,
     waiting_approval: Option<ApprovalRequestSnapshot>,
 }
@@ -155,6 +156,13 @@ impl LiveSessionUsage {
 struct LiveSessionPlan {
     steps: Vec<PlanStepUpdate>,
     current: Option<u32>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct LiveSessionGoal {
+    objective: Option<String>,
+    status: Option<GoalStatus>,
+    started_at_unix: Option<u64>,
 }
 
 #[derive(Clone)]
@@ -798,6 +806,7 @@ async fn handle_session_start(state: &DaemonState, id: Value, params: Option<Val
     let usage_for_task = usage.clone();
     let plan = Arc::new(StdMutex::new(LiveSessionPlan::default()));
     let plan_for_task = plan.clone();
+    let goal = Arc::new(StdMutex::new(initial_live_goal(&spec)));
     let (start_tx, start_rx) = oneshot::channel::<()>();
 
     let handle = tokio::spawn(async move {
@@ -823,6 +832,7 @@ async fn handle_session_start(state: &DaemonState, id: Value, params: Option<Val
             spec: spec.clone(),
             usage,
             plan,
+            goal,
             approval_grants: Vec::new(),
             waiting_approval: None,
         },
@@ -960,6 +970,18 @@ async fn live_session_usage_snapshot(
         .await
         .get(session_id)
         .map(|entry| entry.usage.lock().unwrap().clone())
+}
+
+fn initial_live_goal(spec: &SessionRunSpec) -> LiveSessionGoal {
+    if spec.mode == ExecutionMode::Goal {
+        LiveSessionGoal {
+            objective: Some(spec.task.clone()),
+            status: Some(GoalStatus::Running),
+            started_at_unix: Some(crate::run_state::unix_timestamp()),
+        }
+    } else {
+        LiveSessionGoal::default()
+    }
 }
 
 async fn update_daemon_session_lifecycle(
@@ -1599,6 +1621,12 @@ async fn execute_session_command(
         SlashCommand::SessionSave => {
             handle_command_session_save(state, session_id, raw_command).await
         }
+        SlashCommand::GoalPause
+        | SlashCommand::GoalResume
+        | SlashCommand::GoalClear
+        | SlashCommand::GoalStatus => {
+            handle_command_goal_control(state, session_id, raw_command, &command).await
+        }
         SlashCommand::Skill { name, args } => {
             // Try the project's skill store. If the name exists, inject
             // the body as a PlanReminder-style context entry so the
@@ -1666,11 +1694,7 @@ async fn execute_session_command(
         | SlashCommand::SessionClose(_)
         | SlashCommand::SessionDelete(_)
         | SlashCommand::SessionRename { .. }
-        | SlashCommand::GoalStart(_)
-        | SlashCommand::GoalPause
-        | SlashCommand::GoalResume
-        | SlashCommand::GoalClear
-        | SlashCommand::GoalStatus => Ok(with_state_delta(
+        | SlashCommand::GoalStart(_) => Ok(with_state_delta(
             serde_json::json!({
                 "kind": "client_action",
                 "action": "local",
@@ -1962,6 +1986,138 @@ async fn handle_command_session_save(
             { "label": "cost", "detail": format!("${:.4}", record.total_cost_usd) },
         ],
     }))
+}
+
+async fn handle_command_goal_control(
+    state: &DaemonState,
+    session_id: Option<&str>,
+    raw_command: &str,
+    command: &SlashCommand,
+) -> Result<Value, String> {
+    let Some(session_id) = session_id else {
+        return Ok(goal_command_result(
+            raw_command,
+            None,
+            "none",
+            None,
+            0,
+            0,
+            "goal: no active session",
+        ));
+    };
+    let Some((goal, plan)) = ({
+        let sessions = state.sessions.lock().await;
+        sessions.get(session_id).map(|entry| {
+            let mut goal = entry.goal.lock().unwrap();
+            if goal.objective.is_none() && entry.spec.mode == ExecutionMode::Goal {
+                *goal = initial_live_goal(&entry.spec);
+            }
+            match command {
+                SlashCommand::GoalPause if goal.objective.is_some() => {
+                    goal.status = Some(GoalStatus::Paused);
+                }
+                SlashCommand::GoalResume if goal.objective.is_some() => {
+                    goal.status = Some(GoalStatus::Running);
+                }
+                SlashCommand::GoalClear => {
+                    *goal = LiveSessionGoal {
+                        objective: None,
+                        status: Some(GoalStatus::Cleared),
+                        started_at_unix: None,
+                    };
+                    *entry.plan.lock().unwrap() = LiveSessionPlan::default();
+                }
+                _ => {}
+            }
+            (goal.clone(), entry.plan.lock().unwrap().clone())
+        })
+    }) else {
+        return Ok(goal_command_result(
+            raw_command,
+            Some(session_id),
+            "missing",
+            None,
+            0,
+            0,
+            &format!("goal: session not found: {session_id}"),
+        ));
+    };
+    let done = plan.steps.iter().filter(|step| step.done).count();
+    let total = plan.steps.len();
+    let status = goal
+        .status
+        .as_ref()
+        .map(goal_status_label)
+        .unwrap_or("none");
+    let message = match command {
+        SlashCommand::GoalPause if goal.objective.is_some() => "goal: paused".to_string(),
+        SlashCommand::GoalResume if goal.objective.is_some() => "goal: resumed".to_string(),
+        SlashCommand::GoalClear => "goal: cleared".to_string(),
+        _ => format!("goal: {status} {done}/{total} steps done"),
+    };
+    Ok(goal_command_result(
+        raw_command,
+        Some(session_id),
+        status,
+        goal.objective.as_deref(),
+        done,
+        total,
+        &message,
+    )
+    .with_object("started_at_unix", goal.started_at_unix))
+}
+
+trait JsonObjectExt {
+    fn with_object(self, key: &str, value: Option<u64>) -> Value;
+}
+
+impl JsonObjectExt for Value {
+    fn with_object(mut self, key: &str, value: Option<u64>) -> Value {
+        if let Some(object) = self.as_object_mut() {
+            object.insert(
+                key.to_string(),
+                serde_json::to_value(value).unwrap_or(Value::Null),
+            );
+        }
+        self
+    }
+}
+
+fn goal_command_result(
+    raw_command: &str,
+    session_id: Option<&str>,
+    status: &str,
+    objective: Option<&str>,
+    done: usize,
+    total: usize,
+    message: &str,
+) -> Value {
+    serde_json::json!({
+        "kind": "goal",
+        "title": "Goal",
+        "message": message,
+        "severity": "info",
+        "command": raw_command,
+        "session_id": session_id,
+        "status": status,
+        "objective": objective,
+        "done": done,
+        "total": total,
+        "items": [
+            { "label": "status", "detail": status },
+            { "label": "objective", "detail": objective.unwrap_or("<none>") },
+            { "label": "steps", "detail": format!("{done}/{total}") },
+        ],
+    })
+}
+
+fn goal_status_label(status: &GoalStatus) -> &'static str {
+    match status {
+        GoalStatus::Running => "running",
+        GoalStatus::Paused => "paused",
+        GoalStatus::Done => "done",
+        GoalStatus::Cleared => "cleared",
+    }
 }
 
 async fn handle_command_plan_show(
@@ -4415,6 +4571,7 @@ mod tests {
                 },
                 usage,
                 plan: Arc::new(StdMutex::new(LiveSessionPlan::default())),
+                goal: Arc::new(StdMutex::new(LiveSessionGoal::default())),
                 approval_grants: Vec::new(),
                 waiting_approval: None,
             },
@@ -4482,6 +4639,7 @@ mod tests {
                 },
                 usage: Arc::new(StdMutex::new(LiveSessionUsage::default())),
                 plan,
+                goal: Arc::new(StdMutex::new(LiveSessionGoal::default())),
                 approval_grants: Vec::new(),
                 waiting_approval: None,
             },
@@ -4540,6 +4698,7 @@ mod tests {
                     ..LiveSessionUsage::default()
                 })),
                 plan: Arc::new(StdMutex::new(LiveSessionPlan::default())),
+                goal: Arc::new(StdMutex::new(LiveSessionGoal::default())),
                 approval_grants: Vec::new(),
                 waiting_approval: None,
             },
@@ -4566,6 +4725,95 @@ mod tests {
         assert_eq!(record.total_tokens, 1500);
         assert_eq!(record.turns_used, 4);
         assert!(store.get_session("session-save").unwrap().is_some());
+        shutdown_sessions(&state).await;
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn session_command_goal_controls_live_goal_state() {
+        let root = test_project("session-command-goal-control");
+        let (tx, _rx) = mpsc::unbounded_channel::<String>();
+        let state = DaemonState::new(
+            root.clone(),
+            PeridotConfig::default(),
+            test_options(None),
+            tx,
+        );
+        let goal = Arc::new(StdMutex::new(LiveSessionGoal {
+            objective: Some("finish migration".to_string()),
+            status: Some(GoalStatus::Running),
+            started_at_unix: Some(123),
+        }));
+        state.sessions.lock().await.insert(
+            "session-goal".to_string(),
+            SessionEntry {
+                cancel: CancelToken::new(),
+                compact_request: Arc::new(AtomicBool::new(false)),
+                task: None,
+                spec: SessionRunSpec {
+                    task: "finish migration".to_string(),
+                    mode: ExecutionMode::Goal,
+                    permission: PermissionMode::Auto,
+                    model: None,
+                    reasoning_effort: None,
+                    service_tier: None,
+                    config: PeridotConfig::default(),
+                },
+                usage: Arc::new(StdMutex::new(LiveSessionUsage::default())),
+                plan: Arc::new(StdMutex::new(LiveSessionPlan {
+                    steps: vec![
+                        PlanStepUpdate {
+                            label: "scan".to_string(),
+                            done: true,
+                        },
+                        PlanStepUpdate {
+                            label: "patch".to_string(),
+                            done: false,
+                        },
+                    ],
+                    current: Some(1),
+                })),
+                goal,
+                approval_grants: Vec::new(),
+                waiting_approval: None,
+            },
+        );
+
+        let pause = execute_session_command(
+            &state,
+            Some("session-goal"),
+            "/goal pause",
+            SlashCommand::GoalPause,
+        )
+        .await
+        .unwrap();
+        assert_eq!(pause["kind"], "goal");
+        assert_eq!(pause["status"], "paused");
+        assert_eq!(pause["objective"], "finish migration");
+        assert_eq!(pause["done"], 1);
+        assert_eq!(pause["total"], 2);
+
+        let resume = execute_session_command(
+            &state,
+            Some("session-goal"),
+            "/goal resume",
+            SlashCommand::GoalResume,
+        )
+        .await
+        .unwrap();
+        assert_eq!(resume["status"], "running");
+
+        let clear = execute_session_command(
+            &state,
+            Some("session-goal"),
+            "/goal clear",
+            SlashCommand::GoalClear,
+        )
+        .await
+        .unwrap();
+        assert_eq!(clear["status"], "cleared");
+        assert!(clear["objective"].is_null());
+        assert_eq!(clear["total"], 0);
         shutdown_sessions(&state).await;
         let _ = std::fs::remove_dir_all(root);
     }
@@ -4606,6 +4854,7 @@ mod tests {
                 },
                 usage: Arc::new(StdMutex::new(LiveSessionUsage::default())),
                 plan: Arc::new(StdMutex::new(LiveSessionPlan::default())),
+                goal: Arc::new(StdMutex::new(LiveSessionGoal::default())),
                 approval_grants: Vec::new(),
                 waiting_approval: None,
             },
@@ -5448,6 +5697,7 @@ mod tests {
                 },
                 usage: Arc::new(StdMutex::new(LiveSessionUsage::default())),
                 plan: Arc::new(StdMutex::new(LiveSessionPlan::default())),
+                goal: Arc::new(StdMutex::new(LiveSessionGoal::default())),
                 approval_grants: Vec::new(),
                 waiting_approval: None,
             },

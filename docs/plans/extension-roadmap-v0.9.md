@@ -122,6 +122,20 @@ shared daemon, TUI, and VS Code extension surfaces.
   result. Live token, cost, and turn totals are copied from the daemon's
   session tracker so explicit saves are useful before a run finishes.
 
+### E17. Goal Control Slash Parity
+
+- **Status**: landed.
+- **Goal**: make `/goal pause`, `/goal resume`, `/goal clear`, and
+  `/goal status` report daemon-owned goal state in VS Code instead of
+  local placeholder status rows.
+- **Where**: daemon live goal bookkeeping, `session.command`, VS Code
+  command-result typing.
+- **Result**: goal-mode daemon sessions now keep objective, status, and
+  started timestamp metadata. Goal control slashes return structured
+  `goal` command results with objective, status, step progress, and
+  session id. `/goal <objective>` keeps the existing task-starting
+  extension flow.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.
