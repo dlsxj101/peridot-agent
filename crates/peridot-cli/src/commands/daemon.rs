@@ -1692,8 +1692,6 @@ async fn execute_session_command(
         | SlashCommand::SessionNew(_)
         | SlashCommand::SessionSwitch(_)
         | SlashCommand::SessionClose(_)
-        | SlashCommand::SessionDelete(_)
-        | SlashCommand::SessionRename { .. }
         | SlashCommand::GoalStart(_) => Ok(with_state_delta(
             serde_json::json!({
                 "kind": "client_action",
@@ -1729,6 +1727,12 @@ async fn execute_session_command(
         }
         SlashCommand::SessionList => handle_command_session_list(state, raw_command).await,
         SlashCommand::SessionCount => handle_command_session_count(state, raw_command),
+        SlashCommand::SessionDelete(target) => {
+            handle_command_session_delete(state, raw_command, &target).await
+        }
+        SlashCommand::SessionRename { target, title } => {
+            handle_command_session_rename(state, raw_command, &target, &title).await
+        }
         SlashCommand::McpList => handle_command_mcp_list(state, raw_command),
         SlashCommand::McpAdd {
             name,
@@ -1920,6 +1924,215 @@ fn handle_command_session_count(state: &DaemonState, raw_command: &str) -> Resul
         "done": summary.done,
         "failed": summary.failed,
     }))
+}
+
+async fn handle_command_session_delete(
+    state: &DaemonState,
+    raw_command: &str,
+    target: &str,
+) -> Result<Value, String> {
+    let session_id = resolve_session_target_id(state, target)
+        .await?
+        .unwrap_or_else(|| target.to_string());
+    let cancelled =
+        remove_live_daemon_session(state, &session_id, SessionLifecycle::Suspended).await;
+    let deleted = delete_persisted_session_for_daemon(state, &session_id)?;
+    if cancelled || deleted {
+        emit_session_list_changed(state).await;
+    }
+    Ok(serde_json::json!({
+        "kind": "session_delete",
+        "title": "Session Delete",
+        "message": format!("session delete: {session_id} {}", if deleted || cancelled { "deleted" } else { "not found" }),
+        "severity": if deleted || cancelled { "info" } else { "error" },
+        "command": raw_command,
+        "session_id": session_id,
+        "target": target,
+        "deleted": deleted,
+        "cancelled": cancelled,
+        "items": [
+            { "label": "session", "detail": session_id },
+            { "label": "deleted persisted data", "detail": deleted.to_string() },
+            { "label": "cancelled live run", "detail": cancelled.to_string() },
+        ],
+    }))
+}
+
+async fn handle_command_session_rename(
+    state: &DaemonState,
+    raw_command: &str,
+    target: &str,
+    title: &str,
+) -> Result<Value, String> {
+    let session_id = resolve_session_target_id(state, target)
+        .await?
+        .unwrap_or_else(|| target.to_string());
+    let renamed = rename_persisted_session_for_daemon(state, &session_id, title)?;
+    if renamed {
+        emit_session_list_changed(state).await;
+    }
+    Ok(serde_json::json!({
+        "kind": "session_rename",
+        "title": "Session Rename",
+        "message": if renamed {
+            format!("session rename: {session_id} -> {title}")
+        } else {
+            format!("session rename: {session_id} not found")
+        },
+        "severity": if renamed { "info" } else { "error" },
+        "command": raw_command,
+        "session_id": session_id,
+        "target": target,
+        "session_title": title,
+        "renamed": renamed,
+        "items": [
+            { "label": "session", "detail": session_id },
+            { "label": "title", "detail": title },
+            { "label": "renamed", "detail": renamed.to_string() },
+        ],
+    }))
+}
+
+async fn resolve_session_target_id(
+    state: &DaemonState,
+    target: &str,
+) -> Result<Option<String>, String> {
+    let target = target.trim();
+    if target.is_empty() {
+        return Ok(None);
+    }
+    let list = session_list_result(state).await;
+    let sessions = list["sessions"].as_array().cloned().unwrap_or_default();
+    if let Some(id) = sessions
+        .iter()
+        .filter_map(|session| session["id"].as_str())
+        .find(|id| *id == target)
+    {
+        return Ok(Some(id.to_string()));
+    }
+
+    let needle = target.to_ascii_lowercase();
+    let mut exact = Vec::new();
+    let mut partial = Vec::new();
+    for session in &sessions {
+        let id = session["id"].as_str().unwrap_or_default();
+        let title = session["title"]
+            .as_str()
+            .or_else(|| session["summary"].as_str())
+            .unwrap_or_default();
+        let title_lower = title.to_ascii_lowercase();
+        if title_lower == needle {
+            exact.push(id.to_string());
+        } else if title_lower.contains(&needle) {
+            partial.push(id.to_string());
+        }
+    }
+    let matches = if exact.is_empty() { partial } else { exact };
+    match matches.as_slice() {
+        [] => Ok(None),
+        [id] => Ok(Some(id.clone())),
+        many => Err(format!(
+            "session target '{target}' is ambiguous: {}",
+            many.join(", ")
+        )),
+    }
+}
+
+async fn remove_live_daemon_session(
+    state: &DaemonState,
+    session_id: &str,
+    lifecycle: SessionLifecycle,
+) -> bool {
+    let removed = if let Some(entry) = state.sessions.lock().await.remove(session_id) {
+        entry.cancel.cancel();
+        if let Some(task) = entry.task {
+            task.abort();
+        }
+        true
+    } else {
+        false
+    };
+    if removed {
+        state
+            .router
+            .lock()
+            .expect("daemon session router mutex poisoned")
+            .close(session_id);
+        clear_pending_ask_user_for_session(state, session_id);
+        update_daemon_session_lifecycle(state, session_id, lifecycle).await;
+    }
+    removed
+}
+
+fn delete_persisted_session_for_daemon(
+    state: &DaemonState,
+    session_id: &str,
+) -> Result<bool, String> {
+    let store = MemoryStore::new(state.project_root.join(".peridot/memory.db"));
+    let deleted_summary = store
+        .delete_session(session_id)
+        .map_err(|err| format!("delete session summary: {err}"))?;
+    let deleted_record = store
+        .delete_session_record(session_id)
+        .map_err(|err| format!("delete session record: {err}"))?;
+    let sessions_root = state.project_root.join(".peridot").join("sessions");
+    let deleted_blobs = peridot_memory::remove_session_dir(&sessions_root, session_id)
+        .map_err(|err| format!("delete session blobs: {err}"))?;
+    Ok(deleted_summary || deleted_record || deleted_blobs)
+}
+
+fn rename_persisted_session_for_daemon(
+    state: &DaemonState,
+    session_id: &str,
+    title: &str,
+) -> Result<bool, String> {
+    let store = MemoryStore::new(state.project_root.join(".peridot/memory.db"));
+    let existing_summary = store
+        .get_session(session_id)
+        .map_err(|err| format!("read session summary: {err}"))?;
+    let existing_record = store
+        .get_session_record(session_id)
+        .map_err(|err| format!("read session record: {err}"))?;
+    let sessions_root = state.project_root.join(".peridot").join("sessions");
+    let existing_blob =
+        peridot_memory::load_session_blob(&sessions_root, session_id, "tui_state.json")
+            .map_err(|err| format!("read session blob: {err}"))?;
+    if existing_summary.is_none() && existing_record.is_none() && existing_blob.is_none() {
+        return Ok(false);
+    }
+    store
+        .save_session(&SessionSummary {
+            id: session_id.to_string(),
+            summary: title.to_string(),
+        })
+        .map_err(|err| format!("save session summary: {err}"))?;
+    if let Some(mut record) = existing_record {
+        record.summary = title.to_string();
+        record.updated_at_unix = crate::run_state::unix_timestamp();
+        store
+            .save_session_record(&record)
+            .map_err(|err| format!("save session record: {err}"))?;
+    }
+    if let Some(bytes) = existing_blob
+        && let Ok(mut tui_state) = serde_json::from_slice::<peridot_tui::TuiState>(&bytes)
+    {
+        for item in &mut tui_state.sessions {
+            if item.id == session_id {
+                item.title = title.to_string();
+                item.title_generated = true;
+            }
+        }
+        let serialized = serde_json::to_vec(&tui_state)
+            .map_err(|err| format!("serialize session blob: {err}"))?;
+        peridot_memory::save_session_blob(
+            &sessions_root,
+            session_id,
+            "tui_state.json",
+            &serialized,
+        )
+        .map_err(|err| format!("save session blob: {err}"))?;
+    }
+    Ok(true)
 }
 
 async fn handle_command_session_save(
@@ -4517,6 +4730,108 @@ mod tests {
         assert_eq!(result["done"], 2);
         assert_eq!(result["failed"], 1);
         assert_eq!(result["items"].as_array().unwrap().len(), 5);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn session_command_rename_updates_persisted_session() {
+        let root = test_project("session-command-rename");
+        let store = MemoryStore::new(root.join(".peridot/memory.db"));
+        let mut record = SessionRecord::new("session-rename", &root);
+        record.summary = "old title".into();
+        record.last_task = Some("old task".into());
+        store.save_session_record(&record).unwrap();
+        store
+            .save_session(&SessionSummary {
+                id: "session-rename".into(),
+                summary: "old title".into(),
+            })
+            .unwrap();
+        let (tx, _rx) = mpsc::unbounded_channel::<String>();
+        let state = DaemonState::new(
+            root.clone(),
+            PeridotConfig::default(),
+            test_options(None),
+            tx,
+        );
+
+        let result = execute_session_command(
+            &state,
+            Some("session-rename"),
+            "/session rename session-rename release prep",
+            SlashCommand::SessionRename {
+                target: "session-rename".into(),
+                title: "release prep".into(),
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result["kind"], "session_rename");
+        assert_eq!(result["session_id"], "session-rename");
+        assert_eq!(result["session_title"], "release prep");
+        assert_eq!(result["renamed"], true);
+        let renamed = store.get_session_record("session-rename").unwrap().unwrap();
+        assert_eq!(renamed.summary, "release prep");
+        assert_eq!(
+            store
+                .get_session("session-rename")
+                .unwrap()
+                .unwrap()
+                .summary,
+            "release prep"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn session_command_delete_removes_persisted_session() {
+        let root = test_project("session-command-delete");
+        let store = MemoryStore::new(root.join(".peridot/memory.db"));
+        let record = SessionRecord::new("session-delete", &root);
+        store.save_session_record(&record).unwrap();
+        store
+            .save_session(&SessionSummary {
+                id: "session-delete".into(),
+                summary: "delete me".into(),
+            })
+            .unwrap();
+        let sessions_root = root.join(".peridot").join("sessions");
+        peridot_memory::save_session_blob(
+            &sessions_root,
+            "session-delete",
+            "tui_state.json",
+            br#"{"sessions":[]}"#,
+        )
+        .unwrap();
+        let (tx, _rx) = mpsc::unbounded_channel::<String>();
+        let state = DaemonState::new(
+            root.clone(),
+            PeridotConfig::default(),
+            test_options(None),
+            tx,
+        );
+
+        let result = execute_session_command(
+            &state,
+            Some("session-delete"),
+            "/session delete session-delete",
+            SlashCommand::SessionDelete("session-delete".into()),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result["kind"], "session_delete");
+        assert_eq!(result["session_id"], "session-delete");
+        assert_eq!(result["deleted"], true);
+        assert!(
+            store
+                .get_session_record("session-delete")
+                .unwrap()
+                .is_none()
+        );
+        assert!(store.get_session("session-delete").unwrap().is_none());
+        assert!(!sessions_root.join("session-delete").exists());
         let _ = std::fs::remove_dir_all(root);
     }
 

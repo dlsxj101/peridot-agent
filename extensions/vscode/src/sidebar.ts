@@ -1274,6 +1274,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       if (result.action === 'local' && (await this.handleLocalClientAction(input, options))) {
         return;
       }
+      this.applySessionMutationResult(result);
       this.appendCommandResult(result);
       if (result.kind === 'start_task' && result.task) {
         await this.handlers.runTask(result.task, this.state.runOptions);
@@ -1351,6 +1352,31 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
     if (result.kind === 'setting' || result.kind === 'note') {
       this.state.context = { ...this.state.context, problem: undefined };
     }
+  }
+
+  private applySessionMutationResult(result: CommandResultView): void {
+    if (result.kind === 'session_rename' && result.renamed !== false) {
+      const session = this.findSessionByResultId(result);
+      const title = (result.session_title ?? result.sessionTitle ?? '').trim();
+      if (session && title.length > 0) {
+        this.renameSession(session.id, title);
+      }
+      return;
+    }
+    if (result.kind === 'session_delete' && (result.deleted === true || result.cancelled === true)) {
+      const session = this.findSessionByResultId(result);
+      if (session) {
+        this.deleteSession(session.id);
+      }
+    }
+  }
+
+  private findSessionByResultId(result: CommandResultView): StoredChatSession | undefined {
+    const id = result.session_id?.trim();
+    if (!id) return undefined;
+    return Array.from(this.sessions.values()).find(
+      (session) => session.id === id || session.daemonSessionId === id,
+    );
   }
 
   private showInfo(): void {

@@ -131,6 +131,12 @@ export interface CommandResultView {
   updated_at_unix?: number;
   objective?: string | null;
   started_at_unix?: number | null;
+  target?: string;
+  session_title?: string;
+  sessionTitle?: string;
+  deleted?: boolean;
+  cancelled?: boolean;
+  renamed?: boolean;
   session_count?: number;
   current_cost_usd?: number;
   current_tokens?: number;

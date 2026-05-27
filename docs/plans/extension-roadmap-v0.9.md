@@ -136,6 +136,21 @@ shared daemon, TUI, and VS Code extension surfaces.
   session id. `/goal <objective>` keeps the existing task-starting
   extension flow.
 
+### E18. Session Rename/Delete Slash Parity
+
+- **Status**: landed.
+- **Goal**: make VS Code `/session rename` and `/session delete` mutate
+  the same persisted session state as the TUI/CLI paths instead of only
+  changing sidebar-local session cards.
+- **Where**: daemon `session.command`, persisted session summaries and
+  blobs, VS Code sidebar session reconciliation.
+- **Result**: `/session rename <id|title> <new title>` updates the
+  persisted session summary/record and any saved TUI blob, returning a
+  structured `session_rename` result. `/session delete <id|title>`
+  cancels a live daemon run when present, removes persisted records and
+  session blobs, returns a structured `session_delete` result, and lets
+  VS Code remove the matching local sidebar session by daemon id.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

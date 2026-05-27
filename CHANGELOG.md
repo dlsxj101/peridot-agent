@@ -56,6 +56,10 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
   and turn totals.
 - **Daemon-backed goal control parity** returns structured goal state
   for `/goal pause`, `/goal resume`, `/goal clear`, and `/goal status`.
+- **Daemon-backed session rename/delete parity** lets editor clients
+  update or remove persisted session records and session blobs through
+  `/session rename` and `/session delete`, while keeping the VS Code
+  sidebar session menu in sync.
 - **VS Code Get Started walkthrough** guides first-time users through
   opening the sidebar, connecting a provider, reviewing settings, and
   running a first task using existing Peridot commands and view

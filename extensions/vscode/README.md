@@ -66,8 +66,10 @@ diffs, plus approve/deny controls with a diff preview for `file_write` /
 `file_patch`. The slash picker loads the same command catalog exposed by
 the TUI through the daemon `session.command_catalog` RPC, and supported
 session-control slashes run through `session.command` so mode, permission,
-model, provider, committee, goal control, note, compact, branch, MCP,
-TODO, codemap, info, cost, plan show, goal control, session save, session count, export, diff, undo, and context results stay aligned with the daemon.
+model, provider, committee, note, compact, branch, MCP, TODO, codemap,
+info, cost, plan show, goal control, session save, session count,
+session rename/delete, export, diff, undo, and context results stay
+aligned with the daemon.
 Typing `/branch` opens a picker backed by the current context turns;
 selecting a row runs `/branch turn <id>`. The session header also exposes
 artifact export for the active session's attachments, notes, and replay
