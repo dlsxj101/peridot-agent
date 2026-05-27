@@ -20,6 +20,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
   command belongs to. VS Code keeps backward compatibility with older
   daemons but hides TUI-only composer suggestions such as `/collapse` and
   `/lang` when the daemon provides the metadata.
+- **Structured slash argument options** now ship in the same command
+  catalog so editor clients can offer choices such as `/reasoning high`
+  without reparsing the human-readable `arg_hint` string.
 
 ### Added — skill-aware slash autocomplete
 

@@ -3538,6 +3538,9 @@ function slashArgumentContext(input: string): SlashArgumentContext | undefined {
 }
 
 function slashArgumentOptions(command: SlashCommandSpec): string[] {
+  if (Array.isArray(command.argOptions) && command.argOptions.length > 0) {
+    return command.argOptions.filter((option) => option.trim().length > 0);
+  }
   const hint = command.argHint?.trim();
   if (!hint) return [];
   const opensChoiceList =

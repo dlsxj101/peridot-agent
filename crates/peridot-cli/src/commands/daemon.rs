@@ -462,6 +462,7 @@ fn slash_command_catalog_result() -> Value {
                 "arg_hint": spec.arg_hint,
                 "category": spec.category,
                 "surfaces": peridot_tui::slash_command_surfaces(spec),
+                "arg_options": peridot_tui::slash_command_arg_options(spec),
             })
         })
         .collect();
@@ -5210,10 +5211,25 @@ mod tests {
                 actual["arg_hint"].as_str().unwrap_or(""),
                 expected.arg_hint.unwrap_or("")
             );
+            let arg_options: Vec<&str> = actual["arg_options"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|value| value.as_str().unwrap())
+                .collect();
+            assert_eq!(
+                arg_options,
+                peridot_tui::slash_command_arg_options(expected)
+            );
         }
         assert!(commands.iter().any(|entry| entry["name"] == "/plan"));
         assert!(commands.iter().any(|entry| {
             entry["name"] == "/collapse" && entry["surfaces"] == serde_json::json!(["tui"])
+        }));
+        assert!(commands.iter().any(|entry| {
+            entry["name"] == "/reasoning"
+                && entry["arg_options"]
+                    == serde_json::json!(["off", "low", "medium", "high", "xhigh"])
         }));
         assert!(
             commands

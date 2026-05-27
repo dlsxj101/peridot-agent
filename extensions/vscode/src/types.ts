@@ -202,6 +202,7 @@ export interface SlashCommandSpec {
   name: string;
   description: string;
   argHint?: string;
+  argOptions?: string[];
   category?: string;
   surfaces?: string[];
 }

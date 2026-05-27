@@ -446,6 +446,18 @@ shared daemon, TUI, and VS Code extension surfaces.
   filters out TUI-only commands such as `/collapse` and `/lang` when the
   metadata is available.
 
+### E40. Structured Slash Argument Options
+
+- **Status**: landed.
+- **Goal**: keep finite argument autocomplete consistent across TUI and
+  VS Code without requiring each client to parse display-only hint text.
+- **Where**: TUI slash catalog helpers, daemon `session.command_catalog`,
+  VS Code catalog normalization and composer argument picker.
+- **Result**: command catalog rows now include additive `arg_options`
+  for finite choices such as `/reasoning <off|low|medium|high|xhigh>`.
+  VS Code prefers those structured options and keeps its legacy
+  `arg_hint` parser as a compatibility fallback for older daemons.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

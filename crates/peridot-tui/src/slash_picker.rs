@@ -30,6 +30,12 @@ pub fn slash_command_surfaces(spec: &SlashCommandSpec) -> &'static [&'static str
     }
 }
 
+/// Returns structured finite argument options for clients that should not
+/// parse the human-readable `arg_hint` string.
+pub fn slash_command_arg_options(spec: &SlashCommandSpec) -> Vec<&'static str> {
+    finite_argument_options(spec)
+}
+
 /// Dynamic auto-skill entry surfaced as a slash suggestion.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct SkillSlashSuggestion {
@@ -668,6 +674,24 @@ mod tests {
             .find(|spec| spec.name == "/plan")
             .expect("plan command");
         assert_eq!(slash_command_surfaces(plan), &["tui", "vscode"]);
+    }
+
+    #[test]
+    fn slash_command_arg_options_expose_finite_choices() {
+        let reasoning = slash_command_catalog()
+            .iter()
+            .find(|spec| spec.name == "/reasoning")
+            .expect("reasoning command");
+        assert_eq!(
+            slash_command_arg_options(reasoning),
+            vec!["off", "low", "medium", "high", "xhigh"]
+        );
+
+        let model = slash_command_catalog()
+            .iter()
+            .find(|spec| spec.name == "/model")
+            .expect("model command");
+        assert!(slash_command_arg_options(model).is_empty());
     }
 
     #[test]

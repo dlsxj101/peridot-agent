@@ -8,6 +8,9 @@
   Code composer still accepts older daemon catalogs, but filters out
   TUI-only suggestions such as `/collapse` and `/lang` when the metadata
   is present.
+- Slash catalog entries may also carry structured `arg_options`; the
+  composer uses those choices before falling back to legacy `arg_hint`
+  parsing.
 
 ### Added — compaction snapshot details
 

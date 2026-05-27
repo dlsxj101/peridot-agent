@@ -67,6 +67,7 @@ interface SlashCommandCatalogResult {
     name?: string;
     description?: string;
     arg_hint?: string | null;
+    arg_options?: unknown;
     category?: string;
     surfaces?: unknown;
   }>;
@@ -1945,9 +1946,17 @@ function normalizeSlashCatalog(result: SlashCommandCatalogResult): SlashCommandS
       name: entry.name as string,
       description: entry.description as string,
       ...(typeof entry.arg_hint === 'string' ? { argHint: entry.arg_hint } : {}),
+      ...slashCommandArgOptionsField(entry),
       ...(typeof entry.category === 'string' ? { category: entry.category } : {}),
       ...slashCommandSurfacesField(entry),
     }));
+}
+
+function slashCommandArgOptionsField(entry: { arg_options?: unknown }): Pick<SlashCommandSpec, 'argOptions'> {
+  const argOptions = Array.isArray(entry.arg_options)
+    ? entry.arg_options.filter((option): option is string => typeof option === 'string')
+    : [];
+  return argOptions.length > 0 ? { argOptions } : {};
 }
 
 function slashCommandSupportsSurface(
