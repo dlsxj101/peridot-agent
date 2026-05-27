@@ -24,6 +24,7 @@ import {
   TranscriptItem,
   UsageSlice,
 } from './types';
+import { staleDaemonBackedSessionIds } from './sessionReconcile';
 
 export type {
   ApprovalResponse,
@@ -569,7 +570,6 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
   ): void {
     if (remoteSessions.length === 0 && options.pruneMissing !== true) return;
     this.saveActiveSession();
-    const remoteIds = new Set<string>();
     const byDaemonId = new Map<string, StoredChatSession>();
     for (const session of this.sessions.values()) {
       if (session.daemonSessionId) {
@@ -580,7 +580,6 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
     for (const remote of remoteSessions) {
       const daemonId = remote.id?.trim();
       if (!daemonId) continue;
-      remoteIds.add(daemonId);
       let session = byDaemonId.get(daemonId) ?? this.sessions.get(daemonId);
       if (!session) {
         session = this.createSession(remoteSessionTitle(remote));
@@ -602,10 +601,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
     }
 
     if (options.pruneMissing === true) {
-      const staleIds = Array.from(this.sessions.values())
-        .filter((session) => session.daemonSessionId && !remoteIds.has(session.daemonSessionId))
-        .map((session) => session.id);
-      for (const id of staleIds) {
+      for (const id of staleDaemonBackedSessionIds(this.sessions.values(), remoteSessions)) {
         this.sessions.delete(id);
       }
     }

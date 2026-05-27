@@ -610,7 +610,8 @@ shared daemon, TUI, and VS Code extension surfaces.
   `session.list`, `session.subscribe_list`, and `session.list_changed`
   now prune missing daemon-backed sidebar cards. Partial single-session
   results such as save, switch, rename, and new remain additive so local
-  draft sessions are not removed by accident.
+  draft sessions are not removed by accident. The pruning rule is covered
+  by extension unit tests that run without the VS Code host.
 
 ## Notes
 

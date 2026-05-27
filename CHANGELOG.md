@@ -60,6 +60,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
   daemon-backed sidebar cards when full session inventories arrive from
   `/session list`, `session.list`, subscriptions, or list-change
   notifications.
+- **VS Code session reconciliation tests** cover daemon-backed session
+  pruning separately from the VS Code API so stale-session regressions are
+  caught by `npm test`.
 
 ### Added — skill-aware slash autocomplete
 

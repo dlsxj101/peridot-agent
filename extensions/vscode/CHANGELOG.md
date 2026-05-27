@@ -42,6 +42,8 @@
 - Full daemon session inventories now prune missing daemon-backed VS Code
   sidebar cards, so `session.list_changed` cannot leave deleted sessions
   stale in the editor.
+- Extension unit tests now cover daemon-backed session pruning, including
+  empty authoritative inventories and local draft preservation.
 
 ### Added — compaction snapshot details
 

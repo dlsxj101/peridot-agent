@@ -6,6 +6,7 @@
 
 # Rust build output
 target/
+extensions/vscode/out-test/
 
 # Local editor/system files
 .DS_Store

@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "rootDir": ".",
+    "outDir": "out-test",
+    "types": ["node"]
+  },
+  "include": ["src/sessionReconcile.ts", "test/**/*.test.ts"],
+  "exclude": ["node_modules", "dist", "out-test"]
+}
