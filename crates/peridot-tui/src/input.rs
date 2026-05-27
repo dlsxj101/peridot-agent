@@ -1365,6 +1365,14 @@ pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
             ));
             state.push_pending_session_command(SessionCommandEvent::SkillList);
         }
+        SlashCommand::SkillPin(name) => {
+            state.push_transcript(format!("skill `{name}`: pinning..."));
+            state.push_pending_session_command(SessionCommandEvent::SkillPin(name));
+        }
+        SlashCommand::SkillUnpin(name) => {
+            state.push_transcript(format!("skill `{name}`: unpinning..."));
+            state.push_pending_session_command(SessionCommandEvent::SkillUnpin(name));
+        }
     }
 }
 

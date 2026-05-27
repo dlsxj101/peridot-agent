@@ -25,6 +25,10 @@ pub enum SlashCommand {
     },
     /// List active stored skills available to slash invocation.
     SkillList,
+    /// Pin an active stored skill so automated curation cannot archive it.
+    SkillPin(String),
+    /// Clear the pinned marker from an active stored skill.
+    SkillUnpin(String),
     /// Switch to plan mode.
     Plan,
     /// Switch to execute mode.
@@ -378,6 +382,14 @@ pub fn parse_slash_command(input: &str) -> Option<SlashCommand> {
         "clear" if rest.is_empty() => Some(SlashCommand::Clear),
         "help" if rest.is_empty() => Some(SlashCommand::Help),
         "skills" if rest.is_empty() || rest == "list" => Some(SlashCommand::SkillList),
+        "skills" if rest.starts_with("pin ") => {
+            let name = rest.strip_prefix("pin ")?.trim();
+            (!name.is_empty()).then(|| SlashCommand::SkillPin(name.to_string()))
+        }
+        "skills" if rest.starts_with("unpin ") => {
+            let name = rest.strip_prefix("unpin ")?.trim();
+            (!name.is_empty()).then(|| SlashCommand::SkillUnpin(name.to_string()))
+        }
         "skills" => None,
         "cost" if rest.is_empty() => Some(SlashCommand::Cost),
         "compact" if rest.is_empty() => Some(SlashCommand::Compact),
@@ -733,7 +745,16 @@ mod tests {
             parse_slash_command("/skills list"),
             Some(SlashCommand::SkillList)
         );
+        assert_eq!(
+            parse_slash_command("/skills pin auto-fix-parser"),
+            Some(SlashCommand::SkillPin("auto-fix-parser".to_string()))
+        );
+        assert_eq!(
+            parse_slash_command("/skills unpin auto-fix-parser"),
+            Some(SlashCommand::SkillUnpin("auto-fix-parser".to_string()))
+        );
         assert_eq!(parse_slash_command("/skills bogus"), None);
+        assert_eq!(parse_slash_command("/skills pin"), None);
     }
 
     #[test]

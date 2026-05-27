@@ -1565,6 +1565,12 @@ fn apply_session_command(
         SessionCommandEvent::SkillList => {
             handle_skill_list(state, project_template);
         }
+        SessionCommandEvent::SkillPin(name) => {
+            handle_skill_pin(state, project_template, &name, true);
+        }
+        SessionCommandEvent::SkillUnpin(name) => {
+            handle_skill_pin(state, project_template, &name, false);
+        }
         SessionCommandEvent::ContextTop => {
             handle_context_top(state, project_template);
         }
@@ -1973,6 +1979,23 @@ fn handle_skill_list(state: &mut TuiState, project_root: &Path) {
         ));
     }
     state.push_transcript(lines.join("\n"));
+}
+
+fn handle_skill_pin(state: &mut TuiState, project_root: &Path, name: &str, pinned: bool) {
+    let store = MemoryStore::new(project_root.join(".peridot/memory.db"));
+    let ts = if pinned { unix_timestamp() } else { 0 };
+    match store.set_skill_pinned(name, ts) {
+        Ok(true) => {
+            state.set_skill_suggestions(load_auto_skill_suggestions(project_root));
+            let verb = if pinned { "pinned" } else { "unpinned" };
+            state.push_transcript(format!("{verb} skill `{name}`"));
+        }
+        Ok(false) => state.push_error(format!("skill not found: {name}")),
+        Err(err) => {
+            let verb = if pinned { "pin" } else { "unpin" };
+            state.push_error(format!("skills: failed to {verb} `{name}`: {err}"));
+        }
+    }
 }
 
 /// Forks the live session's context at the given turn id by rewriting

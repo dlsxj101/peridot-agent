@@ -60,6 +60,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
   clients.
 - **VS Code skill inventory affordances** add `Peridot: Show Skills` and
   a sidebar header button backed by the same `/skills` daemon path.
+- **Skill pin controls** add `/skills pin <name>` and `/skills unpin
+  <name>` to the shared slash path, with TUI transcript feedback and VS
+  Code skill-row pin/unpin buttons.
 - **Reflection noise filtering** now drops single-tool repeat n-grams
   before the Curator LLM call and stamps them as handled, so historical
   `file_read|file_read`-style rows do not burn review budget.

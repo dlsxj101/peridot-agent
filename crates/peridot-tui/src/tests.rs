@@ -1805,6 +1805,32 @@ fn skills_slash_queues_skill_inventory_load() {
 }
 
 #[test]
+fn skills_pin_slash_queues_skill_pin_update() {
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+
+    apply_slash_command(
+        &mut state,
+        SlashCommand::SkillPin("auto-fix-parser".to_string()),
+    );
+    apply_slash_command(
+        &mut state,
+        SlashCommand::SkillUnpin("auto-fix-parser".to_string()),
+    );
+
+    assert_eq!(
+        state.drain_pending_session_commands(),
+        vec![
+            SessionCommandEvent::SkillPin("auto-fix-parser".to_string()),
+            SessionCommandEvent::SkillUnpin("auto-fix-parser".to_string()),
+        ]
+    );
+}
+
+#[test]
 fn slash_picker_selects_finite_argument_options() {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 

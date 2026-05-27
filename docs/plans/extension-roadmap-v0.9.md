@@ -320,6 +320,19 @@ shared daemon, TUI, and VS Code extension surfaces.
   uses the same structured `skills` result as the composer and stays
   aligned with TUI slash behavior.
 
+### E31. Skill Pin Controls
+
+- **Status**: landed.
+- **Goal**: let operators protect useful stored skills from automated
+  curation without leaving the TUI or VS Code skill inventory flow.
+- **Where**: shared slash parser/catalog, TUI host skill command queue,
+  daemon `session.command`, VS Code skill inventory card actions.
+- **Result**: `/skills pin <name>` and `/skills unpin <name>` now toggle
+  the persisted `pinned_at_unix` marker through the shared slash path.
+  TUI reports the update in the transcript, daemon clients receive the
+  refreshed structured `skills` result, and VS Code skill rows expose
+  pin/unpin buttons next to the existing copy action.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

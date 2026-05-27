@@ -49,6 +49,8 @@ impl AgentState {
             }
             SlashCommand::Skill { .. }
             | SlashCommand::SkillList
+            | SlashCommand::SkillPin(_)
+            | SlashCommand::SkillUnpin(_)
             | SlashCommand::Plan
             | SlashCommand::Execute
             | SlashCommand::Safe

@@ -1616,6 +1616,10 @@ async fn execute_session_command(
             "command": raw_command,
         })),
         SlashCommand::SkillList => handle_command_skill_list(state, raw_command),
+        SlashCommand::SkillPin(name) => handle_command_skill_pin(state, raw_command, &name, true),
+        SlashCommand::SkillUnpin(name) => {
+            handle_command_skill_pin(state, raw_command, &name, false)
+        }
         SlashCommand::Cost => handle_command_cost(state, session_id, raw_command).await,
         SlashCommand::Info => handle_command_info(state, session_id, raw_command).await,
         SlashCommand::PlanShow => handle_command_plan_show(state, session_id, raw_command).await,
@@ -3371,6 +3375,37 @@ fn skill_plan_reminder(skill: &peridot_memory::StoredSkill, args: &str) -> Strin
 }
 
 fn handle_command_skill_list(state: &DaemonState, raw_command: &str) -> Result<Value, String> {
+    command_skill_list_result(state, raw_command, None)
+}
+
+fn handle_command_skill_pin(
+    state: &DaemonState,
+    raw_command: &str,
+    name: &str,
+    pinned: bool,
+) -> Result<Value, String> {
+    let store = peridot_memory::MemoryStore::new(state.project_root.join(".peridot/memory.db"));
+    let ts = if pinned {
+        crate::run_state::unix_timestamp()
+    } else {
+        0
+    };
+    let updated = store.set_skill_pinned(name, ts).map_err(|err| {
+        let verb = if pinned { "pin" } else { "unpin" };
+        format!("skills: failed to {verb} `{name}`: {err}")
+    })?;
+    if !updated {
+        return Err(format!("skill not found: {name}"));
+    }
+    let verb = if pinned { "pinned" } else { "unpinned" };
+    command_skill_list_result(state, raw_command, Some(format!("{verb} skill `{name}`")))
+}
+
+fn command_skill_list_result(
+    state: &DaemonState,
+    raw_command: &str,
+    message: Option<String>,
+) -> Result<Value, String> {
     let store = peridot_memory::MemoryStore::new(state.project_root.join(".peridot/memory.db"));
     let mut skills = store
         .list_skills()
@@ -3389,14 +3424,15 @@ fn handle_command_skill_list(state: &DaemonState, raw_command: &str) -> Result<V
             })
         })
         .collect();
+    let default_message = if rows.is_empty() {
+        "skills: <none>".to_string()
+    } else {
+        format!("skills: {} active", rows.len())
+    };
     Ok(serde_json::json!({
         "kind": "skills",
         "title": "Skills",
-        "message": if rows.is_empty() {
-            "skills: <none>".to_string()
-        } else {
-            format!("skills: {} active", rows.len())
-        },
+        "message": message.unwrap_or(default_message),
         "severity": "info",
         "command": raw_command,
         "total": rows.len(),
@@ -5055,6 +5091,71 @@ mod tests {
                 && item["scope"] == "community"
                 && item["pinned"] == true
         }));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn session_command_skills_pin_toggles_skill_inventory() {
+        let root = test_project("command-skills-pin");
+        let store = peridot_memory::MemoryStore::new(root.join(".peridot/memory.db"));
+        store
+            .save_skill(&peridot_memory::StoredSkill {
+                name: "auto-fix-parser".into(),
+                body: "repair parser tests".into(),
+                description: "repair parser tests".into(),
+                scope: "auto".into(),
+                ..Default::default()
+            })
+            .unwrap();
+        let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+        let state = DaemonState::new(
+            root.clone(),
+            PeridotConfig::default(),
+            test_options(None),
+            tx,
+        );
+
+        let _ = dispatch_line(
+            &state,
+            r#"{"jsonrpc":"2.0","id":44,"method":"session.command","params":{"command":"/skills pin auto-fix-parser"}}"#,
+        )
+        .await
+        .unwrap();
+
+        let line = rx.try_recv().unwrap();
+        let value: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(value["result"]["kind"], "skills");
+        assert_eq!(value["result"]["message"], "pinned skill `auto-fix-parser`");
+        assert_eq!(value["result"]["items"][0]["pinned"], true);
+        assert!(
+            store
+                .list_skills()
+                .unwrap()
+                .iter()
+                .any(|skill| skill.name == "auto-fix-parser" && skill.pinned_at_unix > 0)
+        );
+
+        let _ = dispatch_line(
+            &state,
+            r#"{"jsonrpc":"2.0","id":45,"method":"session.command","params":{"command":"/skills unpin auto-fix-parser"}}"#,
+        )
+        .await
+        .unwrap();
+
+        let line = rx.try_recv().unwrap();
+        let value: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(
+            value["result"]["message"],
+            "unpinned skill `auto-fix-parser`"
+        );
+        assert_eq!(value["result"]["items"][0]["pinned"], false);
+        assert!(
+            store
+                .list_skills()
+                .unwrap()
+                .iter()
+                .any(|skill| skill.name == "auto-fix-parser" && skill.pinned_at_unix == 0)
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 

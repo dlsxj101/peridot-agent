@@ -42,6 +42,8 @@
   stored skills in a VS Code card with copyable slash invocations.
 - Added `Peridot: Show Skills` and a sidebar header button that route
   through the same `/skills` daemon path.
+- Skill inventory rows now include pin/unpin buttons backed by
+  `/skills pin <name>` and `/skills unpin <name>`.
 - GitHub PR workflow commands are available from VS Code: PR status,
   preview-and-confirm `peridot ship`, and confirm-before-merge
   `gh pr merge`.

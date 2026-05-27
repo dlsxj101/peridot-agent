@@ -403,6 +403,7 @@ export type OutboundMessage =
   | { type: 'outlineCurrentFile' }
   | { type: 'findSymbolReferences' }
   | { type: 'showSkills' }
+  | { type: 'toggleSkillPin'; name: string; pinned: boolean }
   | { type: 'attachFile' }
   | { type: 'detachAttachment'; path: string }
   | { type: 'exportSessionArtifacts' }
