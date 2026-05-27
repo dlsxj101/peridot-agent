@@ -41,6 +41,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **VS Code `/session list` reconciliation** now applies daemon returned
   session rows to the sidebar's local session cards as well as rendering
   the command result.
+- **VS Code `/session save` reconciliation** now applies the daemon's
+  structured save result to the matching sidebar session card, refreshing
+  saved metadata without local command parsing.
 
 ### Added — skill-aware slash autocomplete
 

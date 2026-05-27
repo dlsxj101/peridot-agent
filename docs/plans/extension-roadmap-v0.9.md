@@ -532,6 +532,18 @@ shared daemon, TUI, and VS Code extension surfaces.
   cards from it. The command still renders the structured transcript rows,
   while the session switcher/menu immediately reflects daemon state.
 
+### E47. Session Save Sidebar Reconcile
+
+- **Status**: landed.
+- **Goal**: make `/session save` update the VS Code session card metadata
+  from the daemon's structured save result instead of only rendering a
+  transcript confirmation.
+- **Where**: VS Code sidebar slash result application.
+- **Result**: VS Code now maps daemon-backed `session_save` results into
+  the same sidebar reconciliation path used by `/session list`, preserving
+  transcript compatibility while refreshing the saved session title,
+  status, token, cost, and turn metadata when those fields are present.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

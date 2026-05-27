@@ -27,6 +27,9 @@
 - `/session list` now reconciles the sidebar's session cards from the
   daemon's returned session inventory in addition to rendering the
   transcript result.
+- `/session save` now refreshes the saved session's VS Code sidebar
+  metadata from the daemon's structured result, including status and
+  usage fields when present.
 
 ### Added — compaction snapshot details
 

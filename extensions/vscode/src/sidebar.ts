@@ -1413,6 +1413,10 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       this.reconcileDaemonSessions(Array.isArray(result.sessions) ? result.sessions : []);
       return;
     }
+    if (result.kind === 'session_save') {
+      this.reconcileSessionSaveResult(result);
+      return;
+    }
     if (result.kind === 'session_new') {
       this.createNewSession(this.state.context.workspace);
       return;
@@ -1441,6 +1445,26 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         this.deleteSession(session.id);
       }
     }
+  }
+
+  private reconcileSessionSaveResult(result: CommandResultView): void {
+    const id = result.session_id?.trim();
+    if (!id) return;
+    const title =
+      (result.label ?? result.session_title ?? result.sessionTitle ?? result.summary ?? id).trim() || id;
+    this.reconcileDaemonSessions([
+      {
+        id,
+        title,
+        summary: result.summary,
+        status: result.status,
+        running: result.running,
+        updated_at_unix: result.updated_at_unix,
+        total_tokens: result.total_tokens,
+        total_cost_usd: result.total_cost_usd,
+        turns_used: result.turns_used,
+      },
+    ]);
   }
 
   private ensureSessionFromSwitchResult(result: CommandResultView): StoredChatSession | undefined {
