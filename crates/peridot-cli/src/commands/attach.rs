@@ -1,11 +1,23 @@
 use std::path::{Path, PathBuf};
 
+use peridot_context::{ContextEntry, ContextSource};
+
 /// Text attachment loaded from a workspace-local file.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct TextAttachment {
     pub(crate) path: String,
     pub(crate) bytes: usize,
     pub(crate) media_type: Option<String>,
+    pub(crate) content: Option<String>,
+}
+
+/// Attachment metadata reconstructed from a session context snapshot.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+pub(crate) struct AttachmentArtifact {
+    pub(crate) path: String,
+    pub(crate) bytes: usize,
+    pub(crate) media_type: String,
+    pub(crate) inlined: bool,
     pub(crate) content: Option<String>,
 }
 
@@ -83,6 +95,51 @@ pub(crate) fn attachment_plan_reminder(attachment: &TextAttachment) -> String {
     )
 }
 
+pub(crate) fn attachments_from_context(entries: &[ContextEntry]) -> Vec<AttachmentArtifact> {
+    entries
+        .iter()
+        .filter(|entry| entry.source == ContextSource::PlanReminder)
+        .filter_map(|entry| attachment_from_plan_reminder(&entry.content))
+        .collect()
+}
+
+fn attachment_from_plan_reminder(content: &str) -> Option<AttachmentArtifact> {
+    if !content.starts_with("[attachment]\n") {
+        return None;
+    }
+    let path = attachment_header_value(content, "path: ")?;
+    let bytes = attachment_header_value(content, "bytes: ")?
+        .parse::<usize>()
+        .ok()?;
+    let text = fenced_text_content(content);
+    let media_type = attachment_header_value(content, "media_type: ")
+        .unwrap_or_else(|| "text/plain".to_string());
+    Some(AttachmentArtifact {
+        path,
+        bytes,
+        media_type,
+        inlined: text.is_some(),
+        content: text,
+    })
+}
+
+fn attachment_header_value(content: &str, prefix: &str) -> Option<String> {
+    content.lines().find_map(|line| {
+        line.strip_prefix(prefix)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    })
+}
+
+fn fenced_text_content(content: &str) -> Option<String> {
+    let marker = "\n```text\n";
+    let start = content.find(marker)? + marker.len();
+    let rest = &content[start..];
+    let end = rest.find("\n```").unwrap_or(rest.len());
+    Some(rest[..end].to_string())
+}
+
 fn resolve_attachment_path(root: &Path, requested_path: &str) -> PathBuf {
     let path = PathBuf::from(requested_path);
     if path.is_absolute() {
@@ -148,6 +205,32 @@ mod tests {
         assert!(attachment.content.is_none());
         assert!(attachment_plan_reminder(&attachment).contains("image attachment placeholder"));
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn attachments_from_context_reconstructs_text_and_image_artifacts() {
+        let entries = vec![
+            ContextEntry::trusted(ContextSource::User, "ignore me"),
+            ContextEntry::trusted(
+                ContextSource::PlanReminder,
+                "[attachment]\npath: src/lib.rs\nbytes: 19\n\n```text\npub fn demo() {}\n```",
+            ),
+            ContextEntry::trusted(
+                ContextSource::PlanReminder,
+                "[attachment]\npath: screen.png\nbytes: 4\nmedia_type: image/png\ncontent: <not inlined; image attachment placeholder>",
+            ),
+        ];
+
+        let artifacts = attachments_from_context(&entries);
+        assert_eq!(artifacts.len(), 2);
+        assert_eq!(artifacts[0].path, "src/lib.rs");
+        assert_eq!(artifacts[0].media_type, "text/plain");
+        assert!(artifacts[0].inlined);
+        assert_eq!(artifacts[0].content.as_deref(), Some("pub fn demo() {}"));
+        assert_eq!(artifacts[1].path, "screen.png");
+        assert_eq!(artifacts[1].media_type, "image/png");
+        assert!(!artifacts[1].inlined);
+        assert!(artifacts[1].content.is_none());
     }
 
     fn temp_project(name: &str) -> PathBuf {

@@ -113,6 +113,7 @@ export function activate(context: vscode.ExtensionContext) {
     showCodeMap: async (): Promise<void> => showWorkspaceCodeMap(output, sidebar, false),
     searchCodeMap: async (): Promise<void> => searchWorkspaceCodeMap(output, sidebar),
     attachFile: async (): Promise<void> => attachFileToSession(output, sidebar),
+    showAttachments: async (): Promise<void> => showSessionAttachments(output, sidebar),
     showPrStatus: async (): Promise<void> => showGitHubPrStatus(output, sidebar),
     shipChanges: async (): Promise<void> => shipChangesToPr(output, sidebar),
     mergePr: async (): Promise<void> => mergeGitHubPr(output, sidebar),
@@ -250,6 +251,12 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand('peridot.attachFile', async () => {
       await attachFileToSession(output, sidebar);
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('peridot.showAttachments', async () => {
+      await showSessionAttachments(output, sidebar);
     }),
   );
 
@@ -693,6 +700,26 @@ async function attachFileToSession(
     output.appendLine(`[peridot] attach failed: ${message}`);
     sidebar.appendError(message);
     await vscode.window.showErrorMessage(`Peridot attach failed: ${message}`);
+  }
+}
+
+async function showSessionAttachments(
+  output: vscode.OutputChannel,
+  sidebar: PeridotSidebarProvider,
+): Promise<void> {
+  if (!sidebar.currentDaemonSessionId()) {
+    await vscode.window.showWarningMessage('Start or select a Peridot session before listing attachments.');
+    return;
+  }
+  await vscode.commands.executeCommand('peridot.chatView.focus');
+  try {
+    const result = await runSlashCommand('/attachments', output, sidebar, sidebar.currentRunOptions());
+    sidebar.appendCommandResult(result);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    output.appendLine(`[peridot] attachments failed: ${message}`);
+    sidebar.appendError(message);
+    await vscode.window.showErrorMessage(`Peridot attachments failed: ${message}`);
   }
 }
 

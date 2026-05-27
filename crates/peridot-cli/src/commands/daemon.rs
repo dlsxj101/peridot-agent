@@ -1595,6 +1595,7 @@ async fn execute_session_command(
         SlashCommand::CodeMapRefresh => handle_command_codemap(state, raw_command, true),
         SlashCommand::CodeMapFind(query) => handle_command_codemap_find(state, raw_command, &query),
         SlashCommand::Attach(path) => handle_command_attach(state, session_id, raw_command, &path),
+        SlashCommand::Attachments => handle_command_attachments(state, session_id, raw_command),
         SlashCommand::McpList => handle_command_mcp_list(state, raw_command),
         SlashCommand::McpAdd {
             name,
@@ -2551,6 +2552,45 @@ fn handle_command_attach(
             "media_type": media_type,
             "inlined": inlined,
         }],
+    }))
+}
+
+fn handle_command_attachments(
+    state: &DaemonState,
+    session_id: Option<&str>,
+    raw_command: &str,
+) -> Result<Value, String> {
+    let session_id = require_session_id(session_id, "attachments")?;
+    let entries = read_context_snapshot(state, &session_id)?;
+    let attachments = crate::commands::attachments_from_context(&entries);
+    let items: Vec<Value> = attachments
+        .iter()
+        .map(|attachment| {
+            let mode = if attachment.inlined {
+                "inlined"
+            } else {
+                "placeholder"
+            };
+            serde_json::json!({
+                "source": "attachment",
+                "label": attachment.path,
+                "path": attachment.path,
+                "detail": format!("{} bytes · {} · {}", attachment.bytes, attachment.media_type, mode),
+                "bytes": attachment.bytes,
+                "media_type": attachment.media_type,
+                "inlined": attachment.inlined,
+            })
+        })
+        .collect();
+    Ok(serde_json::json!({
+        "kind": "attachments",
+        "title": "Session Attachments",
+        "message": format!("attachments: {} file(s) in session context", attachments.len()),
+        "severity": "info",
+        "command": raw_command,
+        "attachments": attachments,
+        "items": items,
+        "total": items.len(),
     }))
 }
 
@@ -3624,6 +3664,32 @@ mod tests {
         assert_eq!(image_response["result"]["attachment"]["inlined"], false);
         assert!(image_response["result"]["attachment"]["content"].is_null());
         assert_eq!(image_response["result"]["items"][0]["inlined"], false);
+
+        let _ = dispatch_line(
+            &state,
+            r#"{"jsonrpc":"2.0","id":46,"method":"session.command","params":{"session_id":"session-attach","command":"/attachments"}}"#,
+        )
+        .await
+        .unwrap();
+        let mut list_response = None;
+        while let Ok(line) = rx.try_recv() {
+            let value: Value = serde_json::from_str(&line).unwrap();
+            if value["id"] == 46 {
+                list_response = Some(value);
+                break;
+            }
+        }
+        let list_response = list_response.expect("attachments response");
+        assert_eq!(list_response["result"]["kind"], "attachments");
+        assert_eq!(list_response["result"]["total"], 2);
+        assert_eq!(
+            list_response["result"]["attachments"][0]["path"],
+            "src/lib.rs"
+        );
+        assert_eq!(
+            list_response["result"]["attachments"][1]["media_type"],
+            "image/png"
+        );
 
         let _ = std::fs::remove_dir_all(root);
     }

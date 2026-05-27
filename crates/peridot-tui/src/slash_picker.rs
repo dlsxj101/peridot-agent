@@ -270,6 +270,12 @@ pub fn slash_command_catalog() -> &'static [SlashCommandSpec] {
             category: "session",
         },
         SlashCommandSpec {
+            name: "/attachments",
+            description: "list files attached to the current session context",
+            arg_hint: None,
+            category: "session",
+        },
+        SlashCommandSpec {
             name: "/rewind",
             description: "pop the last user-agent exchange and restore the prompt to the input box",
             arg_hint: None,

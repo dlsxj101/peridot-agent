@@ -2452,6 +2452,7 @@ function renderCommandBlock(item: TranscriptItem): HTMLElement {
   const result = item.commandResult;
   if (result?.kind === 'codemap') return renderCodeMapBlock(item);
   if (result?.kind === 'attach') return renderAttachmentBlock(item);
+  if (result?.kind === 'attachments') return renderAttachmentInventoryBlock(item);
   const wrap = el('section', `command-block ${result?.severity === 'error' ? 'error' : ''}`);
   const header = el('div', 'command-header');
   header.append(el('span', 'command-title', result?.title ?? result?.kind ?? 'Command'));
@@ -2551,6 +2552,63 @@ function renderAttachmentBlock(item: TranscriptItem): HTMLElement {
   return wrap;
 }
 
+function renderAttachmentInventoryBlock(item: TranscriptItem): HTMLElement {
+  const result = item.commandResult;
+  const attachments = attachmentsFromResult(result);
+  const wrap = el('section', 'command-block attachment-block attachment-inventory-block');
+  const header = el('div', 'attachment-header');
+  const title = el('div', 'attachment-title');
+  title.append(el('span', 'command-title', result?.title ?? 'Session Attachments'));
+  const chips = el('div', 'attachment-chips');
+  chips.append(el('span', 'command-chip', `${result?.total ?? attachments.length} files`));
+  title.append(chips);
+  header.append(title);
+  wrap.append(header);
+  if (result?.message) wrap.append(el('div', 'command-message', result.message));
+  if (attachments.length === 0) {
+    wrap.append(el('div', 'attachment-placeholder', 'No files attached to this session.'));
+    return wrap;
+  }
+  const list = el('div', 'attachment-list');
+  attachments.forEach((attachment) => {
+    list.append(renderAttachmentInventoryRow(attachment));
+  });
+  wrap.append(list);
+  return wrap;
+}
+
+function renderAttachmentInventoryRow(attachment: AttachmentView): HTMLElement {
+  const path = attachment.path ?? 'attachment';
+  const bytes = typeof attachment.bytes === 'number' ? `${attachment.bytes} bytes` : '';
+  const mediaType = attachment.media_type ?? attachment.mediaType ?? 'text/plain';
+  const mode = attachment.inlined ? 'inlined' : 'placeholder';
+  const content = typeof attachment.content === 'string' ? attachment.content : undefined;
+  const row = el('div', 'attachment-inventory-row');
+  const main = el('div', 'attachment-row-main');
+  const top = el('div', 'attachment-path-row');
+  top.append(renderFilePathButton(path, 'command-path'));
+  const meta = [bytes, mediaType, mode].filter(Boolean).join(' · ');
+  if (meta) top.append(el('span', 'command-row-meta', meta));
+  main.append(top);
+  row.append(main);
+  const actions = el('div', 'attachment-actions');
+  actions.append(iconButton('open', `Open ${path}`, () => {
+    vscode.postMessage({ type: 'openFile', path });
+  }));
+  const copyPath = iconButton('copy', `Copy ${path}`, () => {
+    void markCopied(copyPath, path);
+  });
+  actions.append(copyPath);
+  if (content !== undefined) {
+    const copyContent = iconButton('copy', `Copy attached content from ${path}`, () => {
+      void markCopied(copyContent, content);
+    });
+    actions.append(copyContent);
+  }
+  row.append(actions);
+  return row;
+}
+
 function attachmentFromResult(result: TranscriptItem['commandResult']): AttachmentView {
   if (result?.attachment) return result.attachment;
   const row = Array.isArray(result?.items)
@@ -2562,6 +2620,19 @@ function attachmentFromResult(result: TranscriptItem['commandResult']): Attachme
     media_type: row?.media_type ?? row?.mediaType,
     inlined: row?.inlined,
   };
+}
+
+function attachmentsFromResult(result: TranscriptItem['commandResult']): AttachmentView[] {
+  if (Array.isArray(result?.attachments)) return result.attachments;
+  if (!Array.isArray(result?.items)) return [];
+  return result.items
+    .filter((item) => item.source === 'attachment')
+    .map((item) => ({
+      path: item.path ?? item.label,
+      bytes: item.bytes,
+      media_type: item.media_type ?? item.mediaType,
+      inlined: item.inlined,
+    }));
 }
 
 function previewAttachmentContent(content: string): string {

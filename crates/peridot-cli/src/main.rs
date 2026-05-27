@@ -1477,6 +1477,9 @@ fn apply_session_command(
         SessionCommandEvent::Attach(path) => {
             handle_attach(state, project_template, &path);
         }
+        SessionCommandEvent::Attachments => {
+            handle_attachments(state, project_template);
+        }
         SessionCommandEvent::BranchSave(name) => {
             handle_branch_save(state, project_template, &name);
         }
@@ -2281,6 +2284,42 @@ fn handle_attach(state: &mut TuiState, project_root: &Path, path: &str) {
         }
         Err(err) => state.push_error(err),
     }
+}
+
+fn handle_attachments(state: &mut TuiState, project_root: &Path) {
+    if state.current_session_id.is_empty() {
+        state.push_error("attachments: no active session".to_string());
+        return;
+    }
+    match read_context_snapshot(project_root, &state.current_session_id) {
+        Ok(entries) => {
+            let artifacts = commands::attachments_from_context(&entries);
+            state.push_transcript(render_attachments_text(&artifacts));
+        }
+        Err(err) => state.push_error(format!("attachments: failed to read context: {err}")),
+    }
+}
+
+fn render_attachments_text(artifacts: &[commands::AttachmentArtifact]) -> String {
+    if artifacts.is_empty() {
+        return "attachments: no files attached to this session".to_string();
+    }
+    let mut body = format!(
+        "attachments: {} file(s) in session context:",
+        artifacts.len()
+    );
+    for artifact in artifacts {
+        let mode = if artifact.inlined {
+            "inlined"
+        } else {
+            "placeholder"
+        };
+        body.push_str(&format!(
+            "\n{}  {} bytes  {}  {}",
+            artifact.path, artifact.bytes, artifact.media_type, mode
+        ));
+    }
+    body
 }
 
 fn render_code_map_text(index: &commands::CodeMapIndex) -> String {

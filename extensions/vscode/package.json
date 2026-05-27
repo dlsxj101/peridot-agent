@@ -179,6 +179,12 @@
         "icon": "$(link)"
       },
       {
+        "command": "peridot.showAttachments",
+        "title": "Peridot: Show Session Attachments",
+        "category": "Peridot",
+        "icon": "$(references)"
+      },
+      {
         "command": "peridot.prStatus",
         "title": "Peridot: Show GitHub PR Status",
         "category": "Peridot",

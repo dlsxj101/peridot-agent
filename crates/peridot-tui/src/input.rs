@@ -1266,6 +1266,10 @@ pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
             ));
             state.push_pending_session_command(SessionCommandEvent::CodeMapFind(query));
         }
+        SlashCommand::Attachments => {
+            state.push_transcript("attachments: loading session attachment inventory…");
+            state.push_pending_session_command(SessionCommandEvent::Attachments);
+        }
         SlashCommand::Attach(path) => {
             state.push_transcript(format!("attach: loading {path}…"));
             state.push_pending_session_command(SessionCommandEvent::Attach(path));

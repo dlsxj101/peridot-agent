@@ -27,6 +27,8 @@
   files are represented with a metadata placeholder.
 - Attachment results now render as compact attachment blocks with open
   and copy actions, including image-placeholder metadata.
+- `Peridot: Show Session Attachments` runs `/attachments` and renders
+  the current session's attachment inventory with open/copy actions.
 - `/codemap` now uses a persisted `.peridot/codemap.json` index, and
   `Peridot: Refresh Workspace Code Map Index` rebuilds it explicitly.
 - `Peridot: Search Workspace Code Map` runs `/codemap find <query>`

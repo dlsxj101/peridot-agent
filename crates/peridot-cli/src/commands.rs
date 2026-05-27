@@ -48,7 +48,9 @@ mod verify;
 
 pub(crate) use agents::run_agents_command;
 use agents::{agents_draft, find_agents_instruction};
-pub(crate) use attach::{attachment_plan_reminder, load_text_attachment};
+pub(crate) use attach::{
+    AttachmentArtifact, attachment_plan_reminder, attachments_from_context, load_text_attachment,
+};
 use auth::unix_timestamp;
 pub(crate) use auth::{
     OpenAiOAuthCredentials, openai_oauth_access_token_identity, read_managed_env_var,

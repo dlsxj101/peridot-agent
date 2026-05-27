@@ -141,6 +141,8 @@ pub enum SlashCommand {
     CodeMapRefresh,
     /// Search the persisted workspace code map index.
     CodeMapFind(String),
+    /// List attachment artifacts already loaded into the current session context.
+    Attachments,
     /// Pop the last user-agent exchange off the visible transcript and
     /// reload the user's previous prompt into the input buffer so the
     /// operator can edit and re-submit. Context is NOT rolled back — the
@@ -469,6 +471,8 @@ pub fn parse_slash_command(input: &str) -> Option<SlashCommand> {
             }
         }
         "codemap" => None,
+        "attachments" if rest.is_empty() => Some(SlashCommand::Attachments),
+        "attachments" => None,
         "rewind" if rest.is_empty() => Some(SlashCommand::Rewind),
         "branch" => match rest {
             "" => Some(SlashCommand::BranchPicker),
@@ -649,6 +653,15 @@ mod tests {
             Some(SlashCommand::Attach("src/lib.rs".to_string()))
         );
         assert_eq!(parse_slash_command("/attach"), None);
+    }
+
+    #[test]
+    fn parses_attachments_builtin() {
+        assert_eq!(
+            parse_slash_command("/attachments"),
+            Some(SlashCommand::Attachments)
+        );
+        assert_eq!(parse_slash_command("/attachments now"), None);
     }
 
     #[test]

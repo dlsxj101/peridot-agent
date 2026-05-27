@@ -2138,6 +2138,25 @@ textarea {
   font-size: 12px;
 }
 
+.attachment-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.attachment-inventory-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 0;
+  border-top: 1px solid var(--peri-border-subtle);
+}
+
+.attachment-row-main {
+  min-width: 0;
+}
+
 .codemap-block {
   gap: 10px;
 }

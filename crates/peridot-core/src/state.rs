@@ -92,6 +92,7 @@ impl AgentState {
             | SlashCommand::CodeMap
             | SlashCommand::CodeMapRefresh
             | SlashCommand::CodeMapFind(_)
+            | SlashCommand::Attachments
             | SlashCommand::Attach(_)
             | SlashCommand::Rewind
             | SlashCommand::BranchSave(_)

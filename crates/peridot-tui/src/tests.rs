@@ -2213,6 +2213,21 @@ fn attach_slash_queues_pending_command() {
             .text
             .contains("attach: loading src/lib.rs")
     );
+
+    apply_slash_command(&mut state, SlashCommand::Attachments);
+
+    assert_eq!(
+        state.drain_pending_session_commands(),
+        vec![SessionCommandEvent::Attachments]
+    );
+    assert!(
+        state
+            .transcript
+            .last()
+            .unwrap()
+            .text
+            .contains("attachments: loading session attachment inventory")
+    );
 }
 
 #[test]

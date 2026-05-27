@@ -68,6 +68,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **Attachment blocks** now carry structured attachment metadata from the
   daemon so VS Code can show compact file cards with open and copy
   actions for both inlined text and image-placeholder attachments.
+- **Session attachment inventory** adds `/attachments` to list files
+  already loaded into the active session context. TUI prints a compact
+  inventory and VS Code renders a reusable attachment list.
 
 ### Changed — TUI borderless transcript
 

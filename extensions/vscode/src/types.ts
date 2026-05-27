@@ -97,6 +97,8 @@ export interface CommandResultView {
   diff?: string;
   items?: CommandResultItem[];
   attachment?: AttachmentView;
+  attachments?: AttachmentView[];
+  total?: number;
   source_totals?: Record<string, number>;
   symbol_count?: number;
   todo_count?: number;

@@ -44,6 +44,7 @@ export interface SidebarHandlers {
   showCodeMap: () => Promise<void>;
   searchCodeMap: () => Promise<void>;
   attachFile: () => Promise<void>;
+  showAttachments: () => Promise<void>;
   showPrStatus: () => Promise<void>;
   shipChanges: () => Promise<void>;
   mergePr: () => Promise<void>;
