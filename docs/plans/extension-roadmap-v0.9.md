@@ -195,6 +195,19 @@ shared daemon, TUI, and VS Code extension surfaces.
   removes the matching local sidebar session by daemon id and forgets any
   active run handle after daemon-side cancellation.
 
+### E22. Session Switch Slash Parity
+
+- **Status**: landed.
+- **Goal**: make VS Code `/session switch <id|title>` resolve targets
+  through the daemon's persisted/live session index instead of only the
+  current sidebar-local cards.
+- **Where**: daemon `session.command`, session list target resolution,
+  VS Code sidebar session materialization.
+- **Result**: `/session switch` now returns a structured
+  `session_switch` result with resolved daemon id, title, status, and
+  running state. VS Code selects an existing matching sidebar session or
+  creates a local session card keyed by the daemon id before switching.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

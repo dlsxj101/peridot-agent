@@ -134,9 +134,11 @@ export interface CommandResultView {
   target?: string;
   session_title?: string;
   sessionTitle?: string;
+  switched?: boolean;
   deleted?: boolean;
   cancelled?: boolean;
   renamed?: boolean;
+  running?: boolean;
   session_count?: number;
   current_cost_usd?: number;
   current_tokens?: number;

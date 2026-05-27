@@ -1682,7 +1682,6 @@ async fn execute_session_command(
         SlashCommand::SidepanelToggle
         | SlashCommand::Collapse
         | SlashCommand::SessionNew(_)
-        | SlashCommand::SessionSwitch(_)
         | SlashCommand::GoalStart(_) => Ok(with_state_delta(
             serde_json::json!({
                 "kind": "client_action",
@@ -1721,6 +1720,9 @@ async fn execute_session_command(
         SlashCommand::SessionCount => handle_command_session_count(state, raw_command),
         SlashCommand::SessionDelete(target) => {
             handle_command_session_delete(state, raw_command, &target).await
+        }
+        SlashCommand::SessionSwitch(target) => {
+            handle_command_session_switch(state, raw_command, &target).await
         }
         SlashCommand::SessionClose(target) => {
             handle_command_session_close(state, raw_command, &target).await
@@ -1982,6 +1984,56 @@ async fn handle_command_session_close(
 ) -> Result<Value, String> {
     handle_command_session_remove(state, raw_command, target, "session_close", "Session Close")
         .await
+}
+
+async fn handle_command_session_switch(
+    state: &DaemonState,
+    raw_command: &str,
+    target: &str,
+) -> Result<Value, String> {
+    let session_id = resolve_session_target_id(state, target).await?;
+    let Some(session_id) = session_id else {
+        return Ok(serde_json::json!({
+            "kind": "session_switch",
+            "title": "Session Switch",
+            "message": format!("session switch: {target} not found"),
+            "severity": "error",
+            "command": raw_command,
+            "target": target,
+            "switched": false,
+        }));
+    };
+    let sessions = session_list_result(state).await;
+    let session = sessions["sessions"]
+        .as_array()
+        .and_then(|items| items.iter().find(|item| item["id"] == session_id));
+    let title = session
+        .and_then(|item| item["title"].as_str())
+        .unwrap_or(session_id.as_str());
+    let status = session
+        .and_then(|item| item["status"].as_str())
+        .unwrap_or("idle");
+    let running = session
+        .and_then(|item| item["running"].as_bool())
+        .unwrap_or(false);
+    Ok(serde_json::json!({
+        "kind": "session_switch",
+        "title": "Session Switch",
+        "message": format!("session switch: {session_id}"),
+        "severity": "info",
+        "command": raw_command,
+        "session_id": session_id,
+        "target": target,
+        "session_title": title,
+        "status": status,
+        "running": running,
+        "switched": true,
+        "items": [
+            { "label": "session", "detail": session_id },
+            { "label": "title", "detail": title },
+            { "label": "status", "detail": status },
+        ],
+    }))
 }
 
 async fn handle_command_session_remove(
@@ -4999,6 +5051,39 @@ mod tests {
         assert!(store.get_session("session-close").unwrap().is_none());
         assert!(!sessions_root.join("session-close").exists());
         shutdown_sessions(&state).await;
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn session_command_switch_resolves_persisted_session() {
+        let root = test_project("session-command-switch");
+        let store = MemoryStore::new(root.join(".peridot/memory.db"));
+        let mut record = SessionRecord::new("session-switch", &root);
+        record.summary = "switch target".into();
+        record.status = SessionLifecycle::Suspended;
+        store.save_session_record(&record).unwrap();
+        let (tx, _rx) = mpsc::unbounded_channel::<String>();
+        let state = DaemonState::new(
+            root.clone(),
+            PeridotConfig::default(),
+            test_options(None),
+            tx,
+        );
+
+        let result = execute_session_command(
+            &state,
+            None,
+            "/session switch target",
+            SlashCommand::SessionSwitch("target".into()),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result["kind"], "session_switch");
+        assert_eq!(result["session_id"], "session-switch");
+        assert_eq!(result["session_title"], "switch target");
+        assert_eq!(result["status"], "suspended");
+        assert_eq!(result["switched"], true);
         let _ = std::fs::remove_dir_all(root);
     }
 

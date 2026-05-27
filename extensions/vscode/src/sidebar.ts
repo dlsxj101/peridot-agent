@@ -1356,6 +1356,13 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
   }
 
   private applySessionMutationResult(result: CommandResultView): void {
+    if (result.kind === 'session_switch' && result.switched === true) {
+      const session = this.ensureSessionFromSwitchResult(result);
+      if (session) {
+        this.selectSession(session.id);
+      }
+      return;
+    }
     if (result.kind === 'session_rename' && result.renamed !== false) {
       const session = this.findSessionByResultId(result);
       const title = (result.session_title ?? result.sessionTitle ?? '').trim();
@@ -1373,6 +1380,27 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         this.deleteSession(session.id);
       }
     }
+  }
+
+  private ensureSessionFromSwitchResult(result: CommandResultView): StoredChatSession | undefined {
+    const id = result.session_id?.trim();
+    if (!id) return undefined;
+    const existing = this.findSessionByResultId(result);
+    if (existing) return existing;
+    const title = (result.session_title ?? result.sessionTitle ?? id).trim() || id;
+    const session = this.createSession(title);
+    this.sessions.delete(session.id);
+    session.id = id;
+    session.daemonSessionId = id;
+    session.status = remoteSessionStatus({
+      id,
+      title,
+      status: result.status,
+      running: result.running,
+    });
+    session.running = result.running === true;
+    this.sessions.set(session.id, session);
+    return session;
   }
 
   private findSessionByResultId(result: CommandResultView): StoredChatSession | undefined {

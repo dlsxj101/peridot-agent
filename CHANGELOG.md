@@ -71,6 +71,10 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
   sessions through the same daemon path as TUI close/delete, including
   live run cancellation, persisted session cleanup, and local run
   bookkeeping cleanup in VS Code.
+- **Daemon-backed `/session switch` parity** now lets editor clients ask
+  the daemon to resolve session ids/titles from the persisted session
+  index, then switches or materializes the matching VS Code sidebar
+  session by daemon id.
 - **VS Code Get Started walkthrough** guides first-time users through
   opening the sidebar, connecting a provider, reviewing settings, and
   running a first task using existing Peridot commands and view

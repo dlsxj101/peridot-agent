@@ -70,6 +70,9 @@
 - `/session close <id|title>` now uses the daemon-backed slash path,
   matching TUI close semantics and cleaning up any active VS Code run
   bookkeeping after the daemon cancels the session.
+- `/session switch <id|title>` now uses daemon target resolution, so
+  persisted sessions can be selected from the composer even when the
+  local sidebar had not materialized the card yet.
 - `/codemap` now uses a persisted `.peridot/codemap.json` index, and
   `Peridot: Refresh Workspace Code Map Index` rebuilds it explicitly.
 - `Peridot: Search Workspace Code Map` runs `/codemap find <query>`
