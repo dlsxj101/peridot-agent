@@ -3575,18 +3575,26 @@ fn handle_command_codemap(
     refresh: bool,
 ) -> Result<Value, String> {
     let index = if refresh {
-        crate::commands::refresh_code_map_index(state.project_root.as_ref(), 120, 80)
+        crate::commands::CodeMapIndexLoad {
+            index: crate::commands::refresh_code_map_index(state.project_root.as_ref(), 120, 80)
+                .map_err(|err| format!("codemap: failed to load index: {err}"))?,
+            refreshed: true,
+        }
     } else {
-        crate::commands::load_or_refresh_code_map_index(state.project_root.as_ref(), 120, 80)
-    }
-    .map_err(|err| format!("codemap: failed to load index: {err}"))?;
+        crate::commands::load_or_refresh_code_map_index_with_status(
+            state.project_root.as_ref(),
+            120,
+            80,
+        )
+        .map_err(|err| format!("codemap: failed to load index: {err}"))?
+    };
     Ok(code_map_result(
         raw_command,
         "Workspace Code Map",
         None,
-        &index.report,
-        index.generated_at_unix,
-        refresh,
+        &index.index.report,
+        index.index.generated_at_unix,
+        index.refreshed,
     ))
 }
 
@@ -3601,17 +3609,20 @@ fn handle_command_codemap_find(
     raw_command: &str,
     query: &str,
 ) -> Result<Value, String> {
-    let index =
-        crate::commands::load_or_refresh_code_map_index(state.project_root.as_ref(), 120, 80)
-            .map_err(|err| format!("codemap: failed to load index: {err}"))?;
-    let report = crate::commands::search_code_map_index(&index, query);
+    let load = crate::commands::load_or_refresh_code_map_index_with_status(
+        state.project_root.as_ref(),
+        120,
+        80,
+    )
+    .map_err(|err| format!("codemap: failed to load index: {err}"))?;
+    let report = crate::commands::search_code_map_index(&load.index, query);
     Ok(code_map_result(
         raw_command,
         "Workspace Code Map Search",
         Some(query),
         &report,
-        index.generated_at_unix,
-        false,
+        load.index.generated_at_unix,
+        load.refreshed,
     ))
 }
 
@@ -3620,17 +3631,20 @@ fn handle_command_codemap_locate(
     raw_command: &str,
     query: &str,
 ) -> Result<Value, String> {
-    let index =
-        crate::commands::load_or_refresh_code_map_index(state.project_root.as_ref(), 120, 80)
-            .map_err(|err| format!("codemap: failed to load index: {err}"))?;
-    let report = crate::commands::locate_code_map_symbols(&index, query);
+    let load = crate::commands::load_or_refresh_code_map_index_with_status(
+        state.project_root.as_ref(),
+        120,
+        80,
+    )
+    .map_err(|err| format!("codemap: failed to load index: {err}"))?;
+    let report = crate::commands::locate_code_map_symbols(&load.index, query);
     Ok(code_map_result(
         raw_command,
         "Workspace Symbol Locations",
         Some(query),
         &report,
-        index.generated_at_unix,
-        false,
+        load.index.generated_at_unix,
+        load.refreshed,
     ))
 }
 
@@ -3639,17 +3653,20 @@ fn handle_command_codemap_outline(
     raw_command: &str,
     path: &str,
 ) -> Result<Value, String> {
-    let index =
-        crate::commands::load_or_refresh_code_map_index(state.project_root.as_ref(), 120, 80)
-            .map_err(|err| format!("codemap: failed to load index: {err}"))?;
-    let report = crate::commands::outline_code_map_file(&index, path);
+    let load = crate::commands::load_or_refresh_code_map_index_with_status(
+        state.project_root.as_ref(),
+        120,
+        80,
+    )
+    .map_err(|err| format!("codemap: failed to load index: {err}"))?;
+    let report = crate::commands::outline_code_map_file(&load.index, path);
     Ok(code_map_result(
         raw_command,
         "Workspace File Outline",
         Some(path),
         &report,
-        index.generated_at_unix,
-        false,
+        load.index.generated_at_unix,
+        load.refreshed,
     ))
 }
 
@@ -3658,18 +3675,25 @@ fn handle_command_codemap_refs(
     raw_command: &str,
     query: &str,
 ) -> Result<Value, String> {
-    let index =
-        crate::commands::load_or_refresh_code_map_index(state.project_root.as_ref(), 120, 80)
-            .map_err(|err| format!("codemap: failed to load index: {err}"))?;
-    let report =
-        crate::commands::find_code_map_references(state.project_root.as_ref(), &index, query, 80);
+    let load = crate::commands::load_or_refresh_code_map_index_with_status(
+        state.project_root.as_ref(),
+        120,
+        80,
+    )
+    .map_err(|err| format!("codemap: failed to load index: {err}"))?;
+    let report = crate::commands::find_code_map_references(
+        state.project_root.as_ref(),
+        &load.index,
+        query,
+        80,
+    );
     Ok(code_map_result(
         raw_command,
         "Workspace Symbol References",
         Some(query),
         &report,
-        index.generated_at_unix,
-        false,
+        load.index.generated_at_unix,
+        load.refreshed,
     ))
 }
 
@@ -6278,7 +6302,7 @@ mod tests {
         assert_eq!(response["result"]["kind"], "codemap");
         assert_eq!(response["result"]["symbol_count"], 1);
         assert_eq!(response["result"]["todo_count"], 1);
-        assert_eq!(response["result"]["refreshed"], false);
+        assert_eq!(response["result"]["refreshed"], true);
         assert!(root.join(".peridot/codemap.json").is_file());
         assert!(
             response["result"]["items"]

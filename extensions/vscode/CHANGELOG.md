@@ -31,6 +31,9 @@
 - `Peridot: Show Workspace Code Map Status` and the sidebar status button
   run `/codemap status`, showing whether `.peridot/codemap.json` is
   missing, fresh, or stale before a refresh.
+- Workspace code-map commands now auto-refresh stale `.peridot/codemap.json`
+  indexes before returning overview, search, locate, outline, or reference
+  rows, and the sidebar chip reflects the refresh.
 - GitHub PR workflow commands are available from VS Code: PR status,
   preview-and-confirm `peridot ship`, and confirm-before-merge
   `gh pr merge`.

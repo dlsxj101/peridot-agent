@@ -280,6 +280,19 @@ shared daemon, TUI, and VS Code extension surfaces.
   receive a structured `codemap_status` result, and VS Code renders a
   status card with a refresh action when the index is stale or missing.
 
+### E28. Stale-Aware Code Map Auto Refresh
+
+- **Status**: landed.
+- **Goal**: prevent TUI and extension users from seeing stale code-map
+  results after source files change.
+- **Where**: shared code map index loader, daemon `session.command`, TUI
+  host codemap handlers, VS Code code-map result chips.
+- **Result**: `/codemap`, `/codemap find`, `/codemap locate`, `/codemap
+  outline`, and `/codemap refs` now compare the persisted index timestamp
+  with indexable source-file mtimes before returning results. Missing or
+  stale indexes are rebuilt automatically through the shared loader, while
+  explicit `/codemap status` remains a non-mutating check.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

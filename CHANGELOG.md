@@ -47,6 +47,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **`/codemap status`** reports whether `.peridot/codemap.json` is
   missing, fresh, or stale compared with source-file mtimes, with the
   same structured result available in TUI and VS Code.
+- **Codemap commands now auto-refresh stale indexes** before search,
+  locate, outline, reference, or overview results are rendered, so TUI
+  and VS Code do not silently show old symbol data after file changes.
 - **Reflection noise filtering** now drops single-tool repeat n-grams
   before the Curator LLM call and stamps them as handled, so historical
   `file_read|file_read`-style rows do not burn review budget.

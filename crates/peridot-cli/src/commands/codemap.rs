@@ -73,6 +73,12 @@ pub(crate) struct CodeMapStatus {
     pub todo_count: usize,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct CodeMapIndexLoad {
+    pub index: CodeMapIndex,
+    pub refreshed: bool,
+}
+
 pub(crate) fn build_code_map(
     project_root: &Path,
     max_symbols: usize,
@@ -127,10 +133,27 @@ pub(crate) fn load_or_refresh_code_map_index(
     max_symbols: usize,
     max_todos: usize,
 ) -> Result<CodeMapIndex> {
-    if let Some(index) = load_code_map_index(project_root)? {
-        return Ok(index);
+    Ok(load_or_refresh_code_map_index_with_status(project_root, max_symbols, max_todos)?.index)
+}
+
+pub(crate) fn load_or_refresh_code_map_index_with_status(
+    project_root: &Path,
+    max_symbols: usize,
+    max_todos: usize,
+) -> Result<CodeMapIndexLoad> {
+    match load_code_map_index(project_root)? {
+        Some(index) if !code_map_index_is_stale(project_root, &index) => {
+            return Ok(CodeMapIndexLoad {
+                index,
+                refreshed: false,
+            });
+        }
+        _ => {}
     }
-    refresh_code_map_index(project_root, max_symbols, max_todos)
+    Ok(CodeMapIndexLoad {
+        index: refresh_code_map_index(project_root, max_symbols, max_todos)?,
+        refreshed: true,
+    })
 }
 
 pub(crate) fn code_map_status(project_root: &Path) -> Result<CodeMapStatus> {
@@ -319,6 +342,14 @@ fn write_code_map_index(project_root: &Path, index: &CodeMapIndex) -> Result<()>
     }
     let bytes = serde_json::to_vec_pretty(index).context("failed to serialize code map index")?;
     fs::write(&path, bytes).with_context(|| format!("failed to write {}", path.display()))
+}
+
+fn code_map_index_is_stale(project_root: &Path, index: &CodeMapIndex) -> bool {
+    let mut source_status = SourceStatus::default();
+    walk_source_status(project_root, &mut source_status);
+    source_status
+        .newest_mtime_unix
+        .is_some_and(|newest| newest > index.generated_at_unix)
 }
 
 #[derive(Default)]
@@ -843,6 +874,38 @@ mod tests {
         assert_eq!(status.generated_at_unix, Some(1));
         assert_eq!(status.source_files, 1);
         assert_eq!(status.symbol_count, 1);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn load_or_refresh_rebuilds_stale_index() {
+        let root = temp_project("stale-load");
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src/lib.rs"), "pub fn fresh_symbol() {}\n").unwrap();
+        let stale = CodeMapIndex {
+            version: 1,
+            generated_at_unix: 1,
+            report: CodeMapReport {
+                walked_files: 0,
+                symbols: Vec::new(),
+                todos: Vec::new(),
+                references: Vec::new(),
+                symbols_truncated: false,
+                todos_truncated: false,
+                references_truncated: false,
+            },
+        };
+        write_code_map_index(&root, &stale).unwrap();
+
+        let load = load_or_refresh_code_map_index_with_status(&root, 100, 100).unwrap();
+        assert!(load.refreshed);
+        assert!(
+            load.index
+                .report
+                .symbols
+                .iter()
+                .any(|symbol| symbol.name == "fresh_symbol")
+        );
         let _ = fs::remove_dir_all(root);
     }
 
