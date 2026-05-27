@@ -175,6 +175,25 @@ test('slashArgumentContext leaves query room after skills search', () => {
   assert.equal(slashArgumentContext('/skills search ', commands), undefined);
 });
 
+test('slashArgumentContext leaves name room after skills management subcommands', () => {
+  const partial = slashArgumentContext('/skills sh', commands);
+
+  assert.equal(partial?.command.name, '/skills');
+  assert.deepEqual(partial?.options, ['show']);
+  assert.equal(partial?.appendSpace, true);
+
+  const exact = slashArgumentContext('/skills rest', commands);
+  assert.equal(exact?.command.name, '/skills');
+  assert.deepEqual(exact?.options, ['restore']);
+  assert.equal(exact?.appendSpace, true);
+
+  const skillPicker = slashArgumentContext('/skills restore', commands);
+  assert.equal(skillPicker?.command.name, '/skills restore');
+  assert.deepEqual(skillPicker?.options, ['old-parser']);
+  assert.deepEqual(slashArgumentContext('/skills restore ', commands)?.options, ['old-parser']);
+  assert.equal(slashArgumentContext('/skills list', commands), undefined);
+});
+
 test('slashArgumentContext filters session target arguments', () => {
   const context = slashArgumentContext('/session switch release', commands, sessions);
 
@@ -342,6 +361,7 @@ test('slashExactSelectionIsRunnable allows optional-arg exact commands only', ()
 test('slashPickerItemCount uses argument options when an argument picker is open', () => {
   assert.equal(slashPickerItemCount('/reasoning ', commands), 5);
   assert.equal(slashPickerItemCount('/skills se', commands), 1);
+  assert.equal(slashPickerItemCount('/skills sh', commands), 1);
   assert.equal(slashPickerItemCount('/session switch ', commands, sessions), 2);
   assert.equal(slashPickerItemCount('/mcp test ', commands, [], mcpServers), 2);
   assert.equal(slashPickerItemCount('/model ', commands, [], [], modelSuggestions), 2);

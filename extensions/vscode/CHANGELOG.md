@@ -56,6 +56,9 @@
   limits free-form.
 - Skills search autocomplete now accepts `/skills se` into
   `/skills search ` so users can immediately type the free-form query.
+- Skills management autocomplete now accepts partial subcommands such as
+  `/skills sh` into `/skills show ` so users can immediately type or
+  autocomplete the skill name.
 - The composer now keeps submitted prompt history per sidebar session.
   ArrowUp / ArrowDown recall previous prompts when the caret is on the
   first or last textarea line, and unsent drafts no longer leak across

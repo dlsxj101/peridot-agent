@@ -1871,6 +1871,26 @@ fn tab_autocompletes_skills_search_subcommand_with_query_slot() {
 }
 
 #[test]
+fn tab_autocompletes_skills_management_subcommand_with_name_slot() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+
+    for character in "/skills sh".chars() {
+        handle_key_event(
+            &mut state,
+            KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE),
+        );
+    }
+    handle_key_event(&mut state, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    assert_eq!(state.input, "/skills show ");
+}
+
+#[test]
 fn tab_autocompletes_archived_skill_restore_argument() {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 

@@ -582,6 +582,9 @@ pub(crate) fn slash_argument_context_with_dynamic(
     if let Some(context) = skill_name_argument_context(query, skills) {
         return Some(context);
     }
+    if let Some(context) = skills_subcommand_argument_context(query) {
+        return Some(context);
+    }
     if let Some(context) = skills_search_argument_context(query) {
         return Some(context);
     }
@@ -746,6 +749,16 @@ fn skill_applies_to_command(command_name: &str, archived: bool) -> bool {
         "/skills show" | "/skills view" => true,
         _ => !archived,
     }
+}
+
+fn skills_subcommand_argument_context(query: &str) -> Option<SlashArgumentContext> {
+    static_subcommand_argument_context(
+        query,
+        "/skills",
+        &["show", "view", "use", "pin", "unpin", "archive", "restore"],
+        true,
+        false,
+    )
 }
 
 fn skills_search_argument_context(query: &str) -> Option<SlashArgumentContext> {
@@ -1366,6 +1379,29 @@ mod tests {
             slash_argument_context_with_dynamic("/skills search ", &[], &[], &[], &[], &[])
                 .is_none(),
             "query slot is free-form after the trailing space"
+        );
+    }
+
+    #[test]
+    fn skills_subcommand_argument_context_leaves_room_for_skill_name() {
+        let context = slash_argument_context_with_dynamic("/skills sh", &[], &[], &[], &[], &[])
+            .expect("skills show option");
+        assert_eq!(context.command_name, "/skills");
+        assert_eq!(context.options, vec!["show"]);
+        assert!(context.append_space);
+
+        let context =
+            slash_argument_context_with_dynamic("/skills restore", &[], &[], &[], &[], &[])
+                .expect("skills restore option");
+        assert_eq!(context.options, vec!["restore"]);
+        assert!(context.append_space);
+
+        assert!(
+            slash_argument_context_with_dynamic("/skills restore ", &[], &[], &[], &[], &[])
+                .is_none()
+        );
+        assert!(
+            slash_argument_context_with_dynamic("/skills list", &[], &[], &[], &[], &[]).is_none()
         );
     }
 

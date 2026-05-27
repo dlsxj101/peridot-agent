@@ -76,6 +76,8 @@ export function slashArgumentContext(
   if (modelContext) return modelContext;
   const skillContext = skillNameArgumentContext(query, slashCommands);
   if (skillContext) return skillContext;
+  const skillSubcommandContext = skillsSubcommandArgumentContext(query);
+  if (skillSubcommandContext) return skillSubcommandContext;
   const skillSearchContext = skillsSearchArgumentContext(query);
   if (skillSearchContext) return skillSearchContext;
   const sessionContext = sessionTargetArgumentContext(query, sessionTargets);
@@ -405,6 +407,16 @@ function skillAppliesToCommand(commandName: string, archived: boolean): boolean 
   if (commandName === '/skills restore') return archived;
   if (commandName === '/skills show' || commandName === '/skills view') return true;
   return !archived;
+}
+
+function skillsSubcommandArgumentContext(query: string): SlashArgumentContext | undefined {
+  return staticSubcommandArgumentContext(
+    query,
+    '/skills',
+    ['show', 'view', 'use', 'pin', 'unpin', 'archive', 'restore'],
+    true,
+    false,
+  );
 }
 
 function skillsSearchArgumentContext(query: string): SlashArgumentContext | undefined {

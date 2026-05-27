@@ -84,6 +84,10 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **Skills search autocomplete** now completes `/skills search` with a
   trailing query slot in both TUI and VS Code, so accepting the subcommand
   no longer leaves the operator at an invalid bare `/skills search`.
+- **Skills management autocomplete** now completes
+  `/skills show|view|use|pin|unpin|archive|restore` with a trailing skill
+  name slot in both TUI and VS Code, so accepting a partial subcommand no
+  longer leaves the operator at an invalid bare management command.
 - **Committee runbook follow-up status** now labels replay weaving,
   duplicate-diff guard, Block prompt, and `committee.executor_model` as
   landed post-M-COM7 work instead of leaving them under an Outstanding

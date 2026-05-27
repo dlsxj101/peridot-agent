@@ -875,6 +875,22 @@ shared daemon, TUI, and VS Code extension surfaces.
   limb index. `/branch list` and `/branch tree` remain plain runnable
   commands.
 
+### E72. Skills Management Continuation Autocomplete
+
+- **Status**: landed.
+- **Goal**: keep skill inventory management autocomplete from stopping at
+  invalid bare subcommands when the selected action still requires a
+  skill name.
+- **Where**: TUI dynamic slash argument context, TUI Tab acceptance path,
+  and VS Code webview slash autocomplete helper.
+- **Result**: accepting `/skills show|view|use|pin|unpin|archive|restore`
+  subcommand completions now leaves a trailing skill-name slot in both
+  TUI and VS Code (`/skills show `, `/skills restore `, etc.). Existing
+  dynamic skill-name completion still takes over once the command is exact
+  and live skill suggestions are available, while `/skills list` remains a
+  runnable inventory command and `/skills search ` keeps its free-form
+  query behavior.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.
