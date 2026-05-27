@@ -2243,6 +2243,30 @@ fn attach_slash_queues_pending_command() {
             .text
             .contains("detach: removing src/lib.rs")
     );
+
+    apply_slash_command(
+        &mut state,
+        SlashCommand::Export(vec![
+            peridot_core::ExportArtifact::Attachments,
+            peridot_core::ExportArtifact::Notes,
+        ]),
+    );
+
+    assert_eq!(
+        state.drain_pending_session_commands(),
+        vec![SessionCommandEvent::Export(vec![
+            peridot_core::ExportArtifact::Attachments,
+            peridot_core::ExportArtifact::Notes,
+        ])]
+    );
+    assert!(
+        state
+            .transcript
+            .last()
+            .unwrap()
+            .text
+            .contains("export: writing session artifacts")
+    );
 }
 
 #[test]

@@ -282,6 +282,12 @@ pub fn slash_command_catalog() -> &'static [SlashCommandSpec] {
             category: "session",
         },
         SlashCommandSpec {
+            name: "/export",
+            description: "export session attachments, notes, and replay timeline",
+            arg_hint: Some("[attachments|notes|timeline|full]"),
+            category: "session",
+        },
+        SlashCommandSpec {
             name: "/rewind",
             description: "pop the last user-agent exchange and restore the prompt to the input box",
             arg_hint: None,

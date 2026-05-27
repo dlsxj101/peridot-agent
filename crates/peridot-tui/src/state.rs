@@ -916,6 +916,8 @@ pub enum SessionCommandEvent {
     Attach(String),
     /// `/detach <path>` — remove matching attachment entries from context.
     Detach(String),
+    /// `/export [attachments|notes|timeline|full]` — write session artifacts.
+    Export(Vec<peridot_core::ExportArtifact>),
     /// `/branch save <name>` — copy the active session's context
     /// snapshot under `.peridot/branches/<name>/` for later restore.
     BranchSave(String),

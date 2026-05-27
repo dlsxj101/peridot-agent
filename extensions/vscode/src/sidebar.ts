@@ -53,6 +53,7 @@ export interface SidebarHandlers {
   respondAskUser: (requestId: string, answer: AskUserAnswer) => Promise<void>;
   respondApproval: (decision: ApprovalResponse) => Promise<void>;
   openFile: (relativePath: string, line?: number, column?: number, projectRoot?: string) => Promise<void>;
+  openPath: (path: string) => Promise<void>;
   registerProvider: (provider: ProviderChoice, params: Record<string, string>) => Promise<void>;
   deleteSession: (clientSessionId: string, daemonSessionId?: string) => Promise<void>;
   copyText: (text: string) => Promise<void>;
@@ -956,6 +957,9 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         return;
       case 'openFile':
         await this.handlers.openFile(message.path, message.line, message.column, this.state.context.workspace);
+        return;
+      case 'openPath':
+        await this.handlers.openPath(message.path);
         return;
       case 'registerProvider':
         await this.handlers.registerProvider(message.provider, message.params);

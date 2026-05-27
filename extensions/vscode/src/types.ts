@@ -69,6 +69,12 @@ export interface AttachmentView {
   content?: string | null;
 }
 
+export interface ExportedArtifactView {
+  class?: string;
+  path?: string;
+  count?: number;
+}
+
 export interface SlashStateDeltaView {
   mode?: Mode;
   permission?: Permission;
@@ -98,6 +104,8 @@ export interface CommandResultView {
   items?: CommandResultItem[];
   attachment?: AttachmentView;
   attachments?: AttachmentView[];
+  artifacts?: ExportedArtifactView[];
+  destination?: string;
   removed?: AttachmentView[];
   removed_count?: number;
   removedCount?: number;
@@ -313,6 +321,7 @@ export type OutboundMessage =
       sessionId?: string;
     }
   | { type: 'openFile'; path: string; line?: number; column?: number }
+  | { type: 'openPath'; path: string }
   | { type: 'registerProvider'; provider: ProviderChoice; params: Record<string, string> }
   | { type: 'showLanding'; screen?: LandingScreen }
   | { type: 'showSession' }

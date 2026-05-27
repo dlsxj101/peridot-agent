@@ -1278,6 +1278,10 @@ pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
             state.push_transcript(format!("detach: removing {path} from session context…"));
             state.push_pending_session_command(SessionCommandEvent::Detach(path));
         }
+        SlashCommand::Export(artifacts) => {
+            state.push_transcript("export: writing session artifacts…");
+            state.push_pending_session_command(SessionCommandEvent::Export(artifacts));
+        }
         SlashCommand::Rewind => apply_rewind(state),
         SlashCommand::BranchSave(name) => {
             state.push_transcript(format!("branch: saving '{name}'…"));

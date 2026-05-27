@@ -126,6 +126,9 @@ export function activate(context: vscode.ExtensionContext) {
       respondApproval(decision, output, sidebar),
     openFile: async (relativePath: string, line?: number, column?: number, projectRoot?: string): Promise<void> =>
       openWorkspaceFile(relativePath, output, line, column, undefined, projectRoot),
+    openPath: async (targetPath: string): Promise<void> => {
+      await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(targetPath));
+    },
     registerProvider: async (
       provider: ProviderChoice,
       params: Record<string, string>,

@@ -145,6 +145,8 @@ pub enum SlashCommand {
     Attachments,
     /// Remove attachment artifacts from the current session context by path.
     Detach(String),
+    /// Export session artifacts into `.peridot/exports`.
+    Export(Vec<ExportArtifact>),
     /// Pop the last user-agent exchange off the visible transcript and
     /// reload the user's previous prompt into the input buffer so the
     /// operator can edit and re-submit. Context is NOT rolled back — the
@@ -186,6 +188,33 @@ pub enum SlashCommand {
     /// `/autofix` — toggle or configure the auto-fix loop.
     /// `on` / `off` enables or disables; a bare number sets max attempts.
     AutoFix(AutoFixAction),
+}
+
+/// Artifact classes accepted by `/export`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum ExportArtifact {
+    /// Full persisted session directory.
+    Full,
+    /// Reconstructed session attachments.
+    Attachments,
+    /// Operator notes.
+    Notes,
+    /// Unified replay timeline.
+    Timeline,
+}
+
+impl FromStr for ExportArtifact {
+    type Err = ();
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.to_ascii_lowercase().as_str() {
+            "full" => Ok(Self::Full),
+            "attachments" | "attachment" => Ok(Self::Attachments),
+            "notes" | "note" => Ok(Self::Notes),
+            "timeline" | "replay" => Ok(Self::Timeline),
+            _ => Err(()),
+        }
+    }
 }
 
 /// Canonical state mutation implied by a slash command.
@@ -477,6 +506,7 @@ pub fn parse_slash_command(input: &str) -> Option<SlashCommand> {
         "codemap" => None,
         "attachments" if rest.is_empty() => Some(SlashCommand::Attachments),
         "attachments" => None,
+        "export" => parse_export_artifacts(rest).map(SlashCommand::Export),
         "rewind" if rest.is_empty() => Some(SlashCommand::Rewind),
         "branch" => match rest {
             "" => Some(SlashCommand::BranchPicker),
@@ -563,6 +593,24 @@ pub fn parse_slash_command(input: &str) -> Option<SlashCommand> {
         }),
         _ => None,
     }
+}
+
+fn parse_export_artifacts(rest: &str) -> Option<Vec<ExportArtifact>> {
+    if rest.is_empty() {
+        return Some(vec![
+            ExportArtifact::Attachments,
+            ExportArtifact::Notes,
+            ExportArtifact::Timeline,
+        ]);
+    }
+    let mut artifacts = Vec::new();
+    for token in rest.split_whitespace() {
+        let artifact = ExportArtifact::from_str(token).ok()?;
+        if !artifacts.contains(&artifact) {
+            artifacts.push(artifact);
+        }
+    }
+    Some(artifacts)
 }
 
 /// Returns true when `name` looks like a kebab-case skill identifier.
@@ -671,6 +719,26 @@ mod tests {
             Some(SlashCommand::Attachments)
         );
         assert_eq!(parse_slash_command("/attachments now"), None);
+    }
+
+    #[test]
+    fn parses_export_builtin() {
+        assert_eq!(
+            parse_slash_command("/export"),
+            Some(SlashCommand::Export(vec![
+                ExportArtifact::Attachments,
+                ExportArtifact::Notes,
+                ExportArtifact::Timeline,
+            ]))
+        );
+        assert_eq!(
+            parse_slash_command("/export full notes notes"),
+            Some(SlashCommand::Export(vec![
+                ExportArtifact::Full,
+                ExportArtifact::Notes,
+            ]))
+        );
+        assert_eq!(parse_slash_command("/export bad"), None);
     }
 
     #[test]

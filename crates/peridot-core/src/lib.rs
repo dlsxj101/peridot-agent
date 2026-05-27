@@ -33,8 +33,8 @@ pub use requests::{
 };
 pub use role::AgentRole;
 pub use slash::{
-    AutoFixAction, SlashCommand, SlashStateDelta, SubagentModelChange, parse_slash_command,
-    slash_state_delta,
+    AutoFixAction, ExportArtifact, SlashCommand, SlashStateDelta, SubagentModelChange,
+    parse_slash_command, slash_state_delta,
 };
 pub use state::AgentState;
 pub use usage::accumulate_usage;

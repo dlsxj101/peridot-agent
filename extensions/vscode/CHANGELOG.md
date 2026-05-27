@@ -35,6 +35,9 @@
 - `Peridot: Export Session Artifacts` exports the active session's
   attachments, notes, and replay timeline into a portable directory and
   reveals it from VS Code.
+- `/export [attachments|notes|timeline|full]` is available through the
+  shared slash catalog; composer results render as an export card with
+  open/copy actions for the generated directory.
 - `/codemap` now uses a persisted `.peridot/codemap.json` index, and
   `Peridot: Refresh Workspace Code Map Index` rebuilds it explicitly.
 - `Peridot: Search Workspace Code Map` runs `/codemap find <query>`

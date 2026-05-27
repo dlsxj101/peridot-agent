@@ -76,8 +76,11 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
   confirm-before-detach action and show the remaining inventory.
 - **Session artifact export** keeps `peridot session export`'s full-copy
   default and adds repeatable `--artifact attachments|notes|timeline|full`
-  selectors. VS Code exposes `Peridot: Export Session Artifacts` from
-  the command palette/sidebar and reveals the portable output directory.
+  selectors. `/export [attachments|notes|timeline|full]` now runs
+  through the shared TUI/daemon slash path, and VS Code exposes
+  `Peridot: Export Session Artifacts` from the command palette/sidebar
+  plus a composer export card that can reveal the portable output
+  directory.
 
 ### Changed — TUI borderless transcript
 

@@ -2457,6 +2457,7 @@ function renderCommandBlock(item: TranscriptItem): HTMLElement {
   if (result?.kind === 'attach') return renderAttachmentBlock(item);
   if (result?.kind === 'attachments') return renderAttachmentInventoryBlock(item);
   if (result?.kind === 'detach') return renderDetachBlock(item);
+  if (result?.kind === 'session_export') return renderSessionExportBlock(item);
   const wrap = el('section', `command-block ${result?.severity === 'error' ? 'error' : ''}`);
   const header = el('div', 'command-header');
   header.append(el('span', 'command-title', result?.title ?? result?.kind ?? 'Command'));
@@ -2668,6 +2669,52 @@ function renderAttachmentInventoryRow(attachment: AttachmentView): HTMLElement {
   }));
   row.append(actions);
   return row;
+}
+
+function renderSessionExportBlock(item: TranscriptItem): HTMLElement {
+  const result = item.commandResult;
+  const artifacts = Array.isArray(result?.artifacts) ? result.artifacts : [];
+  const destination = typeof result?.destination === 'string' ? result.destination : undefined;
+  const wrap = el('section', 'command-block attachment-block');
+  const header = el('div', 'attachment-header');
+  const title = el('div', 'attachment-title');
+  title.append(el('span', 'command-title', result?.title ?? 'Session Artifact Export'));
+  const chips = el('div', 'attachment-chips');
+  chips.append(el('span', 'command-chip', `${artifacts.length} files`));
+  title.append(chips);
+  header.append(title);
+  if (destination) {
+    const actions = el('div', 'attachment-actions');
+    actions.append(iconButton('open', `Open ${destination}`, () => {
+      vscode.postMessage({ type: 'openPath', path: destination });
+    }));
+    actions.append(iconButton('copy', `Copy ${destination}`, () => {
+      vscode.postMessage({ type: 'copyText', text: destination });
+    }));
+    header.append(actions);
+  }
+  wrap.append(header);
+  if (result?.message) wrap.append(el('div', 'command-message', result.message));
+  if (destination) wrap.append(el('div', 'attachment-path-row', destination));
+  if (artifacts.length > 0) {
+    const list = el('div', 'attachment-list');
+    artifacts.forEach((artifact) => {
+      const row = el('div', 'attachment-inventory-row');
+      const main = el('div', 'attachment-row-main');
+      const top = el('div', 'attachment-path-row');
+      top.append(el('span', 'attachment-path', artifact.path ?? 'artifact'));
+      const meta = [
+        artifact.class,
+        typeof artifact.count === 'number' ? `${artifact.count} entries` : '',
+      ].filter(Boolean);
+      if (meta.length > 0) top.append(el('span', 'attachment-meta', meta.join(' · ')));
+      main.append(top);
+      row.append(main);
+      list.append(row);
+    });
+    wrap.append(list);
+  }
+  return wrap;
 }
 
 function attachmentFromResult(result: TranscriptItem['commandResult']): AttachmentView {

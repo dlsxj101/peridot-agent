@@ -9,8 +9,9 @@ use async_trait::async_trait;
 use clap::{Parser, Subcommand, ValueEnum};
 use commands::{
     AgentsCommand, AuthProvider, ConfigCommand, EnvCommand, McpCommand, OutputFormat,
-    SessionCommand, SkillCommand, load_effective_config, maybe_print_update_notice,
-    maybe_run_first_launch_wizard, move_auto_skill_to_archive, print_scan, read_stored_api_key,
+    SessionCommand, SessionExportArtifact, SkillCommand, export_session_artifacts,
+    load_effective_config, maybe_print_update_notice, maybe_run_first_launch_wizard,
+    move_auto_skill_to_archive, print_scan, read_stored_api_key,
     read_stored_openai_oauth_credentials, run_agents_command, run_config_command,
     run_doctor_command, run_env_command, run_login_command, run_logout_command, run_mcp_command,
     run_session_command, run_setting_command, run_setup_command, run_ship_command,
@@ -24,7 +25,8 @@ use peridot_context::{
     ContextEntry, ContextLimits, ContextManager, ContextSource, project_context_limits,
 };
 use peridot_core::{
-    AgentRunEvent, AgentRunRequest, AgentRunSummary, AgentState, HarnessAgent, StopReason,
+    AgentRunEvent, AgentRunRequest, AgentRunSummary, AgentState, ExportArtifact, HarnessAgent,
+    StopReason,
 };
 use peridot_git::GitManager;
 use peridot_llm::{
@@ -1483,6 +1485,9 @@ fn apply_session_command(
         SessionCommandEvent::Detach(path) => {
             handle_detach(state, project_template, &path);
         }
+        SessionCommandEvent::Export(artifacts) => {
+            handle_session_export(state, project_template, &artifacts);
+        }
         SessionCommandEvent::BranchSave(name) => {
             handle_branch_save(state, project_template, &name);
         }
@@ -2326,6 +2331,82 @@ fn handle_detach(state: &mut TuiState, project_root: &Path, path: &str) {
         }
         Err(err) => state.push_error(format!("detach: failed to read context: {err}")),
     }
+}
+
+fn handle_session_export(state: &mut TuiState, project_root: &Path, artifacts: &[ExportArtifact]) {
+    if state.current_session_id.is_empty() {
+        state.push_error("export: no active session".to_string());
+        return;
+    }
+    let selected = map_export_artifacts(artifacts);
+    let out_dir = default_session_export_dir(project_root, &state.current_session_id);
+    match export_session_artifacts(
+        project_root,
+        &state.current_session_id,
+        &out_dir,
+        &selected,
+        false,
+    ) {
+        Ok(report) => state.push_transcript(render_session_export_text(&report)),
+        Err(err) => state.push_error(format!("export: failed: {err}")),
+    }
+}
+
+fn default_session_export_dir(project_root: &Path, session_id: &str) -> PathBuf {
+    project_root.join(".peridot").join("exports").join(format!(
+        "{}-{}",
+        sanitize_export_segment(session_id),
+        unix_timestamp()
+    ))
+}
+
+fn sanitize_export_segment(value: &str) -> String {
+    let sanitized: String = value
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.') {
+                ch
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let trimmed = sanitized.trim_matches('-');
+    if trimmed.is_empty() {
+        "session".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn map_export_artifacts(artifacts: &[ExportArtifact]) -> Vec<SessionExportArtifact> {
+    artifacts
+        .iter()
+        .map(|artifact| match artifact {
+            ExportArtifact::Full => SessionExportArtifact::Full,
+            ExportArtifact::Attachments => SessionExportArtifact::Attachments,
+            ExportArtifact::Notes => SessionExportArtifact::Notes,
+            ExportArtifact::Timeline => SessionExportArtifact::Timeline,
+        })
+        .collect()
+}
+
+fn render_session_export_text(report: &commands::SessionExportReport) -> String {
+    let mut body = format!(
+        "export: wrote {} artifact file(s) to {}",
+        report.artifacts.len(),
+        report.destination
+    );
+    if !report.files.is_empty() {
+        body.push_str(&format!("\nfull copy entries: {}", report.files.len()));
+    }
+    for artifact in &report.artifacts {
+        body.push_str(&format!(
+            "\n{}  {} entries  {}",
+            artifact.path, artifact.count, artifact.class
+        ));
+    }
+    body
 }
 
 fn render_attachments_text(artifacts: &[commands::AttachmentArtifact]) -> String {

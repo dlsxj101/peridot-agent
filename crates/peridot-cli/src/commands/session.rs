@@ -1081,6 +1081,57 @@ fn export_session(
     force: bool,
     output: OutputFormat,
 ) -> Result<()> {
+    let report = export_session_artifacts(project_root, id, out_dir, artifacts, force)?;
+    match output {
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        OutputFormat::Text => {
+            println!(
+                "exported session {id} from {} to {} ({} copied entries, {} generated artifacts)",
+                report.source,
+                report.destination,
+                report.files.len(),
+                report.artifacts.len()
+            );
+            for name in &report.files {
+                println!("  - {name}");
+            }
+            for artifact in &report.artifacts {
+                println!(
+                    "  - {} ({}, {} entries)",
+                    artifact.path, artifact.class, artifact.count
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+pub(crate) struct SessionExportReport {
+    pub(crate) id: String,
+    pub(crate) source: String,
+    pub(crate) destination: String,
+    pub(crate) artifact_classes: Vec<String>,
+    pub(crate) files: Vec<String>,
+    pub(crate) artifacts: Vec<ExportedArtifact>,
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+pub(crate) struct ExportedArtifact {
+    pub(crate) class: &'static str,
+    pub(crate) path: String,
+    pub(crate) count: usize,
+}
+
+pub(crate) fn export_session_artifacts(
+    project_root: &Path,
+    id: &str,
+    out_dir: &Path,
+    artifacts: &[SessionExportArtifact],
+    force: bool,
+) -> Result<SessionExportReport> {
     let source = project_root.join(".peridot").join("sessions").join(id);
     if !source.is_dir() {
         anyhow::bail!(
@@ -1139,47 +1190,17 @@ fn export_session(
     if !generated.is_empty() {
         write_export_manifest(id, &source, out_dir, &selected, &copied, &generated)?;
     }
-    match output {
-        OutputFormat::Json => {
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&serde_json::json!({
-                    "id": id,
-                    "source": source.display().to_string(),
-                    "destination": out_dir.display().to_string(),
-                    "artifact_classes": selected.iter().map(|artifact| artifact.as_str()).collect::<Vec<_>>(),
-                    "files": copied,
-                    "artifacts": generated,
-                }))?
-            );
-        }
-        OutputFormat::Text => {
-            println!(
-                "exported session {id} from {} to {} ({} copied entries, {} generated artifacts)",
-                source.display(),
-                out_dir.display(),
-                copied.len(),
-                generated.len()
-            );
-            for name in &copied {
-                println!("  - {name}");
-            }
-            for artifact in &generated {
-                println!(
-                    "  - {} ({}, {} entries)",
-                    artifact.path, artifact.class, artifact.count
-                );
-            }
-        }
-    }
-    Ok(())
-}
-
-#[derive(Clone, Debug, serde::Serialize)]
-struct ExportedArtifact {
-    class: &'static str,
-    path: String,
-    count: usize,
+    Ok(SessionExportReport {
+        id: id.to_string(),
+        source: source.display().to_string(),
+        destination: out_dir.display().to_string(),
+        artifact_classes: selected
+            .iter()
+            .map(|artifact| artifact.as_str().to_string())
+            .collect(),
+        files: copied,
+        artifacts: generated,
+    })
 }
 
 fn effective_export_artifacts(artifacts: &[SessionExportArtifact]) -> Vec<SessionExportArtifact> {

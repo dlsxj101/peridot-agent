@@ -42,8 +42,10 @@ shared daemon, TUI, and VS Code extension surfaces.
   command palette/sidebar affordances.
 - **Result**: `peridot session export` preserves the full-copy default
   and adds repeatable `--artifact attachments|notes|timeline|full`
-  selectors. VS Code can export the active session's attachments,
-  notes, and replay timeline from the command palette or sidebar header,
+  selectors. `/export [attachments|notes|timeline|full]` runs through
+  the shared TUI/daemon slash path and writes to `.peridot/exports`.
+  VS Code can export the active session's attachments, notes, and replay
+  timeline from the command palette, sidebar header, or composer slash,
   then reveals the generated portable directory.
 
 ## Notes

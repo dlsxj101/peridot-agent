@@ -20,8 +20,8 @@ use peridot_common::{
 };
 use peridot_context::{BranchJournal, ContextEntry, ContextSource, estimate_tokens_for_text};
 use peridot_core::{
-    AgentRunEvent, AutoFixAction, SlashCommand, SlashStateDelta, StopReason, SubagentModelChange,
-    parse_slash_command, slash_state_delta,
+    AgentRunEvent, AutoFixAction, ExportArtifact, SlashCommand, SlashStateDelta, StopReason,
+    SubagentModelChange, parse_slash_command, slash_state_delta,
 };
 use peridot_git::GitManager;
 use peridot_memory::{MemoryStore, SessionLifecycle, SessionRecord};
@@ -1597,6 +1597,9 @@ async fn execute_session_command(
         SlashCommand::Attach(path) => handle_command_attach(state, session_id, raw_command, &path),
         SlashCommand::Attachments => handle_command_attachments(state, session_id, raw_command),
         SlashCommand::Detach(path) => handle_command_detach(state, session_id, raw_command, &path),
+        SlashCommand::Export(artifacts) => {
+            handle_command_export(state, session_id, raw_command, &artifacts)
+        }
         SlashCommand::McpList => handle_command_mcp_list(state, raw_command),
         SlashCommand::McpAdd {
             name,
@@ -2643,6 +2646,99 @@ fn handle_command_detach(
         "attachments": remaining,
         "items": items,
     }))
+}
+
+fn handle_command_export(
+    state: &DaemonState,
+    session_id: Option<&str>,
+    raw_command: &str,
+    artifacts: &[ExportArtifact],
+) -> Result<Value, String> {
+    let session_id = require_session_id(session_id, "export")?;
+    let selected = map_export_artifacts(artifacts);
+    let out_dir = default_session_export_dir(&state.project_root, &session_id);
+    let report = crate::commands::export_session_artifacts(
+        &state.project_root,
+        &session_id,
+        &out_dir,
+        &selected,
+        false,
+    )
+    .map_err(|err| err.to_string())?;
+    let items: Vec<Value> = report
+        .artifacts
+        .iter()
+        .map(|artifact| {
+            serde_json::json!({
+                "source": "artifact",
+                "label": artifact.path,
+                "detail": format!("{} entries · {}", artifact.count, artifact.class),
+            })
+        })
+        .collect();
+    Ok(serde_json::json!({
+        "kind": "session_export",
+        "title": "Session Artifact Export",
+        "message": format!("export: wrote {} artifact file(s) to {}", report.artifacts.len(), report.destination),
+        "severity": "info",
+        "command": raw_command,
+        "id": report.id,
+        "source": report.source,
+        "destination": report.destination,
+        "artifact_classes": report.artifact_classes,
+        "files": report.files,
+        "artifacts": report.artifacts,
+        "items": items,
+        "total": items.len(),
+    }))
+}
+
+fn default_session_export_dir(project_root: &Path, session_id: &str) -> PathBuf {
+    project_root.join(".peridot").join("exports").join(format!(
+        "{}-{}",
+        sanitize_export_segment(session_id),
+        current_unix_secs()
+    ))
+}
+
+fn sanitize_export_segment(value: &str) -> String {
+    let sanitized: String = value
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.') {
+                ch
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let trimmed = sanitized.trim_matches('-');
+    if trimmed.is_empty() {
+        "session".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn current_unix_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or_default()
+}
+
+fn map_export_artifacts(
+    artifacts: &[ExportArtifact],
+) -> Vec<crate::commands::SessionExportArtifact> {
+    artifacts
+        .iter()
+        .map(|artifact| match artifact {
+            ExportArtifact::Full => crate::commands::SessionExportArtifact::Full,
+            ExportArtifact::Attachments => crate::commands::SessionExportArtifact::Attachments,
+            ExportArtifact::Notes => crate::commands::SessionExportArtifact::Notes,
+            ExportArtifact::Timeline => crate::commands::SessionExportArtifact::Timeline,
+        })
+        .collect()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3772,6 +3868,67 @@ mod tests {
         let remaining = crate::commands::attachments_from_context(&entries);
         assert_eq!(remaining.len(), 1);
         assert_eq!(remaining[0].path, "screen.png");
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn session_command_export_writes_session_artifacts() {
+        let root = test_project("session-export");
+        let session_dir = root.join(".peridot/sessions/session-export");
+        std::fs::create_dir_all(&session_dir).unwrap();
+        let context = vec![ContextEntry::trusted(
+            ContextSource::PlanReminder,
+            "[attachment]\npath: src/lib.rs\nbytes: 5\n\n```text\nhello\n```",
+        )];
+        std::fs::write(
+            session_dir.join("context.bin"),
+            serde_json::to_vec(&context).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            session_dir.join("notes.ndjson"),
+            "{\"ts\":1,\"text\":\"remember\"}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            session_dir.join("transcript.ndjson"),
+            "{\"kind\":\"user\",\"text\":\"task\",\"ts\":1}\n",
+        )
+        .unwrap();
+        let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+        let state = DaemonState::new(
+            root.clone(),
+            PeridotConfig::default(),
+            test_options(None),
+            tx,
+        );
+
+        let _ = dispatch_line(
+            &state,
+            r#"{"jsonrpc":"2.0","id":48,"method":"session.command","params":{"session_id":"session-export","command":"/export attachments notes timeline"}}"#,
+        )
+        .await
+        .unwrap();
+        let mut response = None;
+        while let Ok(line) = rx.try_recv() {
+            let value: Value = serde_json::from_str(&line).unwrap();
+            if value["id"] == 48 {
+                response = Some(value);
+                break;
+            }
+        }
+        let response = response.expect("export response");
+        assert_eq!(response["result"]["kind"], "session_export");
+        assert_eq!(
+            response["result"]["artifact_classes"],
+            serde_json::json!(["attachments", "notes", "timeline"])
+        );
+        let destination = response["result"]["destination"].as_str().unwrap();
+        assert!(Path::new(destination).join("attachments.json").is_file());
+        assert!(Path::new(destination).join("notes.ndjson").is_file());
+        assert!(Path::new(destination).join("timeline.json").is_file());
+        assert_eq!(response["result"]["artifacts"][0]["count"], 1);
 
         let _ = std::fs::remove_dir_all(root);
     }
