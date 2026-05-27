@@ -1617,6 +1617,7 @@ async fn execute_session_command(
         })),
         SlashCommand::SkillList => handle_command_skill_list(state, raw_command),
         SlashCommand::SkillShow(name) => handle_command_skill_show(state, raw_command, &name),
+        SlashCommand::SkillSearch(query) => handle_command_skill_search(state, raw_command, &query),
         SlashCommand::SkillPin(name) => handle_command_skill_pin(state, raw_command, &name, true),
         SlashCommand::SkillUnpin(name) => {
             handle_command_skill_pin(state, raw_command, &name, false)
@@ -3410,6 +3411,33 @@ fn handle_command_skill_show(
     }))
 }
 
+fn handle_command_skill_search(
+    state: &DaemonState,
+    raw_command: &str,
+    query: &str,
+) -> Result<Value, String> {
+    let store = peridot_memory::MemoryStore::new(state.project_root.join(".peridot/memory.db"));
+    let mut skills = store
+        .search_skills(query)
+        .map_err(|err| format!("skills: failed to search skill store: {err}"))?;
+    skills.sort_by(|a, b| a.scope.cmp(&b.scope).then_with(|| a.name.cmp(&b.name)));
+    let rows = skill_inventory_rows(&skills);
+    Ok(serde_json::json!({
+        "kind": "skills",
+        "title": "Skills",
+        "message": if rows.is_empty() {
+            format!("skills: no matches for `{}`", query.trim())
+        } else {
+            format!("skills: {} match(es) for `{}`", rows.len(), query.trim())
+        },
+        "severity": "info",
+        "command": raw_command,
+        "query": query.trim(),
+        "total": rows.len(),
+        "items": rows,
+    }))
+}
+
 fn handle_command_skill_pin(
     state: &DaemonState,
     raw_command: &str,
@@ -3443,19 +3471,7 @@ fn command_skill_list_result(
         .list_skills()
         .map_err(|err| format!("skills: failed to read skill store: {err}"))?;
     skills.sort_by(|a, b| a.scope.cmp(&b.scope).then_with(|| a.name.cmp(&b.name)));
-    let rows: Vec<Value> = skills
-        .iter()
-        .map(|skill| {
-            serde_json::json!({
-                "label": format!("/{}", skill.name),
-                "detail": skill_description(skill),
-                "source": "skill",
-                "scope": skill.scope,
-                "last_used_at_unix": skill.last_used_at_unix,
-                "pinned": skill.pinned_at_unix > 0,
-            })
-        })
-        .collect();
+    let rows = skill_inventory_rows(&skills);
     let default_message = if rows.is_empty() {
         "skills: <none>".to_string()
     } else {
@@ -3470,6 +3486,22 @@ fn command_skill_list_result(
         "total": rows.len(),
         "items": rows,
     }))
+}
+
+fn skill_inventory_rows(skills: &[peridot_memory::StoredSkill]) -> Vec<Value> {
+    skills
+        .iter()
+        .map(|skill| {
+            serde_json::json!({
+                "label": format!("/{}", skill.name),
+                "detail": skill_description(skill),
+                "source": "skill",
+                "scope": skill.scope,
+                "last_used_at_unix": skill.last_used_at_unix,
+                "pinned": skill.pinned_at_unix > 0,
+            })
+        })
+        .collect()
 }
 
 fn source_label(source: &ContextSource) -> &'static str {
@@ -5169,6 +5201,52 @@ mod tests {
             value["result"]["body"],
             "repair parser tests\nrun cargo test"
         );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn session_command_skills_search_returns_matching_inventory() {
+        let root = test_project("command-skills-search");
+        let store = peridot_memory::MemoryStore::new(root.join(".peridot/memory.db"));
+        store
+            .save_skill(&peridot_memory::StoredSkill {
+                name: "auto-fix-parser".into(),
+                body: "repair parser tests".into(),
+                description: "repair parser tests".into(),
+                scope: "auto".into(),
+                ..Default::default()
+            })
+            .unwrap();
+        store
+            .save_skill(&peridot_memory::StoredSkill {
+                name: "release-notes".into(),
+                body: "prepare changelog".into(),
+                description: "write release notes".into(),
+                scope: "auto".into(),
+                ..Default::default()
+            })
+            .unwrap();
+        let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+        let state = DaemonState::new(
+            root.clone(),
+            PeridotConfig::default(),
+            test_options(None),
+            tx,
+        );
+
+        let _ = dispatch_line(
+            &state,
+            r#"{"jsonrpc":"2.0","id":44,"method":"session.command","params":{"command":"/skills search parser"}}"#,
+        )
+        .await
+        .unwrap();
+
+        let line = rx.try_recv().unwrap();
+        let value: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(value["result"]["kind"], "skills");
+        assert_eq!(value["result"]["query"], "parser");
+        assert_eq!(value["result"]["total"], 1);
+        assert_eq!(value["result"]["items"][0]["label"], "/auto-fix-parser");
         let _ = std::fs::remove_dir_all(root);
     }
 

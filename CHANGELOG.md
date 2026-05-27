@@ -66,6 +66,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **Skill detail view** adds `/skills show <name>` / `/skills view
   <name>` plus a VS Code skill-row detail button for inspecting stored
   skill bodies without leaving the inventory flow.
+- **Skill inventory search** adds `/skills search <query>` to the shared
+  slash path and exposes `Peridot: Search Skills` plus a VS Code sidebar
+  search button.
 - **Reflection noise filtering** now drops single-tool repeat n-grams
   before the Curator LLM call and stamps them as handled, so historical
   `file_read|file_read`-style rows do not burn review budget.

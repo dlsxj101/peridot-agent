@@ -1369,6 +1369,10 @@ pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
             state.push_transcript(format!("skill `{name}`: loading details..."));
             state.push_pending_session_command(SessionCommandEvent::SkillShow(name));
         }
+        SlashCommand::SkillSearch(query) => {
+            state.push_transcript(format!("skills: searching `{query}`..."));
+            state.push_pending_session_command(SessionCommandEvent::SkillSearch(query));
+        }
         SlashCommand::SkillPin(name) => {
             state.push_transcript(format!("skill `{name}`: pinning..."));
             state.push_pending_session_command(SessionCommandEvent::SkillPin(name));

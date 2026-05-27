@@ -970,6 +970,8 @@ pub enum SessionCommandEvent {
     SkillList,
     /// `/skills show <name>` — show details for one stored skill.
     SkillShow(String),
+    /// `/skills search <query>` — search active stored skills.
+    SkillSearch(String),
     /// `/skills pin <name>` — protect an active stored skill from curation.
     SkillPin(String),
     /// `/skills unpin <name>` — remove the curation protection marker.

@@ -46,6 +46,8 @@
   `/skills pin <name>` and `/skills unpin <name>`.
 - Skill inventory rows now include a detail button backed by `/skills
   show <name>`, rendering the stored skill body in a dedicated card.
+- `Peridot: Search Skills` and a sidebar header search button run
+  `/skills search <query>` and render filtered skill inventory results.
 - GitHub PR workflow commands are available from VS Code: PR status,
   preview-and-confirm `peridot ship`, and confirm-before-merge
   `gh pr merge`.

@@ -347,6 +347,20 @@ shared daemon, TUI, and VS Code extension surfaces.
   `skill_detail` result, and VS Code skill rows expose a detail button
   with a dedicated body preview card.
 
+### E33. Skill Inventory Search
+
+- **Status**: landed.
+- **Goal**: keep stored skills usable as the inventory grows beyond what
+  a single list can scan comfortably.
+- **Where**: shared slash parser/catalog, `MemoryStore::search_skills`,
+  TUI host skill command queue, daemon `session.command`, VS Code command
+  palette/sidebar header.
+- **Result**: `/skills search <query>` now searches active stored skills
+  by name or body text and returns the same structured inventory shape as
+  `/skills`. TUI prints filtered matches, daemon clients receive a
+  query-tagged `skills` result, and VS Code exposes `Peridot: Search
+  Skills` plus a sidebar header search button.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

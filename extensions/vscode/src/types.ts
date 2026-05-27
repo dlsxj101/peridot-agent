@@ -410,6 +410,7 @@ export type OutboundMessage =
   | { type: 'outlineCurrentFile' }
   | { type: 'findSymbolReferences' }
   | { type: 'showSkills' }
+  | { type: 'searchSkills' }
   | { type: 'showSkill'; name: string }
   | { type: 'toggleSkillPin'; name: string; pinned: boolean }
   | { type: 'attachFile' }

@@ -1568,6 +1568,9 @@ fn apply_session_command(
         SessionCommandEvent::SkillShow(name) => {
             handle_skill_show(state, project_template, &name);
         }
+        SessionCommandEvent::SkillSearch(query) => {
+            handle_skill_search(state, project_template, &query);
+        }
         SessionCommandEvent::SkillPin(name) => {
             handle_skill_pin(state, project_template, &name, true);
         }
@@ -2010,6 +2013,42 @@ fn handle_skill_show(state: &mut TuiState, project_root: &Path, name: &str) {
         skill_description(&skill),
         skill.body.trim()
     ));
+}
+
+fn handle_skill_search(state: &mut TuiState, project_root: &Path, query: &str) {
+    let store = MemoryStore::new(project_root.join(".peridot/memory.db"));
+    let mut matches = match store.search_skills(query) {
+        Ok(skills) => skills,
+        Err(err) => {
+            state.push_error(format!("skills: failed to search skill store: {err}"));
+            return;
+        }
+    };
+    matches.sort_by(|a, b| a.scope.cmp(&b.scope).then_with(|| a.name.cmp(&b.name)));
+    if matches.is_empty() {
+        state.push_transcript(format!("skills: no matches for `{}`", query.trim()));
+        return;
+    }
+    let mut lines = vec![format!(
+        "skills: {} match(es) for `{}`",
+        matches.len(),
+        query.trim()
+    )];
+    for skill in matches {
+        let pinned = if skill.pinned_at_unix > 0 {
+            " · pinned"
+        } else {
+            ""
+        };
+        lines.push(format!(
+            "  /{}  ·  {} [{}{}]",
+            skill.name,
+            skill_description(&skill),
+            skill.scope,
+            pinned,
+        ));
+    }
+    state.push_transcript(lines.join("\n"));
 }
 
 fn handle_skill_pin(state: &mut TuiState, project_root: &Path, name: &str, pinned: bool) {

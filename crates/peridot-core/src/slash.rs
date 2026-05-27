@@ -27,6 +27,8 @@ pub enum SlashCommand {
     SkillList,
     /// Show details for an active stored skill.
     SkillShow(String),
+    /// Search active stored skills by name or body text.
+    SkillSearch(String),
     /// Pin an active stored skill so automated curation cannot archive it.
     SkillPin(String),
     /// Clear the pinned marker from an active stored skill.
@@ -391,6 +393,10 @@ pub fn parse_slash_command(input: &str) -> Option<SlashCommand> {
         "skills" if rest.starts_with("view ") => {
             let name = rest.strip_prefix("view ")?.trim();
             (!name.is_empty()).then(|| SlashCommand::SkillShow(name.to_string()))
+        }
+        "skills" if rest.starts_with("search ") => {
+            let query = rest.strip_prefix("search ")?.trim();
+            (!query.is_empty()).then(|| SlashCommand::SkillSearch(query.to_string()))
         }
         "skills" if rest.starts_with("pin ") => {
             let name = rest.strip_prefix("pin ")?.trim();
@@ -764,6 +770,10 @@ mod tests {
             Some(SlashCommand::SkillShow("auto-fix-parser".to_string()))
         );
         assert_eq!(
+            parse_slash_command("/skills search parser tests"),
+            Some(SlashCommand::SkillSearch("parser tests".to_string()))
+        );
+        assert_eq!(
             parse_slash_command("/skills pin auto-fix-parser"),
             Some(SlashCommand::SkillPin("auto-fix-parser".to_string()))
         );
@@ -773,6 +783,7 @@ mod tests {
         );
         assert_eq!(parse_slash_command("/skills bogus"), None);
         assert_eq!(parse_slash_command("/skills show"), None);
+        assert_eq!(parse_slash_command("/skills search"), None);
         assert_eq!(parse_slash_command("/skills pin"), None);
     }
 

@@ -203,6 +203,12 @@
         "icon": "$(list-filter)"
       },
       {
+        "command": "peridot.searchSkills",
+        "title": "Peridot: Search Skills",
+        "category": "Peridot",
+        "icon": "$(search)"
+      },
+      {
         "command": "peridot.attachFile",
         "title": "Peridot: Attach File to Session",
         "category": "Peridot",
@@ -291,6 +297,11 @@
           "command": "peridot.showSkills",
           "when": "view == peridot.chatView",
           "group": "navigation@4.8"
+        },
+        {
+          "command": "peridot.searchSkills",
+          "when": "view == peridot.chatView",
+          "group": "navigation@4.9"
         },
         {
           "command": "peridot.attachFile",

@@ -761,6 +761,7 @@ function renderHeader(s: SidebarState): HTMLElement {
   right.append(iconButton('list-tree', 'Outline Current File', () => vscode.postMessage({ type: 'outlineCurrentFile' })));
   right.append(iconButton('references', 'Find Symbol References', () => vscode.postMessage({ type: 'findSymbolReferences' })));
   right.append(iconButton('skills', 'Show Skills', () => vscode.postMessage({ type: 'showSkills' })));
+  right.append(iconButton('search', 'Search Skills', () => vscode.postMessage({ type: 'searchSkills' })));
   right.append(iconButton('attach', 'Attach File', () => vscode.postMessage({ type: 'attachFile' })));
   right.append(iconButton('export', 'Export Session Artifacts', () => vscode.postMessage({ type: 'exportSessionArtifacts' })));
   right.append(iconButton('pr', 'GitHub PR Status', () => vscode.postMessage({ type: 'showPrStatus' })));
