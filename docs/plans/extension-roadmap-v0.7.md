@@ -29,14 +29,14 @@ and compaction visualization have landed.
 
 ### E3. Extension PR Workflow Surface
 
-- **Status**: next.
+- **Status**: landed.
 - **Goal**: expose the existing GitHub PR workflow tools from VS Code as
   explicit command palette entries and sidebar actions.
-- **Where**: daemon command catalog, `extensions/vscode/src/extension.ts`,
-  sidebar command rendering
-- **Done when**: operators can open/status/merge PRs through the
-  extension without dropping into the terminal, while retaining safe-mode
-  approval gates.
+- **Where**: `crates/peridot-cli/src/commands/ship.rs`,
+  `extensions/vscode/src/extension.ts`, sidebar command rendering
+- **Result**: operators can inspect PR status, preview/confirm
+  `peridot ship`, and confirm `gh pr merge` from the extension without
+  dropping into the terminal.
 
 ### E4. Attachment UX Spike
 

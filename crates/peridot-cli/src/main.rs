@@ -291,6 +291,10 @@ struct ShipArgs {
     /// the operator opts in explicitly.
     #[arg(long)]
     allow_protected_branch: bool,
+    /// Preview the branch / commit / push / PR steps without mutating
+    /// the worktree or contacting GitHub.
+    #[arg(long)]
+    dry_run: bool,
 }
 
 /// Top-level subcommands.
@@ -539,6 +543,7 @@ async fn main() -> Result<()> {
                 draft: args.draft,
                 no_pr: args.no_pr,
                 allow_protected_branch: args.allow_protected_branch,
+                dry_run: args.dry_run,
             };
             run_ship_command(&project_root, &config, options, cli.output).await?;
             return Ok(());

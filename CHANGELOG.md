@@ -50,6 +50,10 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **VS Code extension release guard** now validates that `vsce/v*`
   release tags match `extensions/vscode/package.json` before publishing
   Marketplace and Open VSX packages.
+- **VS Code GitHub PR workflow surface** adds PR status, ship-to-PR, and
+  merge commands. Ship uses the new `peridot ship --dry-run` preview
+  before asking for confirmation; merge prompts for strategy and branch
+  cleanup before running `gh pr merge`.
 
 ### Changed — TUI borderless transcript
 

@@ -303,6 +303,9 @@ export type OutboundMessage =
   | { type: 'queueClear' }
   | { type: 'dismissBranchPicker' }
   | { type: 'showCodeMap' }
+  | { type: 'showPrStatus' }
+  | { type: 'shipChanges' }
+  | { type: 'mergePr' }
   | { type: 'openSettings' };
 
 /** Messages the extension host posts back to the webview. */

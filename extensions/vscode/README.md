@@ -25,6 +25,9 @@ native tool calling, and 2-Tier context management.
 | `Peridot: Login with ChatGPT` | Runs `peridot login openai-oauth` from the active workspace. |
 | `Peridot: Refresh Status` | Refreshes daemon workspace/provider/model/auth status. |
 | `Peridot: Show Workspace Code Map` | Runs the shared `/codemap` scan and appends public symbols plus TODO markers to the sidebar transcript. |
+| `Peridot: Show GitHub PR Status` | Runs `gh pr status` from the workspace and appends the result to the sidebar transcript. |
+| `Peridot: Ship Changes to PR` | Previews `peridot ship --dry-run`, asks for confirmation, then commits, pushes, and optionally opens a PR. |
+| `Peridot: Merge GitHub PR` | Prompts for PR/merge strategy, asks for confirmation, then runs `gh pr merge`. |
 | `Peridot: Open Settings` | Opens an editor-area form for `.peridot/config.toml`. Toggle autonomy loops, defaults, committee mode, security, git automation, language, and updates. New sessions started after a save pick up the values automatically; running sessions keep their boot snapshot. Also reachable from the gear icon in the Peridot sidebar title bar. |
 
 ## First run

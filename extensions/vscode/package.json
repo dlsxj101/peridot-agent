@@ -161,6 +161,24 @@
         "icon": "$(symbol-misc)"
       },
       {
+        "command": "peridot.prStatus",
+        "title": "Peridot: Show GitHub PR Status",
+        "category": "Peridot",
+        "icon": "$(github)"
+      },
+      {
+        "command": "peridot.shipChanges",
+        "title": "Peridot: Ship Changes to PR",
+        "category": "Peridot",
+        "icon": "$(git-pull-request-create)"
+      },
+      {
+        "command": "peridot.mergePr",
+        "title": "Peridot: Merge GitHub PR",
+        "category": "Peridot",
+        "icon": "$(git-merge)"
+      },
+      {
         "command": "peridot.openSettings",
         "title": "Peridot: Open Settings",
         "category": "Peridot",
@@ -178,6 +196,21 @@
           "command": "peridot.showCodeMap",
           "when": "view == peridot.chatView",
           "group": "navigation@2"
+        },
+        {
+          "command": "peridot.prStatus",
+          "when": "view == peridot.chatView",
+          "group": "navigation@3"
+        },
+        {
+          "command": "peridot.shipChanges",
+          "when": "view == peridot.chatView",
+          "group": "navigation@4"
+        },
+        {
+          "command": "peridot.mergePr",
+          "when": "view == peridot.chatView",
+          "group": "navigation@5"
         }
       ]
     },

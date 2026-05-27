@@ -34,6 +34,7 @@ pub(crate) struct ShipOptions {
     pub draft: bool,
     pub no_pr: bool,
     pub allow_protected_branch: bool,
+    pub dry_run: bool,
 }
 
 pub(crate) async fn run_ship_command(
@@ -71,6 +72,56 @@ pub(crate) async fn run_ship_command(
         );
     }
 
+    let commit_message = options
+        .commit_message
+        .clone()
+        .unwrap_or_else(|| format!("ship: {} file(s) via peridot", dirty_files.len()));
+
+    if options.dry_run {
+        let exists = git_local_branch_exists(project_root, &target_branch);
+        steps.push(serde_json::json!({
+            "step": "switch_branch",
+            "status": "planned",
+            "from": original_branch,
+            "to": target_branch,
+            "created": !exists,
+        }));
+        steps.push(serde_json::json!({
+            "step": "commit",
+            "status": "planned",
+            "message": commit_message,
+        }));
+        steps.push(serde_json::json!({
+            "step": "push",
+            "status": "planned",
+            "branch": target_branch,
+        }));
+        if options.no_pr {
+            steps.push(serde_json::json!({
+                "step": "pr",
+                "status": "skip",
+                "reason": "--no-pr",
+            }));
+        } else {
+            let pr_title = options.pr_title.clone().unwrap_or_else(|| {
+                commit_message
+                    .lines()
+                    .find(|line| !line.trim().is_empty())
+                    .unwrap_or(&commit_message)
+                    .to_string()
+            });
+            steps.push(serde_json::json!({
+                "step": "pr",
+                "status": "planned",
+                "title": pr_title,
+                "base": options.base,
+                "draft": options.draft,
+            }));
+        }
+        print_ship_result(steps, output)?;
+        return Ok(());
+    }
+
     if target_branch != original_branch {
         // Switch (or create) the branch. `-c` if the branch doesn't yet
         // exist locally; falling back to plain `switch` if it does.
@@ -98,10 +149,6 @@ pub(crate) async fn run_ship_command(
         }));
     }
 
-    let commit_message = options
-        .commit_message
-        .clone()
-        .unwrap_or_else(|| format!("ship: {} file(s) via peridot", dirty_files.len()));
     run_git(project_root, &["add", "--all"])?;
     let commit_output = Command::new("git")
         .args(["commit", "-m", &commit_message])
@@ -203,6 +250,11 @@ pub(crate) async fn run_ship_command(
         }));
     }
 
+    print_ship_result(steps, output)?;
+    Ok(())
+}
+
+fn print_ship_result(steps: Vec<serde_json::Value>, output: OutputFormat) -> Result<()> {
     let text_lines: Vec<String> = steps
         .iter()
         .map(|step| {
@@ -283,4 +335,56 @@ fn unix_seconds() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn dry_run_reports_plan_without_committing_or_switching() {
+        let root = temp_git_repo("ship-dry-run");
+        run_git(&root, &["config", "user.email", "peridot@example.test"]).unwrap();
+        run_git(&root, &["config", "user.name", "Peridot Test"]).unwrap();
+        std::fs::write(root.join("README.md"), "initial\n").unwrap();
+        run_git(&root, &["add", "--all"]).unwrap();
+        run_git(&root, &["commit", "-m", "initial"]).unwrap();
+        std::fs::write(root.join("README.md"), "initial\nchanged\n").unwrap();
+
+        run_ship_command(
+            &root,
+            &PeridotConfig::default(),
+            ShipOptions {
+                branch: Some("peridot/test-ship".to_string()),
+                commit_message: Some("ship: dry run".to_string()),
+                dry_run: true,
+                ..ShipOptions::default()
+            },
+            OutputFormat::Json,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(current_branch(&root).unwrap(), "main");
+        let log = Command::new("git")
+            .args(["log", "--oneline"])
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        let log = String::from_utf8_lossy(&log.stdout);
+        assert!(!log.contains("ship: dry run"));
+        assert_eq!(collect_dirty_files(&root).unwrap(), vec!["README.md"]);
+    }
+
+    fn temp_git_repo(name: &str) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "peridot-{name}-{}-{}",
+            std::process::id(),
+            unix_seconds()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        run_git(&root, &["init", "-b", "main"]).unwrap();
+        root
+    }
 }
