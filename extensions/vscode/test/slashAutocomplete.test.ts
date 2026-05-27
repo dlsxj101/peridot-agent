@@ -62,6 +62,14 @@ const commands: SlashCommandSpec[] = [
     argHint: '<turn-id>',
   },
   {
+    name: '/context',
+    description: 'show largest context entries',
+  },
+  {
+    name: '/context top',
+    description: 'show largest context entries',
+  },
+  {
     name: '/skills',
     description: 'list stored skills',
   },
@@ -108,6 +116,13 @@ test('filteredSlashCommands includes status alias commands', () => {
   const matches = filteredSlashCommands('/sta', commands);
 
   assert.deepEqual(matches.map((command) => command.name), ['/status']);
+});
+
+test('filteredSlashCommands includes context alias and context top', () => {
+  const matches = filteredSlashCommands('/context', commands);
+
+  assert.deepEqual(matches.map((command) => command.name), ['/context', '/context top']);
+  assert.equal(slashExactSelectionIsRunnable('/context', commands, 0), true);
 });
 
 test('slashArgumentOptions prefers structured argOptions over placeholder hints', () => {

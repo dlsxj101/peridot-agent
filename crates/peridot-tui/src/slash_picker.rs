@@ -152,6 +152,12 @@ pub fn slash_command_catalog() -> &'static [SlashCommandSpec] {
             category: "session",
         },
         SlashCommandSpec {
+            name: "/context",
+            description: "show the largest entries in the current context",
+            arg_hint: None,
+            category: "session",
+        },
+        SlashCommandSpec {
             name: "/context top",
             description: "show the largest entries in the current context",
             arg_hint: None,
@@ -1161,6 +1167,20 @@ mod tests {
         let matches = filtered_specs("/go");
         assert!(matches.iter().any(|spec| spec.name == "/goal"));
         assert!(!matches.iter().any(|spec| spec.name == "/plan"));
+    }
+
+    #[test]
+    fn context_alias_is_discoverable_next_to_context_top() {
+        let matches = filtered_specs("/context");
+        assert!(matches.iter().any(|spec| spec.name == "/context"));
+        assert!(matches.iter().any(|spec| spec.name == "/context top"));
+
+        let context = slash_command_catalog()
+            .iter()
+            .find(|spec| spec.name == "/context")
+            .expect("context alias");
+        assert_eq!(slash_command_surfaces(context), &["tui", "vscode"]);
+        assert!(slash_command_arg_options(context).is_empty());
     }
 
     #[test]

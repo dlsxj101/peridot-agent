@@ -56,6 +56,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
   `/codemap find|locate|outline|refs` with a trailing query/path/symbol
   slot in both TUI and VS Code, while `/codemap status|refresh` remain
   directly runnable.
+- **Context alias discoverability** now advertises parser-supported
+  `/context` alongside `/context top` in the shared slash catalog, so TUI
+  and VS Code autocomplete/help expose both equivalent forms.
 - **MCP add transport autocomplete** now suggests `stdio` / `http` after
   `/mcp add <name> ` in both TUI and VS Code, leaving a trailing space so
   operators can immediately type the command or URL.

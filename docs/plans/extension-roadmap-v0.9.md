@@ -906,6 +906,18 @@ shared daemon, TUI, and VS Code extension surfaces.
   as `/codemap r` still show both `refresh` and `refs` without forcing the
   trailing-space behavior too early.
 
+### E74. Context Alias Discoverability
+
+- **Status**: landed.
+- **Goal**: keep parser-supported context inspection aliases visible in
+  the shared command catalog used by TUI and VS Code.
+- **Where**: shared TUI slash catalog, daemon `session.command_catalog`,
+  TUI help/autocomplete, and VS Code composer autocomplete/help.
+- **Result**: `/context` is now advertised alongside `/context top`,
+  matching the parser path that already treats both commands as the same
+  `ContextTop` action. Both forms remain available through the same
+  daemon-backed slash command handling.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

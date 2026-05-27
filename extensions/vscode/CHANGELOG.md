@@ -35,6 +35,8 @@
 - Code-map continuation autocomplete now accepts partial subcommands such
   as `/codemap loc` into `/codemap locate ` so users can immediately type
   the symbol, path, or query.
+- `/context` is now advertised alongside `/context top`, matching the
+  daemon parser and shared TUI catalog.
 - MCP add transport autocomplete now fills `stdio` or `http` after
   `/mcp add <name> ` and leaves the composer ready for the command or URL.
 - MCP server-name autocomplete now fills configured server names for
