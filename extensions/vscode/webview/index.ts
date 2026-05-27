@@ -2779,6 +2779,9 @@ function renderSkillsBlock(item: TranscriptItem): HTMLElement {
     const actions = el('div', 'attachment-actions');
     const command = String(label);
     const name = command.replace(/^\/+/, '');
+    actions.append(iconButton('send', `Use ${command}`, () => {
+      vscode.postMessage({ type: 'useSkill', name });
+    }));
     actions.append(iconButton('open', `Show ${command}`, () => {
       vscode.postMessage({ type: 'showSkill', name });
     }));
@@ -2818,6 +2821,10 @@ function renderSkillDetailBlock(item: TranscriptItem): HTMLElement {
   header.append(title);
   const actions = el('div', 'attachment-actions');
   const command = String(label);
+  const name = command.replace(/^\/+/, '');
+  actions.append(iconButton('send', `Use ${command}`, () => {
+    vscode.postMessage({ type: 'useSkill', name });
+  }));
   const copy = iconButton('copy', `Copy ${command}`, () => {
     void markCopied(copy, command);
   });

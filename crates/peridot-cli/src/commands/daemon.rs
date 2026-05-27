@@ -6171,6 +6171,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn session_command_skills_use_appends_plan_reminder_context() {
+        let root = test_project("skills-use-command");
+        let store = peridot_memory::MemoryStore::new(root.join(".peridot/memory.db"));
+        store
+            .save_skill(&peridot_memory::StoredSkill {
+                name: "auto-fix-parser".into(),
+                body: "## Steps\nRun parser tests".into(),
+                description: "repair parser tests".into(),
+                scope: "auto".into(),
+                ..Default::default()
+            })
+            .unwrap();
+        let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+        let state = DaemonState::new(
+            root.clone(),
+            PeridotConfig::default(),
+            test_options(None),
+            tx,
+        );
+
+        let _ = dispatch_line(
+            &state,
+            r#"{"jsonrpc":"2.0","id":44,"method":"session.command","params":{"session_id":"session-skill","command":"/skills use auto-fix-parser --dry"}}"#,
+        )
+        .await
+        .unwrap();
+
+        let mut values = Vec::new();
+        while let Ok(line) = rx.try_recv() {
+            values.push(serde_json::from_str::<Value>(&line).unwrap());
+        }
+        assert!(
+            values
+                .iter()
+                .any(|value| { value["id"] == 44 && value["result"]["kind"] == "skill" })
+        );
+        let entries = read_context_snapshot(&state, "session-skill").unwrap();
+        let last = entries.last().unwrap();
+        assert_eq!(last.source, ContextSource::PlanReminder);
+        assert!(last.content.contains("[skill:auto-fix-parser]"));
+        assert!(last.content.contains("Operator passed args: --dry"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
     async fn session_command_attach_appends_file_context() {
         let root = test_project("attach-command");
         std::fs::create_dir_all(root.join("src")).unwrap();

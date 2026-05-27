@@ -398,6 +398,10 @@ pub fn parse_slash_command(input: &str) -> Option<SlashCommand> {
             let query = rest.strip_prefix("search ")?.trim();
             (!query.is_empty()).then(|| SlashCommand::SkillSearch(query.to_string()))
         }
+        "skills" if rest.starts_with("use ") => {
+            let request = rest.strip_prefix("use ")?.trim();
+            parse_skill_use(request)
+        }
         "skills" if rest.starts_with("pin ") => {
             let name = rest.strip_prefix("pin ")?.trim();
             (!name.is_empty()).then(|| SlashCommand::SkillPin(name.to_string()))
@@ -681,6 +685,18 @@ fn parse_export_artifacts(rest: &str) -> Option<Vec<ExportArtifact>> {
     Some(artifacts)
 }
 
+fn parse_skill_use(request: &str) -> Option<SlashCommand> {
+    let mut parts = request.splitn(2, char::is_whitespace);
+    let name = parts.next()?.trim().trim_start_matches('/');
+    if name.is_empty() || !looks_like_skill_name(name) {
+        return None;
+    }
+    Some(SlashCommand::Skill {
+        name: name.to_string(),
+        args: parts.next().unwrap_or("").trim().to_string(),
+    })
+}
+
 /// Returns true when `name` looks like a kebab-case skill identifier.
 /// Required because the parser uses it as the fallback gate — only
 /// strings that match this shape can be routed to skill lookup. Live
@@ -774,6 +790,20 @@ mod tests {
             Some(SlashCommand::SkillSearch("parser tests".to_string()))
         );
         assert_eq!(
+            parse_slash_command("/skills use auto-fix-parser --dry"),
+            Some(SlashCommand::Skill {
+                name: "auto-fix-parser".to_string(),
+                args: "--dry".to_string(),
+            })
+        );
+        assert_eq!(
+            parse_slash_command("/skills use /auto-fix-parser"),
+            Some(SlashCommand::Skill {
+                name: "auto-fix-parser".to_string(),
+                args: String::new(),
+            })
+        );
+        assert_eq!(
             parse_slash_command("/skills pin auto-fix-parser"),
             Some(SlashCommand::SkillPin("auto-fix-parser".to_string()))
         );
@@ -784,6 +814,8 @@ mod tests {
         assert_eq!(parse_slash_command("/skills bogus"), None);
         assert_eq!(parse_slash_command("/skills show"), None);
         assert_eq!(parse_slash_command("/skills search"), None);
+        assert_eq!(parse_slash_command("/skills use"), None);
+        assert_eq!(parse_slash_command("/skills use bad_name"), None);
         assert_eq!(parse_slash_command("/skills pin"), None);
     }
 

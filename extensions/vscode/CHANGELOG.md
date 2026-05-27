@@ -48,6 +48,8 @@
   show <name>`, rendering the stored skill body in a dedicated card.
 - `Peridot: Search Skills` and a sidebar header search button run
   `/skills search <query>` and render filtered skill inventory results.
+- Skill inventory and detail cards now include a Use button backed by
+  `/skills use <name>`, loading the stored skill into session context.
 - GitHub PR workflow commands are available from VS Code: PR status,
   preview-and-confirm `peridot ship`, and confirm-before-merge
   `gh pr merge`.

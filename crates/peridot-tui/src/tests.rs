@@ -1819,6 +1819,13 @@ fn skills_pin_slash_queues_skill_pin_update() {
     apply_slash_command(&mut state, SlashCommand::SkillSearch("parser".to_string()));
     apply_slash_command(
         &mut state,
+        SlashCommand::Skill {
+            name: "auto-fix-parser".to_string(),
+            args: "--dry".to_string(),
+        },
+    );
+    apply_slash_command(
+        &mut state,
         SlashCommand::SkillPin("auto-fix-parser".to_string()),
     );
     apply_slash_command(
@@ -1831,6 +1838,10 @@ fn skills_pin_slash_queues_skill_pin_update() {
         vec![
             SessionCommandEvent::SkillShow("auto-fix-parser".to_string()),
             SessionCommandEvent::SkillSearch("parser".to_string()),
+            SessionCommandEvent::Skill {
+                name: "auto-fix-parser".to_string(),
+                args: "--dry".to_string(),
+            },
             SessionCommandEvent::SkillPin("auto-fix-parser".to_string()),
             SessionCommandEvent::SkillUnpin("auto-fix-parser".to_string()),
         ]

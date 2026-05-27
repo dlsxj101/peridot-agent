@@ -137,6 +137,7 @@ export function activate(context: vscode.ExtensionContext) {
     showSkills: async (): Promise<void> => showSkills(output, sidebar),
     searchSkills: async (): Promise<void> => searchSkills(output, sidebar),
     showSkill: async (name: string): Promise<void> => showSkill(name, output, sidebar),
+    useSkill: async (name: string): Promise<void> => useSkill(name, output, sidebar),
     toggleSkillPin: async (name: string, pinned: boolean): Promise<void> =>
       toggleSkillPin(name, pinned, output, sidebar),
     attachFile: async (): Promise<void> => attachFileToSession(output, sidebar),
@@ -1058,6 +1059,37 @@ async function showSkill(
     output.appendLine(`[peridot] skill show failed: ${message}`);
     sidebar.appendError(message);
     await vscode.window.showErrorMessage(`Peridot skill view failed: ${message}`);
+  }
+}
+
+async function useSkill(
+  skillName: string,
+  output: vscode.OutputChannel,
+  sidebar: PeridotSidebarProvider,
+): Promise<void> {
+  const name = skillName.trim().replace(/^\/+/, '');
+  if (!name) return;
+  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!folder) {
+    const message = 'Open a workspace folder before using Peridot skills.';
+    sidebar.setWorkspaceProblem(message);
+    await vscode.window.showWarningMessage(message);
+    return;
+  }
+  await vscode.commands.executeCommand('peridot.chatView.focus');
+  try {
+    const result = await runSlashCommand(
+      `/skills use ${name}`,
+      output,
+      sidebar,
+      sidebar.currentRunOptions(),
+    );
+    sidebar.appendCommandResult(result);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    output.appendLine(`[peridot] skill use failed: ${message}`);
+    sidebar.appendError(message);
+    await vscode.window.showErrorMessage(`Peridot skill use failed: ${message}`);
   }
 }
 

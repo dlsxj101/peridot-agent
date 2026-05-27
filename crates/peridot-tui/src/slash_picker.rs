@@ -187,8 +187,8 @@ pub fn slash_command_catalog() -> &'static [SlashCommandSpec] {
         },
         SlashCommandSpec {
             name: "/skills",
-            description: "list, search, show, pin, or unpin active stored skills",
-            arg_hint: Some("[list|search|show|pin|unpin]"),
+            description: "list, search, show, use, pin, or unpin active stored skills",
+            arg_hint: Some("[list|search|show|use|pin|unpin]"),
             category: "skill",
         },
         SlashCommandSpec {

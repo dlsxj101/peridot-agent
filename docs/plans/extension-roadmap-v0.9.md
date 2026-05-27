@@ -361,6 +361,20 @@ shared daemon, TUI, and VS Code extension surfaces.
   query-tagged `skills` result, and VS Code exposes `Peridot: Search
   Skills` plus a sidebar header search button.
 
+### E34. Skill Use From Inventory
+
+- **Status**: landed.
+- **Goal**: let operators apply a discovered skill without remembering
+  the separate `/skill-name` invocation form.
+- **Where**: shared slash parser/catalog, existing skill PlanReminder
+  load path, TUI host skill command queue, daemon `session.command`, VS
+  Code skill inventory/detail card actions.
+- **Result**: `/skills use <name> [args]` now aliases the existing
+  `/skill-name [args]` context-injection behavior. TUI routes it through
+  the same skill load queue, daemon clients receive the existing `skill`
+  command result, and VS Code skill inventory/detail rows expose a
+  one-click Use action.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

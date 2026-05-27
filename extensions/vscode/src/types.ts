@@ -412,6 +412,7 @@ export type OutboundMessage =
   | { type: 'showSkills' }
   | { type: 'searchSkills' }
   | { type: 'showSkill'; name: string }
+  | { type: 'useSkill'; name: string }
   | { type: 'toggleSkillPin'; name: string; pinned: boolean }
   | { type: 'attachFile' }
   | { type: 'detachAttachment'; path: string }
