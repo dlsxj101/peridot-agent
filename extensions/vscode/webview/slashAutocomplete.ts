@@ -90,6 +90,8 @@ export function slashArgumentContext(
   if (branchSubcommandContext) return branchSubcommandContext;
   const branchContext = branchSnapshotArgumentContext(query, branches);
   if (branchContext) return branchContext;
+  const codemapContinuationContext = codemapContinuationArgumentContext(query);
+  if (codemapContinuationContext) return codemapContinuationContext;
   const goalContext = goalControlArgumentContext(query);
   if (goalContext) return goalContext;
   const notesContext = notesLastArgumentContext(query);
@@ -229,6 +231,31 @@ function branchSnapshotArgumentContext(
       category: 'branch',
     },
     options,
+  };
+}
+
+function codemapContinuationArgumentContext(query: string): SlashArgumentContext | undefined {
+  const commandName = '/codemap';
+  if (!query.startsWith(`${commandName} `)) return undefined;
+  const continuationOptions = ['find', 'locate', 'outline', 'refs'];
+  const terminalOptions = ['status', 'refresh'];
+  const hasTrailingSpace = /\s$/.test(query);
+  const needle = query.slice(commandName.length).trim().toLowerCase();
+  if (needle.length === 0 || /\s/.test(needle)) return undefined;
+  if (terminalOptions.some((option) => option.startsWith(needle))) return undefined;
+  const options = continuationOptions.filter((option) => option.startsWith(needle));
+  if (options.length === 0) return undefined;
+  if (hasTrailingSpace && options.some((option) => option.toLowerCase() === needle)) {
+    return undefined;
+  }
+  return {
+    command: {
+      name: commandName,
+      description: 'code map',
+      category: 'plan',
+    },
+    options,
+    appendSpace: true,
   };
 }
 

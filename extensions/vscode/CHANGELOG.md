@@ -32,6 +32,9 @@
   shared daemon slash catalog.
 - Code-map subcommand autocomplete now fills `/codemap status|refresh|find|locate|outline|refs`
   from the shared daemon slash catalog.
+- Code-map continuation autocomplete now accepts partial subcommands such
+  as `/codemap loc` into `/codemap locate ` so users can immediately type
+  the symbol, path, or query.
 - MCP add transport autocomplete now fills `stdio` or `http` after
   `/mcp add <name> ` and leaves the composer ready for the command or URL.
 - MCP server-name autocomplete now fills configured server names for

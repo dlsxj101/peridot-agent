@@ -139,7 +139,18 @@ test('slashArgumentContext filters finite options and closes after exact option'
   const codemap = slashArgumentContext('/codemap l', commands);
   assert.equal(codemap?.command.name, '/codemap');
   assert.deepEqual(codemap?.options, ['locate']);
-  assert.equal(slashArgumentContext('/codemap locate', commands), undefined);
+  assert.equal(codemap?.appendSpace, true);
+
+  const locate = slashArgumentContext('/codemap locate', commands);
+  assert.equal(locate?.command.name, '/codemap');
+  assert.deepEqual(locate?.options, ['locate']);
+  assert.equal(locate?.appendSpace, true);
+  assert.equal(slashArgumentContext('/codemap locate ', commands), undefined);
+
+  const mixedCodemap = slashArgumentContext('/codemap r', commands);
+  assert.equal(mixedCodemap?.command.name, '/codemap');
+  assert.deepEqual(mixedCodemap?.options, ['refresh', 'refs']);
+  assert.equal(mixedCodemap?.appendSpace, undefined);
 
   assert.equal(slashArgumentContext('/mcp add local', commands), undefined);
   const mcpTransport = slashArgumentContext('/mcp add local h', commands);
@@ -367,6 +378,7 @@ test('slashPickerItemCount uses argument options when an argument picker is open
   assert.equal(slashPickerItemCount('/model ', commands, [], [], modelSuggestions), 2);
   assert.equal(slashPickerItemCount('/branch restore ', commands, [], [], [], branchSnapshots), 2);
   assert.equal(slashPickerItemCount('/branch tu', commands), 1);
+  assert.equal(slashPickerItemCount('/codemap loc', commands), 1);
   assert.equal(slashPickerItemCount('/goal ', commands), 4);
   assert.equal(slashPickerItemCount('/notes l', commands), 1);
   assert.equal(slashPickerItemCount('/think h', commands), 3);

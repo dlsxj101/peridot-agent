@@ -891,6 +891,21 @@ shared daemon, TUI, and VS Code extension surfaces.
   runnable inventory command and `/skills search ` keeps its free-form
   query behavior.
 
+### E73. Code-Map Continuation Autocomplete
+
+- **Status**: landed.
+- **Goal**: prevent code-map autocomplete from stopping at invalid bare
+  subcommands when the selected action still requires a query, path, or
+  symbol argument.
+- **Where**: TUI dynamic slash argument context, TUI Tab acceptance path,
+  and VS Code webview slash autocomplete helper.
+- **Result**: accepting `/codemap find|locate|outline|refs` subcommand
+  completions now leaves a trailing argument slot in both TUI and VS Code
+  (`/codemap locate `, `/codemap outline `, etc.). `/codemap status` and
+  `/codemap refresh` stay directly runnable, and ambiguous prefixes such
+  as `/codemap r` still show both `refresh` and `refs` without forcing the
+  trailing-space behavior too early.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

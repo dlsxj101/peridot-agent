@@ -603,6 +603,9 @@ pub(crate) fn slash_argument_context_with_dynamic(
     if let Some(context) = branch_snapshot_argument_context(query, branches) {
         return Some(context);
     }
+    if let Some(context) = codemap_continuation_argument_context(query) {
+        return Some(context);
+    }
     if let Some(context) = goal_control_argument_context(query) {
         return Some(context);
     }
@@ -936,6 +939,45 @@ fn branch_snapshot_argument_context(
         command_name: command_name.to_string(),
         options,
         append_space: false,
+    })
+}
+
+fn codemap_continuation_argument_context(query: &str) -> Option<SlashArgumentContext> {
+    const CONTINUATION_OPTIONS: &[&str] = &["find", "locate", "outline", "refs"];
+    const TERMINAL_OPTIONS: &[&str] = &["status", "refresh"];
+    let command_name = "/codemap";
+    if !query.starts_with(&format!("{command_name} ")) {
+        return None;
+    }
+    let has_trailing_space = query.chars().last().is_some_and(char::is_whitespace);
+    let rest = query[command_name.len()..].trim().to_ascii_lowercase();
+    if rest.is_empty() || rest.contains(char::is_whitespace) {
+        return None;
+    }
+    if TERMINAL_OPTIONS
+        .iter()
+        .any(|option| option.starts_with(&rest))
+    {
+        return None;
+    }
+    let options: Vec<String> = CONTINUATION_OPTIONS
+        .iter()
+        .filter(|option| option.starts_with(&rest))
+        .map(|option| (*option).to_string())
+        .collect();
+    if options.is_empty() {
+        return None;
+    }
+    let exact = options
+        .iter()
+        .any(|option| option.eq_ignore_ascii_case(&rest));
+    if exact && has_trailing_space {
+        return None;
+    }
+    Some(SlashArgumentContext {
+        command_name: command_name.to_string(),
+        options,
+        append_space: true,
     })
 }
 
@@ -1282,7 +1324,18 @@ mod tests {
         let context = slash_argument_context("/codemap l").expect("codemap options");
         assert_eq!(context.command_name, "/codemap");
         assert_eq!(context.options, vec!["locate"]);
-        assert!(slash_argument_context("/codemap locate").is_none());
+        assert!(context.append_space);
+
+        let context =
+            slash_argument_context("/codemap locate").expect("codemap locate argument slot");
+        assert_eq!(context.command_name, "/codemap");
+        assert_eq!(context.options, vec!["locate"]);
+        assert!(context.append_space);
+        assert!(slash_argument_context("/codemap locate ").is_none());
+
+        let context = slash_argument_context("/codemap r").expect("mixed codemap options");
+        assert_eq!(context.options, vec!["refresh", "refs"]);
+        assert!(!context.append_space);
 
         assert!(slash_argument_context("/think").is_none());
         let context = slash_argument_context("/think h").expect("think alias options");

@@ -52,6 +52,10 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **Code-map subcommand autocomplete** now exposes `/codemap` subcommands
   (`status`, `refresh`, `find`, `locate`, `outline`, `refs`) as structured
   slash argument options for both TUI and VS Code.
+- **Code-map continuation autocomplete** now completes
+  `/codemap find|locate|outline|refs` with a trailing query/path/symbol
+  slot in both TUI and VS Code, while `/codemap status|refresh` remain
+  directly runnable.
 - **MCP add transport autocomplete** now suggests `stdio` / `http` after
   `/mcp add <name> ` in both TUI and VS Code, leaving a trailing space so
   operators can immediately type the command or URL.
