@@ -1274,6 +1274,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       if (result.action === 'local' && (await this.handleLocalClientAction(input, options))) {
         return;
       }
+      this.applyRewindResult(result);
       this.applySessionMutationResult(result);
       this.appendCommandResult(result);
       if (result.kind === 'start_task' && result.task) {
@@ -1305,12 +1306,6 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       case 'status':
         if (rest.length === 0) {
           this.showInfo();
-          return true;
-        }
-        return false;
-      case 'rewind':
-        if (rest.length === 0) {
-          this.rewindLastExchange();
           return true;
         }
         return false;
@@ -1379,6 +1374,12 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
     );
   }
 
+  private applyRewindResult(result: CommandResultView): void {
+    if (result.kind !== 'rewind') return;
+    const restored = (result.restored_prompt ?? result.restoredPrompt ?? '').trim();
+    this.rewindLastExchange(restored.length > 0 ? restored : undefined);
+  }
+
   private showInfo(): void {
     const c = this.state.context;
     const o = this.state.runOptions;
@@ -1428,13 +1429,17 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
     });
   }
 
-  private rewindLastExchange(): void {
+  private rewindLastExchange(restoredPrompt?: string): void {
     const lastUser = this.state.transcript.map((item) => item.role).lastIndexOf('user');
     if (lastUser < 0) {
       this.append({ role: 'status', text: 'rewind: nothing to rewind' });
       return;
     }
     this.state.transcript = this.state.transcript.slice(0, lastUser);
+    if (restoredPrompt) {
+      this.state.composerDraft = restoredPrompt;
+      this.state.composerDraftVersion = (this.state.composerDraftVersion ?? 0) + 1;
+    }
     this.append({ role: 'status', text: 'rewind: last exchange removed' });
   }
 
@@ -1892,6 +1897,8 @@ function freshState(): SidebarState {
     authBusy: false,
     runStartedAtMs: undefined,
     lastRunElapsedMs: undefined,
+    composerDraft: undefined,
+    composerDraftVersion: 0,
   };
 }
 

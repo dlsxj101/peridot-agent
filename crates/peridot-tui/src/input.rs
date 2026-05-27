@@ -1346,12 +1346,9 @@ pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
 }
 
 /// Pops the visible transcript back to (but not including) the operator's
-/// last `User` entry and reloads that prompt into the input buffer for
-/// editing. Context (what the model sees on the next turn) is NOT
-/// rolled back — true semantic rewind needs per-turn context boundaries
-/// that we don't track yet; a notice in the transcript states this so
-/// the operator isn't surprised when the model still remembers the
-/// "rewound" turn on its next reply.
+/// last `User` entry, reloads that prompt into the input buffer for
+/// editing, and asks the CLI host to remove the same turn from the
+/// context snapshot.
 fn apply_rewind(state: &mut TuiState) {
     if state.is_agent_busy() {
         state.push_error("rewind: refusing while agent is running");
@@ -1384,9 +1381,10 @@ fn apply_rewind(state: &mut TuiState) {
     state.input_cursor = state.input.chars().count();
     state.input_history_cursor = None;
     state.refresh_at_picker();
+    state.push_pending_session_command(SessionCommandEvent::RewindContext);
     state.push_transcript_entry(
         TranscriptKind::Notice,
-        "rewind: restored the last prompt to the input box. Context is not rolled back — the model still remembers the rewound turn on its next reply.",
+        "rewind: restored the last prompt to the input box and queued context rollback.",
     );
 }
 

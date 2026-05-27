@@ -1,5 +1,48 @@
 use super::*;
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct RewindContextResult {
+    pub(crate) restored_prompt: String,
+    pub(crate) removed_count: usize,
+    pub(crate) kept_count: usize,
+    pub(crate) rewind_turn_id: Option<u64>,
+}
+
+pub(crate) fn rewind_context_entries(
+    entries: Vec<peridot_context::ContextEntry>,
+) -> Result<(Vec<peridot_context::ContextEntry>, RewindContextResult), String> {
+    let Some(user_idx) = entries
+        .iter()
+        .rposition(|entry| entry.source == peridot_context::ContextSource::User)
+    else {
+        return Err("rewind: no user message in context snapshot".to_string());
+    };
+    let restored_prompt = entries[user_idx].content.clone();
+    let rewind_turn_id = match entries[user_idx].turn_id {
+        0 => None,
+        id => Some(id),
+    };
+    let split_at = rewind_turn_id
+        .and_then(|turn_id| {
+            entries
+                .iter()
+                .position(|entry| entry.turn_id != 0 && entry.turn_id >= turn_id)
+        })
+        .unwrap_or(user_idx);
+    let kept: Vec<peridot_context::ContextEntry> = entries[..split_at].to_vec();
+    let removed_count = entries.len().saturating_sub(kept.len());
+    let kept_count = kept.len();
+    Ok((
+        kept,
+        RewindContextResult {
+            restored_prompt,
+            removed_count,
+            kept_count,
+            rewind_turn_id,
+        },
+    ))
+}
+
 pub(crate) fn run_session_command(
     command: &SessionCommand,
     project_root: &Path,
@@ -754,6 +797,70 @@ mod tests {
             "peridot-session-{name}-{}-{nanos}",
             std::process::id()
         ))
+    }
+
+    #[test]
+    fn rewind_context_entries_removes_last_turn_and_restores_prompt() {
+        let mut first = peridot_context::ContextEntry::trusted(
+            peridot_context::ContextSource::User,
+            "first prompt",
+        );
+        first.turn_id = 1;
+        let mut first_reply = peridot_context::ContextEntry::trusted(
+            peridot_context::ContextSource::Assistant,
+            "first reply",
+        );
+        first_reply.turn_id = 1;
+        let mut second = peridot_context::ContextEntry::trusted(
+            peridot_context::ContextSource::User,
+            "second prompt",
+        );
+        second.turn_id = 2;
+        let mut second_reply = peridot_context::ContextEntry::trusted(
+            peridot_context::ContextSource::Assistant,
+            "second reply",
+        );
+        second_reply.turn_id = 2;
+
+        let (kept, rewind) =
+            rewind_context_entries(vec![first, first_reply, second, second_reply]).unwrap();
+
+        assert_eq!(rewind.restored_prompt, "second prompt");
+        assert_eq!(rewind.rewind_turn_id, Some(2));
+        assert_eq!(rewind.removed_count, 2);
+        assert_eq!(rewind.kept_count, 2);
+        assert_eq!(kept.len(), 2);
+        assert_eq!(kept[0].content, "first prompt");
+        assert_eq!(kept[1].content, "first reply");
+    }
+
+    #[test]
+    fn rewind_context_entries_handles_legacy_zero_turn_snapshots() {
+        let entries = vec![
+            peridot_context::ContextEntry::trusted(
+                peridot_context::ContextSource::User,
+                "old prompt",
+            ),
+            peridot_context::ContextEntry::trusted(
+                peridot_context::ContextSource::Assistant,
+                "old reply",
+            ),
+            peridot_context::ContextEntry::trusted(
+                peridot_context::ContextSource::User,
+                "legacy prompt",
+            ),
+            peridot_context::ContextEntry::trusted(
+                peridot_context::ContextSource::Assistant,
+                "legacy reply",
+            ),
+        ];
+
+        let (kept, rewind) = rewind_context_entries(entries).unwrap();
+
+        assert_eq!(rewind.restored_prompt, "legacy prompt");
+        assert_eq!(rewind.rewind_turn_id, None);
+        assert_eq!(rewind.removed_count, 2);
+        assert_eq!(kept.len(), 2);
     }
 
     #[test]

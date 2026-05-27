@@ -33,6 +33,7 @@ const mascotUri = root.dataset.mascot ?? '';
 // textarea while typing) survive a re-render.
 let state: SidebarState | undefined;
 let composerDraft = '';
+let appliedComposerDraftVersion = 0;
 // Pending composer selections — captured pre-render so a state update
 // triggered by a streaming event doesn't reset the user's mid-edit
 // mode / permission / model picks back to whatever was last submitted.
@@ -122,7 +123,13 @@ function render(s: SidebarState): void {
   // Preserve composer draft / selection across renders so streaming
   // events don't clobber what the user is typing or picking.
   const textarea = document.getElementById('composer-input') as HTMLTextAreaElement | null;
-  if (textarea) composerDraft = textarea.value;
+  const requestedDraftVersion = s.composerDraftVersion ?? 0;
+  if (requestedDraftVersion > appliedComposerDraftVersion) {
+    composerDraft = s.composerDraft ?? '';
+    appliedComposerDraftVersion = requestedDraftVersion;
+  } else if (textarea) {
+    composerDraft = textarea.value;
+  }
   const modeEl = document.getElementById('composer-mode') as HTMLSelectElement | null;
   if (modeEl && !composerSessionChanged) composerModeOverride = modeEl.value;
   const permEl = document.getElementById('composer-permission') as HTMLSelectElement | null;

@@ -2138,6 +2138,33 @@ fn session_new_slash_queues_pending_command_with_task() {
 }
 
 #[test]
+fn rewind_slash_restores_prompt_and_queues_context_rollback() {
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    state.push_transcript_entry(TranscriptKind::User, "implement rewind");
+    state.push_transcript_entry(TranscriptKind::Assistant, "done");
+
+    apply_slash_command(&mut state, SlashCommand::Rewind);
+
+    assert_eq!(state.input, "implement rewind");
+    assert_eq!(
+        state.drain_pending_session_commands(),
+        vec![SessionCommandEvent::RewindContext]
+    );
+    assert!(
+        state
+            .transcript
+            .last()
+            .unwrap()
+            .text
+            .contains("queued context rollback")
+    );
+}
+
+#[test]
 fn codemap_slash_queues_pending_command() {
     let mut state = TuiState::new(HeaderState::new(
         ExecutionMode::Execute,

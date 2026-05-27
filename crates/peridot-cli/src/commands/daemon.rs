@@ -1688,7 +1688,6 @@ async fn execute_session_command(
         })),
         SlashCommand::SidepanelToggle
         | SlashCommand::Collapse
-        | SlashCommand::Rewind
         | SlashCommand::SessionNew(_)
         | SlashCommand::SessionSwitch(_)
         | SlashCommand::SessionClose(_)
@@ -1713,6 +1712,7 @@ async fn execute_session_command(
         )),
         SlashCommand::ContextTop => handle_command_context_top(state, session_id, raw_command),
         SlashCommand::Compact => handle_command_compact(state, session_id).await,
+        SlashCommand::Rewind => handle_command_rewind(state, session_id, raw_command),
         SlashCommand::Diff => handle_command_diff(state, raw_command),
         SlashCommand::Undo => handle_command_undo(state, raw_command),
         SlashCommand::Todos => handle_command_todos(state, raw_command),
@@ -3344,6 +3344,37 @@ async fn handle_command_compact(
     } else {
         Err(format!("compact: session {session_id} is not running"))
     }
+}
+
+fn handle_command_rewind(
+    state: &DaemonState,
+    session_id: Option<&str>,
+    raw_command: &str,
+) -> Result<Value, String> {
+    let session_id = require_session_id(session_id, "rewind")?;
+    let entries = read_context_snapshot(state, &session_id)?;
+    let (kept, rewind) = crate::commands::rewind_context_entries(entries)?;
+    write_context_snapshot(state, &session_id, &kept)?;
+    Ok(serde_json::json!({
+        "kind": "rewind",
+        "title": "Rewind",
+        "message": format!(
+            "rewind: restored last prompt and removed {} context entr{}",
+            rewind.removed_count,
+            if rewind.removed_count == 1 { "y" } else { "ies" }
+        ),
+        "severity": "info",
+        "command": raw_command,
+        "session_id": session_id,
+        "restored_prompt": rewind.restored_prompt,
+        "removed_context_entries": rewind.removed_count,
+        "kept_context_entries": rewind.kept_count,
+        "rewind_turn_id": rewind.rewind_turn_id,
+        "items": [
+            { "label": "removed context entries", "detail": rewind.removed_count.to_string() },
+            { "label": "kept context entries", "detail": rewind.kept_count.to_string() },
+        ],
+    }))
 }
 
 fn handle_command_diff(state: &DaemonState, raw_command: &str) -> Result<Value, String> {
@@ -5778,7 +5809,14 @@ mod tests {
         .to_string();
 
         let _ = dispatch_line(&state, &line).await.unwrap();
-        let response: Value = serde_json::from_str(&rx.recv().await.unwrap()).unwrap();
+        let mut response = Value::Null;
+        while let Some(line) = rx.recv().await {
+            let value: Value = serde_json::from_str(&line).unwrap();
+            if value["id"] == 42 {
+                response = value;
+                break;
+            }
+        }
 
         assert_eq!(response["id"], 42);
         assert_eq!(response["result"]["kind"], "codemap");
@@ -5891,6 +5929,49 @@ mod tests {
         assert_eq!(response["result"]["items"][0]["turn_id"], 1);
         assert_eq!(response["result"]["items"][0]["source"], "user");
         assert_eq!(response["result"]["items"][1]["turn_id"], 2);
+
+        shutdown_sessions(&state).await;
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn session_command_rewind_updates_context_snapshot() {
+        let (tx, _rx) = mpsc::unbounded_channel::<String>();
+        let root = test_project("command-rewind");
+        let state = DaemonState::new(
+            root.clone(),
+            PeridotConfig::default(),
+            test_options(None),
+            tx,
+        );
+        let session_id = "session-test-rewind";
+        let snapshot_path = context_snapshot_path(&state, session_id);
+        std::fs::create_dir_all(snapshot_path.parent().unwrap()).unwrap();
+        let mut first = ContextEntry::trusted(ContextSource::User, "first prompt");
+        first.turn_id = 1;
+        let mut first_reply = ContextEntry::trusted(ContextSource::Assistant, "first reply");
+        first_reply.turn_id = 1;
+        let mut second = ContextEntry::trusted(ContextSource::User, "second prompt");
+        second.turn_id = 2;
+        let mut second_reply = ContextEntry::trusted(ContextSource::Assistant, "second reply");
+        second_reply.turn_id = 2;
+        std::fs::write(
+            &snapshot_path,
+            serde_json::to_vec(&vec![first, first_reply, second, second_reply]).unwrap(),
+        )
+        .unwrap();
+        let result =
+            execute_session_command(&state, Some(session_id), "/rewind", SlashCommand::Rewind)
+                .await
+                .unwrap();
+
+        assert_eq!(result["kind"], "rewind");
+        assert_eq!(result["restored_prompt"], "second prompt");
+        assert_eq!(result["removed_context_entries"], 2);
+        let entries = read_context_snapshot(&state, session_id).unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].content, "first prompt");
+        assert_eq!(entries[1].content, "first reply");
 
         shutdown_sessions(&state).await;
         let _ = std::fs::remove_dir_all(root);

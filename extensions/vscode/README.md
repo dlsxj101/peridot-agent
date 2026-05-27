@@ -68,7 +68,7 @@ the TUI through the daemon `session.command_catalog` RPC, and supported
 session-control slashes run through `session.command` so mode, permission,
 model, provider, committee, note, compact, branch, MCP, TODO, codemap,
 info, cost, plan show, goal control, session save, session count,
-session rename/delete, export, diff, undo, and context results stay
+session rename/delete, rewind, export, diff, undo, and context results stay
 aligned with the daemon.
 Typing `/branch` opens a picker backed by the current context turns;
 selecting a row runs `/branch turn <id>`. The session header also exposes

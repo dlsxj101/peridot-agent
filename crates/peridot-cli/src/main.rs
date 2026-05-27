@@ -1520,6 +1520,9 @@ fn apply_session_command(
         SessionCommandEvent::Export(artifacts) => {
             handle_session_export(state, project_template, &artifacts);
         }
+        SessionCommandEvent::RewindContext => {
+            handle_rewind_context(state, project_template);
+        }
         SessionCommandEvent::BranchSave(name) => {
             handle_branch_save(state, project_template, &name);
         }
@@ -2362,6 +2365,29 @@ fn handle_detach(state: &mut TuiState, project_root: &Path, path: &str) {
             }
         }
         Err(err) => state.push_error(format!("detach: failed to read context: {err}")),
+    }
+}
+
+fn handle_rewind_context(state: &mut TuiState, project_root: &Path) {
+    if state.current_session_id.is_empty() {
+        state.push_error("rewind: no active session".to_string());
+        return;
+    }
+    match read_context_snapshot(project_root, &state.current_session_id).and_then(|entries| {
+        let (kept, rewind) = commands::rewind_context_entries(entries)?;
+        write_context_snapshot(project_root, &state.current_session_id, &kept)?;
+        Ok(rewind)
+    }) {
+        Ok(rewind) => state.push_transcript(format!(
+            "rewind: removed {} context entr{}",
+            rewind.removed_count,
+            if rewind.removed_count == 1 {
+                "y"
+            } else {
+                "ies"
+            }
+        )),
+        Err(err) => state.push_error(format!("rewind: failed to update context: {err}")),
     }
 }
 

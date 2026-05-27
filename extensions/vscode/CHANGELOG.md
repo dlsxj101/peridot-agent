@@ -61,6 +61,9 @@
 - `/session rename` and `/session delete` now run through the
   daemon-backed slash path, mutate persisted session records/blobs, and
   update matching sidebar sessions by daemon id.
+- `/rewind` now runs through the daemon-backed slash path, removes the
+  last user turn from the session context snapshot, and refills the
+  composer draft with the restored prompt.
 - `/codemap` now uses a persisted `.peridot/codemap.json` index, and
   `Peridot: Refresh Workspace Code Map Index` rebuilds it explicitly.
 - `Peridot: Search Workspace Code Map` runs `/codemap find <query>`

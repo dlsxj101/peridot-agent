@@ -920,6 +920,8 @@ pub enum SessionCommandEvent {
     Detach(String),
     /// `/export [attachments|notes|timeline|full]` — write session artifacts.
     Export(Vec<peridot_core::ExportArtifact>),
+    /// `/rewind` — remove the last user turn from the context snapshot.
+    RewindContext,
     /// `/branch save <name>` — copy the active session's context
     /// snapshot under `.peridot/branches/<name>/` for later restore.
     BranchSave(String),

@@ -151,6 +151,21 @@ shared daemon, TUI, and VS Code extension surfaces.
   session blobs, returns a structured `session_delete` result, and lets
   VS Code remove the matching local sidebar session by daemon id.
 
+### E19. Semantic Rewind Slash Parity
+
+- **Status**: landed.
+- **Goal**: make `/rewind` roll back the model-visible session context,
+  not just the local transcript, so the next turn no longer sees the
+  rewound exchange.
+- **Where**: shared context rewind helper, daemon `session.command`,
+  TUI host command queue, VS Code composer draft state.
+- **Result**: `/rewind` finds the last user context entry, removes that
+  turn and later entries from the session context snapshot, and returns
+  the restored prompt. TUI restores the prompt into the input box and
+  queues the same context rollback through the host. VS Code receives a
+  structured `rewind` result, removes the visible last exchange, and
+  refills the composer draft with the restored prompt.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

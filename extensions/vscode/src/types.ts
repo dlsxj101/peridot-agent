@@ -152,6 +152,14 @@ export interface CommandResultView {
   steps?: PlanStepView[];
   current?: number | null;
   done?: number;
+  restored_prompt?: string;
+  restoredPrompt?: string;
+  removed_context_entries?: number;
+  removedContextEntries?: number;
+  kept_context_entries?: number;
+  keptContextEntries?: number;
+  rewind_turn_id?: number | null;
+  rewindTurnId?: number | null;
   source_totals?: Record<string, number>;
   symbol_count?: number;
   todo_count?: number;
@@ -338,6 +346,8 @@ export interface SidebarState {
   phase?: string;
   runStartedAtMs?: number;
   lastRunElapsedMs?: number;
+  composerDraft?: string;
+  composerDraftVersion?: number;
 }
 
 /** Identifier of the provider the user opts into from the landing UI. */
