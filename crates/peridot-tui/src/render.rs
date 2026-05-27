@@ -10,21 +10,64 @@ pub(super) fn render_header_brief(state: &TuiState) -> String {
 
 /// Status-bar metrics text: mode/permission + optional tok/cost/cache + goal + agent.
 pub(super) fn render_status_metrics(state: &TuiState) -> String {
-    let mut parts = vec![format!(
-        "{} · {}",
-        state.header.mode, state.header.permission
+    join_status_metric_parts(status_metric_parts(state).iter())
+}
+
+pub(super) fn render_status_metrics_for_width(state: &TuiState, max_width: usize) -> String {
+    let parts = status_metric_parts(state);
+    let full = join_status_metric_parts(parts.iter());
+    if string_width(&full) <= max_width {
+        return full;
+    }
+
+    for max_priority in (0..=3).rev() {
+        let compact =
+            join_status_metric_parts(parts.iter().filter(|part| part.priority <= max_priority));
+        if string_width(&compact) <= max_width {
+            return compact;
+        }
+    }
+
+    truncate_display_width(&parts[0].text, max_width)
+}
+
+#[derive(Clone, Debug)]
+struct StatusMetricPart {
+    text: String,
+    priority: u8,
+}
+
+impl StatusMetricPart {
+    fn new(text: impl Into<String>, priority: u8) -> Self {
+        Self {
+            text: text.into(),
+            priority,
+        }
+    }
+}
+
+fn status_metric_parts(state: &TuiState) -> Vec<StatusMetricPart> {
+    let mut parts = vec![StatusMetricPart::new(
+        format!("{} · {}", state.header.mode, state.header.permission),
+        0,
     )];
     if let Some(workspace) = state.header.workspace_label.as_deref() {
-        parts.push(format!("workspace {workspace}"));
+        parts.push(StatusMetricPart::new(format!("workspace {workspace}"), 1));
     }
     if let Some(provider) = state.header.provider.as_deref() {
-        parts.push(format!("provider {provider}"));
+        parts.push(StatusMetricPart::new(format!("provider {provider}"), 3));
     }
     if state.current_turn > 0 {
-        parts.push(format!("turn {}", state.current_turn));
+        parts.push(StatusMetricPart::new(
+            format!("turn {}", state.current_turn),
+            1,
+        ));
     }
     if state.committee_mode != peridot_common::CommitteeMode::Off {
-        parts.push(format!("committee {}", state.committee_mode));
+        parts.push(StatusMetricPart::new(
+            format!("committee {}", state.committee_mode),
+            1,
+        ));
     }
     let active_subagents = state
         .subagents
@@ -32,33 +75,51 @@ pub(super) fn render_status_metrics(state: &TuiState) -> String {
         .filter(|item| matches!(item.status.as_str(), "running" | "starting"))
         .count();
     if active_subagents > 0 {
-        parts.push(format!("subagents {active_subagents}"));
+        parts.push(StatusMetricPart::new(
+            format!("subagents {active_subagents}"),
+            2,
+        ));
     }
     if state.config.show_token_count {
-        parts.push(format!("{} tok", state.header.total_tokens));
+        parts.push(StatusMetricPart::new(
+            format!("{} tok", state.header.total_tokens),
+            2,
+        ));
     }
     if state.config.show_cost {
         let total_turns = state.current_turn;
         if total_turns > 1 && state.header.cost_usd > 0.0 {
             let avg = state.header.cost_usd / total_turns as f64;
-            parts.push(format!("${:.4} (${avg:.4}/turn)", state.header.cost_usd));
+            parts.push(StatusMetricPart::new(
+                format!("${:.4} (${avg:.4}/turn)", state.header.cost_usd),
+                2,
+            ));
         } else {
-            parts.push(format!("${:.4}", state.header.cost_usd));
+            parts.push(StatusMetricPart::new(
+                format!("${:.4}", state.header.cost_usd),
+                2,
+            ));
         }
     }
     if let Some(total) = aggregate_usage_status(state) {
-        parts.push(total);
+        parts.push(StatusMetricPart::new(total, 2));
     }
     if state.config.show_cache_rate {
-        parts.push(format!("cache {:.0}%", state.header.cache_hit_rate * 100.0));
+        parts.push(StatusMetricPart::new(
+            format!("cache {:.0}%", state.header.cache_hit_rate * 100.0),
+            3,
+        ));
     }
     if let Some(status) = state.goal_status.as_ref() {
-        parts.push(format!("goal {}", goal_status_label(Some(status))));
+        parts.push(StatusMetricPart::new(
+            format!("goal {}", goal_status_label(Some(status))),
+            1,
+        ));
     }
     if state.agent_run_status != AgentRunStatus::Idle {
-        parts.push(format!(
-            "agent {}",
-            agent_run_status_label(&state.agent_run_status)
+        parts.push(StatusMetricPart::new(
+            format!("agent {}", agent_run_status_label(&state.agent_run_status)),
+            0,
         ));
     }
     // Surface the elapsed counter once a task has started running. We render
@@ -69,11 +130,46 @@ pub(super) fn render_status_metrics(state: &TuiState) -> String {
         // No prefix glyph — the stopwatch emoji `⏱` (U+23F1) is rendered as
         // half-width in many WSL fonts and clipped the digits that followed.
         // Bare digits with the trailing `s` suffix read fine on their own.
-        parts.push(state::format_duration_ms(
-            state.side_panel.stats.elapsed_seconds * 1000,
+        parts.push(StatusMetricPart::new(
+            state::format_duration_ms(state.side_panel.stats.elapsed_seconds * 1000),
+            0,
         ));
     }
-    parts.join("  |  ")
+    parts
+}
+
+fn join_status_metric_parts<'a>(parts: impl Iterator<Item = &'a StatusMetricPart>) -> String {
+    parts
+        .map(|part| part.text.as_str())
+        .collect::<Vec<_>>()
+        .join("  |  ")
+}
+
+fn string_width(text: &str) -> usize {
+    unicode_width::UnicodeWidthStr::width(text)
+}
+
+fn truncate_display_width(text: &str, max_width: usize) -> String {
+    if max_width == 0 {
+        return String::new();
+    }
+    if string_width(text) <= max_width {
+        return text.to_string();
+    }
+
+    let mut out = String::new();
+    let mut used = 0usize;
+    let content_width = max_width.saturating_sub(1);
+    for ch in text.chars() {
+        let width = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+        if used + width > content_width {
+            break;
+        }
+        out.push(ch);
+        used += width;
+    }
+    out.push('\u{2026}');
+    out
 }
 
 fn aggregate_usage_status(state: &TuiState) -> Option<String> {
@@ -991,7 +1087,7 @@ fn mood_indicator(state: &TuiState) -> (&'static str, Style) {
 }
 
 /// Renders a 1-line agent status bar (icon, label, queue depth, metrics).
-fn render_status_bar(state: &TuiState) -> Line<'static> {
+fn render_status_bar(state: &TuiState, width: u16) -> Line<'static> {
     let (icon, icon_style) = mood_indicator(state);
 
     let mut spans = vec![Span::styled(format!("{icon} "), icon_style)];
@@ -1058,12 +1154,21 @@ fn render_status_bar(state: &TuiState) -> Line<'static> {
             style,
         ));
     }
-    spans.push(Span::styled(
-        format!("  · {}", render_status_metrics(state)),
-        Style::default()
-            .fg(Color::DarkGray)
-            .add_modifier(Modifier::DIM),
-    ));
+    let metrics_prefix = "  · ";
+    let occupied_width = spans
+        .iter()
+        .map(|span| string_width(span.content.as_ref()))
+        .sum::<usize>();
+    let metrics_width = usize::from(width).saturating_sub(occupied_width + metrics_prefix.len());
+    let metrics = render_status_metrics_for_width(state, metrics_width);
+    if !metrics.is_empty() {
+        spans.push(Span::styled(
+            format!("{metrics_prefix}{metrics}"),
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::DIM),
+        ));
+    }
     Line::from(spans)
 }
 
@@ -1631,7 +1736,10 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
         frame.render_widget(Paragraph::new(side).wrap(Wrap { trim: false }), info_area);
     }
 
-    frame.render_widget(Paragraph::new(render_status_bar(state)), chunks[3]);
+    frame.render_widget(
+        Paragraph::new(render_status_bar(state, chunks[3].width)),
+        chunks[3],
+    );
 
     let input_area = chunks[4];
     let prompt_glyph = "\u{276F} "; // ❯ + space, two display columns

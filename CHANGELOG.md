@@ -42,6 +42,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **`/status` slash discoverability** now adds the already-supported
   status alias to the shared command catalog, so TUI and VS Code
   autocomplete/help match the parser.
+- **TUI narrow status metrics** now use the actual status-bar width to
+  drop lower-priority metadata before clipping, keeping the core
+  mode/agent/elapsed state readable on compact terminals.
 - **Daemon-backed `/session new [task]` intent** now lets VS Code apply a
   structured `session_new` result instead of locally re-parsing the slash
   command after daemon parsing.

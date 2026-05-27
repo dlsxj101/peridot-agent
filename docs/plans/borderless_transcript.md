@@ -182,7 +182,7 @@ peridot · gpt-4o · auto · session 1779011508 · steps 12 · 8s · subagents 0
 | `peridot-tui/src/render.rs:1145-1146` | `inner_width` / `inner_height`의 `saturating_sub(2)`를 `saturating_sub(1)`로 (보더 없으니 padding만) |
 | `peridot-tui/src/render.rs:1204` | `side_block` 보더를 `Borders::LEFT`로 (왼쪽 dim 구분자만) |
 | `peridot-tui/src/render.rs` (header 라인) | session id / steps / elapsed / subagents count 추가 — `render_header_line` 확장 |
-| `peridot-tui/src/render.rs:847-873` | `render_status_bar`에서 `●` 자리를 mood glyph로 치환 |
+| `peridot-tui/src/render.rs:847-873` | `render_status_bar`에서 `●` 자리를 mood glyph로 치환하고, status bar 폭에 맞춰 낮은 우선순위 메트릭을 생략 |
 | `peridot-tui/src/render.rs:232-…` | `render_welcome`에 풀 마스코트 8×4 영역 추가 (현재 텍스트만 출력 중) |
 | `peridot-common/src/lib.rs` | `TuiConfig::show_subagent_panel` 기본값 `true` → `false` |
 | `peridot-tui/src/tests.rs` | 스냅샷 fixture 갱신 (보더 제거 / 헤더 확장 반영) |
@@ -192,7 +192,7 @@ peridot · gpt-4o · auto · session 1779011508 · steps 12 · 8s · subagents 0
 ## 위험 / 트레이드오프
 
 - **사이드 패널 default OFF** — 기존 사용자에게 변화. 마이그레이션 노트로 "Ctrl+] to bring it back" 안내 필요.
-- **헤더가 좁은 터미널에서 길어짐** — width < 100일 때 자동으로 우선순위 낮은 정보 (subagents count, elapsed) 생략하도록 fallback 추가.
+- **헤더/상태바가 좁은 터미널에서 길어짐** — ✅ status bar는 실제 폭 예산을 받아 provider/cache/subagents/aggregate 같은 낮은 우선순위 메트릭을 먼저 생략한다. 핵심 mode/permission, agent 상태, elapsed는 유지한다.
 - **테스트 fixture 다수 갱신** — `fixture_scenarios_render_through_ratatui_backend`가 ratatui buffer 기준 스냅샷이라 보더/패널 변경 시 의도된 diff 검토.
 - **mood glyph가 일부 터미널에서 누락 가능** — `◔◑◉◕◓` 등이 unicode 범위. WSL conpty는 OK이지만 안전을 위해 fallback `●` 옵션 검토.
 
@@ -215,3 +215,4 @@ peridot · gpt-4o · auto · session 1779011508 · steps 12 · 8s · subagents 0
 6. ✅ status bar `●` → mood glyph
 7. ✅ welcome 화면에 풀 마스코트 추가
 8. ✅ 렌더 회귀 테스트 추가
+9. ✅ 좁은 status bar에서 낮은 우선순위 메트릭 생략

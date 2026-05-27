@@ -3001,6 +3001,57 @@ fn status_metrics_show_aggregate_usage_for_multi_session() {
 }
 
 #[test]
+fn status_metrics_drop_low_priority_parts_when_narrow() {
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    state.header.workspace_label = Some("peridot-agent".to_string());
+    state.header.provider = Some("openrouter-api".to_string());
+    state.header.cost_usd = 0.10;
+    state.header.total_tokens = 2_000;
+    state.header.cache_hit_rate = 0.87;
+    state.current_turn = 3;
+    state.current_session_id = "s1".to_string();
+    state.agent_run_status = AgentRunStatus::Running;
+    state.side_panel.stats.elapsed_seconds = 8;
+    state
+        .sessions
+        .push(crate::SessionDirectoryItem::new("s1", "main"));
+    let mut bg = crate::SessionDirectoryItem::new("s2", "background");
+    bg.cost_usd = 0.04;
+    bg.tokens = 500;
+    state.sessions.push(bg);
+    state.subagents.push(SubagentMonitorItem {
+        kind: "fork".to_string(),
+        task: "audit lib".to_string(),
+        status: "running".to_string(),
+        summary: None,
+        id: "fork-1".to_string(),
+        parent_id: Some("parent".to_string()),
+        depth: 1,
+        started_at_unix: 0,
+        tokens: 0,
+    });
+
+    let full = render_status_metrics(&state);
+    assert!(full.contains("provider openrouter-api"));
+    assert!(full.contains("cache 87%"));
+    assert!(full.contains("subagents 1"));
+    assert!(full.contains("all 2500 tok / $0.1400"));
+
+    let compact = render_status_metrics_for_width(&state, 42);
+    assert!(compact.contains("execute · auto"));
+    assert!(compact.contains("agent running"));
+    assert!(compact.contains("8s"));
+    assert!(!compact.contains("provider openrouter-api"));
+    assert!(!compact.contains("cache 87%"));
+    assert!(!compact.contains("subagents 1"));
+    assert!(unicode_width::UnicodeWidthStr::width(compact.as_str()) <= 42);
+}
+
+#[test]
 fn status_metrics_omit_redundant_aggregate_usage() {
     let mut state = TuiState::new(HeaderState::new(
         ExecutionMode::Execute,
