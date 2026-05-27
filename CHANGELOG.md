@@ -32,6 +32,10 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **VS Code skill autocomplete refresh** now reloads the slash catalog
   when the skill store changes or when `/skills archive|restore` mutates
   active `/skill-name` suggestions.
+- **TUI skill autocomplete refresh** now notices `.peridot/memory.db`
+  signature changes while the TUI is open, so skills added by another
+  client or CLI command appear in `/skill-name` suggestions without
+  waiting for the next agent run.
 - **`/sidepanel` surface metadata** now marks the command as TUI-only so
   VS Code autocomplete and `/help` no longer advertise a terminal status
   panel toggle.

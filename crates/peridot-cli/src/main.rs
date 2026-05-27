@@ -1000,6 +1000,8 @@ async fn main() -> Result<()> {
                                 String,
                                 usize,
                             > = std::collections::HashMap::new();
+                            let mut last_skill_store_signature =
+                                skill_store_signature(&project_template);
                             move |state: &mut TuiState| {
                                 append_new_transcript_entries(
                                     state,
@@ -1016,6 +1018,11 @@ async fn main() -> Result<()> {
                                     return;
                                 }
                                 last_persist_unix = now;
+                                refresh_tui_skill_suggestions_if_changed(
+                                    state,
+                                    &project_template,
+                                    &mut last_skill_store_signature,
+                                );
                                 persist_session_snapshot(state, &router, &project_template);
                             }
                         },
@@ -1702,6 +1709,55 @@ fn load_auto_skill_suggestions(project_root: &Path) -> Vec<SkillSlashSuggestion>
             name: skill.name,
         })
         .collect()
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct SkillStoreSignature {
+    db: Option<FileSignature>,
+    wal: Option<FileSignature>,
+    shm: Option<FileSignature>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct FileSignature {
+    modified_nanos: u128,
+    len: u64,
+}
+
+fn refresh_tui_skill_suggestions_if_changed(
+    state: &mut TuiState,
+    project_root: &Path,
+    last_signature: &mut SkillStoreSignature,
+) {
+    let current = skill_store_signature(project_root);
+    if current == *last_signature {
+        return;
+    }
+    *last_signature = current;
+    state.set_skill_suggestions(load_auto_skill_suggestions(project_root));
+}
+
+fn skill_store_signature(project_root: &Path) -> SkillStoreSignature {
+    let memory_path = project_root.join(".peridot/memory.db");
+    SkillStoreSignature {
+        db: file_signature(&memory_path),
+        wal: file_signature(&memory_path.with_file_name("memory.db-wal")),
+        shm: file_signature(&memory_path.with_file_name("memory.db-shm")),
+    }
+}
+
+fn file_signature(path: &Path) -> Option<FileSignature> {
+    let metadata = fs::metadata(path).ok()?;
+    let modified_nanos = metadata
+        .modified()
+        .ok()?
+        .duration_since(UNIX_EPOCH)
+        .ok()?
+        .as_nanos();
+    Some(FileSignature {
+        modified_nanos,
+        len: metadata.len(),
+    })
 }
 
 fn skill_description(skill: &StoredSkill) -> String {

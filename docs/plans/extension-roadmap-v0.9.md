@@ -637,6 +637,19 @@ shared daemon, TUI, and VS Code extension surfaces.
   autocomplete, and daemon-backed `/help`. `/sidepanel` remains TUI-only,
   while `/status` stays available as a cross-surface local status action.
 
+### E55. TUI Live Skill Autocomplete Refresh
+
+- **Status**: landed.
+- **Goal**: bring TUI `/skill-name` autocomplete freshness up to the VS
+  Code watcher behavior, so both clients reflect skill inventory changes
+  made by another surface during a long-running session.
+- **Where**: TUI host persist tick, project memory-store signature helper.
+- **Result**: the TUI records the `.peridot/memory.db` / SQLite sidecar
+  signature it loaded at startup, checks it on the existing once-per-second
+  persistence tick, and reloads active auto-skill suggestions when the
+  signature changes. VS Code keeps its file watcher path; both clients now
+  refresh autocomplete without waiting for an agent run to finish.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

@@ -6,7 +6,7 @@ use anyhow::Result;
 use peridot_common::{ExecutionMode, MemoryConfig, PeridotConfig, PermissionMode};
 use peridot_core::{AgentRunSummary, StopReason};
 use peridot_llm::Usage;
-use peridot_memory::{MemoryStore, SessionLifecycle, SessionRecord};
+use peridot_memory::{MemoryStore, SessionLifecycle, SessionRecord, StoredSkill};
 use peridot_tui::{HeaderState, TuiState};
 
 use super::checkpoints::restore_latest_checkpoint;
@@ -77,6 +77,43 @@ fn reviewer_guard_blocks_repeated_same_diff_rejections() {
     assert!(
         matches!(second, ReviewerVerdict::Block { reason } if reason.contains("same diff 2 times"))
     );
+}
+
+#[test]
+fn tui_skill_suggestions_refresh_when_memory_store_changes() {
+    let root =
+        std::env::temp_dir().join(format!("peridot-cli-skill-refresh-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(root.join(".peridot")).unwrap();
+
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    let mut signature = super::skill_store_signature(&root);
+    assert!(state.skill_suggestions.is_empty());
+
+    let store = MemoryStore::new(root.join(".peridot/memory.db"));
+    store
+        .save_skill(&StoredSkill {
+            name: "auto-refresh-skill".into(),
+            body: "refresh skill suggestions".into(),
+            description: "refresh skill suggestions".into(),
+            scope: "auto".into(),
+            ..StoredSkill::default()
+        })
+        .unwrap();
+
+    super::refresh_tui_skill_suggestions_if_changed(&mut state, &root, &mut signature);
+
+    assert_eq!(state.skill_suggestions.len(), 1);
+    assert_eq!(state.skill_suggestions[0].name, "auto-refresh-skill");
+    assert_eq!(
+        state.skill_suggestions[0].description,
+        "refresh skill suggestions"
+    );
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
