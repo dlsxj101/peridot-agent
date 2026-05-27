@@ -330,6 +330,7 @@ export type OutboundMessage =
   | { type: 'searchCodeMap' }
   | { type: 'attachFile' }
   | { type: 'detachAttachment'; path: string }
+  | { type: 'exportSessionArtifacts' }
   | { type: 'showPrStatus' }
   | { type: 'shipChanges' }
   | { type: 'mergePr' }

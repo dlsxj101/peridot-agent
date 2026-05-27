@@ -116,6 +116,7 @@ export function activate(context: vscode.ExtensionContext) {
     detachAttachment: async (path: string): Promise<void> =>
       detachAttachmentFromSession(path, output, sidebar),
     showAttachments: async (): Promise<void> => showSessionAttachments(output, sidebar),
+    exportSessionArtifacts: async (): Promise<void> => exportSessionArtifacts(output, sidebar),
     showPrStatus: async (): Promise<void> => showGitHubPrStatus(output, sidebar),
     shipChanges: async (): Promise<void> => shipChangesToPr(output, sidebar),
     mergePr: async (): Promise<void> => mergeGitHubPr(output, sidebar),
@@ -259,6 +260,12 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand('peridot.showAttachments', async () => {
       await showSessionAttachments(output, sidebar);
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('peridot.exportSessionArtifacts', async () => {
+      await exportSessionArtifacts(output, sidebar);
     }),
   );
 
@@ -754,6 +761,95 @@ async function detachAttachmentFromSession(
   }
 }
 
+async function exportSessionArtifacts(
+  output: vscode.OutputChannel,
+  sidebar: PeridotSidebarProvider,
+): Promise<void> {
+  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!folder) {
+    const message = 'Open a workspace folder before exporting session artifacts.';
+    sidebar.setWorkspaceProblem(message);
+    await vscode.window.showWarningMessage(message);
+    return;
+  }
+  const sessionId = sidebar.currentDaemonSessionId();
+  if (!sessionId) {
+    await vscode.window.showWarningMessage('Start or select a Peridot session before exporting artifacts.');
+    return;
+  }
+  const picked = await vscode.window.showOpenDialog({
+    title: 'Peridot: Export Session Artifacts',
+    canSelectFiles: false,
+    canSelectFolders: true,
+    canSelectMany: false,
+    defaultUri: vscode.Uri.file(folder),
+    openLabel: 'Export Here',
+  });
+  const base = picked?.[0];
+  if (!base) return;
+  const destination = path.join(base.fsPath, `peridot-session-${sanitizePathSegment(sessionId)}`);
+  let force = false;
+  if (await pathExists(destination)) {
+    const confirmed = await vscode.window.showWarningMessage(
+      `${destination} already exists. Overwrite it?`,
+      { modal: true },
+      'Overwrite',
+    );
+    if (confirmed !== 'Overwrite') return;
+    force = true;
+  }
+  await vscode.commands.executeCommand('peridot.chatView.focus');
+  const args = [
+    '--output',
+    'json',
+    'session',
+    'export',
+    sessionId,
+    '--out',
+    destination,
+    '--artifact',
+    'attachments',
+    '--artifact',
+    'notes',
+    '--artifact',
+    'timeline',
+    ...(force ? ['--force'] : []),
+  ];
+  try {
+    output.appendLine(`[peridot] exporting session artifacts: ${destination}`);
+    const { stdout } = await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: 'Peridot: exporting session artifacts',
+        cancellable: false,
+      },
+      async () => execPeridotCli(args, folder),
+    );
+    const payload = parseJson(stdout);
+    const artifacts = exportedArtifactsFromPayload(payload);
+    sidebar.appendCommandResult({
+      kind: 'session_export',
+      title: 'Session Artifact Export',
+      command: 'peridot session export',
+      message: `Exported ${artifacts.length} artifact files to ${destination}`,
+      items: [
+        { label: 'Destination', detail: destination, source: 'directory' },
+        ...artifacts.map((artifact) => ({
+          label: artifact.path,
+          detail: `${artifact.class} · ${artifact.count} entries`,
+          source: 'artifact',
+        })),
+      ],
+    });
+    await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(destination));
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    output.appendLine(`[peridot] session artifact export failed: ${message}`);
+    sidebar.appendError(message);
+    await vscode.window.showErrorMessage(`Peridot export failed: ${message}`);
+  }
+}
+
 async function shipChangesToPr(
   output: vscode.OutputChannel,
   sidebar: PeridotSidebarProvider,
@@ -991,6 +1087,20 @@ function nonEmpty(value: string): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
+function sanitizePathSegment(value: string): string {
+  const sanitized = value.replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
+  return sanitized.length > 0 ? sanitized : 'session';
+}
+
+async function pathExists(filePath: string): Promise<boolean> {
+  try {
+    await vscode.workspace.fs.stat(vscode.Uri.file(filePath));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function execPeridotCli(
   args: string[],
   cwd: string,
@@ -1031,6 +1141,23 @@ function parseJson(raw: string): unknown {
   } catch {
     return { output: raw };
   }
+}
+
+interface ExportedArtifactView {
+  class: string;
+  path: string;
+  count: number;
+}
+
+function exportedArtifactsFromPayload(payload: unknown): ExportedArtifactView[] {
+  if (!isRecord(payload) || !Array.isArray(payload.artifacts)) return [];
+  return payload.artifacts
+    .filter(isRecord)
+    .map((artifact) => ({
+      class: typeof artifact.class === 'string' ? artifact.class : 'artifact',
+      path: typeof artifact.path === 'string' ? artifact.path : 'artifact',
+      count: typeof artifact.count === 'number' ? artifact.count : 0,
+    }));
 }
 
 function shipPreviewText(value: unknown): string {

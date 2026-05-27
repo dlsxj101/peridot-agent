@@ -287,8 +287,13 @@ pub(crate) fn run_session_command(
                 output,
             )?;
         }
-        SessionCommand::Export { id, out, force } => {
-            export_session(project_root, id, out, *force, output)?;
+        SessionCommand::Export {
+            id,
+            out,
+            artifacts,
+            force,
+        } => {
+            export_session(project_root, id, out, artifacts, *force, output)?;
         }
         SessionCommand::Import { from, id, force } => {
             import_session(&store, project_root, from, id.as_deref(), *force, output)?;
@@ -984,12 +989,95 @@ mod tests {
             ]
         );
     }
+
+    #[test]
+    fn session_export_selected_artifacts_writes_portable_files() {
+        let root = temp_root("export-selected");
+        let session_dir = root.join(".peridot").join("sessions").join("s1");
+        fs::create_dir_all(&session_dir).unwrap();
+        let context = vec![peridot_context::ContextEntry::trusted(
+            peridot_context::ContextSource::PlanReminder,
+            "[attachment]\npath: src/lib.rs\nbytes: 12\n\n```text\nhello world\n```",
+        )];
+        fs::write(
+            session_dir.join("context.bin"),
+            serde_json::to_vec(&context).unwrap(),
+        )
+        .unwrap();
+        fs::write(
+            session_dir.join("notes.ndjson"),
+            "{\"ts\":1,\"text\":\"remember export\"}\n",
+        )
+        .unwrap();
+        fs::write(
+            session_dir.join("transcript.ndjson"),
+            format!(
+                "{}\n",
+                serde_json::to_string(&transcript_entry(
+                    peridot_tui::TranscriptKind::User,
+                    "task",
+                    1
+                ))
+                .unwrap()
+            ),
+        )
+        .unwrap();
+
+        let out = root.join("export");
+        export_session(
+            &root,
+            "s1",
+            &out,
+            &[
+                SessionExportArtifact::Attachments,
+                SessionExportArtifact::Notes,
+                SessionExportArtifact::Timeline,
+            ],
+            false,
+            OutputFormat::Text,
+        )
+        .unwrap();
+
+        assert!(!out.join("context.bin").exists());
+        let attachments: Vec<serde_json::Value> =
+            serde_json::from_slice(&fs::read(out.join("attachments.json")).unwrap()).unwrap();
+        assert_eq!(attachments[0]["path"], "src/lib.rs");
+        assert_eq!(attachments[0]["content"], "hello world");
+        assert_eq!(count_non_empty_lines(&out.join("notes.ndjson")).unwrap(), 1);
+        let timeline: Vec<serde_json::Value> =
+            serde_json::from_slice(&fs::read(out.join("timeline.json")).unwrap()).unwrap();
+        assert_eq!(timeline.len(), 1);
+        assert_eq!(timeline[0]["source"], "transcript");
+        let manifest: serde_json::Value =
+            serde_json::from_slice(&fs::read(out.join("export-manifest.json")).unwrap()).unwrap();
+        assert_eq!(
+            manifest["artifact_classes"],
+            serde_json::json!(["attachments", "notes", "timeline"])
+        );
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn session_export_without_artifacts_preserves_full_copy_default() {
+        let root = temp_root("export-full-default");
+        let session_dir = root.join(".peridot").join("sessions").join("s1");
+        fs::create_dir_all(&session_dir).unwrap();
+        fs::write(session_dir.join("context.bin"), "[]").unwrap();
+
+        let out = root.join("export");
+        export_session(&root, "s1", &out, &[], false, OutputFormat::Text).unwrap();
+
+        assert!(out.join("context.bin").exists());
+        assert!(!out.join("export-manifest.json").exists());
+        fs::remove_dir_all(&root).ok();
+    }
 }
 
 fn export_session(
     project_root: &Path,
     id: &str,
     out_dir: &Path,
+    artifacts: &[SessionExportArtifact],
     force: bool,
     output: OutputFormat,
 ) -> Result<()> {
@@ -1012,22 +1100,44 @@ fn export_session(
     }
     std::fs::create_dir_all(out_dir)
         .with_context(|| format!("failed to create export directory {}", out_dir.display()))?;
+    let selected = effective_export_artifacts(artifacts);
     let mut copied: Vec<String> = Vec::new();
-    for entry in std::fs::read_dir(&source)? {
-        let entry = entry?;
-        let file_name = entry.file_name();
-        let from = entry.path();
-        let to = out_dir.join(&file_name);
-        if from.is_dir() {
-            copy_dir_recursive(&from, &to)?;
-        } else {
-            std::fs::copy(&from, &to).with_context(|| {
-                format!("failed to copy {} -> {}", from.display(), to.display())
-            })?;
+    if selected.contains(&SessionExportArtifact::Full) {
+        for entry in std::fs::read_dir(&source)? {
+            let entry = entry?;
+            let file_name = entry.file_name();
+            let from = entry.path();
+            let to = out_dir.join(&file_name);
+            if from.is_dir() {
+                copy_dir_recursive(&from, &to)?;
+            } else {
+                std::fs::copy(&from, &to).with_context(|| {
+                    format!("failed to copy {} -> {}", from.display(), to.display())
+                })?;
+            }
+            if let Some(name) = file_name.to_str() {
+                copied.push(name.to_string());
+            }
         }
-        if let Some(name) = file_name.to_str() {
-            copied.push(name.to_string());
+        copied.sort();
+    }
+    let mut generated: Vec<ExportedArtifact> = Vec::new();
+    for artifact in &selected {
+        match artifact {
+            SessionExportArtifact::Full => {}
+            SessionExportArtifact::Attachments => {
+                generated.push(write_attachments_export(project_root, id, out_dir)?);
+            }
+            SessionExportArtifact::Notes => {
+                generated.push(write_notes_export(&source, out_dir)?);
+            }
+            SessionExportArtifact::Timeline => {
+                generated.push(write_timeline_export(project_root, id, out_dir)?);
+            }
         }
+    }
+    if !generated.is_empty() {
+        write_export_manifest(id, &source, out_dir, &selected, &copied, &generated)?;
     }
     match output {
         OutputFormat::Json => {
@@ -1037,23 +1147,159 @@ fn export_session(
                     "id": id,
                     "source": source.display().to_string(),
                     "destination": out_dir.display().to_string(),
+                    "artifact_classes": selected.iter().map(|artifact| artifact.as_str()).collect::<Vec<_>>(),
                     "files": copied,
+                    "artifacts": generated,
                 }))?
             );
         }
         OutputFormat::Text => {
             println!(
-                "exported session {id} from {} to {} ({} entries)",
+                "exported session {id} from {} to {} ({} copied entries, {} generated artifacts)",
                 source.display(),
                 out_dir.display(),
-                copied.len()
+                copied.len(),
+                generated.len()
             );
             for name in &copied {
                 println!("  - {name}");
             }
+            for artifact in &generated {
+                println!(
+                    "  - {} ({}, {} entries)",
+                    artifact.path, artifact.class, artifact.count
+                );
+            }
         }
     }
     Ok(())
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+struct ExportedArtifact {
+    class: &'static str,
+    path: String,
+    count: usize,
+}
+
+fn effective_export_artifacts(artifacts: &[SessionExportArtifact]) -> Vec<SessionExportArtifact> {
+    let artifacts = if artifacts.is_empty() {
+        &[SessionExportArtifact::Full][..]
+    } else {
+        artifacts
+    };
+    let mut selected = Vec::new();
+    for artifact in artifacts {
+        if !selected.contains(artifact) {
+            selected.push(*artifact);
+        }
+    }
+    selected
+}
+
+fn write_attachments_export(
+    project_root: &Path,
+    id: &str,
+    out_dir: &Path,
+) -> Result<ExportedArtifact> {
+    let entries = read_context_snapshot_for_export(project_root, id)?;
+    let attachments = attachments_from_context(&entries);
+    let path = out_dir.join("attachments.json");
+    write_pretty_json(&path, &attachments)?;
+    Ok(ExportedArtifact {
+        class: SessionExportArtifact::Attachments.as_str(),
+        path: "attachments.json".to_string(),
+        count: attachments.len(),
+    })
+}
+
+fn write_notes_export(source: &Path, out_dir: &Path) -> Result<ExportedArtifact> {
+    let source_path = source.join("notes.ndjson");
+    let destination_path = out_dir.join("notes.ndjson");
+    let count = if source_path.exists() {
+        std::fs::copy(&source_path, &destination_path).with_context(|| {
+            format!(
+                "failed to copy {} -> {}",
+                source_path.display(),
+                destination_path.display()
+            )
+        })?;
+        count_non_empty_lines(&destination_path)?
+    } else {
+        std::fs::write(&destination_path, "")
+            .with_context(|| format!("failed to write {}", destination_path.display()))?;
+        0
+    };
+    Ok(ExportedArtifact {
+        class: SessionExportArtifact::Notes.as_str(),
+        path: "notes.ndjson".to_string(),
+        count,
+    })
+}
+
+fn write_timeline_export(
+    project_root: &Path,
+    id: &str,
+    out_dir: &Path,
+) -> Result<ExportedArtifact> {
+    let entries = load_session_transcript(project_root, id)?;
+    let committee = load_committee_replay_events(project_root, id);
+    let timeline = build_replay_timeline(&entries, &committee);
+    let values: Vec<_> = timeline.iter().map(ReplayTimelineEntry::to_json).collect();
+    let path = out_dir.join("timeline.json");
+    write_pretty_json(&path, &values)?;
+    Ok(ExportedArtifact {
+        class: SessionExportArtifact::Timeline.as_str(),
+        path: "timeline.json".to_string(),
+        count: values.len(),
+    })
+}
+
+fn write_export_manifest(
+    id: &str,
+    source: &Path,
+    out_dir: &Path,
+    selected: &[SessionExportArtifact],
+    copied: &[String],
+    generated: &[ExportedArtifact],
+) -> Result<()> {
+    let manifest = serde_json::json!({
+        "id": id,
+        "source": source.display().to_string(),
+        "destination": out_dir.display().to_string(),
+        "artifact_classes": selected.iter().map(|artifact| artifact.as_str()).collect::<Vec<_>>(),
+        "files": copied,
+        "artifacts": generated,
+    });
+    write_pretty_json(&out_dir.join("export-manifest.json"), &manifest)
+}
+
+fn read_context_snapshot_for_export(
+    project_root: &Path,
+    id: &str,
+) -> Result<Vec<peridot_context::ContextEntry>> {
+    let path = project_root
+        .join(".peridot")
+        .join("sessions")
+        .join(id)
+        .join("context.bin");
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let bytes =
+        std::fs::read(&path).with_context(|| format!("failed to read {}", path.display()))?;
+    serde_json::from_slice(&bytes).with_context(|| format!("failed to parse {}", path.display()))
+}
+
+fn count_non_empty_lines(path: &Path) -> Result<usize> {
+    let raw = std::fs::read_to_string(path)
+        .with_context(|| format!("failed to read {}", path.display()))?;
+    Ok(raw.lines().filter(|line| !line.trim().is_empty()).count())
+}
+
+fn write_pretty_json(path: &Path, value: &impl serde::Serialize) -> Result<()> {
+    let raw = serde_json::to_vec_pretty(value)?;
+    std::fs::write(path, raw).with_context(|| format!("failed to write {}", path.display()))
 }
 
 fn copy_dir_recursive(from: &Path, to: &Path) -> Result<()> {

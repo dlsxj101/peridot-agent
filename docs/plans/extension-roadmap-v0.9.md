@@ -34,14 +34,17 @@ shared daemon, TUI, and VS Code extension surfaces.
 
 ### E10. Session Artifact Export
 
-- **Status**: next.
+- **Status**: landed.
 - **Goal**: let operators export session artifacts such as attachments,
   notes, and replay timeline data into a portable directory without
   hand-copying files from `.peridot/sessions`.
 - **Where**: `peridot session export`, daemon command results, VS Code
   command palette/sidebar affordances.
-- **Done when**: the CLI can export selected artifact classes and VS
-  Code can trigger the export and open the output directory.
+- **Result**: `peridot session export` preserves the full-copy default
+  and adds repeatable `--artifact attachments|notes|timeline|full`
+  selectors. VS Code can export the active session's attachments,
+  notes, and replay timeline from the command palette or sidebar header,
+  then reveals the generated portable directory.
 
 ## Notes
 

@@ -88,6 +88,30 @@ pub(crate) enum OutputFormat {
     Json,
 }
 
+/// Session artifact class selected for `peridot session export`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub(crate) enum SessionExportArtifact {
+    /// Copy the full persisted session directory.
+    Full,
+    /// Export reconstructed session attachments.
+    Attachments,
+    /// Export operator notes.
+    Notes,
+    /// Export replay timeline data.
+    Timeline,
+}
+
+impl SessionExportArtifact {
+    fn as_str(self) -> &'static str {
+        match self {
+            SessionExportArtifact::Full => "full",
+            SessionExportArtifact::Attachments => "attachments",
+            SessionExportArtifact::Notes => "notes",
+            SessionExportArtifact::Timeline => "timeline",
+        }
+    }
+}
+
 /// Auth providers supported by `peridot login`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 pub(crate) enum AuthProvider {
@@ -268,6 +292,9 @@ pub(crate) enum SessionCommand {
         /// Destination directory. Created if missing.
         #[arg(long)]
         out: PathBuf,
+        /// Artifact class to export. Repeat for multiple classes. Defaults to full.
+        #[arg(long = "artifact", value_enum)]
+        artifacts: Vec<SessionExportArtifact>,
         /// Overwrite an existing destination directory.
         #[arg(long)]
         force: bool,

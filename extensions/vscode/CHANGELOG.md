@@ -32,6 +32,9 @@
 - Attachment cards now include a confirm-before-detach action backed by
   `/detach <path>`, so stale session context can be removed from the
   sidebar.
+- `Peridot: Export Session Artifacts` exports the active session's
+  attachments, notes, and replay timeline into a portable directory and
+  reveals it from VS Code.
 - `/codemap` now uses a persisted `.peridot/codemap.json` index, and
   `Peridot: Refresh Workspace Code Map Index` rebuilds it explicitly.
 - `Peridot: Search Workspace Code Map` runs `/codemap find <query>`
