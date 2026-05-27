@@ -720,6 +720,21 @@ shared daemon, TUI, and VS Code extension surfaces.
   operator types and close the argument picker once an exact provider id is
   present so Enter submits the command normally.
 
+### E61. Code-Map Subcommand Autocomplete
+
+- **Status**: landed.
+- **Goal**: make the code-map workflow discoverable from both TUI and VS
+  Code without forcing operators to remember the exact `/codemap`
+  subcommands.
+- **Where**: shared slash catalog `arg_options`, daemon
+  `session.command_catalog`, TUI finite-argument picker, and VS Code
+  composer autocomplete.
+- **Result**: `/codemap` now advertises `status`, `refresh`, `find`,
+  `locate`, `outline`, and `refs` as structured argument options while
+  keeping the detailed help hint for subcommands that need a follow-up
+  query/path/symbol. TUI and VS Code filter those subcommands as the
+  operator types and close the picker once an exact subcommand is present.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

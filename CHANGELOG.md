@@ -49,6 +49,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
   for `/provider <claude-api|openai-api|openrouter-api|openai-oauth>` through
   the shared slash catalog, TUI picker, daemon JSON catalog, and VS Code
   composer.
+- **Code-map subcommand autocomplete** now exposes `/codemap` subcommands
+  (`status`, `refresh`, `find`, `locate`, `outline`, `refs`) as structured
+  slash argument options for both TUI and VS Code.
 - **VS Code per-session composer history** now mirrors the TUI input
   history ergonomics: ArrowUp/ArrowDown recall submitted prompts per
   sidebar session, while in-progress drafts stay isolated across session

@@ -33,6 +33,12 @@ const commands: SlashCommandSpec[] = [
     argOptions: ['claude-api', 'openai-api', 'openrouter-api', 'openai-oauth'],
   },
   {
+    name: '/codemap',
+    description: 'show code map',
+    argHint: '[status|refresh|find <query>|locate <symbol>|outline <path>|refs <symbol>]',
+    argOptions: ['status', 'refresh', 'find', 'locate', 'outline', 'refs'],
+  },
+  {
     name: '/skills',
     description: 'list stored skills',
   },
@@ -102,6 +108,11 @@ test('slashArgumentContext filters finite options and closes after exact option'
   assert.equal(providers?.command.name, '/provider');
   assert.deepEqual(providers?.options, ['openai-api', 'openrouter-api', 'openai-oauth']);
   assert.equal(slashArgumentContext('/provider openai-oauth', commands), undefined);
+
+  const codemap = slashArgumentContext('/codemap l', commands);
+  assert.equal(codemap?.command.name, '/codemap');
+  assert.deepEqual(codemap?.options, ['locate']);
+  assert.equal(slashArgumentContext('/codemap locate', commands), undefined);
 });
 
 test('slashArgumentContext filters skill-name arguments', () => {

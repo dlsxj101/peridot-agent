@@ -517,6 +517,9 @@ fn suggestion_match_rank(suggestion: &SlashSuggestion, needle: &str) -> (u8, Str
 
 /// Returns finite argument options from an arg hint, excluding placeholder arms.
 pub(crate) fn finite_argument_options(spec: &SlashCommandSpec) -> Vec<&'static str> {
+    if spec.name == "/codemap" {
+        return vec!["status", "refresh", "find", "locate", "outline", "refs"];
+    }
     finite_argument_options_from_hint(spec.arg_hint)
 }
 
@@ -874,6 +877,15 @@ mod tests {
             slash_command_arg_options(provider),
             vec!["claude-api", "openai-api", "openrouter-api", "openai-oauth"]
         );
+
+        let codemap = slash_command_catalog()
+            .iter()
+            .find(|spec| spec.name == "/codemap")
+            .expect("codemap command");
+        assert_eq!(
+            slash_command_arg_options(codemap),
+            vec!["status", "refresh", "find", "locate", "outline", "refs"]
+        );
     }
 
     #[test]
@@ -904,6 +916,11 @@ mod tests {
             vec!["openai-api", "openrouter-api", "openai-oauth"]
         );
         assert!(slash_argument_context("/provider openai-oauth").is_none());
+
+        let context = slash_argument_context("/codemap l").expect("codemap options");
+        assert_eq!(context.command_name, "/codemap");
+        assert_eq!(context.options, vec!["locate"]);
+        assert!(slash_argument_context("/codemap locate").is_none());
     }
 
     #[test]

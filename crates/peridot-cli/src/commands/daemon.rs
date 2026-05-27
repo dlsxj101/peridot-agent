@@ -5434,6 +5434,11 @@ mod tests {
                         "openai-oauth"
                     ])
         }));
+        assert!(commands.iter().any(|entry| {
+            entry["name"] == "/codemap"
+                && entry["arg_options"]
+                    == serde_json::json!(["status", "refresh", "find", "locate", "outline", "refs"])
+        }));
         assert!(
             commands
                 .iter()
