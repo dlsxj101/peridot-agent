@@ -44,6 +44,9 @@
 - `/session count` is available through the shared slash catalog and
   returns the persisted lifecycle breakdown as a structured command
   card.
+- `/info` now runs through the daemon-backed slash path and returns a
+  structured session info card with session id, workspace, provider,
+  model, mode, permission, turn, token, and cost context.
 - `/codemap` now uses a persisted `.peridot/codemap.json` index, and
   `Peridot: Refresh Workspace Code Map Index` rebuilds it explicitly.
 - `Peridot: Search Workspace Code Map` runs `/codemap find <query>`

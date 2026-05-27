@@ -71,6 +71,19 @@ shared daemon, TUI, and VS Code extension surfaces.
   suspended / done / failed counts in the TUI transcript and returns a
   structured `session_count` command result for VS Code.
 
+### E13. Session Info Slash Parity
+
+- **Status**: landed.
+- **Goal**: make `/info` useful from the VS Code composer instead of
+  returning a local-placeholder command result.
+- **Where**: daemon `session.command`, shared slash state, VS Code
+  command-result typing.
+- **Result**: `/info` now returns a structured `info` command result
+  containing session id, workspace, provider, model, mode, permission,
+  reasoning, service tier, turn count, token total, and cost total. TUI
+  keeps its existing local transcript summary while editor clients get
+  daemon-backed data from the same command path.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

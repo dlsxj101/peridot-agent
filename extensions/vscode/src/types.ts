@@ -112,6 +112,13 @@ export interface CommandResultView {
   remaining_count?: number;
   remainingCount?: number;
   total?: number;
+  session_id?: string;
+  workspace?: string;
+  workspace_root?: string;
+  status?: string;
+  turns_used?: number;
+  total_tokens?: number;
+  total_cost_usd?: number;
   source_totals?: Record<string, number>;
   symbol_count?: number;
   todo_count?: number;

@@ -43,6 +43,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
   notifications. VS Code now reconciles its local session menu with
   daemon-persisted session records and watches `.peridot/memory.db` so
   another window's session changes surface after the shared DB updates.
+- **Daemon-backed `/info` parity** returns structured session metadata
+  for editor clients, including provider/model/mode/permission plus
+  persisted turn, token, and cost totals when a session record exists.
 - **VS Code Get Started walkthrough** guides first-time users through
   opening the sidebar, connecting a provider, reviewing settings, and
   running a first task using existing Peridot commands and view

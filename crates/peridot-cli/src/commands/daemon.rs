@@ -1495,6 +1495,7 @@ async fn execute_session_command(
             "severity": "info",
             "command": raw_command,
         })),
+        SlashCommand::Info => handle_command_info(state, session_id, raw_command).await,
         SlashCommand::Skill { name, args } => {
             // Try the project's skill store. If the name exists, inject
             // the body as a PlanReminder-style context entry so the
@@ -1556,7 +1557,6 @@ async fn execute_session_command(
         })),
         SlashCommand::Cost
         | SlashCommand::PlanShow
-        | SlashCommand::Info
         | SlashCommand::SessionSave
         | SlashCommand::SidepanelToggle
         | SlashCommand::Collapse
@@ -1673,6 +1673,9 @@ async fn apply_session_state_delta(
         }
         if let Some(model) = delta.model.as_ref() {
             spec.model = Some(model.clone());
+        }
+        if let Some(provider) = delta.provider.as_ref() {
+            spec.config.auth.primary = provider.clone();
         }
         if let Some(reasoning_effort) = delta.reasoning_effort {
             spec.reasoning_effort = Some(reasoning_effort);
@@ -1792,6 +1795,145 @@ fn handle_command_session_count(state: &DaemonState, raw_command: &str) -> Resul
         "suspended": summary.suspended,
         "done": summary.done,
         "failed": summary.failed,
+    }))
+}
+
+async fn handle_command_info(
+    state: &DaemonState,
+    session_id: Option<&str>,
+    raw_command: &str,
+) -> Result<Value, String> {
+    let live_spec = if let Some(session_id) = session_id {
+        state
+            .sessions
+            .lock()
+            .await
+            .get(session_id)
+            .map(|entry| entry.spec.clone())
+    } else {
+        None
+    };
+    let store = MemoryStore::new(state.project_root.join(".peridot/memory.db"));
+    let record = session_id.and_then(|id| {
+        store
+            .list_session_records()
+            .unwrap_or_default()
+            .into_iter()
+            .find(|record| record.id == id)
+    });
+    let config = live_spec
+        .as_ref()
+        .map(|spec| spec.config.clone())
+        .unwrap_or_else(|| state.run_config.as_ref().clone());
+    let session_label = session_id.unwrap_or("<none>");
+    let workspace_root = record
+        .as_ref()
+        .map(|record| record.workspace_root.clone())
+        .unwrap_or_else(|| state.project_root.as_ref().clone());
+    let workspace = workspace_root
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("<unknown>")
+        .to_string();
+    let model = live_spec
+        .as_ref()
+        .and_then(|spec| spec.model.clone())
+        .unwrap_or_else(|| {
+            if live_spec.is_some() {
+                config.models.main.clone()
+            } else {
+                state.run_template.model.clone()
+            }
+        });
+    let provider = config.auth.primary.clone();
+    let mode = live_spec
+        .as_ref()
+        .map(|spec| spec.mode)
+        .unwrap_or(config.defaults.mode);
+    let permission = live_spec
+        .as_ref()
+        .map(|spec| spec.permission)
+        .unwrap_or(state.run_template.permission);
+    let reasoning_effort = live_spec
+        .as_ref()
+        .and_then(|spec| spec.reasoning_effort)
+        .unwrap_or(state.run_template.reasoning_effort);
+    let service_tier = match live_spec
+        .as_ref()
+        .and_then(|spec| spec.service_tier.as_ref())
+    {
+        Some(Some(tier)) => Some(tier.clone()),
+        Some(None) => None,
+        None => state.run_template.service_tier.clone(),
+    };
+    let status = if live_spec.is_some() {
+        "running".to_string()
+    } else if let Some(record) = record.as_ref() {
+        format!("{:?}", record.status).to_ascii_lowercase()
+    } else if session_id.is_some() {
+        "unknown".to_string()
+    } else {
+        "workspace".to_string()
+    };
+    let turns_used = record.as_ref().map(|record| record.turns_used).unwrap_or(0);
+    let total_tokens = record
+        .as_ref()
+        .map(|record| record.total_tokens)
+        .unwrap_or(0);
+    let total_cost_usd = record
+        .as_ref()
+        .map(|record| record.total_cost_usd)
+        .unwrap_or(0.0);
+    let mut items = vec![
+        serde_json::json!({ "label": "session", "detail": session_label }),
+        serde_json::json!({ "label": "workspace", "detail": workspace }),
+        serde_json::json!({ "label": "status", "detail": status }),
+        serde_json::json!({ "label": "model", "detail": model }),
+        serde_json::json!({ "label": "provider", "detail": provider }),
+        serde_json::json!({ "label": "mode", "detail": mode.to_string() }),
+        serde_json::json!({ "label": "permission", "detail": permission.to_string() }),
+        serde_json::json!({ "label": "reasoning", "detail": reasoning_effort.to_string() }),
+        serde_json::json!({
+            "label": "service tier",
+            "detail": service_tier.as_deref().unwrap_or("standard")
+        }),
+        serde_json::json!({ "label": "turns", "detail": turns_used.to_string() }),
+        serde_json::json!({ "label": "tokens", "detail": total_tokens.to_string() }),
+        serde_json::json!({ "label": "cost", "detail": format!("${total_cost_usd:.4}") }),
+    ];
+    if let Some(record) = record.as_ref() {
+        if let Some(task) = record.last_task.as_deref()
+            && !task.trim().is_empty()
+        {
+            items.push(serde_json::json!({ "label": "last task", "detail": task }));
+        }
+        if let Some(branch) = record.worktree_branch.as_deref() {
+            items.push(serde_json::json!({ "label": "worktree branch", "detail": branch }));
+        }
+    }
+    Ok(serde_json::json!({
+        "kind": "info",
+        "title": "Session Info",
+        "message": format!(
+            "info: session {session_label} · workspace {workspace} · model {model} · provider {provider} · mode {mode} · permission {permission} · turn {turns_used} · tokens {total_tokens} · cost ${total_cost_usd:.4}"
+        ),
+        "severity": "info",
+        "command": raw_command,
+        "items": items,
+        "session_id": session_id,
+        "workspace": workspace,
+        "workspace_root": workspace_root,
+        "status": status,
+        "model": model,
+        "provider": provider,
+        "mode": mode.to_string(),
+        "permission": permission.to_string(),
+        "reasoning_effort": reasoning_effort.to_string(),
+        "service_tier": service_tier,
+        "committee_mode": config.committee.mode.to_string(),
+        "turns_used": turns_used,
+        "total_tokens": total_tokens,
+        "total_cost_usd": total_cost_usd,
     }))
 }
 
@@ -3793,6 +3935,78 @@ mod tests {
         assert_eq!(result["done"], 2);
         assert_eq!(result["failed"], 1);
         assert_eq!(result["items"].as_array().unwrap().len(), 5);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn session_command_info_returns_live_and_persisted_context() {
+        let root = test_project("session-command-info");
+        let store = MemoryStore::new(root.join(".peridot/memory.db"));
+        let mut record = SessionRecord::new("session-info", &root);
+        record.status = SessionLifecycle::Suspended;
+        record.last_task = Some("inspect daemon info".into());
+        record.total_tokens = 1234;
+        record.total_cost_usd = 0.42;
+        record.turns_used = 7;
+        store.save_session_record(&record).unwrap();
+
+        let mut config = PeridotConfig::default();
+        config.auth.primary = "openai-api".to_string();
+        config.models.main = "configured-model".to_string();
+        let (tx, _rx) = mpsc::unbounded_channel::<String>();
+        let state = DaemonState::new(root.clone(), config.clone(), test_options(None), tx);
+        let mut spec_config = config;
+        spec_config.auth.primary = "openrouter-api".to_string();
+        state.sessions.lock().await.insert(
+            "session-info".to_string(),
+            SessionEntry {
+                cancel: CancelToken::new(),
+                compact_request: Arc::new(AtomicBool::new(false)),
+                task: None,
+                spec: SessionRunSpec {
+                    task: "inspect daemon info".to_string(),
+                    mode: ExecutionMode::Goal,
+                    permission: PermissionMode::Safe,
+                    model: Some("live-model".to_string()),
+                    reasoning_effort: Some(peridot_common::ReasoningEffort::High),
+                    service_tier: Some(Some("fast".to_string())),
+                    config: spec_config,
+                },
+                approval_grants: Vec::new(),
+                waiting_approval: None,
+            },
+        );
+
+        execute_session_command(
+            &state,
+            Some("session-info"),
+            "/provider claude-api",
+            SlashCommand::Provider("claude-api".to_string()),
+        )
+        .await
+        .unwrap();
+        let result =
+            execute_session_command(&state, Some("session-info"), "/info", SlashCommand::Info)
+                .await
+                .unwrap();
+
+        assert_eq!(result["kind"], "info");
+        assert_eq!(result["session_id"], "session-info");
+        assert_eq!(result["status"], "running");
+        assert_eq!(result["model"], "live-model");
+        assert_eq!(result["provider"], "claude-api");
+        assert_eq!(result["mode"], "goal");
+        assert_eq!(result["permission"], "safe");
+        assert_eq!(result["reasoning_effort"], "high");
+        assert_eq!(result["service_tier"], "fast");
+        assert_eq!(result["turns_used"], 7);
+        assert_eq!(result["total_tokens"], 1234);
+        assert_eq!(result["total_cost_usd"], 0.42);
+        let items = result["items"].as_array().unwrap();
+        assert!(items.iter().any(|item| {
+            item["label"] == "last task" && item["detail"] == "inspect daemon info"
+        }));
+        shutdown_sessions(&state).await;
         let _ = std::fs::remove_dir_all(root);
     }
 
