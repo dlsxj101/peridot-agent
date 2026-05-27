@@ -75,6 +75,10 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
   the daemon to resolve session ids/titles from the persisted session
   index, then switches or materializes the matching VS Code sidebar
   session by daemon id.
+- **Daemon-backed `/goal <objective>` parity** now returns a structured
+  start-task command result with a goal-mode state delta, so editor
+  clients start goal runs through the shared daemon slash path instead
+  of re-parsing the objective locally.
 - **VS Code Get Started walkthrough** guides first-time users through
   opening the sidebar, connecting a provider, reviewing settings, and
   running a first task using existing Peridot commands and view

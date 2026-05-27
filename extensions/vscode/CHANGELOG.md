@@ -73,6 +73,9 @@
 - `/session switch <id|title>` now uses daemon target resolution, so
   persisted sessions can be selected from the composer even when the
   local sidebar had not materialized the card yet.
+- `/goal <objective>` now uses the daemon-backed slash path to return a
+  goal-mode `start_task` result, keeping mode changes and task launch on
+  the shared command contract.
 - `/codemap` now uses a persisted `.peridot/codemap.json` index, and
   `Peridot: Refresh Workspace Code Map Index` rebuilds it explicitly.
 - `Peridot: Search Workspace Code Map` runs `/codemap find <query>`

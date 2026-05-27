@@ -208,6 +208,19 @@ shared daemon, TUI, and VS Code extension surfaces.
   running state. VS Code selects an existing matching sidebar session or
   creates a local session card keyed by the daemon id before switching.
 
+### E23. Goal Start Slash Parity
+
+- **Status**: landed.
+- **Goal**: make VS Code `/goal <objective>` launch through the shared
+  daemon slash result path instead of locally re-parsing the objective.
+- **Where**: daemon `session.command`, shared slash state delta, VS Code
+  `start_task` handling.
+- **Result**: `/goal <objective>` now returns a structured `start_task`
+  result labeled `goal` plus a goal-mode state delta. VS Code applies the
+  delta and starts the task through the existing daemon `session.start`
+  path, while `/goal` with no objective remains a local composer-mode
+  toggle.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

@@ -1679,18 +1679,21 @@ async fn execute_session_command(
             }))
         }
         SlashCommand::Clear => handle_command_clear(state, session_id, raw_command).await,
-        SlashCommand::SidepanelToggle
-        | SlashCommand::Collapse
-        | SlashCommand::SessionNew(_)
-        | SlashCommand::GoalStart(_) => Ok(with_state_delta(
-            serde_json::json!({
-                "kind": "client_action",
-                "action": "local",
-                "title": "Handled by Extension",
-                "message": format!("{raw_command}: handled by the extension UI"),
-                "severity": "info",
-                "command": raw_command,
-            }),
+        SlashCommand::SidepanelToggle | SlashCommand::Collapse | SlashCommand::SessionNew(_) => {
+            Ok(with_state_delta(
+                serde_json::json!({
+                    "kind": "client_action",
+                    "action": "local",
+                    "title": "Handled by Extension",
+                    "message": format!("{raw_command}: handled by the extension UI"),
+                    "severity": "info",
+                    "command": raw_command,
+                }),
+                &state_delta,
+            ))
+        }
+        SlashCommand::GoalStart(goal) => Ok(with_state_delta(
+            start_task_result("goal", goal),
             &state_delta,
         )),
         SlashCommand::Fork(task) => Ok(start_task_result("fork", task)),
@@ -5084,6 +5087,33 @@ mod tests {
         assert_eq!(result["session_title"], "switch target");
         assert_eq!(result["status"], "suspended");
         assert_eq!(result["switched"], true);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn session_command_goal_start_returns_goal_start_task() {
+        let (tx, _rx) = mpsc::unbounded_channel::<String>();
+        let root = test_project("session-command-goal-start");
+        let state = DaemonState::new(
+            root.clone(),
+            PeridotConfig::default(),
+            test_options(None),
+            tx,
+        );
+
+        let result = execute_session_command(
+            &state,
+            None,
+            "/goal ship release",
+            SlashCommand::GoalStart("ship release".into()),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result["kind"], "start_task");
+        assert_eq!(result["label"], "goal");
+        assert_eq!(result["task"], "ship release");
+        assert_eq!(result["state_delta"]["mode"], "goal");
         let _ = std::fs::remove_dir_all(root);
     }
 
