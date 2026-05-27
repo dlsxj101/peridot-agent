@@ -31,6 +31,10 @@ native tool calling, and 2-Tier context management.
 | `Peridot: Locate Workspace Symbol` | Prompts for a symbol, runs `/codemap locate <symbol>`, and opens the first indexed definition. |
 | `Peridot: Outline Current File` | Runs `/codemap outline <path>` for the active editor file and renders indexed symbols. |
 | `Peridot: Find Workspace Symbol References` | Prompts for a symbol and runs `/codemap refs <symbol>` to render matching reference lines. |
+| `Peridot: Show Skills` | Runs `/skills` and renders active stored skills with copy/use/pin/archive actions. |
+| `Peridot: Show Archived Skills` | Runs `/skills archived` and renders archived skills with show/restore actions. |
+| `Peridot: Search Skills` | Prompts for a query and runs `/skills search <query>` against active stored skills. |
+| `Peridot: Search Archived Skills` | Prompts for a query and runs `/skills archived <query>` against archived stored skills. |
 | `Peridot: Attach File to Session` | Picks a workspace file, runs `/attach <path>`, and renders a compact attachment block with open/copy actions. |
 | `Peridot: Show Session Attachments` | Runs `/attachments` and renders files already loaded into the current session context, with open/copy/detach actions. |
 | `Peridot: Export Session Artifacts` | Exports the active session's attachments, notes, and replay timeline to a portable directory, then opens it. |
@@ -194,14 +198,11 @@ workflow requires `VSCE_PAT` and `OVSX_PAT` repository secrets.
   routine phase-transition filtering for a quieter transcript,
   risk-class chip colours on tool rows, and an LLM-authored session
   title with `"No title"` fallback.
-- **v0.6.0** — Settings webview polish (in-flight save guard, aria-
-  live flash, focus-visible outline on toggles, responsive layout
-  below 480px viewports, webview-side i18n for Save / Reload /
-  flash strings); per-skill description shown in `skill_list` L0
-  disclosure; L2 reference-file tier under
-  `.peridot/skills/auto/<name>/references/`; operator-facing
-  `peridot skill pin <name>` / `unpin <name>` subcommands. Multi-
-  session tab bar and remaining editor parity polish.
+- **v0.6.x+** — ✅ Settings webview polish, Hermes-style skill
+  directories, skill pin/archive/restore/detail/search surfaces,
+  daemon-backed session/slash parity, attachment inventory/lifecycle,
+  session artifact export, stale worktree/session reconciliation, and
+  shared autocomplete/help metadata across TUI and VS Code.
 
 ## Source
 
