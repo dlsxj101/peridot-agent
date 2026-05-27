@@ -166,6 +166,20 @@ shared daemon, TUI, and VS Code extension surfaces.
   structured `rewind` result, removes the visible last exchange, and
   refills the composer draft with the restored prompt.
 
+### E20. Deep Clear Slash Parity
+
+- **Status**: landed.
+- **Goal**: make VS Code `/clear` match the TUI's fresh-session
+  semantics instead of only wiping sidebar-local state.
+- **Where**: daemon `session.command`, live daemon session registry,
+  persisted session summaries/records/blobs, VS Code clear handling.
+- **Result**: `/clear` keeps the existing `action: "clear"` client
+  contract, but the daemon now cancels the active session, drops the
+  matching live registry entry, removes persisted session state, and
+  emits session-list invalidation when anything changed. VS Code then
+  clears the local transcript without sending a duplicate cancel request
+  after the daemon already handled it.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

@@ -1678,14 +1678,7 @@ async fn execute_session_command(
                 },
             }))
         }
-        SlashCommand::Clear => Ok(serde_json::json!({
-            "kind": "client_action",
-            "action": "clear",
-            "title": "Clear",
-            "message": "clear: transcript + context should be cleared by the client",
-            "severity": "info",
-            "command": raw_command,
-        })),
+        SlashCommand::Clear => handle_command_clear(state, session_id, raw_command).await,
         SlashCommand::SidepanelToggle
         | SlashCommand::Collapse
         | SlashCommand::SessionNew(_)
@@ -1923,6 +1916,45 @@ fn handle_command_session_count(state: &DaemonState, raw_command: &str) -> Resul
         "suspended": summary.suspended,
         "done": summary.done,
         "failed": summary.failed,
+    }))
+}
+
+async fn handle_command_clear(
+    state: &DaemonState,
+    session_id: Option<&str>,
+    raw_command: &str,
+) -> Result<Value, String> {
+    let (cancelled, deleted) = if let Some(session_id) = session_id {
+        let cancelled =
+            remove_live_daemon_session(state, session_id, SessionLifecycle::Suspended).await;
+        let deleted = delete_persisted_session_for_daemon(state, session_id)?;
+        if cancelled || deleted {
+            emit_session_list_changed(state).await;
+        }
+        (cancelled, deleted)
+    } else {
+        (false, false)
+    };
+    let message = if session_id.is_some() {
+        "clear: transcript + context wiped, new session"
+    } else {
+        "clear: no active daemon session; clear local transcript"
+    };
+    Ok(serde_json::json!({
+        "kind": "client_action",
+        "action": "clear",
+        "title": "Clear",
+        "message": message,
+        "severity": "info",
+        "command": raw_command,
+        "session_id": session_id,
+        "deleted": deleted,
+        "cancelled": cancelled,
+        "items": [
+            { "label": "session", "detail": session_id.unwrap_or("<none>") },
+            { "label": "deleted persisted data", "detail": deleted.to_string() },
+            { "label": "cancelled live run", "detail": cancelled.to_string() },
+        ],
     }))
 }
 
@@ -4863,6 +4895,74 @@ mod tests {
         );
         assert!(store.get_session("session-delete").unwrap().is_none());
         assert!(!sessions_root.join("session-delete").exists());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn session_command_clear_removes_live_and_persisted_session() {
+        let root = test_project("session-command-clear");
+        let store = MemoryStore::new(root.join(".peridot/memory.db"));
+        let record = SessionRecord::new("session-clear", &root);
+        store.save_session_record(&record).unwrap();
+        store
+            .save_session(&SessionSummary {
+                id: "session-clear".into(),
+                summary: "clear me".into(),
+            })
+            .unwrap();
+        let sessions_root = root.join(".peridot").join("sessions");
+        peridot_memory::save_session_blob(
+            &sessions_root,
+            "session-clear",
+            "tui_state.json",
+            br#"{"sessions":[]}"#,
+        )
+        .unwrap();
+        let (tx, _rx) = mpsc::unbounded_channel::<String>();
+        let state = DaemonState::new(
+            root.clone(),
+            PeridotConfig::default(),
+            test_options(None),
+            tx,
+        );
+        state.sessions.lock().await.insert(
+            "session-clear".to_string(),
+            SessionEntry {
+                cancel: CancelToken::new(),
+                compact_request: Arc::new(AtomicBool::new(false)),
+                task: None,
+                spec: SessionRunSpec {
+                    task: "clear active session".to_string(),
+                    mode: ExecutionMode::Execute,
+                    permission: PermissionMode::Auto,
+                    model: None,
+                    reasoning_effort: None,
+                    service_tier: None,
+                    config: PeridotConfig::default(),
+                },
+                usage: Arc::new(StdMutex::new(LiveSessionUsage::default())),
+                plan: Arc::new(StdMutex::new(LiveSessionPlan::default())),
+                goal: Arc::new(StdMutex::new(LiveSessionGoal::default())),
+                approval_grants: Vec::new(),
+                waiting_approval: None,
+            },
+        );
+
+        let result =
+            execute_session_command(&state, Some("session-clear"), "/clear", SlashCommand::Clear)
+                .await
+                .unwrap();
+
+        assert_eq!(result["kind"], "client_action");
+        assert_eq!(result["action"], "clear");
+        assert_eq!(result["session_id"], "session-clear");
+        assert_eq!(result["deleted"], true);
+        assert_eq!(result["cancelled"], true);
+        assert!(!state.sessions.lock().await.contains_key("session-clear"));
+        assert!(store.get_session_record("session-clear").unwrap().is_none());
+        assert!(store.get_session("session-clear").unwrap().is_none());
+        assert!(!sessions_root.join("session-clear").exists());
+        shutdown_sessions(&state).await;
         let _ = std::fs::remove_dir_all(root);
     }
 

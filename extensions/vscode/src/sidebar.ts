@@ -38,7 +38,7 @@ export interface SidebarHandlers {
   runTask: (task: string, options: RunOptions) => Promise<void>;
   runSlashCommand: (command: string, options: RunOptions) => Promise<CommandResultView>;
   cancelTask: () => Promise<void>;
-  clearSession: () => Promise<void>;
+  clearSession: (options?: { skipDaemonCancel?: boolean }) => Promise<void>;
   loginOpenAi: () => Promise<void>;
   refreshStatus: () => Promise<void>;
   showCodeMap: () => Promise<void>;
@@ -1265,7 +1265,9 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
     try {
       const result = await this.handlers.runSlashCommand(input, options);
       if (result.action === 'clear') {
-        await this.handlers.clearSession();
+        await this.handlers.clearSession({
+          skipDaemonCancel: result.cancelled === true || result.deleted === true,
+        });
         this.clearActiveSession();
         this.append({ role: 'status', text: 'clear: transcript + context wiped, new session' });
         return;

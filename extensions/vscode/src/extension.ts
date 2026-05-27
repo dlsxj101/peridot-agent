@@ -124,7 +124,8 @@ export function activate(context: vscode.ExtensionContext) {
     runSlashCommand: async (command: string, options: RunOptions): Promise<CommandResultView> =>
       runSlashCommand(command, output, sidebar, options),
     cancelTask: async (): Promise<void> => cancelTask(output, sidebar),
-    clearSession: async (): Promise<void> => clearExtensionSession(output, sidebar),
+    clearSession: async (options?: { skipDaemonCancel?: boolean }): Promise<void> =>
+      clearExtensionSession(output, sidebar, options?.skipDaemonCancel === true),
     loginOpenAi: async (): Promise<void> => loginOpenAi(output, sidebar),
     refreshStatus: async (): Promise<void> => refreshStatus(output, sidebar, { force: true }),
     showCodeMap: async (): Promise<void> => showWorkspaceCodeMap(output, sidebar, false),
@@ -2085,9 +2086,10 @@ async function openWorkspaceFile(
 async function clearExtensionSession(
   output: vscode.OutputChannel,
   sidebar: PeridotSidebarProvider,
+  skipDaemonCancel = false,
 ): Promise<void> {
   const current = currentActiveRun(sidebar) ?? singleActiveRun();
-  if (current?.sessionId) {
+  if (current?.sessionId && !skipDaemonCancel) {
     try {
       await current.daemon.send('session.cancel', { session_id: current.sessionId });
     } catch (err) {

@@ -63,6 +63,10 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **Semantic `/rewind` parity** removes the last user turn from the
   session context snapshot and restores that prompt into TUI / VS Code
   input surfaces, so the next turn no longer sees the rewound exchange.
+- **Daemon-backed `/clear` parity** now lets editor clients clear the
+  visible transcript while the daemon cancels the active session and
+  removes the matching persisted session record and blobs, matching the
+  TUI's fresh-session semantics.
 - **VS Code Get Started walkthrough** guides first-time users through
   opening the sidebar, connecting a provider, reviewing settings, and
   running a first task using existing Peridot commands and view
