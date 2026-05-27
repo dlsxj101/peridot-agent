@@ -1938,6 +1938,38 @@ fn tab_autocompletes_mcp_add_transport_argument() {
 }
 
 #[test]
+fn tab_autocompletes_mcp_server_name_arguments() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    state.side_panel.mcp_status = vec![
+        McpServerSummary {
+            name: "filesystem".to_string(),
+            tool_count: 4,
+            connected: true,
+        },
+        McpServerSummary {
+            name: "github".to_string(),
+            tool_count: 2,
+            connected: false,
+        },
+    ];
+
+    for character in "/mcp test git".chars() {
+        handle_key_event(
+            &mut state,
+            KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE),
+        );
+    }
+    handle_key_event(&mut state, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    assert_eq!(state.input, "/mcp test github");
+}
+
+#[test]
 fn skills_slash_queues_skill_inventory_load() {
     let mut state = TuiState::new(HeaderState::new(
         ExecutionMode::Execute,

@@ -64,6 +64,8 @@ const sessions = [
   { id: 's-2', title: 'release prep' },
 ];
 
+const mcpServers = [{ name: 'filesystem' }, { name: 'github' }];
+
 test('filteredSlashCommands ranks prefixes before description matches', () => {
   const matches = filteredSlashCommands('/switch', commands);
 
@@ -149,6 +151,23 @@ test('slashArgumentContext filters session target arguments', () => {
   assert.equal(slashArgumentContext('/session rename s-1 new title', commands, sessions), undefined);
 });
 
+test('slashArgumentContext filters mcp server arguments', () => {
+  const context = slashArgumentContext('/mcp test g', commands, [], mcpServers);
+
+  assert.equal(context?.command.name, '/mcp test');
+  assert.deepEqual(context?.options, ['github']);
+  assert.equal(context?.appendSpace, undefined);
+  assert.equal(slashArgumentContext('/mcp test github', commands, [], mcpServers), undefined);
+  assert.equal(
+    slashArgumentContext('/mcp remove github extra', commands, [], mcpServers),
+    undefined,
+  );
+  assert.deepEqual(
+    slashArgumentContext('/mcp remove ', commands, [], mcpServers)?.options,
+    ['filesystem', 'github'],
+  );
+});
+
 test('slashExactSelectionIsRunnable allows optional-arg exact commands only', () => {
   assert.equal(slashExactSelectionIsRunnable('/skills', commands, 0), true);
   assert.equal(slashExactSelectionIsRunnable('/reasoning', commands, 0), false);
@@ -157,4 +176,5 @@ test('slashExactSelectionIsRunnable allows optional-arg exact commands only', ()
 test('slashPickerItemCount uses argument options when an argument picker is open', () => {
   assert.equal(slashPickerItemCount('/reasoning ', commands), 5);
   assert.equal(slashPickerItemCount('/session switch ', commands, sessions), 2);
+  assert.equal(slashPickerItemCount('/mcp test ', commands, [], mcpServers), 2);
 });

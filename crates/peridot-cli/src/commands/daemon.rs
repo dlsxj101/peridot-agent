@@ -667,6 +667,16 @@ async fn handle_status(state: &DaemonState, id: Value) -> Result<()> {
     let config = state.run_config.as_ref();
     let auth = auth_status(config).await;
     let worktree_cleanup = reconcile_stale_worktrees(state.project_root.as_ref());
+    let mcp: Vec<Value> = config
+        .mcp
+        .iter()
+        .map(|entry| {
+            serde_json::json!({
+                "name": entry.name,
+                "transport": entry.transport.to_string(),
+            })
+        })
+        .collect();
     emit_response(
         state,
         id,
@@ -679,6 +689,7 @@ async fn handle_status(state: &DaemonState, id: Value) -> Result<()> {
             "mode": format!("{:?}", config.defaults.mode),
             "permission": format!("{:?}", state.run_template.permission),
             "auth": auth,
+            "mcp": mcp,
             "worktree_cleanup": worktree_cleanup,
         }),
     )
@@ -5336,6 +5347,7 @@ mod tests {
         assert!(out[0]["result"]["project_root"].as_str().is_some());
         assert_eq!(out[0]["result"]["auth"]["provider"], "claude-api");
         assert_eq!(out[0]["result"]["auth"]["method"], "api_key");
+        assert!(out[0]["result"]["mcp"].as_array().is_some());
         assert!(out[0]["result"]["worktree_cleanup"].is_object());
     }
 

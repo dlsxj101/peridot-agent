@@ -43,6 +43,7 @@ interface DaemonStatusResult {
     method?: string;
     source?: string;
   };
+  mcp?: Array<{ name?: string; transport?: string }>;
   worktree_cleanup?: WorktreeCleanupResult;
 }
 
@@ -1851,6 +1852,7 @@ async function refreshStatus(
       authConfigured: Boolean(result.auth?.configured),
       authMethod: result.auth?.method,
       authSource: result.auth?.source,
+      mcpServers: normalizeMcpServers(result.mcp),
       status: cleanupProblem ? 'Needs attention' : activeRunCount() > 0 ? 'Running' : 'Idle',
       problem: cleanupProblem,
       running: activeRunCount() > 0,
@@ -1865,6 +1867,18 @@ async function refreshStatus(
       running: activeRunCount() > 0,
     });
   }
+}
+
+function normalizeMcpServers(
+  servers: DaemonStatusResult['mcp'],
+): Array<{ name: string; transport?: string }> {
+  if (!Array.isArray(servers)) return [];
+  return servers
+    .map((server) => ({
+      name: typeof server.name === 'string' ? server.name.trim() : '',
+      transport: typeof server.transport === 'string' ? server.transport : undefined,
+    }))
+    .filter((server) => server.name.length > 0);
 }
 
 function worktreeCleanupSummary(cleanup?: WorktreeCleanupResult): string | undefined {

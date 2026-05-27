@@ -276,6 +276,12 @@ export interface SidebarContext {
   status?: string;
   problem?: string;
   running?: boolean;
+  mcpServers?: McpServerSummary[];
+}
+
+export interface McpServerSummary {
+  name: string;
+  transport?: string;
 }
 
 export interface UsageSlice {

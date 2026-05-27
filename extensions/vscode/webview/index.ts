@@ -3474,7 +3474,12 @@ function filteredSlashCommands(input: string): SlashCommandSpec[] {
 }
 
 function slashPickerItemCount(input: string): number {
-  return countSlashPickerItems(input, slashCommands, state?.sessions ?? []);
+  return countSlashPickerItems(
+    input,
+    slashCommands,
+    state?.sessions ?? [],
+    state?.context.mcpServers ?? [],
+  );
 }
 
 function updateSlashPicker(textarea: HTMLTextAreaElement, picker: HTMLElement): void {
@@ -3589,11 +3594,22 @@ function acceptSlashSelection(textarea: HTMLTextAreaElement, picker: HTMLElement
 }
 
 function slashExactSelectionIsRunnable(input: string): boolean {
-  return isSlashExactSelectionRunnable(input, slashCommands, slashPickerSelected, state?.sessions ?? []);
+  return isSlashExactSelectionRunnable(
+    input,
+    slashCommands,
+    slashPickerSelected,
+    state?.sessions ?? [],
+    state?.context.mcpServers ?? [],
+  );
 }
 
 function slashArgumentContext(input: string): SlashArgumentContext | undefined {
-  return resolveSlashArgumentContext(input, slashCommands, state?.sessions ?? []);
+  return resolveSlashArgumentContext(
+    input,
+    slashCommands,
+    state?.sessions ?? [],
+    state?.context.mcpServers ?? [],
+  );
 }
 
 function slashArgumentOptions(command: SlashCommandSpec): string[] {

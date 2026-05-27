@@ -749,6 +749,20 @@ shared daemon, TUI, and VS Code extension surfaces.
   be entered immediately. The picker stays closed once a complete transport
   is present or a command/URL argument has started.
 
+### E63. MCP Server-Name Autocomplete
+
+- **Status**: landed.
+- **Goal**: make MCP maintenance commands safer from both TUI and VS Code
+  by completing configured server names for destructive or probing actions.
+- **Where**: daemon `peridot.status` MCP summary, extension status
+  context, TUI side-panel MCP summaries, TUI dynamic slash argument
+  context, and VS Code webview slash autocomplete helper.
+- **Result**: `/mcp remove <name>` and `/mcp test <name>` now suggest
+  configured MCP server names. TUI reads the existing side-panel MCP
+  status list, while VS Code receives the configured MCP names through
+  status refresh and passes them into the composer picker. Exact names and
+  commands with extra arguments close the picker so Enter submits normally.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

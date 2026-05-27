@@ -11,6 +11,10 @@ export interface SlashSessionTarget {
   title?: string;
 }
 
+export interface SlashMcpServerTarget {
+  name: string;
+}
+
 export function filteredSlashCommands(
   input: string,
   slashCommands: SlashCommandSpec[],
@@ -33,8 +37,9 @@ export function slashPickerItemCount(
   input: string,
   slashCommands: SlashCommandSpec[],
   sessionTargets: SlashSessionTarget[] = [],
+  mcpServers: SlashMcpServerTarget[] = [],
 ): number {
-  const argumentContext = slashArgumentContext(input, slashCommands, sessionTargets);
+  const argumentContext = slashArgumentContext(input, slashCommands, sessionTargets, mcpServers);
   if (argumentContext) return argumentContext.options.length;
   return filteredSlashCommands(input, slashCommands).length;
 }
@@ -44,8 +49,9 @@ export function slashExactSelectionIsRunnable(
   slashCommands: SlashCommandSpec[],
   selected: number,
   sessionTargets: SlashSessionTarget[] = [],
+  mcpServers: SlashMcpServerTarget[] = [],
 ): boolean {
-  if (slashArgumentContext(input, slashCommands, sessionTargets)) return false;
+  if (slashArgumentContext(input, slashCommands, sessionTargets, mcpServers)) return false;
   const matches = filteredSlashCommands(input, slashCommands);
   const command = matches[selected];
   if (!command) return false;
@@ -56,6 +62,7 @@ export function slashArgumentContext(
   input: string,
   slashCommands: SlashCommandSpec[],
   sessionTargets: SlashSessionTarget[] = [],
+  mcpServers: SlashMcpServerTarget[] = [],
 ): SlashArgumentContext | undefined {
   const query = input;
   if (!query.startsWith('/') || query.includes('\n')) return undefined;
@@ -63,6 +70,8 @@ export function slashArgumentContext(
   if (skillContext) return skillContext;
   const sessionContext = sessionTargetArgumentContext(query, sessionTargets);
   if (sessionContext) return sessionContext;
+  const mcpServerContext = mcpServerArgumentContext(query, mcpServers);
+  if (mcpServerContext) return mcpServerContext;
   const mcpAddContext = mcpAddTransportArgumentContext(query);
   if (mcpAddContext) return mcpAddContext;
   const command = [...slashCommands]
@@ -81,6 +90,34 @@ export function slashArgumentContext(
     ? options.filter((option) => option.toLowerCase().startsWith(rest))
     : options;
   return { command, options: filtered };
+}
+
+function mcpServerArgumentContext(
+  query: string,
+  mcpServers: SlashMcpServerTarget[],
+): SlashArgumentContext | undefined {
+  const commandName = ['/mcp remove', '/mcp test']
+    .filter((candidate) => query === candidate || query.startsWith(`${candidate} `))
+    .sort((a, b) => b.length - a.length)[0];
+  if (!commandName) return undefined;
+  const needle = query.slice(commandName.length).trim().toLowerCase();
+  if (/\s/.test(needle)) return undefined;
+  const options = [...new Set(
+    mcpServers
+      .map((server) => server.name.trim())
+      .filter((name) => name.length > 0)
+      .filter((name) => needle.length === 0 || name.toLowerCase().startsWith(needle)),
+  )].sort((a, b) => a.localeCompare(b));
+  if (needle && options.some((option) => option.toLowerCase() === needle)) return undefined;
+  if (options.length === 0) return undefined;
+  return {
+    command: {
+      name: commandName,
+      description: 'MCP server',
+      category: 'mcp',
+    },
+    options,
+  };
 }
 
 function sessionTargetArgumentContext(

@@ -555,7 +555,7 @@ fn slash_argument_context_with_skills(
     query: &str,
     skills: &[SkillSlashSuggestion],
 ) -> Option<SlashArgumentContext> {
-    slash_argument_context_with_dynamic(query, skills, &[])
+    slash_argument_context_with_dynamic(query, skills, &[], &[])
 }
 
 /// Returns the active argument picker, including dynamic skill/session options.
@@ -563,6 +563,7 @@ pub(crate) fn slash_argument_context_with_dynamic(
     query: &str,
     skills: &[SkillSlashSuggestion],
     sessions: &[crate::session_directory::SessionDirectoryItem],
+    mcp_servers: &[crate::state::McpServerSummary],
 ) -> Option<SlashArgumentContext> {
     if !query.starts_with('/') || query.contains('\n') {
         return None;
@@ -571,6 +572,9 @@ pub(crate) fn slash_argument_context_with_dynamic(
         return Some(context);
     }
     if let Some(context) = session_target_argument_context(query, sessions) {
+        return Some(context);
+    }
+    if let Some(context) = mcp_server_argument_context(query, mcp_servers) {
         return Some(context);
     }
     if let Some(context) = mcp_add_transport_argument_context(query) {
@@ -710,6 +714,43 @@ fn mcp_add_transport_argument_context(query: &str) -> Option<SlashArgumentContex
     })
 }
 
+fn mcp_server_argument_context(
+    query: &str,
+    mcp_servers: &[crate::state::McpServerSummary],
+) -> Option<SlashArgumentContext> {
+    let command_name = ["/mcp remove", "/mcp test"]
+        .into_iter()
+        .filter(|command| query == *command || query.starts_with(&format!("{command} ")))
+        .max_by_key(|command| command.len())?;
+    let rest = query[command_name.len()..].trim().to_ascii_lowercase();
+    if rest.contains(char::is_whitespace) {
+        return None;
+    }
+    let mut options: Vec<String> = mcp_servers
+        .iter()
+        .map(|server| server.name.trim().to_string())
+        .filter(|name| !name.is_empty())
+        .filter(|name| rest.is_empty() || name.to_ascii_lowercase().starts_with(&rest))
+        .collect();
+    options.sort();
+    options.dedup();
+    if !rest.is_empty()
+        && options
+            .iter()
+            .any(|option| option.eq_ignore_ascii_case(&rest))
+    {
+        return None;
+    }
+    if options.is_empty() {
+        return None;
+    }
+    Some(SlashArgumentContext {
+        command_name: command_name.to_string(),
+        options,
+        append_space: false,
+    })
+}
+
 fn session_target_argument_context(
     query: &str,
     sessions: &[crate::session_directory::SessionDirectoryItem],
@@ -762,8 +803,9 @@ pub(crate) fn picker_len_with_dynamic(
     query: &str,
     skills: &[SkillSlashSuggestion],
     sessions: &[crate::session_directory::SessionDirectoryItem],
+    mcp_servers: &[crate::state::McpServerSummary],
 ) -> usize {
-    slash_argument_context_with_dynamic(query, skills, sessions)
+    slash_argument_context_with_dynamic(query, skills, sessions, mcp_servers)
         .map(|context| context.options.len())
         .unwrap_or_else(|| filtered_suggestions(query, skills).len())
 }
@@ -1033,22 +1075,62 @@ mod tests {
         ];
 
         let context =
-            slash_argument_context_with_dynamic("/session switch release", &[], &sessions)
+            slash_argument_context_with_dynamic("/session switch release", &[], &sessions, &[])
                 .expect("session target");
         assert_eq!(context.command_name, "/session switch");
         assert_eq!(context.options, vec!["s-2"]);
         assert!(!context.append_space);
 
-        let context = slash_argument_context_with_dynamic("/session rename parser", &[], &sessions)
-            .expect("rename target");
+        let context =
+            slash_argument_context_with_dynamic("/session rename parser", &[], &sessions, &[])
+                .expect("rename target");
         assert_eq!(context.options, vec!["s-1"]);
         assert!(context.append_space);
 
         assert!(
-            slash_argument_context_with_dynamic("/session switch s-2", &[], &sessions).is_none()
+            slash_argument_context_with_dynamic("/session switch s-2", &[], &sessions, &[])
+                .is_none()
         );
         assert!(
-            slash_argument_context_with_dynamic("/session rename s-1 new title", &[], &sessions)
+            slash_argument_context_with_dynamic(
+                "/session rename s-1 new title",
+                &[],
+                &sessions,
+                &[]
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn mcp_server_argument_context_filters_configured_servers() {
+        let servers = vec![
+            crate::state::McpServerSummary {
+                name: "filesystem".to_string(),
+                tool_count: 4,
+                connected: true,
+            },
+            crate::state::McpServerSummary {
+                name: "github".to_string(),
+                tool_count: 2,
+                connected: false,
+            },
+        ];
+
+        let context = slash_argument_context_with_dynamic("/mcp test g", &[], &[], &servers)
+            .expect("mcp server");
+        assert_eq!(context.command_name, "/mcp test");
+        assert_eq!(context.options, vec!["github"]);
+        assert!(!context.append_space);
+
+        let context = slash_argument_context_with_dynamic("/mcp remove ", &[], &[], &servers)
+            .expect("mcp remove");
+        assert_eq!(context.options, vec!["filesystem", "github"]);
+        assert!(
+            slash_argument_context_with_dynamic("/mcp test github", &[], &[], &servers).is_none()
+        );
+        assert!(
+            slash_argument_context_with_dynamic("/mcp test github extra", &[], &[], &servers)
                 .is_none()
         );
     }

@@ -1576,6 +1576,7 @@ impl TuiState {
             &query,
             &self.skill_suggestions,
             &self.sessions,
+            &self.side_panel.mcp_status,
         );
         if len == 0 {
             self.slash_picker = None;
@@ -1601,6 +1602,7 @@ impl TuiState {
             &picker.query,
             &self.skill_suggestions,
             &self.sessions,
+            &self.side_panel.mcp_status,
         );
         if len == 0 {
             picker.selected = 0;
@@ -1621,6 +1623,7 @@ impl TuiState {
             &query,
             &self.skill_suggestions,
             &self.sessions,
+            &self.side_panel.mcp_status,
         ) {
             let Some(option) = context
                 .options
@@ -1665,6 +1668,7 @@ impl TuiState {
             &picker.query,
             &self.skill_suggestions,
             &self.sessions,
+            &self.side_panel.mcp_status,
         )
         .is_some()
         {

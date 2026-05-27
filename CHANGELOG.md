@@ -55,6 +55,8 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **MCP add transport autocomplete** now suggests `stdio` / `http` after
   `/mcp add <name> ` in both TUI and VS Code, leaving a trailing space so
   operators can immediately type the command or URL.
+- **MCP server-name autocomplete** now suggests configured server names for
+  `/mcp remove <name>` and `/mcp test <name>` in both TUI and VS Code.
 - **VS Code per-session composer history** now mirrors the TUI input
   history ergonomics: ArrowUp/ArrowDown recall submitted prompts per
   sidebar session, while in-progress drafts stay isolated across session
