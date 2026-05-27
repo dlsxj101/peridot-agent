@@ -833,6 +833,20 @@ shared daemon, TUI, and VS Code extension surfaces.
   `xhigh`, `medium`, `low`, `off`, `stop`, and `less`. Bare `/think`
   remains runnable as the high-reasoning shortcut.
 
+### E69. Fast And Autofix Alias Autocomplete
+
+- **Status**: landed.
+- **Goal**: keep service-tier and autofix shortcut autocomplete aligned
+  with parser-supported aliases without making free-form numeric autofix
+  limits rigid.
+- **Where**: TUI dynamic slash argument context, TUI Tab acceptance path,
+  and VS Code webview slash autocomplete helper.
+- **Result**: `/fast <arg>` now suggests `on`, `off`, `toggle`, `true`,
+  `false`, `1`, `0`, and `standard`; `/autofix <arg>` now suggests
+  `on`, `off`, `true`, `false`, `1`, and `0`. Bare commands remain
+  runnable, and `/autofix <N>` still submits as a free-form max-attempts
+  value.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

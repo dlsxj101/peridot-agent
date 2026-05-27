@@ -600,6 +600,12 @@ pub(crate) fn slash_argument_context_with_dynamic(
     if let Some(context) = think_alias_argument_context(query) {
         return Some(context);
     }
+    if let Some(context) = fast_alias_argument_context(query) {
+        return Some(context);
+    }
+    if let Some(context) = autofix_alias_argument_context(query) {
+        return Some(context);
+    }
     let spec = slash_command_catalog()
         .iter()
         .filter(|spec| !finite_argument_options(spec).is_empty())
@@ -964,9 +970,19 @@ const EXPORT_ARTIFACT_OPTIONS: &[&str] = &["attachments", "notes", "timeline", "
 const THINK_ALIAS_OPTIONS: &[&str] = &[
     "hard", "harder", "more", "high", "xhigh", "medium", "low", "off", "stop", "less",
 ];
+const FAST_ALIAS_OPTIONS: &[&str] = &["on", "off", "toggle", "true", "false", "1", "0", "standard"];
+const AUTOFIX_ALIAS_OPTIONS: &[&str] = &["on", "off", "true", "false", "1", "0"];
 
 fn think_alias_argument_context(query: &str) -> Option<SlashArgumentContext> {
     static_subcommand_argument_context(query, "/think", THINK_ALIAS_OPTIONS, false, true)
+}
+
+fn fast_alias_argument_context(query: &str) -> Option<SlashArgumentContext> {
+    static_subcommand_argument_context(query, "/fast", FAST_ALIAS_OPTIONS, false, true)
+}
+
+fn autofix_alias_argument_context(query: &str) -> Option<SlashArgumentContext> {
+    static_subcommand_argument_context(query, "/autofix", AUTOFIX_ALIAS_OPTIONS, false, true)
 }
 
 fn static_subcommand_argument_context(
@@ -1200,7 +1216,10 @@ mod tests {
         assert!(slash_argument_context("/reasoning xhigh").is_none());
 
         let context = slash_argument_context("/autofix ").expect("autofix options");
-        assert_eq!(context.options, vec!["on", "off"]);
+        assert_eq!(
+            context.options,
+            vec!["on", "off", "true", "false", "1", "0"]
+        );
         assert!(slash_argument_context("/autofix").is_none());
 
         let context = slash_argument_context("/subagent model ").expect("reset option");
@@ -1226,6 +1245,19 @@ mod tests {
         assert_eq!(context.options, vec!["hard", "harder", "high"]);
         assert!(slash_argument_context("/think hard").is_none());
         assert!(slash_argument_context("/think fix tests").is_none());
+
+        assert!(slash_argument_context("/fast").is_none());
+        let context = slash_argument_context("/fast st").expect("fast alias options");
+        assert_eq!(context.command_name, "/fast");
+        assert_eq!(context.options, vec!["standard"]);
+        assert!(slash_argument_context("/fast standard").is_none());
+
+        assert!(slash_argument_context("/autofix").is_none());
+        let context = slash_argument_context("/autofix f").expect("autofix alias options");
+        assert_eq!(context.command_name, "/autofix");
+        assert_eq!(context.options, vec!["false"]);
+        assert!(slash_argument_context("/autofix false").is_none());
+        assert!(slash_argument_context("/autofix 5").is_none());
 
         assert!(slash_argument_context("/mcp add local").is_none());
         let context = slash_argument_context("/mcp add local ").expect("mcp transport options");

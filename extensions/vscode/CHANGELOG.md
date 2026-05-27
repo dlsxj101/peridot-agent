@@ -48,6 +48,9 @@
   remaining artifact classes after each accepted token.
 - Think alias autocomplete now suggests the parser-supported `/think`
   arguments, including `hard`, `harder`, `more`, `stop`, and `less`.
+- Fast and autofix autocomplete now suggests parser-supported aliases such
+  as `/fast standard` and `/autofix false` while keeping numeric autofix
+  limits free-form.
 - The composer now keeps submitted prompt history per sidebar session.
   ArrowUp / ArrowDown recall previous prompts when the caret is on the
   first or last textarea line, and unsent drafts no longer leak across

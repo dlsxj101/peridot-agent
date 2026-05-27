@@ -39,6 +39,18 @@ const commands: SlashCommandSpec[] = [
     argOptions: ['off', 'low', 'medium', 'high', 'xhigh'],
   },
   {
+    name: '/fast',
+    description: 'toggle fast service tier',
+    argHint: '[on|off|toggle]',
+    argOptions: ['on', 'off', 'toggle'],
+  },
+  {
+    name: '/autofix',
+    description: 'toggle or configure autofix',
+    argHint: '[on|off|<N>]',
+    argOptions: ['on', 'off'],
+  },
+  {
     name: '/codemap',
     description: 'show code map',
     argHint: '[status|refresh|find <query>|locate <symbol>|outline <path>|refs <symbol>]',
@@ -256,6 +268,18 @@ test('slashArgumentContext filters think alias arguments', () => {
   assert.equal(slashArgumentContext('/think fix tests', commands), undefined);
 });
 
+test('slashArgumentContext filters fast and autofix alias arguments', () => {
+  assert.equal(slashArgumentContext('/fast', commands), undefined);
+  assert.deepEqual(slashArgumentContext('/fast st', commands)?.options, ['standard']);
+  assert.equal(slashArgumentContext('/fast standard', commands), undefined);
+  assert.deepEqual(slashArgumentContext('/fast t', commands)?.options, ['toggle', 'true']);
+
+  assert.equal(slashArgumentContext('/autofix', commands), undefined);
+  assert.deepEqual(slashArgumentContext('/autofix f', commands)?.options, ['false']);
+  assert.equal(slashArgumentContext('/autofix false', commands), undefined);
+  assert.equal(slashArgumentContext('/autofix 5', commands), undefined);
+});
+
 test('slashArgumentContext filters export artifact arguments across tokens', () => {
   assert.equal(slashArgumentContext('/export', commands), undefined);
   const first = slashArgumentContext('/export a', commands);
@@ -290,5 +314,7 @@ test('slashPickerItemCount uses argument options when an argument picker is open
   assert.equal(slashPickerItemCount('/goal ', commands), 4);
   assert.equal(slashPickerItemCount('/notes l', commands), 1);
   assert.equal(slashPickerItemCount('/think h', commands), 3);
+  assert.equal(slashPickerItemCount('/fast t', commands), 2);
+  assert.equal(slashPickerItemCount('/autofix f', commands), 1);
   assert.equal(slashPickerItemCount('/export attachments ', commands), 3);
 });

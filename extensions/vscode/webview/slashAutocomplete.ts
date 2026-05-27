@@ -92,6 +92,10 @@ export function slashArgumentContext(
   if (exportContext) return exportContext;
   const thinkContext = thinkAliasArgumentContext(query);
   if (thinkContext) return thinkContext;
+  const fastContext = fastAliasArgumentContext(query);
+  if (fastContext) return fastContext;
+  const autofixContext = autofixAliasArgumentContext(query);
+  if (autofixContext) return autofixContext;
   const command = [...slashCommands]
     .sort((a, b) => b.name.length - a.name.length)
     .find(
@@ -127,6 +131,8 @@ function notesLastArgumentContext(query: string): SlashArgumentContext | undefin
 
 const EXPORT_ARTIFACT_OPTIONS = ['attachments', 'notes', 'timeline', 'full'];
 const THINK_ALIAS_OPTIONS = ['hard', 'harder', 'more', 'high', 'xhigh', 'medium', 'low', 'off', 'stop', 'less'];
+const FAST_ALIAS_OPTIONS = ['on', 'off', 'toggle', 'true', 'false', '1', '0', 'standard'];
+const AUTOFIX_ALIAS_OPTIONS = ['on', 'off', 'true', 'false', '1', '0'];
 
 function exportArtifactArgumentContext(query: string): SlashArgumentContext | undefined {
   const commandName = '/export';
@@ -158,6 +164,14 @@ function exportArtifactArgumentContext(query: string): SlashArgumentContext | un
 
 function thinkAliasArgumentContext(query: string): SlashArgumentContext | undefined {
   return staticSubcommandArgumentContext(query, '/think', THINK_ALIAS_OPTIONS, false, true);
+}
+
+function fastAliasArgumentContext(query: string): SlashArgumentContext | undefined {
+  return staticSubcommandArgumentContext(query, '/fast', FAST_ALIAS_OPTIONS, false, true);
+}
+
+function autofixAliasArgumentContext(query: string): SlashArgumentContext | undefined {
+  return staticSubcommandArgumentContext(query, '/autofix', AUTOFIX_ALIAS_OPTIONS, false, true);
 }
 
 function staticSubcommandArgumentContext(
