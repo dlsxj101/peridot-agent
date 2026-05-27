@@ -35,6 +35,10 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **`/sidepanel` surface metadata** now marks the command as TUI-only so
   VS Code autocomplete and `/help` no longer advertise a terminal status
   panel toggle.
+- **VS Code local slash fallback cleanup** now limits daemon
+  `action: "local"` handling to true editor-local status panel aliases,
+  removing stale sidebar re-parsers for daemon-backed commands such as
+  `/info`, `/cost`, `/plan show`, and `/session list`.
 - **Daemon-backed `/session new [task]` intent** now lets VS Code apply a
   structured `session_new` result instead of locally re-parsing the slash
   command after daemon parsing.

@@ -613,6 +613,18 @@ shared daemon, TUI, and VS Code extension surfaces.
   draft sessions are not removed by accident. The pruning rule is covered
   by extension unit tests that run without the VS Code host.
 
+### E53. Local Slash Fallback Cleanup
+
+- **Status**: landed.
+- **Goal**: keep the VS Code slash path daemon-owned after the parity
+  work, leaving only real editor-local actions in the local fallback.
+- **Where**: VS Code sidebar slash dispatch and extension unit tests.
+- **Result**: daemon `action: "local"` responses now route only
+  `/sidepanel` and `/status` to the sidebar status summary. Daemon-backed
+  commands such as `/info`, `/cost`, `/plan show`, and `/session list` no
+  longer have stale VS Code re-parser fallbacks, and the local-action
+  filter is covered by a pure unit test.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

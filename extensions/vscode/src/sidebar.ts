@@ -24,6 +24,7 @@ import {
   TranscriptItem,
   UsageSlice,
 } from './types';
+import { localSlashAction } from './localSlashAction';
 import { staleDaemonBackedSessionIds } from './sessionReconcile';
 
 export type {
@@ -1205,76 +1206,6 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
     await this.executeDaemonSlash(input, options);
   }
 
-  private async handleSessionSlash(rest: string, options: RunOptions): Promise<void> {
-    const [subcommand, ...tailParts] = rest.split(/\s+/).filter(Boolean);
-    const tail = tailParts.join(' ').trim();
-    switch (subcommand) {
-      case 'new':
-        this.createNewSession(this.state.context.workspace);
-        if (tail.length > 0) {
-          await this.handlers.runTask(tail, options);
-        }
-        return;
-      case 'list': {
-        this.refreshSessionSummaries();
-        const lines = this.state.sessions.map((session) => {
-          const marker = session.active ? '*' : '-';
-          const running = session.running ? ' running' : '';
-          return `${marker} ${session.title} [${session.id}]${running}`;
-        });
-        this.append({ role: 'assistant', text: lines.length > 0 ? lines.join('\n') : 'No sessions' });
-        return;
-      }
-      case 'save':
-        this.append({ role: 'status', text: 'session saved' });
-        return;
-      case 'switch': {
-        const session = this.findSession(tail);
-        if (!session) {
-          this.appendError('Usage: /session switch <id|title>');
-          return;
-        }
-        this.selectSession(session.id);
-        return;
-      }
-      case 'close': {
-        if (!this.closeSession(tail)) {
-          this.appendError('Usage: /session close <id|title>');
-        }
-        return;
-      }
-      case 'delete': {
-        const session =
-          tail.length > 0
-            ? this.findSession(tail)
-            : this.activeStoredSession();
-        if (!session) {
-          this.appendError('Usage: /session delete <id|title>');
-          return;
-        }
-        await this.handlers.deleteSession(session.id, session.daemonSessionId);
-        this.deleteSession(session.id);
-        return;
-      }
-      case 'rename': {
-        const [target, ...titleParts] = tailParts;
-        const title = titleParts.join(' ').trim();
-        const session = this.findSession(target ?? '');
-        if (!session || title.length === 0) {
-          this.appendError('Usage: /session rename <id|title> <new title>');
-          return;
-        }
-        this.renameSession(session.id, title);
-        return;
-      }
-      default:
-        this.appendError(
-          'Usage: /session new [task] | /session list | /session switch <id|title> | /session close <id|title> | /session delete <id|title> | /session rename <id|title> <new title> | /session save',
-        );
-        return;
-    }
-  }
-
   private async executeDaemonSlash(input: string, options: RunOptions): Promise<void> {
     try {
       const result = await this.handlers.runSlashCommand(input, options);
@@ -1287,7 +1218,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         return;
       }
       this.applySlashCommandState(input, result, options);
-      if (result.action === 'local' && (await this.handleLocalClientAction(input, options))) {
+      if (result.action === 'local' && this.handleLocalClientAction(input)) {
         return;
       }
       this.applyRewindResult(result);
@@ -1308,32 +1239,10 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  private async handleLocalClientAction(input: string, options: RunOptions): Promise<boolean> {
-    const [command, ...restParts] = input.slice(1).trim().split(/\s+/);
-    const rest = restParts.join(' ').trim();
-    switch (command) {
-      case 'plan':
-        if (rest === 'show') {
-          this.showPlan();
-          return true;
-        }
-        return false;
-      case 'cost':
-        if (rest.length === 0) {
-          this.showCost();
-          return true;
-        }
-        return false;
-      case 'info':
-      case 'sidepanel':
-      case 'status':
-        if (rest.length === 0) {
-          this.showInfo();
-          return true;
-        }
-        return false;
-      case 'session':
-        await this.handleSessionSlash(rest, options);
+  private handleLocalClientAction(input: string): boolean {
+    switch (localSlashAction(input)) {
+      case 'showInfo':
+        this.showInfo();
         return true;
       default:
         return false;
@@ -1554,36 +1463,6 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
     });
   }
 
-  private showCost(): void {
-    const usage = this.state.hud.usage;
-    if (!usage) {
-      this.append({ role: 'assistant', text: 'No usage data yet.' });
-      return;
-    }
-    this.append({
-      role: 'assistant',
-      text: [
-        `Input tokens: ${usage.inputTokens}`,
-        `Output tokens: ${usage.outputTokens}`,
-        `Cache read tokens: ${usage.cacheReadTokens ?? 0}`,
-        `Cache creation tokens: ${usage.cacheCreationTokens ?? 0}`,
-        `Estimated cost: $${(usage.costUsd ?? 0).toFixed(4)}`,
-      ].join('\n'),
-    });
-  }
-
-  private showPlan(): void {
-    const steps = this.state.hud.plan?.steps ?? [];
-    if (steps.length === 0) {
-      this.append({ role: 'assistant', text: 'No plan steps yet.' });
-      return;
-    }
-    this.append({
-      role: 'assistant',
-      text: steps.map((step, index) => `${index + 1}. ${step.status ?? 'pending'} ${step.text}`).join('\n'),
-    });
-  }
-
   private rewindLastExchange(restoredPrompt?: string): void {
     const lastUser = this.state.transcript.map((item) => item.role).lastIndexOf('user');
     if (lastUser < 0) {
@@ -1596,42 +1475,6 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       this.state.composerDraftVersion = (this.state.composerDraftVersion ?? 0) + 1;
     }
     this.append({ role: 'status', text: 'rewind: last exchange removed' });
-  }
-
-  private findSession(query: string): StoredChatSession | undefined {
-    const needle = query.trim().toLowerCase();
-    if (!needle) return undefined;
-    return Array.from(this.sessions.values()).find(
-      (session) =>
-        session.id.toLowerCase() === needle ||
-        session.title.toLowerCase() === needle ||
-        session.title.toLowerCase().includes(needle),
-    );
-  }
-
-  private closeSession(query: string): boolean {
-    const session =
-      query.trim().length > 0
-        ? this.findSession(query)
-        : this.activeStoredSession();
-    if (!session) return false;
-    if (session.running) {
-      this.appendError('Cannot close a running session.');
-      return true;
-    }
-
-    const wasActive = session.id === this.state.activeChatId;
-    this.sessions.delete(session.id);
-    if (wasActive) {
-      const next = this.sessions.values().next().value as StoredChatSession | undefined;
-      if (next) {
-        this.loadSessionIntoState(next.id, false);
-      } else {
-        this.loadDraftSessionIntoState();
-      }
-    }
-    this.append({ role: 'status', text: `session closed: ${session.title}` });
-    return true;
   }
 
   private ensureActiveSession(): StoredChatSession {

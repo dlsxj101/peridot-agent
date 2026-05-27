@@ -6,6 +6,11 @@
     "outDir": "out-test",
     "types": ["node"]
   },
-  "include": ["src/sessionReconcile.ts", "webview/slashAutocomplete.ts", "test/**/*.test.ts"],
+  "include": [
+    "src/localSlashAction.ts",
+    "src/sessionReconcile.ts",
+    "webview/slashAutocomplete.ts",
+    "test/**/*.test.ts"
+  ],
   "exclude": ["node_modules", "dist", "out-test"]
 }

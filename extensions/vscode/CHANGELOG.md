@@ -55,6 +55,10 @@
   development files so `npm test` does not leak `out-test/` into packages.
 - VS Code CI/release packaging now relies on the same `vscode:prepublish`
   test gate instead of running duplicate test/build steps before `vsce package`.
+- VS Code local slash handling now only accepts real editor-local actions
+  after a daemon `action: "local"` result. Daemon-backed commands such as
+  `/info`, `/cost`, `/plan show`, and `/session list` no longer have stale
+  sidebar re-parser fallbacks.
 
 ### Added — compaction snapshot details
 
