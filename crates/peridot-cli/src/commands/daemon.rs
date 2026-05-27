@@ -5279,6 +5279,9 @@ mod tests {
             entry["name"] == "/collapse" && entry["surfaces"] == serde_json::json!(["tui"])
         }));
         assert!(commands.iter().any(|entry| {
+            entry["name"] == "/sidepanel" && entry["surfaces"] == serde_json::json!(["tui"])
+        }));
+        assert!(commands.iter().any(|entry| {
             entry["name"] == "/reasoning"
                 && entry["arg_options"]
                     == serde_json::json!(["off", "low", "medium", "high", "xhigh"])
@@ -5305,6 +5308,7 @@ mod tests {
         let commands = out[0]["result"]["commands"].as_array().unwrap();
         assert!(commands.iter().any(|entry| entry["name"] == "/plan"));
         assert!(!commands.iter().any(|entry| entry["name"] == "/collapse"));
+        assert!(!commands.iter().any(|entry| entry["name"] == "/sidepanel"));
         assert!(!commands.iter().any(|entry| entry["name"] == "/lang"));
         assert!(commands.iter().all(|entry| {
             entry["surfaces"]
@@ -5328,6 +5332,7 @@ mod tests {
         let items = result["items"].as_array().unwrap();
         assert!(items.iter().any(|entry| entry["label"] == "/plan"));
         assert!(!items.iter().any(|entry| entry["label"] == "/collapse"));
+        assert!(!items.iter().any(|entry| entry["label"] == "/sidepanel"));
         assert!(!items.iter().any(|entry| entry["label"] == "/lang <en|ko>"));
         assert_eq!(result["total"].as_u64().unwrap(), items.len() as u64);
     }

@@ -496,6 +496,17 @@ shared daemon, TUI, and VS Code extension surfaces.
   the session therefore appear or disappear from composer autocomplete
   without requiring a manual status refresh.
 
+### E44. TUI-Only Sidepanel Surface Metadata
+
+- **Status**: landed.
+- **Goal**: keep editor slash suggestions focused on commands that have a
+  meaningful VS Code behavior.
+- **Where**: shared TUI slash catalog metadata, daemon
+  `session.command_catalog`, daemon `/help` surface filtering.
+- **Result**: `/sidepanel` is now marked as TUI-only, matching its status
+  panel toggle semantics. TUI keeps accepting the command, while VS Code's
+  surface-filtered autocomplete and `/help` output no longer suggest it.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

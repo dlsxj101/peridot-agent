@@ -19,6 +19,8 @@
 - Skill-aware slash autocomplete now refreshes when `.peridot/memory.db`
   changes and immediately after `/skills archive` or `/skills restore`, so
   `/skill-name` suggestions stay current without a manual status refresh.
+- `/sidepanel` is now filtered out of VS Code slash autocomplete and
+  `/help` because it only toggles the TUI status panel.
 
 ### Added — compaction snapshot details
 

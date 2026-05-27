@@ -32,6 +32,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **VS Code skill autocomplete refresh** now reloads the slash catalog
   when the skill store changes or when `/skills archive|restore` mutates
   active `/skill-name` suggestions.
+- **`/sidepanel` surface metadata** now marks the command as TUI-only so
+  VS Code autocomplete and `/help` no longer advertise a terminal status
+  panel toggle.
 
 ### Added — skill-aware slash autocomplete
 

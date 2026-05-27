@@ -25,7 +25,7 @@ pub struct SlashCommandSpec {
 /// clients use this additive metadata to avoid suggesting TUI-only controls.
 pub fn slash_command_surfaces(spec: &SlashCommandSpec) -> &'static [&'static str] {
     match spec.name {
-        "/collapse" | "/lang" => &["tui"],
+        "/collapse" | "/lang" | "/sidepanel" => &["tui"],
         _ => &["tui", "vscode"],
     }
 }
@@ -668,6 +668,12 @@ mod tests {
             .find(|spec| spec.name == "/collapse")
             .expect("collapse command");
         assert_eq!(slash_command_surfaces(collapse), &["tui"]);
+
+        let sidepanel = slash_command_catalog()
+            .iter()
+            .find(|spec| spec.name == "/sidepanel")
+            .expect("sidepanel command");
+        assert_eq!(slash_command_surfaces(sidepanel), &["tui"]);
 
         let plan = slash_command_catalog()
             .iter()
