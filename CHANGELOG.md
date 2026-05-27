@@ -58,6 +58,8 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **Skill inventory is available from shared slash UX** via `/skills` and
   `/skills list`, with TUI output and structured daemon results for editor
   clients.
+- **VS Code skill inventory affordances** add `Peridot: Show Skills` and
+  a sidebar header button backed by the same `/skills` daemon path.
 - **Reflection noise filtering** now drops single-tool repeat n-grams
   before the Curator LLM call and stamps them as handled, so historical
   `file_read|file_read`-style rows do not burn review budget.

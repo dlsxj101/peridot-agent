@@ -40,6 +40,8 @@
   edits and same-file-count content changes.
 - The composer now supports `/skills` and `/skills list`, rendering active
   stored skills in a VS Code card with copyable slash invocations.
+- Added `Peridot: Show Skills` and a sidebar header button that route
+  through the same `/skills` daemon path.
 - GitHub PR workflow commands are available from VS Code: PR status,
   preview-and-confirm `peridot ship`, and confirm-before-merge
   `gh pr merge`.

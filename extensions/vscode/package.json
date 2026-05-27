@@ -197,6 +197,12 @@
         "icon": "$(references)"
       },
       {
+        "command": "peridot.showSkills",
+        "title": "Peridot: Show Skills",
+        "category": "Peridot",
+        "icon": "$(list-filter)"
+      },
+      {
         "command": "peridot.attachFile",
         "title": "Peridot: Attach File to Session",
         "category": "Peridot",
@@ -280,6 +286,11 @@
           "command": "peridot.findSymbolReferences",
           "when": "view == peridot.chatView",
           "group": "navigation@4.7"
+        },
+        {
+          "command": "peridot.showSkills",
+          "when": "view == peridot.chatView",
+          "group": "navigation@4.8"
         },
         {
           "command": "peridot.attachFile",

@@ -308,6 +308,18 @@ shared daemon, TUI, and VS Code extension surfaces.
   `skills` command result, and VS Code renders a skill inventory card
   with copyable slash invocations.
 
+### E30. Skill Inventory Editor Affordances
+
+- **Status**: landed.
+- **Goal**: make the new skill inventory reachable without remembering
+  the slash command in VS Code.
+- **Where**: VS Code command palette, sidebar header actions, shared
+  daemon slash execution path.
+- **Result**: VS Code now contributes `Peridot: Show Skills` and a
+  sidebar header button. Both route through `/skills`, so the editor
+  uses the same structured `skills` result as the composer and stays
+  aligned with TUI slash behavior.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

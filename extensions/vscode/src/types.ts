@@ -402,6 +402,7 @@ export type OutboundMessage =
   | { type: 'searchCodeMap' }
   | { type: 'outlineCurrentFile' }
   | { type: 'findSymbolReferences' }
+  | { type: 'showSkills' }
   | { type: 'attachFile' }
   | { type: 'detachAttachment'; path: string }
   | { type: 'exportSessionArtifacts' }

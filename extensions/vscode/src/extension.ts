@@ -134,6 +134,7 @@ export function activate(context: vscode.ExtensionContext) {
     searchCodeMap: async (): Promise<void> => searchWorkspaceCodeMap(output, sidebar),
     outlineCurrentFile: async (): Promise<void> => outlineCurrentFile(output, sidebar),
     findSymbolReferences: async (): Promise<void> => findWorkspaceSymbolReferences(output, sidebar),
+    showSkills: async (): Promise<void> => showSkills(output, sidebar),
     attachFile: async (): Promise<void> => attachFileToSession(output, sidebar),
     detachAttachment: async (path: string): Promise<void> =>
       detachAttachmentFromSession(path, output, sidebar),
@@ -299,6 +300,12 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand('peridot.findSymbolReferences', async () => {
       await findWorkspaceSymbolReferences(output, sidebar);
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('peridot.showSkills', async () => {
+      await showSkills(output, sidebar);
     }),
   );
 
@@ -945,6 +952,35 @@ async function showSessionAttachments(
     output.appendLine(`[peridot] attachments failed: ${message}`);
     sidebar.appendError(message);
     await vscode.window.showErrorMessage(`Peridot attachments failed: ${message}`);
+  }
+}
+
+async function showSkills(
+  output: vscode.OutputChannel,
+  sidebar: PeridotSidebarProvider,
+): Promise<void> {
+  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!folder) {
+    const message = 'Open a workspace folder before listing Peridot skills.';
+    sidebar.setWorkspaceProblem(message);
+    await vscode.window.showWarningMessage(message);
+    return;
+  }
+  await vscode.commands.executeCommand('peridot.chatView.focus');
+  try {
+    const result = await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Window,
+        title: 'Peridot: loading skills',
+      },
+      async () => runSlashCommand('/skills', output, sidebar, sidebar.currentRunOptions()),
+    );
+    sidebar.appendCommandResult(result);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    output.appendLine(`[peridot] skills failed: ${message}`);
+    sidebar.appendError(message);
+    await vscode.window.showErrorMessage(`Peridot skills failed: ${message}`);
   }
 }
 

@@ -760,6 +760,7 @@ function renderHeader(s: SidebarState): HTMLElement {
   right.append(iconButton('search', 'Search Workspace Code Map', () => vscode.postMessage({ type: 'searchCodeMap' })));
   right.append(iconButton('list-tree', 'Outline Current File', () => vscode.postMessage({ type: 'outlineCurrentFile' })));
   right.append(iconButton('references', 'Find Symbol References', () => vscode.postMessage({ type: 'findSymbolReferences' })));
+  right.append(iconButton('skills', 'Show Skills', () => vscode.postMessage({ type: 'showSkills' })));
   right.append(iconButton('attach', 'Attach File', () => vscode.postMessage({ type: 'attachFile' })));
   right.append(iconButton('export', 'Export Session Artifacts', () => vscode.postMessage({ type: 'exportSessionArtifacts' })));
   right.append(iconButton('pr', 'GitHub PR Status', () => vscode.postMessage({ type: 'showPrStatus' })));
@@ -979,6 +980,8 @@ function iconSvg(kind: string): string {
       return `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.5v1.3M8 13.2v1.3M3.4 3.4l.9.9M11.7 11.7l.9.9M1.5 8h1.3M13.2 8h1.3M3.4 12.6l.9-.9M11.7 4.3l.9-.9"/></svg>`;
     case 'codemap':
       return `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4.5h4l1.5 2h5.5v6.5h-11z"/><path d="M4.5 9h7"/><path d="M4.5 11h4"/><path d="M5 2.5h5"/></svg>`;
+    case 'skills':
+      return `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3.5h10"/><path d="M3 8h10"/><path d="M3 12.5h10"/><path d="M5.5 2.2v2.6"/><path d="M9.5 6.7v2.6"/><path d="M6.8 11.2v2.6"/></svg>`;
     case 'attach':
       return `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5.2 8.7l3.9-3.9a2.4 2.4 0 0 1 3.4 3.4l-5.1 5.1a3.6 3.6 0 0 1-5.1-5.1l5.5-5.5"/><path d="M6.3 9.8l4.2-4.2"/></svg>`;
     case 'export':
