@@ -198,10 +198,10 @@ pub(super) fn handle_ctrl_c_quit_confirmation(
     false
 }
 
-/// Hot-swaps `state` so that its transcript/header/plan match the new
-/// `state.current_session_id`. The previous foreground's contents are stashed
-/// in `other_states` under `previous_id`; if the target session was seen
-/// before, its state is restored, otherwise a fresh state inherits the
+/// Hot-swaps `state` so that its transcript/header/plan/input history match
+/// the new `state.current_session_id`. The previous foreground's contents are
+/// stashed in `other_states` under `previous_id`; if the target session was
+/// seen before, its state is restored, otherwise a fresh state inherits the
 /// header / config / sessions directory from the master view. Called from the
 /// main loop the moment `current_session_id` diverges from the foreground we
 /// last drew.
@@ -237,6 +237,9 @@ pub fn handle_key_event(state: &mut TuiState, key: KeyEvent) -> TuiEventOutcome 
     }
     if state.approval.is_some() {
         return handle_approval_key_event(state, key);
+    }
+    if state.session_picker.is_some() {
+        return handle_session_picker_key_event(state, key);
     }
     if state.branch_picker.is_some() {
         return handle_branch_picker_key_event(state, key);
@@ -291,7 +294,9 @@ pub fn handle_key_event(state: &mut TuiState, key: KeyEvent) -> TuiEventOutcome 
             TuiEventOutcome::Continue
         }
         KeyCode::Char('t') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            crate::cycle_foreground(state);
+            if state.sessions.len() > 1 {
+                state.session_picker = Some(crate::SessionPickerState::opening());
+            }
             TuiEventOutcome::Continue
         }
         KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -476,6 +481,60 @@ pub(super) fn handle_menu_key_event(state: &mut TuiState, key: KeyEvent) -> TuiE
                 .unwrap_or_default();
             state.menu = None;
             apply_menu_selection(state, &selected)
+        }
+        _ => TuiEventOutcome::Continue,
+    }
+}
+
+/// Routes keystrokes while the session picker overlay is open.
+/// `↑`/`↓` move the selection, normal text edits the prefix filter,
+/// `Enter` switches foreground, and `Esc` cancels.
+pub(super) fn handle_session_picker_key_event(
+    state: &mut TuiState,
+    key: KeyEvent,
+) -> TuiEventOutcome {
+    let Some(picker) = state.session_picker.as_mut() else {
+        return TuiEventOutcome::Continue;
+    };
+    match key.code {
+        KeyCode::Up => {
+            let count =
+                crate::session_picker::filtered_sessions(&state.sessions, &picker.query).len();
+            picker.move_selection(-1, count);
+            TuiEventOutcome::Continue
+        }
+        KeyCode::Down => {
+            let count =
+                crate::session_picker::filtered_sessions(&state.sessions, &picker.query).len();
+            picker.move_selection(1, count);
+            TuiEventOutcome::Continue
+        }
+        KeyCode::Backspace => {
+            picker.backspace_query();
+            TuiEventOutcome::Continue
+        }
+        KeyCode::Enter => {
+            let target = picker.selected_session_id(&state.sessions);
+            state.session_picker = None;
+            if let Some(id) = target {
+                state.current_session_id = id.clone();
+                if let Some(item) = state.sessions.iter_mut().find(|item| item.id == id) {
+                    item.pending_attention = false;
+                }
+            }
+            TuiEventOutcome::Continue
+        }
+        KeyCode::Esc => {
+            state.session_picker = None;
+            TuiEventOutcome::Continue
+        }
+        KeyCode::Char(character)
+            if !key
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+        {
+            picker.push_query_char(character);
+            TuiEventOutcome::Continue
         }
         _ => TuiEventOutcome::Continue,
     }
@@ -1493,7 +1552,8 @@ fn apply_menu_selection(state: &mut TuiState, selected: &str) -> TuiEventOutcome
                  - Ctrl+L            clear transcript\n\
                  - Ctrl+U            clear input\n\
                  - Ctrl+A / Ctrl+E   home / end\n\
-                 - Ctrl+T / Ctrl+W   cycle session\n\
+                 - Ctrl+T            open session picker\n\
+                 - Ctrl+W            cycle session\n\
                  - PageUp / PageDown scroll transcript\n\
                  - Shift+Up / Down   scroll by line\n\
                  - Ctrl+C twice / Ctrl+D quit",

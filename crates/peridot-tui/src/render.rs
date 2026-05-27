@@ -45,9 +45,9 @@ pub(super) fn render_status_metrics(state: &TuiState) -> String {
         } else {
             parts.push(format!("${:.4}", state.header.cost_usd));
         }
-        if state.sessions.len() > 1 {
-            parts.push(format!("all ${:.4}", state.aggregate_cost_usd()));
-        }
+    }
+    if let Some(total) = aggregate_usage_status(state) {
+        parts.push(total);
     }
     if state.config.show_cache_rate {
         parts.push(format!("cache {:.0}%", state.header.cache_hit_rate * 100.0));
@@ -74,6 +74,42 @@ pub(super) fn render_status_metrics(state: &TuiState) -> String {
         ));
     }
     parts.join("  |  ")
+}
+
+fn aggregate_usage_status(state: &TuiState) -> Option<String> {
+    if state.sessions.len() <= 1 {
+        return None;
+    }
+
+    let mut metrics = Vec::new();
+    if state.config.show_token_count {
+        let total_tokens = state.aggregate_tokens();
+        if total_tokens > state.header.total_tokens {
+            metrics.push(format!("{} tok", format_status_token_count(total_tokens)));
+        }
+    }
+    if state.config.show_cost {
+        let total_cost = state.aggregate_cost_usd();
+        if total_cost > state.header.cost_usd + f64::EPSILON {
+            metrics.push(format!("${total_cost:.4}"));
+        }
+    }
+
+    if metrics.is_empty() {
+        None
+    } else {
+        Some(format!("all {}", metrics.join(" / ")))
+    }
+}
+
+fn format_status_token_count(tokens: u64) -> String {
+    if tokens >= 1_000_000 {
+        format!("{:.1}M", tokens as f64 / 1_000_000.0)
+    } else if tokens >= 10_000 {
+        format!("{:.1}k", tokens as f64 / 1_000.0)
+    } else {
+        tokens.to_string()
+    }
 }
 
 pub(super) fn agent_run_status_label(status: &AgentRunStatus) -> &'static str {
@@ -1300,6 +1336,17 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
                 .wrap(Wrap { trim: false }),
             body_chunks[0],
         );
+    } else if let Some(picker) = &state.session_picker {
+        frame.render_widget(
+            Paragraph::new(render_session_picker(
+                picker,
+                &state.sessions,
+                &state.current_session_id,
+            ))
+            .block(overlay_block())
+            .wrap(Wrap { trim: false }),
+            body_chunks[0],
+        );
     } else if let Some(picker) = &state.branch_picker {
         frame.render_widget(
             Paragraph::new(render_branch_picker(picker))
@@ -1979,6 +2026,41 @@ pub(super) fn render_branch_picker(picker: &crate::BranchPickerState) -> String 
     }
     sections.push(String::new());
     sections.push("  ↑/↓ navigate  •  Enter fork  •  q / Esc cancel".to_string());
+    sections.join("\n")
+}
+
+pub(super) fn render_session_picker(
+    picker: &crate::SessionPickerState,
+    sessions: &[crate::SessionDirectoryItem],
+    current_session_id: &str,
+) -> String {
+    let mut sections = vec!["Switch session".to_string(), String::new()];
+    sections.push(format!("  filter: {}", picker.query));
+    sections.push(String::new());
+
+    let matches = crate::session_picker::filtered_sessions(sessions, &picker.query);
+    if matches.is_empty() {
+        sections.push("  (no matching sessions)".to_string());
+    } else {
+        for (index, item) in matches.iter().enumerate() {
+            let cursor = if index == picker.selected { ">" } else { " " };
+            let current = if item.id == current_session_id {
+                "*"
+            } else {
+                " "
+            };
+            let attention = if item.pending_attention { "!" } else { " " };
+            sections.push(format!(
+                "  {cursor}{current}{attention} {title}  [{status}]  {id}",
+                title = item.title,
+                status = format!("{:?}", item.status).to_ascii_lowercase(),
+                id = item.id,
+            ));
+        }
+    }
+
+    sections.push(String::new());
+    sections.push("  type to filter  •  ↑/↓ navigate  •  Enter switch  •  Esc cancel".to_string());
     sections.join("\n")
 }
 

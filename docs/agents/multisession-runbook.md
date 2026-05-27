@@ -1,8 +1,12 @@
 # Multi-Session Runbook
 
-This runbook tracks the work that turns the multi-session scaffolding landed in PRs 8–11 into a fully live runtime. The data model, slash commands, persistence schema, and tab bar all already exist on `main`; what remains is wiring the foreground/background swap, concurrent agent loops, and subagent fan-in.
+This runbook tracks Peridot's multi-session runtime: foreground/background
+agent loops, per-session persistence, worktree isolation, subagent fan-in,
+and the smaller CLI/TUI surfaces that make long-lived sessions inspectable.
+The core runtime milestones are landed on `main`; the remaining work is
+polish and hardening around session ergonomics.
 
-## Current state on main (after the 2026-05 TUI overhaul + M1/M2)
+## Current state on main
 
 - `SessionRouter` is live: each foreground/background session owns a real
   `SessionHandle` with its own `CancelToken`, and every event is multiplexed
@@ -29,12 +33,13 @@ This runbook tracks the work that turns the multi-session scaffolding landed in 
 - LLM-generated session titles: after the first successful agent run, a
   lightweight LLM call (main model, `ReasoningEffort::Off`) generates a
   3–8 word title that replaces the placeholder.
-- 126 peridot-tui tests + 40 peridot-cli tests cover the surface,
-  0 ignored, 0 flaky.
+- The landed milestone log below is intentionally append-only so older
+  release notes still map to the implementation sequence.
 
-Outstanding for the next milestones: throttled persistence on every tick
-(M3), `LocalSubAgentRunner` fan-in so `/fork` actually shares context with
-its parent transcript (M4), and the attention notifier line (M5).
+Remaining scoped polish:
+
+- Continued hardening for abnormal shutdown paths, especially orphaned
+  worktree cleanup after process crashes.
 
 ## Milestones
 
@@ -260,9 +265,17 @@ its parent transcript (M4), and the attention notifier line (M5).
 - After the first successful `run_task_with_events` completes, a lightweight LLM call (`live_provider`, main model, `ReasoningEffort::Off`, max 30 tokens) generates a 3–8 word session title. The result flows through the new `TuiRuntimeEvent::SessionTitleUpdated { session_id, title }` variant and updates `SessionDirectoryItem.title` + sets `title_generated = true` to prevent redundant calls. Approval resumes skip title generation.
 
 ### M6 — Multi-session UX polish
-- Per-session history (input recall) when swapping foreground.
-- Session search/picker (`Ctrl+T` chord) with prefix match + recency.
-- Aggregate budget/cost line in the status bar, distinct from per-session totals.
+- Per-session history (input recall) when swapping foreground. ✓ landed as
+  M6-1: foreground swaps stash and restore the full per-session `TuiState`,
+  including `input_history` and its cursor, so Up/Down recall never leaks
+  prompts between sessions.
+- Session search/picker (`Ctrl+T` chord) with prefix match + recency. ✓
+  landed as M6-2: `Ctrl+T` opens a searchable session picker, ranks matches
+  by latest activity, clears attention on the chosen foreground session, and
+  keeps `Ctrl+W` as the quick cycle shortcut.
+- Aggregate budget/cost line in the status bar, distinct from per-session totals. ✓
+  landed as M6-3: multi-session status metrics show `all <tokens> tok / $<cost>`
+  when background sessions add usage beyond the foreground session.
 
 ## Cross-cutting checklist for every multi-session PR
 

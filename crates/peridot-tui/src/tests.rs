@@ -1044,6 +1044,84 @@ fn scroll_offset_anchors_view_when_content_arrives_above_tail() {
 }
 
 #[test]
+fn ctrl_t_opens_session_picker_and_switches_by_prefix() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    let mut alpha = SessionDirectoryItem::new("alpha", "Alpha work");
+    alpha.last_event_at_unix = 10;
+    let mut beta = SessionDirectoryItem::new("beta", "Beta review");
+    beta.last_event_at_unix = 30;
+    beta.pending_attention = true;
+    let mut build = SessionDirectoryItem::new("build", "Build checks");
+    build.last_event_at_unix = 20;
+    state.sessions = vec![alpha, beta, build];
+    state.current_session_id = "alpha".to_string();
+
+    handle_key_event(
+        &mut state,
+        KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL),
+    );
+    assert!(state.session_picker.is_some());
+
+    handle_key_event(
+        &mut state,
+        KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE),
+    );
+    assert_eq!(
+        state
+            .session_picker
+            .as_ref()
+            .map(|picker| picker.query.as_str()),
+        Some("b")
+    );
+
+    handle_key_event(
+        &mut state,
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+    );
+
+    assert_eq!(state.current_session_id, "beta");
+    assert!(state.session_picker.is_none());
+    assert!(
+        !state
+            .sessions
+            .iter()
+            .find(|item| item.id == "beta")
+            .expect("beta session exists")
+            .pending_attention
+    );
+}
+
+#[test]
+fn ctrl_w_still_cycles_sessions() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    state.sessions = vec![
+        SessionDirectoryItem::new("a", "Alpha"),
+        SessionDirectoryItem::new("b", "Beta"),
+    ];
+    state.current_session_id = "a".to_string();
+
+    handle_key_event(
+        &mut state,
+        KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL),
+    );
+
+    assert_eq!(state.current_session_id, "b");
+    assert!(state.session_picker.is_none());
+}
+
+#[test]
 fn submit_input_resets_scroll_to_tail() {
     let mut state = TuiState::new(HeaderState::new(
         ExecutionMode::Execute,
@@ -2449,6 +2527,54 @@ fn status_metrics_show_turn_count_after_first_turn() {
 }
 
 #[test]
+fn status_metrics_show_aggregate_usage_for_multi_session() {
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    state.current_session_id = "s1".to_string();
+    state.header.cost_usd = 0.10;
+    state.header.total_tokens = 2_000;
+    state
+        .sessions
+        .push(crate::SessionDirectoryItem::new("s1", "main"));
+    let mut bg = crate::SessionDirectoryItem::new("s2", "background");
+    bg.cost_usd = 0.04;
+    bg.tokens = 500;
+    state.sessions.push(bg);
+
+    let snapshot = render_text_snapshot(&state);
+
+    assert!(snapshot.contains("2000 tok"));
+    assert!(snapshot.contains("$0.1000"));
+    assert!(snapshot.contains("all 2500 tok / $0.1400"));
+}
+
+#[test]
+fn status_metrics_omit_redundant_aggregate_usage() {
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    state.current_session_id = "s1".to_string();
+    state.header.cost_usd = 0.10;
+    state.header.total_tokens = 2_000;
+    state
+        .sessions
+        .push(crate::SessionDirectoryItem::new("s1", "main"));
+    state
+        .sessions
+        .push(crate::SessionDirectoryItem::new("s2", "idle"));
+
+    let snapshot = render_text_snapshot(&state);
+
+    assert!(!snapshot.contains("all 2000 tok"));
+    assert!(!snapshot.contains("all $0.1000"));
+}
+
+#[test]
 fn workspace_label_appears_in_status_metrics_when_set() {
     let mut state = TuiState::new(HeaderState::new(
         ExecutionMode::Execute,
@@ -2538,6 +2664,47 @@ fn swap_foreground_state_round_trips_transcripts_between_sessions() {
     assert!(other_states.contains_key("B"));
     assert_eq!(other_states["B"].transcript.len(), 1);
     assert_eq!(other_states["B"].transcript[0].text, "hello from B");
+}
+
+#[test]
+fn swap_foreground_state_keeps_input_history_per_session() {
+    use std::collections::HashMap;
+
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    state.current_session_id = "A".to_string();
+    state.sessions.push(SessionDirectoryItem::new("A", "alpha"));
+    state.sessions.push(SessionDirectoryItem::new("B", "beta"));
+    state.record_input_history("ask from A");
+    state.record_input_history("second from A");
+
+    state.current_session_id = "B".to_string();
+    let mut other_states: HashMap<String, TuiState> = HashMap::new();
+    swap_foreground_state(&mut state, &mut other_states, "A");
+
+    assert_eq!(state.current_session_id, "B");
+    assert!(state.input_history.is_empty());
+    state.record_input_history("ask from B");
+
+    state.current_session_id = "A".to_string();
+    swap_foreground_state(&mut state, &mut other_states, "B");
+
+    assert_eq!(
+        state.input_history,
+        vec!["ask from A".to_string(), "second from A".to_string()]
+    );
+    state.previous_input_history();
+    assert_eq!(state.input, "second from A");
+
+    state.current_session_id = "B".to_string();
+    swap_foreground_state(&mut state, &mut other_states, "A");
+
+    assert_eq!(state.input_history, vec!["ask from B".to_string()]);
+    state.previous_input_history();
+    assert_eq!(state.input, "ask from B");
 }
 
 #[test]

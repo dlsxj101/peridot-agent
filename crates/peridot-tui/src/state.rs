@@ -715,6 +715,9 @@ pub struct TuiState {
     /// after reading the session's context snapshot.
     #[serde(default)]
     pub branch_picker: Option<BranchPickerState>,
+    /// Active session picker overlay, opened with Ctrl+T.
+    #[serde(default)]
+    pub session_picker: Option<SessionPickerState>,
     /// Active Esc menu.
     pub menu: Option<MenuState>,
     /// Lifecycle events recorded from local TUI commands.
@@ -1030,6 +1033,7 @@ impl TuiState {
             approval: None,
             approval_grants: Vec::new(),
             branch_picker: None,
+            session_picker: None,
             menu: None,
             lifecycle_events: Vec::new(),
             scroll_offset: 0,

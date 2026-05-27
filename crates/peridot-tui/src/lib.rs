@@ -46,6 +46,7 @@ mod input;
 mod mascot;
 mod render;
 mod session_directory;
+mod session_picker;
 mod settings_screen;
 mod slash_picker;
 mod state;
@@ -61,6 +62,7 @@ pub use session_directory::{
     SessionDirectoryItem, cycle_foreground, foreground_index, render_tab_bar, render_tab_bar_text,
     tab_bar_height, trim_directory,
 };
+pub use session_picker::SessionPickerState;
 pub use slash_picker::{SlashCommandSpec, filtered_specs, first_match, slash_command_catalog};
 
 pub use ask_user::{
