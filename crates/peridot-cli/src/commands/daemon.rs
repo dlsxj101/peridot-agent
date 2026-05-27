@@ -5429,6 +5429,7 @@ mod tests {
         assert_eq!(out[0]["jsonrpc"], "2.0");
         let commands = out[0]["result"]["commands"].as_array().unwrap();
         assert!(commands.iter().any(|entry| entry["name"] == "/plan"));
+        assert!(commands.iter().any(|entry| entry["name"] == "/status"));
         assert!(!commands.iter().any(|entry| entry["name"] == "/collapse"));
         assert!(!commands.iter().any(|entry| entry["name"] == "/sidepanel"));
         assert!(!commands.iter().any(|entry| entry["name"] == "/lang"));
@@ -5453,6 +5454,7 @@ mod tests {
         assert_eq!(result["surface"], "vscode");
         let items = result["items"].as_array().unwrap();
         assert!(items.iter().any(|entry| entry["label"] == "/plan"));
+        assert!(items.iter().any(|entry| entry["label"] == "/status"));
         assert!(!items.iter().any(|entry| entry["label"] == "/collapse"));
         assert!(!items.iter().any(|entry| entry["label"] == "/sidepanel"));
         assert!(!items.iter().any(|entry| entry["label"] == "/lang <en|ko>"));

@@ -31,6 +31,10 @@ const commands: SlashCommandSpec[] = [
     description: 'list stored skills',
   },
   {
+    name: '/status',
+    description: 'show local status',
+  },
+  {
     name: '/auto-fix-parser',
     description: 'repair parser tests',
     category: 'skill',
@@ -47,6 +51,12 @@ test('filteredSlashCommands includes dynamic skill slash commands', () => {
   const matches = filteredSlashCommands('/auto-f', commands);
 
   assert.deepEqual(matches.map((command) => command.name), ['/auto-fix-parser']);
+});
+
+test('filteredSlashCommands includes status alias commands', () => {
+  const matches = filteredSlashCommands('/sta', commands);
+
+  assert.deepEqual(matches.map((command) => command.name), ['/status']);
 });
 
 test('slashArgumentOptions prefers structured argOptions over placeholder hints', () => {

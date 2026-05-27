@@ -39,6 +39,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
   `action: "local"` handling to true editor-local status panel aliases,
   removing stale sidebar re-parsers for daemon-backed commands such as
   `/info`, `/cost`, `/plan show`, and `/session list`.
+- **`/status` slash discoverability** now adds the already-supported
+  status alias to the shared command catalog, so TUI and VS Code
+  autocomplete/help match the parser.
 - **Daemon-backed `/session new [task]` intent** now lets VS Code apply a
   structured `session_new` result instead of locally re-parsing the slash
   command after daemon parsing.

@@ -625,6 +625,18 @@ shared daemon, TUI, and VS Code extension surfaces.
   longer have stale VS Code re-parser fallbacks, and the local-action
   filter is covered by a pure unit test.
 
+### E54. Status Slash Discoverability
+
+- **Status**: landed.
+- **Goal**: remove drift between the parser and discoverability surfaces
+  for the `/status` alias.
+- **Where**: shared slash catalog, daemon command catalog/help filtering,
+  TUI and VS Code autocomplete tests.
+- **Result**: `/status` is now advertised by the shared command catalog
+  and therefore appears in TUI slash autocomplete, VS Code composer
+  autocomplete, and daemon-backed `/help`. `/sidepanel` remains TUI-only,
+  while `/status` stays available as a cross-surface local status action.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

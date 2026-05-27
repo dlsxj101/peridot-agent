@@ -59,6 +59,9 @@
   after a daemon `action: "local"` result. Daemon-backed commands such as
   `/info`, `/cost`, `/plan show`, and `/session list` no longer have stale
   sidebar re-parser fallbacks.
+- `/status` is now part of the shared slash catalog, so the VS Code
+  composer and `/help` can discover the status alias that the daemon
+  already accepts.
 
 ### Added — compaction snapshot details
 

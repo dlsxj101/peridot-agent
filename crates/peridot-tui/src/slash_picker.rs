@@ -161,6 +161,12 @@ pub fn slash_command_catalog() -> &'static [SlashCommandSpec] {
             category: "tui",
         },
         SlashCommandSpec {
+            name: "/status",
+            description: "show or toggle the local status surface",
+            arg_hint: None,
+            category: "session",
+        },
+        SlashCommandSpec {
             name: "/collapse",
             description: "toggle collapse of tool/diff transcript blocks",
             arg_hint: None,
@@ -674,6 +680,12 @@ mod tests {
             .find(|spec| spec.name == "/sidepanel")
             .expect("sidepanel command");
         assert_eq!(slash_command_surfaces(sidepanel), &["tui"]);
+
+        let status = slash_command_catalog()
+            .iter()
+            .find(|spec| spec.name == "/status")
+            .expect("status command");
+        assert_eq!(slash_command_surfaces(status), &["tui", "vscode"]);
 
         let plan = slash_command_catalog()
             .iter()
