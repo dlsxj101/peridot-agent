@@ -63,6 +63,8 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **VS Code session reconciliation tests** cover daemon-backed session
   pruning separately from the VS Code API so stale-session regressions are
   caught by `npm test`.
+- **VS Code slash autocomplete tests** cover command ranking, dynamic skill
+  suggestions, structured argument options, and exact-command submission.
 
 ### Added — skill-aware slash autocomplete
 

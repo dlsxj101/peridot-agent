@@ -44,6 +44,8 @@
   stale in the editor.
 - Extension unit tests now cover daemon-backed session pruning, including
   empty authoritative inventories and local draft preservation.
+- Slash autocomplete filtering and finite-argument picker behavior now live
+  in a tested pure helper shared by the VS Code webview.
 
 ### Added — compaction snapshot details
 

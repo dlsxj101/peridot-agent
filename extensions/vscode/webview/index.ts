@@ -17,6 +17,14 @@ import type {
   TranscriptItem,
 } from '../src/types';
 import { diffStats, renderUnifiedDiff } from './diff';
+import {
+  filteredSlashCommands as filterSlashCommands,
+  slashArgumentContext as resolveSlashArgumentContext,
+  slashArgumentOptions as slashOptionsForCommand,
+  slashExactSelectionIsRunnable as isSlashExactSelectionRunnable,
+  slashPickerItemCount as countSlashPickerItems,
+  type SlashArgumentContext,
+} from './slashAutocomplete';
 import { el, formatTokens, highlightLite, isRecord, json } from './util';
 
 declare function acquireVsCodeApi(): {
@@ -3361,37 +3369,11 @@ function renderComposer(s: SidebarState): HTMLElement {
 }
 
 function filteredSlashCommands(input: string): SlashCommandSpec[] {
-  const query = input.trimEnd();
-  if (!query.startsWith('/') || query.includes('\n')) return [];
-  const needle = query.slice(1).trim().toLowerCase();
-  if (needle.length === 0) return slashCommands;
-  return slashCommands
-    .filter((command) => {
-      const name = command.name.slice(1).toLowerCase();
-      const description = command.description.toLowerCase();
-      return name.startsWith(needle) || name.includes(` ${needle}`) || description.includes(needle);
-    })
-    .sort((a, b) => slashCommandRank(a, needle) - slashCommandRank(b, needle) || a.name.localeCompare(b.name));
-}
-
-function slashCommandRank(command: SlashCommandSpec, needle: string): number {
-  const name = command.name.slice(1).toLowerCase();
-  const description = command.description.toLowerCase();
-  if (name.startsWith(needle)) return 0;
-  if (name.includes(` ${needle}`)) return 1;
-  if (description.includes(needle)) return 2;
-  return 3;
-}
-
-interface SlashArgumentContext {
-  command: SlashCommandSpec;
-  options: string[];
+  return filterSlashCommands(input, slashCommands);
 }
 
 function slashPickerItemCount(input: string): number {
-  const argumentContext = slashArgumentContext(input);
-  if (argumentContext) return argumentContext.options.length;
-  return filteredSlashCommands(input).length;
+  return countSlashPickerItems(input, slashCommands);
 }
 
 function updateSlashPicker(textarea: HTMLTextAreaElement, picker: HTMLElement): void {
@@ -3506,60 +3488,15 @@ function acceptSlashSelection(textarea: HTMLTextAreaElement, picker: HTMLElement
 }
 
 function slashExactSelectionIsRunnable(input: string): boolean {
-  if (slashArgumentContext(input)) return false;
-  const matches = filteredSlashCommands(input);
-  const command = matches[slashPickerSelected];
-  if (!command) return false;
-  return (
-    input.trim() === command.name &&
-    (!command.argHint || command.argHint.startsWith('['))
-  );
+  return isSlashExactSelectionRunnable(input, slashCommands, slashPickerSelected);
 }
 
 function slashArgumentContext(input: string): SlashArgumentContext | undefined {
-  const query = input;
-  if (!query.startsWith('/') || query.includes('\n')) return undefined;
-  const command = [...slashCommands]
-    .sort((a, b) => b.name.length - a.name.length)
-    .find(
-      (candidate) =>
-        !(query === candidate.name && candidate.argHint?.trim().startsWith('[')) &&
-        (query === candidate.name || query.startsWith(`${candidate.name} `)),
-    );
-  if (!command) return undefined;
-  const options = slashArgumentOptions(command);
-  if (options.length === 0) return undefined;
-  const rest = query.slice(command.name.length).trim().toLowerCase();
-  if (rest && options.some((option) => option.toLowerCase() === rest)) return undefined;
-  const filtered = rest
-    ? options.filter((option) => option.toLowerCase().startsWith(rest))
-    : options;
-  return { command, options: filtered };
+  return resolveSlashArgumentContext(input, slashCommands);
 }
 
 function slashArgumentOptions(command: SlashCommandSpec): string[] {
-  if (Array.isArray(command.argOptions) && command.argOptions.length > 0) {
-    return command.argOptions.filter((option) => option.trim().length > 0);
-  }
-  const hint = command.argHint?.trim();
-  if (!hint) return [];
-  const opensChoiceList =
-    (hint.startsWith('<') && hint.endsWith('>')) ||
-    (hint.startsWith('[') && hint.endsWith(']'));
-  if (!opensChoiceList) return [];
-  const body = hint.slice(1, -1);
-  if (!body.includes('|') || /\s/.test(body)) return [];
-  return body
-    .split('|')
-    .map((option) => option.trim())
-    .filter((option) => option.length > 0 && !isPlaceholderSlashOption(option));
-}
-
-function isPlaceholderSlashOption(option: string): boolean {
-  if (option.includes('<') || option.includes('>')) return true;
-  return new Set(['branch', 'command', 'id', 'index', 'name', 'objective', 'task', 'text', 'title', 'url']).has(
-    option.toLowerCase(),
-  );
+  return slashOptionsForCommand(command);
 }
 
 function modeSelect(opts: RunOptions): HTMLSelectElement {
