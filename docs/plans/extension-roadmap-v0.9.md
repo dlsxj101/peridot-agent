@@ -584,6 +584,20 @@ shared daemon, TUI, and VS Code extension surfaces.
   before applying the local title update, preserving older-daemon fallback
   behavior when those additive fields are absent.
 
+### E51. Session New Daemon Materialization
+
+- **Status**: landed.
+- **Goal**: make `/session new [task]` create an authoritative daemon
+  session id and persisted idle record before editor clients select or
+  start the session.
+- **Where**: daemon `session.command`, VS Code sidebar slash result
+  application.
+- **Result**: daemon-backed `session_new` results now include session id,
+  title, summary, status, running state, updated timestamp, and zeroed
+  usage fields. VS Code reconciles and selects that daemon-backed session
+  card before starting an optional task, so the subsequent `session.start`
+  continues the same id instead of creating a separate daemon session.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

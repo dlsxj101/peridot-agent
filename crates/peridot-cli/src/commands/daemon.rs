@@ -1760,7 +1760,9 @@ async fn execute_session_command(
             }),
             &state_delta,
         )),
-        SlashCommand::SessionNew(task) => Ok(handle_command_session_new(raw_command, task)),
+        SlashCommand::SessionNew(task) => {
+            handle_command_session_new(state, raw_command, task).await
+        }
         SlashCommand::GoalStart(goal) => Ok(with_state_delta(
             start_task_result("goal", goal),
             &state_delta,
@@ -1932,12 +1934,34 @@ fn start_task_result(label: &str, task: String) -> Value {
     })
 }
 
-fn handle_command_session_new(raw_command: &str, task: Option<String>) -> Value {
+async fn handle_command_session_new(
+    state: &DaemonState,
+    raw_command: &str,
+    task: Option<String>,
+) -> Result<Value, String> {
     let trimmed_task = task
         .as_deref()
         .map(str::trim)
         .filter(|task| !task.is_empty());
-    serde_json::json!({
+    let session_id = state.next_id().await;
+    let mut record = SessionRecord::new(&session_id, state.project_root.as_ref().clone());
+    record.summary = trimmed_task
+        .map(session_title_from_task)
+        .unwrap_or_else(|| "new session".to_string());
+    record.last_task = trimmed_task.map(str::to_string);
+    let store = MemoryStore::new(state.project_root.join(".peridot/memory.db"));
+    store
+        .save_session_record(&record)
+        .map_err(|err| format!("failed to save new session record: {err}"))?;
+    let title = record_title(&record);
+    store
+        .save_session(&SessionSummary {
+            id: record.id.clone(),
+            summary: title.clone(),
+        })
+        .map_err(|err| format!("failed to save legacy session summary: {err}"))?;
+    emit_session_list_changed(state).await;
+    Ok(serde_json::json!({
         "kind": "session_new",
         "title": "New Session",
         "message": if trimmed_task.is_some() {
@@ -1948,8 +1972,17 @@ fn handle_command_session_new(raw_command: &str, task: Option<String>) -> Value 
         "severity": "info",
         "command": raw_command,
         "task": trimmed_task,
+        "session_id": session_id,
+        "session_title": title,
+        "summary": record.summary,
+        "status": format!("{:?}", record.status).to_ascii_lowercase(),
+        "running": false,
+        "updated_at_unix": record.updated_at_unix,
+        "total_tokens": record.total_tokens,
+        "total_cost_usd": record.total_cost_usd,
+        "turns_used": record.turns_used,
         "has_task": trimmed_task.is_some(),
-    })
+    }))
 }
 
 async fn handle_command_session_list(
@@ -6212,6 +6245,18 @@ mod tests {
         assert_eq!(empty["kind"], "session_new");
         assert_eq!(empty["has_task"], false);
         assert!(empty.get("task").is_none_or(Value::is_null));
+        let empty_id = empty["session_id"].as_str().unwrap();
+        assert_eq!(empty["session_title"], "new session");
+        assert_eq!(empty["status"], "idle");
+        assert_eq!(empty["running"], false);
+        assert_eq!(empty["total_tokens"], 0);
+        assert!(state.sessions.lock().await.get(empty_id).is_none());
+        assert!(
+            MemoryStore::new(root.join(".peridot/memory.db"))
+                .get_session_record(empty_id)
+                .unwrap()
+                .is_some()
+        );
 
         let with_task = execute_session_command(
             &state,
@@ -6223,6 +6268,7 @@ mod tests {
         .unwrap();
         assert_eq!(with_task["kind"], "session_new");
         assert_eq!(with_task["task"], "fix tests");
+        assert_eq!(with_task["session_title"], "fix tests");
         assert_eq!(with_task["has_task"], true);
         assert_ne!(with_task["action"], "local");
         let _ = std::fs::remove_dir_all(root);

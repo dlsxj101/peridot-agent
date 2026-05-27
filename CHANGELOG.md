@@ -53,6 +53,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **VS Code `/session rename` reconciliation** now applies persisted
   status and usage metadata from the daemon rename result before updating
   the target sidebar session title.
+- **Daemon-backed `/session new [task]` materialization** now creates a
+  persisted idle session id and lets VS Code select that same id before
+  starting an optional task.
 
 ### Added — skill-aware slash autocomplete
 

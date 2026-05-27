@@ -37,6 +37,8 @@
   daemon result, including persisted usage metadata when present.
 - `/session rename` now reconciles the renamed sidebar session from the
   daemon result, keeping persisted status and usage metadata fresh.
+- `/session new [task]` now materializes a daemon-backed idle session id
+  before VS Code selects the new card or starts the optional task.
 
 ### Added — compaction snapshot details
 
