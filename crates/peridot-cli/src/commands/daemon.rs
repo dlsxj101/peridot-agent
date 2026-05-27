@@ -2211,6 +2211,36 @@ async fn handle_command_session_rename(
     if renamed {
         emit_session_list_changed(state).await;
     }
+    let sessions = if renamed {
+        Some(session_list_result(state).await)
+    } else {
+        None
+    };
+    let session = sessions
+        .as_ref()
+        .and_then(|list| list["sessions"].as_array())
+        .and_then(|items| items.iter().find(|item| item["id"] == session_id));
+    let summary = session
+        .and_then(|item| item["summary"].as_str())
+        .unwrap_or(title);
+    let status = session
+        .and_then(|item| item["status"].as_str())
+        .unwrap_or("idle");
+    let running = session
+        .and_then(|item| item["running"].as_bool())
+        .unwrap_or(false);
+    let updated_at_unix = session
+        .and_then(|item| item["updated_at_unix"].as_u64())
+        .unwrap_or(0);
+    let total_tokens = session
+        .and_then(|item| item["total_tokens"].as_u64())
+        .unwrap_or(0);
+    let total_cost_usd = session
+        .and_then(|item| item["total_cost_usd"].as_f64())
+        .unwrap_or(0.0);
+    let turns_used = session
+        .and_then(|item| item["turns_used"].as_u64())
+        .unwrap_or(0);
     Ok(serde_json::json!({
         "kind": "session_rename",
         "title": "Session Rename",
@@ -2224,11 +2254,21 @@ async fn handle_command_session_rename(
         "session_id": session_id,
         "target": target,
         "session_title": title,
+        "summary": summary,
+        "status": status,
+        "running": running,
+        "updated_at_unix": updated_at_unix,
+        "total_tokens": total_tokens,
+        "total_cost_usd": total_cost_usd,
+        "turns_used": turns_used,
         "renamed": renamed,
         "items": [
             { "label": "session", "detail": session_id },
             { "label": "title", "detail": title },
             { "label": "renamed", "detail": renamed.to_string() },
+            { "label": "tokens", "detail": total_tokens.to_string() },
+            { "label": "cost", "detail": format!("${:.4}", total_cost_usd) },
+            { "label": "turns", "detail": turns_used.to_string() },
         ],
     }))
 }
@@ -5887,6 +5927,11 @@ mod tests {
         let mut record = SessionRecord::new("session-rename", &root);
         record.summary = "old title".into();
         record.last_task = Some("old task".into());
+        record.status = SessionLifecycle::Suspended;
+        record.updated_at_unix = 77;
+        record.total_tokens = 4096;
+        record.total_cost_usd = 0.25;
+        record.turns_used = 8;
         store.save_session_record(&record).unwrap();
         store
             .save_session(&SessionSummary {
@@ -5917,6 +5962,12 @@ mod tests {
         assert_eq!(result["kind"], "session_rename");
         assert_eq!(result["session_id"], "session-rename");
         assert_eq!(result["session_title"], "release prep");
+        assert_eq!(result["summary"], "release prep");
+        assert_eq!(result["status"], "suspended");
+        assert!(result["updated_at_unix"].as_u64().unwrap() >= 77);
+        assert_eq!(result["total_tokens"], 4096);
+        assert_eq!(result["turns_used"], 8);
+        assert!((result["total_cost_usd"].as_f64().unwrap() - 0.25).abs() < 1e-9);
         assert_eq!(result["renamed"], true);
         let renamed = store.get_session_record("session-rename").unwrap().unwrap();
         assert_eq!(renamed.summary, "release prep");

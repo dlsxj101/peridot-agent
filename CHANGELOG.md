@@ -50,6 +50,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **VS Code `/session switch` reconciliation** now applies persisted
   usage metadata from the daemon switch result before selecting the
   target sidebar session.
+- **VS Code `/session rename` reconciliation** now applies persisted
+  status and usage metadata from the daemon rename result before updating
+  the target sidebar session title.
 
 ### Added — skill-aware slash autocomplete
 

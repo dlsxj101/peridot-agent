@@ -35,6 +35,8 @@
   VS Code-local parser branch.
 - `/session switch` now reconciles the selected sidebar session from the
   daemon result, including persisted usage metadata when present.
+- `/session rename` now reconciles the renamed sidebar session from the
+  daemon result, keeping persisted status and usage metadata fresh.
 
 ### Added — compaction snapshot details
 

@@ -570,6 +570,20 @@ shared daemon, TUI, and VS Code extension surfaces.
   VS Code feeds that switch result through the same sidebar reconciliation
   path as list/save before selecting the target session card.
 
+### E50. Session Rename Metadata Reconcile
+
+- **Status**: landed.
+- **Goal**: make `/session rename <id|title> <new title>` return the
+  updated persisted session metadata so editor clients can refresh the
+  existing sidebar card without a follow-up list call.
+- **Where**: daemon `session.command`, VS Code sidebar slash result
+  application.
+- **Result**: daemon-backed `session_rename` results now include summary,
+  status, running state, updated timestamp, total tokens, total cost, and
+  turn count when the rename succeeds. VS Code reconciles that metadata
+  before applying the local title update, preserving older-daemon fallback
+  behavior when those additive fields are absent.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.
