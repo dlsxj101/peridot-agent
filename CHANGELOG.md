@@ -67,6 +67,10 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
   visible transcript while the daemon cancels the active session and
   removes the matching persisted session record and blobs, matching the
   TUI's fresh-session semantics.
+- **Daemon-backed `/session close` parity** now lets editor clients close
+  sessions through the same daemon path as TUI close/delete, including
+  live run cancellation, persisted session cleanup, and local run
+  bookkeeping cleanup in VS Code.
 - **VS Code Get Started walkthrough** guides first-time users through
   opening the sidebar, connecting a provider, reviewing settings, and
   running a first task using existing Peridot commands and view

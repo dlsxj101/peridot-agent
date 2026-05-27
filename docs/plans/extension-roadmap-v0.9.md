@@ -180,6 +180,21 @@ shared daemon, TUI, and VS Code extension surfaces.
   clears the local transcript without sending a duplicate cancel request
   after the daemon already handled it.
 
+### E21. Session Close Slash Parity
+
+- **Status**: landed.
+- **Goal**: make VS Code `/session close <id|title>` use the same daemon
+  lifecycle path as TUI close/delete instead of only removing a local
+  sidebar card.
+- **Where**: daemon `session.command`, live daemon session registry,
+  persisted session summaries/records/blobs, VS Code run bookkeeping.
+- **Result**: `/session close` now returns a structured `session_close`
+  command result. The daemon resolves the target, cancels and removes a
+  live session when present, deletes persisted session state to match
+  TUI close semantics, and emits session-list invalidation. VS Code
+  removes the matching local sidebar session by daemon id and forgets any
+  active run handle after daemon-side cancellation.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

@@ -56,6 +56,7 @@ export interface SidebarHandlers {
   openPath: (path: string) => Promise<void>;
   registerProvider: (provider: ProviderChoice, params: Record<string, string>) => Promise<void>;
   deleteSession: (clientSessionId: string, daemonSessionId?: string) => Promise<void>;
+  finishDaemonSession: (daemonSessionId: string) => Promise<void>;
   copyText: (text: string) => Promise<void>;
   /**
    * Ask the daemon to LLM-generate a short title for a session from its first
@@ -1278,6 +1279,9 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       }
       this.applyRewindResult(result);
       this.applySessionMutationResult(result);
+      if (sessionResultClosesDaemonRun(result) && result.session_id) {
+        await this.handlers.finishDaemonSession(result.session_id);
+      }
       this.appendCommandResult(result);
       if (result.kind === 'start_task' && result.task) {
         await this.handlers.runTask(result.task, this.state.runOptions);
@@ -1360,7 +1364,10 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       }
       return;
     }
-    if (result.kind === 'session_delete' && (result.deleted === true || result.cancelled === true)) {
+    if (
+      (result.kind === 'session_delete' || result.kind === 'session_close') &&
+      (result.deleted === true || result.cancelled === true)
+    ) {
       const session = this.findSessionByResultId(result);
       if (session) {
         this.deleteSession(session.id);
@@ -1799,6 +1806,13 @@ function normalizeReasoning(
   value: string | undefined,
 ): RunOptions['reasoningEffort'] | undefined {
   return value ? parseReasoningEffort(value) : undefined;
+}
+
+function sessionResultClosesDaemonRun(result: CommandResultView): boolean {
+  return (
+    (result.kind === 'session_delete' || result.kind === 'session_close') &&
+    result.cancelled === true
+  );
 }
 
 function applyRunOptionDelta(

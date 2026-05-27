@@ -67,6 +67,9 @@
 - `/clear` now uses the daemon-backed slash path to cancel the active
   daemon session and delete matching persisted session records/blobs
   before the sidebar opens a fresh local transcript.
+- `/session close <id|title>` now uses the daemon-backed slash path,
+  matching TUI close semantics and cleaning up any active VS Code run
+  bookkeeping after the daemon cancels the session.
 - `/codemap` now uses a persisted `.peridot/codemap.json` index, and
   `Peridot: Refresh Workspace Code Map Index` rebuilds it explicitly.
 - `Peridot: Search Workspace Code Map` runs `/codemap find <query>`

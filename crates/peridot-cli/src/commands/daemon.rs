@@ -1683,7 +1683,6 @@ async fn execute_session_command(
         | SlashCommand::Collapse
         | SlashCommand::SessionNew(_)
         | SlashCommand::SessionSwitch(_)
-        | SlashCommand::SessionClose(_)
         | SlashCommand::GoalStart(_) => Ok(with_state_delta(
             serde_json::json!({
                 "kind": "client_action",
@@ -1722,6 +1721,9 @@ async fn execute_session_command(
         SlashCommand::SessionCount => handle_command_session_count(state, raw_command),
         SlashCommand::SessionDelete(target) => {
             handle_command_session_delete(state, raw_command, &target).await
+        }
+        SlashCommand::SessionClose(target) => {
+            handle_command_session_close(state, raw_command, &target).await
         }
         SlashCommand::SessionRename { target, title } => {
             handle_command_session_rename(state, raw_command, &target, &title).await
@@ -1963,6 +1965,32 @@ async fn handle_command_session_delete(
     raw_command: &str,
     target: &str,
 ) -> Result<Value, String> {
+    handle_command_session_remove(
+        state,
+        raw_command,
+        target,
+        "session_delete",
+        "Session Delete",
+    )
+    .await
+}
+
+async fn handle_command_session_close(
+    state: &DaemonState,
+    raw_command: &str,
+    target: &str,
+) -> Result<Value, String> {
+    handle_command_session_remove(state, raw_command, target, "session_close", "Session Close")
+        .await
+}
+
+async fn handle_command_session_remove(
+    state: &DaemonState,
+    raw_command: &str,
+    target: &str,
+    kind: &str,
+    title: &str,
+) -> Result<Value, String> {
     let session_id = resolve_session_target_id(state, target)
         .await?
         .unwrap_or_else(|| target.to_string());
@@ -1972,10 +2000,15 @@ async fn handle_command_session_delete(
     if cancelled || deleted {
         emit_session_list_changed(state).await;
     }
+    let (label, success_word) = if kind == "session_close" {
+        ("close", "closed")
+    } else {
+        ("delete", "deleted")
+    };
     Ok(serde_json::json!({
-        "kind": "session_delete",
-        "title": "Session Delete",
-        "message": format!("session delete: {session_id} {}", if deleted || cancelled { "deleted" } else { "not found" }),
+        "kind": kind,
+        "title": title,
+        "message": format!("session {label}: {session_id} {}", if deleted || cancelled { success_word } else { "not found" }),
         "severity": if deleted || cancelled { "info" } else { "error" },
         "command": raw_command,
         "session_id": session_id,
@@ -4895,6 +4928,77 @@ mod tests {
         );
         assert!(store.get_session("session-delete").unwrap().is_none());
         assert!(!sessions_root.join("session-delete").exists());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn session_command_close_removes_live_and_persisted_session() {
+        let root = test_project("session-command-close");
+        let store = MemoryStore::new(root.join(".peridot/memory.db"));
+        let record = SessionRecord::new("session-close", &root);
+        store.save_session_record(&record).unwrap();
+        store
+            .save_session(&SessionSummary {
+                id: "session-close".into(),
+                summary: "close me".into(),
+            })
+            .unwrap();
+        let sessions_root = root.join(".peridot").join("sessions");
+        peridot_memory::save_session_blob(
+            &sessions_root,
+            "session-close",
+            "tui_state.json",
+            br#"{"sessions":[]}"#,
+        )
+        .unwrap();
+        let (tx, _rx) = mpsc::unbounded_channel::<String>();
+        let state = DaemonState::new(
+            root.clone(),
+            PeridotConfig::default(),
+            test_options(None),
+            tx,
+        );
+        state.sessions.lock().await.insert(
+            "session-close".to_string(),
+            SessionEntry {
+                cancel: CancelToken::new(),
+                compact_request: Arc::new(AtomicBool::new(false)),
+                task: None,
+                spec: SessionRunSpec {
+                    task: "close active session".to_string(),
+                    mode: ExecutionMode::Execute,
+                    permission: PermissionMode::Auto,
+                    model: None,
+                    reasoning_effort: None,
+                    service_tier: None,
+                    config: PeridotConfig::default(),
+                },
+                usage: Arc::new(StdMutex::new(LiveSessionUsage::default())),
+                plan: Arc::new(StdMutex::new(LiveSessionPlan::default())),
+                goal: Arc::new(StdMutex::new(LiveSessionGoal::default())),
+                approval_grants: Vec::new(),
+                waiting_approval: None,
+            },
+        );
+
+        let result = execute_session_command(
+            &state,
+            Some("session-close"),
+            "/session close session-close",
+            SlashCommand::SessionClose("session-close".into()),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result["kind"], "session_close");
+        assert_eq!(result["session_id"], "session-close");
+        assert_eq!(result["deleted"], true);
+        assert_eq!(result["cancelled"], true);
+        assert!(!state.sessions.lock().await.contains_key("session-close"));
+        assert!(store.get_session_record("session-close").unwrap().is_none());
+        assert!(store.get_session("session-close").unwrap().is_none());
+        assert!(!sessions_root.join("session-close").exists());
+        shutdown_sessions(&state).await;
         let _ = std::fs::remove_dir_all(root);
     }
 

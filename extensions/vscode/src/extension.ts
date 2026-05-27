@@ -153,6 +153,8 @@ export function activate(context: vscode.ExtensionContext) {
     ): Promise<void> => registerProvider(provider, params, output, sidebar),
     deleteSession: async (clientSessionId: string, daemonSessionId?: string): Promise<void> =>
       deleteExtensionSession(clientSessionId, daemonSessionId, output),
+    finishDaemonSession: async (daemonSessionId: string): Promise<void> =>
+      finishRunBySession(daemonSessionId, output),
     copyText: async (text: string): Promise<void> => vscode.env.clipboard.writeText(text),
     generateSessionTitle: async (task: string): Promise<string | null> =>
       generateSessionTitle(task, output),
