@@ -976,6 +976,8 @@ pub enum SessionCommandEvent {
     SkillPin(String),
     /// `/skills unpin <name>` — remove the curation protection marker.
     SkillUnpin(String),
+    /// `/skills archive <name>` — hide an active stored skill from inventory.
+    SkillArchive(String),
     /// `/context top` — render the largest entries from the persisted
     /// context snapshot so operators can see what is consuming the window.
     ContextTop,

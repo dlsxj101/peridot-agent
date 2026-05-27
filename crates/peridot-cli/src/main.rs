@@ -1577,6 +1577,9 @@ fn apply_session_command(
         SessionCommandEvent::SkillUnpin(name) => {
             handle_skill_pin(state, project_template, &name, false);
         }
+        SessionCommandEvent::SkillArchive(name) => {
+            handle_skill_archive(state, project_template, &name);
+        }
         SessionCommandEvent::ContextTop => {
             handle_context_top(state, project_template);
         }
@@ -2065,6 +2068,24 @@ fn handle_skill_pin(state: &mut TuiState, project_root: &Path, name: &str, pinne
             let verb = if pinned { "pin" } else { "unpin" };
             state.push_error(format!("skills: failed to {verb} `{name}`: {err}"));
         }
+    }
+}
+
+fn handle_skill_archive(state: &mut TuiState, project_root: &Path, name: &str) {
+    let store = MemoryStore::new(project_root.join(".peridot/memory.db"));
+    match store.set_skill_archived(name, unix_timestamp()) {
+        Ok(true) => {
+            if let Err(err) = move_auto_skill_to_archive(project_root, name) {
+                state.push_error(format!(
+                    "skills: archived `{name}` but failed to move file: {err}"
+                ));
+                return;
+            }
+            state.set_skill_suggestions(load_auto_skill_suggestions(project_root));
+            state.push_transcript(format!("archived skill `{name}`"));
+        }
+        Ok(false) => state.push_error(format!("skill not found: {name}")),
+        Err(err) => state.push_error(format!("skills: failed to archive `{name}`: {err}")),
     }
 }
 

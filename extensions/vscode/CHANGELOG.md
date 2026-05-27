@@ -50,6 +50,8 @@
   `/skills search <query>` and render filtered skill inventory results.
 - Skill inventory and detail cards now include a Use button backed by
   `/skills use <name>`, loading the stored skill into session context.
+- Skill inventory and detail cards now include a confirm-before-archive
+  action backed by `/skills archive <name>`.
 - GitHub PR workflow commands are available from VS Code: PR status,
   preview-and-confirm `peridot ship`, and confirm-before-merge
   `gh pr merge`.

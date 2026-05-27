@@ -52,6 +52,7 @@ export interface SidebarHandlers {
   showSkill: (name: string) => Promise<void>;
   useSkill: (name: string) => Promise<void>;
   toggleSkillPin: (name: string, pinned: boolean) => Promise<void>;
+  archiveSkill: (name: string) => Promise<void>;
   attachFile: () => Promise<void>;
   detachAttachment: (path: string) => Promise<void>;
   showAttachments: () => Promise<void>;
@@ -956,6 +957,9 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         return;
       case 'toggleSkillPin':
         await this.handlers.toggleSkillPin(message.name, message.pinned);
+        return;
+      case 'archiveSkill':
+        await this.handlers.archiveSkill(message.name);
         return;
       case 'attachFile':
         await this.handlers.attachFile();

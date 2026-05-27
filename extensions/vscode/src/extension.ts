@@ -140,6 +140,7 @@ export function activate(context: vscode.ExtensionContext) {
     useSkill: async (name: string): Promise<void> => useSkill(name, output, sidebar),
     toggleSkillPin: async (name: string, pinned: boolean): Promise<void> =>
       toggleSkillPin(name, pinned, output, sidebar),
+    archiveSkill: async (name: string): Promise<void> => archiveSkill(name, output, sidebar),
     attachFile: async (): Promise<void> => attachFileToSession(output, sidebar),
     detachAttachment: async (path: string): Promise<void> =>
       detachAttachmentFromSession(path, output, sidebar),
@@ -1123,6 +1124,43 @@ async function toggleSkillPin(
     output.appendLine(`[peridot] skill pin failed: ${message}`);
     sidebar.appendError(message);
     await vscode.window.showErrorMessage(`Peridot skill update failed: ${message}`);
+  }
+}
+
+async function archiveSkill(
+  skillName: string,
+  output: vscode.OutputChannel,
+  sidebar: PeridotSidebarProvider,
+): Promise<void> {
+  const name = skillName.trim().replace(/^\/+/, '');
+  if (!name) return;
+  const confirmed = await vscode.window.showWarningMessage(
+    `Archive Peridot skill ${name}? It will be hidden from active skill lists.`,
+    { modal: true },
+    'Archive',
+  );
+  if (confirmed !== 'Archive') return;
+  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!folder) {
+    const message = 'Open a workspace folder before archiving Peridot skills.';
+    sidebar.setWorkspaceProblem(message);
+    await vscode.window.showWarningMessage(message);
+    return;
+  }
+  await vscode.commands.executeCommand('peridot.chatView.focus');
+  try {
+    const result = await runSlashCommand(
+      `/skills archive ${name}`,
+      output,
+      sidebar,
+      sidebar.currentRunOptions(),
+    );
+    sidebar.appendCommandResult(result);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    output.appendLine(`[peridot] skill archive failed: ${message}`);
+    sidebar.appendError(message);
+    await vscode.window.showErrorMessage(`Peridot skill archive failed: ${message}`);
   }
 }
 

@@ -34,8 +34,8 @@ use tokio::sync::{Mutex, mpsc, oneshot};
 
 use crate::checkpoints::restore_latest_checkpoint;
 use crate::commands::{
-    AuthProvider, read_managed_env_var, read_stored_api_key, read_stored_openai_oauth_credentials,
-    session_count_summary,
+    AuthProvider, move_auto_skill_to_archive, read_managed_env_var, read_stored_api_key,
+    read_stored_openai_oauth_credentials, session_count_summary,
 };
 use crate::run_loop::{AgentTaskOptions, MessageBusHookup, run_task_with_events};
 use crate::session_router::{RouterMessageBus, SessionHandle, SessionRouter, WorkspaceIsolation};
@@ -1622,6 +1622,7 @@ async fn execute_session_command(
         SlashCommand::SkillUnpin(name) => {
             handle_command_skill_pin(state, raw_command, &name, false)
         }
+        SlashCommand::SkillArchive(name) => handle_command_skill_archive(state, raw_command, &name),
         SlashCommand::Cost => handle_command_cost(state, session_id, raw_command).await,
         SlashCommand::Info => handle_command_info(state, session_id, raw_command).await,
         SlashCommand::PlanShow => handle_command_plan_show(state, session_id, raw_command).await,
@@ -3459,6 +3460,23 @@ fn handle_command_skill_pin(
     }
     let verb = if pinned { "pinned" } else { "unpinned" };
     command_skill_list_result(state, raw_command, Some(format!("{verb} skill `{name}`")))
+}
+
+fn handle_command_skill_archive(
+    state: &DaemonState,
+    raw_command: &str,
+    name: &str,
+) -> Result<Value, String> {
+    let store = peridot_memory::MemoryStore::new(state.project_root.join(".peridot/memory.db"));
+    let updated = store
+        .set_skill_archived(name, crate::run_state::unix_timestamp())
+        .map_err(|err| format!("skills: failed to archive `{name}`: {err}"))?;
+    if !updated {
+        return Err(format!("skill not found: {name}"));
+    }
+    move_auto_skill_to_archive(&state.project_root, name)
+        .map_err(|err| format!("skills: archived `{name}` but failed to move file: {err}"))?;
+    command_skill_list_result(state, raw_command, Some(format!("archived skill `{name}`")))
 }
 
 fn command_skill_list_result(
@@ -5311,6 +5329,53 @@ mod tests {
                 .unwrap()
                 .iter()
                 .any(|skill| skill.name == "auto-fix-parser" && skill.pinned_at_unix == 0)
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn session_command_skills_archive_hides_skill_inventory() {
+        let root = test_project("command-skills-archive");
+        let skill_dir = root.join(".peridot/skills/auto");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(skill_dir.join("auto-fix-parser.md"), "repair parser tests").unwrap();
+        let store = peridot_memory::MemoryStore::new(root.join(".peridot/memory.db"));
+        store
+            .save_skill(&peridot_memory::StoredSkill {
+                name: "auto-fix-parser".into(),
+                body: "repair parser tests".into(),
+                description: "repair parser tests".into(),
+                scope: "auto".into(),
+                ..Default::default()
+            })
+            .unwrap();
+        let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+        let state = DaemonState::new(
+            root.clone(),
+            PeridotConfig::default(),
+            test_options(None),
+            tx,
+        );
+
+        let _ = dispatch_line(
+            &state,
+            r#"{"jsonrpc":"2.0","id":44,"method":"session.command","params":{"command":"/skills archive auto-fix-parser"}}"#,
+        )
+        .await
+        .unwrap();
+
+        let line = rx.try_recv().unwrap();
+        let value: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(value["result"]["kind"], "skills");
+        assert_eq!(
+            value["result"]["message"],
+            "archived skill `auto-fix-parser`"
+        );
+        assert_eq!(value["result"]["total"], 0);
+        assert!(store.list_skills().unwrap().is_empty());
+        assert!(
+            root.join(".peridot/skills/archive/auto-fix-parser.md")
+                .is_file()
         );
         let _ = std::fs::remove_dir_all(root);
     }

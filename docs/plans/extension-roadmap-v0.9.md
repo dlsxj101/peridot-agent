@@ -375,6 +375,21 @@ shared daemon, TUI, and VS Code extension surfaces.
   command result, and VS Code skill inventory/detail rows expose a
   one-click Use action.
 
+### E35. Skill Archive From Inventory
+
+- **Status**: landed.
+- **Goal**: let operators hide stale or noisy active skills without
+  leaving the inventory flow or permanently deleting skill files.
+- **Where**: shared slash parser/catalog, `MemoryStore::set_skill_archived`,
+  auto-skill file archive helper, TUI host skill command queue, daemon
+  `session.command`, VS Code skill inventory/detail card actions.
+- **Result**: `/skills archive <name>` now marks the skill archived and
+  moves matching auto-skill files into `.peridot/skills/archive/` when
+  present. TUI refreshes dynamic skill suggestions, daemon clients
+  receive a refreshed `skills` result with the archived row removed, and
+  VS Code skill inventory/detail rows expose a confirm-before-archive
+  action.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

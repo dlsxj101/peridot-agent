@@ -414,6 +414,7 @@ export type OutboundMessage =
   | { type: 'showSkill'; name: string }
   | { type: 'useSkill'; name: string }
   | { type: 'toggleSkillPin'; name: string; pinned: boolean }
+  | { type: 'archiveSkill'; name: string }
   | { type: 'attachFile' }
   | { type: 'detachAttachment'; path: string }
   | { type: 'exportSessionArtifacts' }

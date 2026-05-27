@@ -987,6 +987,8 @@ function iconSvg(kind: string): string {
       return `<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5.5 2.5h5l-1 4 2.5 2.5H4l2.5-2.5z"/><path d="M8 9v4.5"/></svg>`;
     case 'unpin':
       return `<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5.5 2.5h5l-1 4 2.5 2.5H7"/><path d="M8 9v4.5"/><path d="M2.5 2.5l11 11"/></svg>`;
+    case 'archive':
+      return `<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4.5h11v9h-11z"/><path d="M1.8 2.5h12.4v2h-12.4z"/><path d="M6 8h4"/></svg>`;
     case 'attach':
       return `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5.2 8.7l3.9-3.9a2.4 2.4 0 0 1 3.4 3.4l-5.1 5.1a3.6 3.6 0 0 1-5.1-5.1l5.5-5.5"/><path d="M6.3 9.8l4.2-4.2"/></svg>`;
     case 'export':
@@ -2793,6 +2795,9 @@ function renderSkillsBlock(item: TranscriptItem): HTMLElement {
       void markCopied(copy, command);
     });
     actions.append(copy);
+    actions.append(iconButton('archive', `Archive ${command}`, () => {
+      vscode.postMessage({ type: 'archiveSkill', name });
+    }));
     row.append(actions);
     list.append(row);
   });
@@ -2835,6 +2840,9 @@ function renderSkillDetailBlock(item: TranscriptItem): HTMLElement {
     });
     actions.append(copyBody);
   }
+  actions.append(iconButton('archive', `Archive ${command}`, () => {
+    vscode.postMessage({ type: 'archiveSkill', name });
+  }));
   header.append(actions);
   wrap.append(header);
   if (result?.detail) wrap.append(el('div', 'command-message', result.detail));

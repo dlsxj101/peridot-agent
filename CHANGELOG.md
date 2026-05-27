@@ -72,6 +72,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **Skill use from inventory** adds `/skills use <name> [args]` as an
   explicit alias for `/skill-name [args]`, plus VS Code Use buttons on
   skill inventory/detail cards.
+- **Skill archive from inventory** adds `/skills archive <name>` and VS
+  Code confirm-before-archive buttons that hide active skills without
+  deleting archived auto-skill files.
 - **Reflection noise filtering** now drops single-tool repeat n-grams
   before the Curator LLM call and stamps them as handled, so historical
   `file_read|file_read`-style rows do not burn review budget.

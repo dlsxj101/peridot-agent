@@ -1381,6 +1381,10 @@ pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
             state.push_transcript(format!("skill `{name}`: unpinning..."));
             state.push_pending_session_command(SessionCommandEvent::SkillUnpin(name));
         }
+        SlashCommand::SkillArchive(name) => {
+            state.push_transcript(format!("skill `{name}`: archiving..."));
+            state.push_pending_session_command(SessionCommandEvent::SkillArchive(name));
+        }
     }
 }
 
