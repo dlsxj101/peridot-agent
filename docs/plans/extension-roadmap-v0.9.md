@@ -218,8 +218,7 @@ shared daemon, TUI, and VS Code extension surfaces.
 - **Result**: `/goal <objective>` now returns a structured `start_task`
   result labeled `goal` plus a goal-mode state delta. VS Code applies the
   delta and starts the task through the existing daemon `session.start`
-  path, while `/goal` with no objective remains a local composer-mode
-  toggle.
+  path.
 
 ### E24. Workspace Symbol Locate
 
@@ -543,6 +542,20 @@ shared daemon, TUI, and VS Code extension surfaces.
   the same sidebar reconciliation path used by `/session list`, preserving
   transcript compatibility while refreshing the saved session title,
   status, token, cost, and turn metadata when those fields are present.
+
+### E48. Bare Goal Slash Parity
+
+- **Status**: landed.
+- **Goal**: make `/goal` with no objective use the same shared slash
+  parser and daemon state-delta path as `/plan` and `/execute` instead of
+  being a VS Code-local composer toggle.
+- **Where**: shared slash parser/state delta, TUI slash application,
+  daemon `session.command`, VS Code slash dispatch.
+- **Result**: `/goal` now parses as a goal-mode switch, returns a
+  structured `setting` result with `state_delta.mode = "goal"` from the
+  daemon, and updates TUI state without creating a goal objective. VS Code
+  routes the command through the daemon instead of special-casing it
+  locally.
 
 ## Notes
 

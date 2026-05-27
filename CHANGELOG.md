@@ -44,6 +44,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **VS Code `/session save` reconciliation** now applies the daemon's
   structured save result to the matching sidebar session card, refreshing
   saved metadata without local command parsing.
+- **Bare `/goal` slash parity** now routes goal-mode switching through
+  the shared parser, TUI state delta, and daemon `session.command` result
+  path instead of requiring a VS Code-local special case.
 
 ### Added — skill-aware slash autocomplete
 

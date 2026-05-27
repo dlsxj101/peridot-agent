@@ -58,6 +58,7 @@ impl AgentState {
             | SlashCommand::SkillRestore(_)
             | SlashCommand::Plan
             | SlashCommand::Execute
+            | SlashCommand::GoalMode
             | SlashCommand::Safe
             | SlashCommand::Auto
             | SlashCommand::Yolo

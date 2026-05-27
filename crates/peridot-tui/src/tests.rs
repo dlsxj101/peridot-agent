@@ -672,6 +672,14 @@ fn slash_commands_update_tui_state() {
         PermissionMode::Auto,
         "mock",
     ));
+    apply_slash_command(&mut state, SlashCommand::GoalMode);
+    assert_eq!(state.header.mode, ExecutionMode::Goal);
+    assert_eq!(state.goal_status, None);
+    assert!(state.transcript.last().unwrap().text.contains("mode: goal"));
+
+    state.header.mode = ExecutionMode::Execute;
+    state.transcript.clear();
+    state.lifecycle_events.clear();
     for character in "/goal ship release".chars() {
         let outcome = handle_key_event(
             &mut state,

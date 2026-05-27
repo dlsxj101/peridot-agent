@@ -6,6 +6,7 @@ use crate::{AgentState, GoalController, SlashCommand, parse_slash_command};
 
 #[test]
 fn parses_goal_slash_commands() {
+    assert_eq!(parse_slash_command("/goal"), Some(SlashCommand::GoalMode));
     assert_eq!(
         parse_slash_command("/goal fix tests"),
         Some(SlashCommand::GoalStart("fix tests".to_string()))
@@ -64,6 +65,11 @@ fn goal_controller_stops_on_budget() {
 #[test]
 fn agent_state_applies_mode_commands() {
     let mut state = AgentState::default();
+    state.apply_slash_command(&SlashCommand::GoalMode);
+
+    assert_eq!(state.mode, ExecutionMode::Goal);
+    assert_eq!(state.goal, None);
+
     state.apply_slash_command(&SlashCommand::GoalStart("ship".to_string()));
 
     assert_eq!(state.mode, ExecutionMode::Goal);

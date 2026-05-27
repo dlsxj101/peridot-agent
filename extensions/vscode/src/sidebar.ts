@@ -1185,47 +1185,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
   }
 
   private async handleSlashCommand(input: string, options: RunOptions): Promise<void> {
-    const [command, ...restParts] = input.slice(1).trim().split(/\s+/);
-    const rest = restParts.join(' ').trim();
-
-    if (command === 'goal' && rest.length === 0) {
-      this.updateRunOptions({ ...options, mode: 'goal' }, 'mode: goal');
-      return;
-    }
     await this.executeDaemonSlash(input, options);
-  }
-
-  private async handleGoalSlash(rest: string, options: RunOptions): Promise<void> {
-    const next = { ...options, mode: 'goal' as const };
-    switch (rest) {
-      case '':
-        this.updateRunOptions(next, 'mode: goal');
-        return;
-      case 'pause':
-        this.append({ role: 'status', text: 'goal: paused' });
-        return;
-      case 'resume':
-        this.append({ role: 'status', text: 'goal: resumed' });
-        return;
-      case 'clear':
-        this.append({ role: 'status', text: 'goal: cleared' });
-        return;
-      case 'status':
-        this.append({ role: 'status', text: 'goal: status is tracked by the running agent' });
-        return;
-      default:
-        this.state.runOptions = next;
-        this.state.context = {
-          ...this.state.context,
-          mode: 'goal',
-          permission: next.permission,
-          model: next.model ?? this.state.context.model,
-          reasoningEffort: next.reasoningEffort,
-          serviceTier: next.serviceTier,
-        };
-        await this.handlers.runTask(rest, next);
-        return;
-    }
   }
 
   private async handleSessionSlash(rest: string, options: RunOptions): Promise<void> {
@@ -1298,19 +1258,6 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  private updateRunOptions(next: RunOptions, notice: string): void {
-    this.state.runOptions = next;
-    this.state.context = {
-      ...this.state.context,
-      mode: next.mode,
-      permission: next.permission,
-      model: next.model ?? this.state.context.model,
-      reasoningEffort: next.reasoningEffort,
-      serviceTier: next.serviceTier,
-    };
-    this.append({ role: 'status', text: notice });
-  }
-
   private async executeDaemonSlash(input: string, options: RunOptions): Promise<void> {
     try {
       const result = await this.handlers.runSlashCommand(input, options);
@@ -1370,9 +1317,6 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         return false;
       case 'session':
         await this.handleSessionSlash(rest, options);
-        return true;
-      case 'goal':
-        await this.handleGoalSlash(rest, options);
         return true;
       default:
         return false;

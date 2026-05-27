@@ -1571,6 +1571,13 @@ async fn execute_session_command(
             "info",
             &state_delta,
         )),
+        SlashCommand::GoalMode => Ok(command_result_with_state_delta(
+            "setting",
+            "Mode",
+            "mode: goal",
+            "info",
+            &state_delta,
+        )),
         SlashCommand::Safe => Ok(command_result_with_state_delta(
             "setting",
             "Permission",
@@ -6079,6 +6086,27 @@ mod tests {
         assert_eq!(result["kind"], "start_task");
         assert_eq!(result["label"], "goal");
         assert_eq!(result["task"], "ship release");
+        assert_eq!(result["state_delta"]["mode"], "goal");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn session_command_goal_mode_returns_state_delta() {
+        let (tx, _rx) = mpsc::unbounded_channel::<String>();
+        let root = test_project("session-command-goal-mode");
+        let state = DaemonState::new(
+            root.clone(),
+            PeridotConfig::default(),
+            test_options(None),
+            tx,
+        );
+
+        let result = execute_session_command(&state, None, "/goal", SlashCommand::GoalMode)
+            .await
+            .unwrap();
+
+        assert_eq!(result["kind"], "setting");
+        assert_eq!(result["message"], "mode: goal");
         assert_eq!(result["state_delta"]["mode"], "goal");
         let _ = std::fs::remove_dir_all(root);
     }

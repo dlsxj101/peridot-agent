@@ -30,6 +30,9 @@
 - `/session save` now refreshes the saved session's VS Code sidebar
   metadata from the daemon's structured result, including status and
   usage fields when present.
+- Bare `/goal` now routes through daemon `session.command` like `/plan`
+  and `/execute`, applying the shared goal-mode state delta instead of a
+  VS Code-local parser branch.
 
 ### Added — compaction snapshot details
 

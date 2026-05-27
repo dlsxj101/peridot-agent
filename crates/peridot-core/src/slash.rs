@@ -43,6 +43,8 @@ pub enum SlashCommand {
     Plan,
     /// Switch to execute mode.
     Execute,
+    /// Switch to goal mode without starting a new objective.
+    GoalMode,
     /// Start goal mode with an objective.
     GoalStart(String),
     /// Pause goal execution.
@@ -302,7 +304,7 @@ pub fn slash_state_delta(
             mode: Some(ExecutionMode::Execute),
             ..SlashStateDelta::default()
         },
-        SlashCommand::GoalStart(_) => SlashStateDelta {
+        SlashCommand::GoalMode | SlashCommand::GoalStart(_) => SlashStateDelta {
             mode: Some(ExecutionMode::Goal),
             ..SlashStateDelta::default()
         },
@@ -527,7 +529,7 @@ pub fn parse_slash_command(input: &str) -> Option<SlashCommand> {
             "resume" => Some(SlashCommand::GoalResume),
             "clear" => Some(SlashCommand::GoalClear),
             "status" => Some(SlashCommand::GoalStatus),
-            "" => None,
+            "" => Some(SlashCommand::GoalMode),
             goal => Some(SlashCommand::GoalStart(goal.to_string())),
         },
         "subagent" if rest.starts_with("model") => {

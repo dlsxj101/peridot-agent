@@ -893,6 +893,9 @@ pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
         SlashCommand::Execute => {
             state.push_transcript_entry(TranscriptKind::Notice, "mode: execute");
         }
+        SlashCommand::GoalMode => {
+            state.push_transcript_entry(TranscriptKind::Notice, "mode: goal");
+        }
         SlashCommand::GoalStart(goal) => {
             state.goal_status = Some(GoalStatus::Running);
             state.goal_text = Some(goal.clone());
