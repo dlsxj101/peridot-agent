@@ -588,6 +588,12 @@ pub(crate) fn slash_argument_context_with_dynamic(
     if let Some(context) = branch_snapshot_argument_context(query, branches) {
         return Some(context);
     }
+    if let Some(context) = goal_control_argument_context(query) {
+        return Some(context);
+    }
+    if let Some(context) = notes_last_argument_context(query) {
+        return Some(context);
+    }
     let spec = slash_command_catalog()
         .iter()
         .filter(|spec| !finite_argument_options(spec).is_empty())
@@ -879,6 +885,57 @@ fn branch_snapshot_argument_context(
         command_name: command_name.to_string(),
         options,
         append_space: false,
+    })
+}
+
+fn goal_control_argument_context(query: &str) -> Option<SlashArgumentContext> {
+    static_subcommand_argument_context(
+        query,
+        "/goal",
+        &["pause", "resume", "clear", "status"],
+        false,
+        true,
+    )
+}
+
+fn notes_last_argument_context(query: &str) -> Option<SlashArgumentContext> {
+    static_subcommand_argument_context(query, "/notes", &["last"], true, false)
+}
+
+fn static_subcommand_argument_context(
+    query: &str,
+    command_name: &str,
+    options: &[&str],
+    append_space: bool,
+    close_on_exact: bool,
+) -> Option<SlashArgumentContext> {
+    if !query.starts_with(&format!("{command_name} ")) {
+        return None;
+    }
+    let has_trailing_space = query.chars().last().is_some_and(char::is_whitespace);
+    let rest = query[command_name.len()..].trim().to_ascii_lowercase();
+    if rest.contains(char::is_whitespace) {
+        return None;
+    }
+    let exact = !rest.is_empty()
+        && options
+            .iter()
+            .any(|option| option.eq_ignore_ascii_case(&rest));
+    if exact && (close_on_exact || has_trailing_space) {
+        return None;
+    }
+    let options: Vec<String> = options
+        .iter()
+        .filter(|option| rest.is_empty() || option.starts_with(&rest))
+        .map(|option| (*option).to_string())
+        .collect();
+    if options.is_empty() {
+        return None;
+    }
+    Some(SlashArgumentContext {
+        command_name: command_name.to_string(),
+        options,
+        append_space,
     })
 }
 
@@ -1331,6 +1388,53 @@ mod tests {
                 &branches,
             )
             .is_none()
+        );
+    }
+
+    #[test]
+    fn goal_control_argument_context_filters_subcommands() {
+        assert!(
+            slash_argument_context_with_dynamic("/goal", &[], &[], &[], &[], &[]).is_none(),
+            "bare /goal remains runnable as goal mode"
+        );
+
+        let context = slash_argument_context_with_dynamic("/goal p", &[], &[], &[], &[], &[])
+            .expect("goal control");
+        assert_eq!(context.command_name, "/goal");
+        assert_eq!(context.options, vec!["pause"]);
+        assert!(!context.append_space);
+
+        let context = slash_argument_context_with_dynamic("/goal ", &[], &[], &[], &[], &[])
+            .expect("goal controls");
+        assert_eq!(context.options, vec!["pause", "resume", "clear", "status"]);
+        assert!(
+            slash_argument_context_with_dynamic("/goal pause", &[], &[], &[], &[], &[]).is_none()
+        );
+        assert!(
+            slash_argument_context_with_dynamic("/goal fix tests", &[], &[], &[], &[], &[])
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn notes_last_argument_context_leaves_room_for_count() {
+        assert!(
+            slash_argument_context_with_dynamic("/notes", &[], &[], &[], &[], &[]).is_none(),
+            "bare /notes remains runnable"
+        );
+
+        let context = slash_argument_context_with_dynamic("/notes l", &[], &[], &[], &[], &[])
+            .expect("notes last");
+        assert_eq!(context.command_name, "/notes");
+        assert_eq!(context.options, vec!["last"]);
+        assert!(context.append_space);
+
+        let context = slash_argument_context_with_dynamic("/notes last", &[], &[], &[], &[], &[])
+            .expect("notes exact");
+        assert_eq!(context.options, vec!["last"]);
+        assert!(context.append_space);
+        assert!(
+            slash_argument_context_with_dynamic("/notes last ", &[], &[], &[], &[], &[]).is_none()
         );
     }
 

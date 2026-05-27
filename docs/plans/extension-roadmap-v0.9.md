@@ -795,6 +795,20 @@ shared daemon, TUI, and VS Code extension surfaces.
   and commands with extra arguments close the picker so Enter submits
   normally.
 
+### E66. Goal And Notes Subcommand Autocomplete
+
+- **Status**: landed.
+- **Goal**: make mixed free-form slash commands easier to use from both
+  TUI and VS Code without turning every first argument into a rigid
+  choice list.
+- **Where**: TUI dynamic slash argument context, TUI Tab acceptance path,
+  and VS Code webview slash autocomplete helper.
+- **Result**: `/goal pause|resume|clear|status` now autocomplete after
+  `/goal ` or a matching prefix, while bare `/goal` and nonmatching
+  free-form objectives still behave as before. `/notes last` now
+  autocompletes with a trailing space so the operator can immediately type
+  the count.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

@@ -62,6 +62,10 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
   in both TUI and VS Code.
 - **Branch snapshot autocomplete** now suggests saved `.peridot/branches`
   snapshot names for `/branch restore <name>` in both TUI and VS Code.
+- **Goal and notes subcommand autocomplete** now suggests
+  `/goal pause|resume|clear|status` and `/notes last` in both TUI and VS
+  Code without interfering with free-form goal objectives or bare
+  `/notes`.
 - **VS Code per-session composer history** now mirrors the TUI input
   history ergonomics: ArrowUp/ArrowDown recall submitted prompts per
   sidebar session, while in-progress drafts stay isolated across session
@@ -121,6 +125,12 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
   source-only development files from packaged artifacts.
 - **VS Code workflow packaging** now avoids duplicate extension test/build
   runs by relying on the shared `vscode:prepublish` test gate.
+
+### Fixed — hook execution
+
+- **Hook execution on WSL/Linux** now retries transient `Text file busy`
+  script launch failures, which can occur when a hook is executed
+  immediately after being written.
 
 ### Added — skill-aware slash autocomplete
 

@@ -136,9 +136,21 @@ impl HookRunner {
     fn run_one(&self, hook: &HookConfig, variables: &HookVariables) -> PeriResult<HookOutcome> {
         let command = render_template(&hook.run, variables);
         validate_hook_command(&self.project_root, &command)?;
+        for attempt in 0..3 {
+            let outcome = self.run_rendered_command(hook, &command)?;
+            if attempt < 2 && hook_text_file_busy(&outcome) {
+                std::thread::sleep(Duration::from_millis(25));
+                continue;
+            }
+            return Ok(outcome);
+        }
+        unreachable!("bounded hook retry loop always returns")
+    }
+
+    fn run_rendered_command(&self, hook: &HookConfig, command: &str) -> PeriResult<HookOutcome> {
         let mut child = Command::new("sh")
             .arg("-c")
-            .arg(&command)
+            .arg(command)
             .current_dir(&self.project_root)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -157,7 +169,7 @@ impl HookRunner {
                     .map_err(|err| PeriError::Tool(format!("failed to collect hook: {err}")))?;
                 return Ok(HookOutcome {
                     event: hook.event.clone(),
-                    command,
+                    command: command.to_string(),
                     on_failure: hook.on_failure,
                     exit_code: output.status.code().unwrap_or(-1),
                     stdout: String::from_utf8_lossy(&output.stdout).to_string(),
@@ -169,7 +181,7 @@ impl HookRunner {
                 let _ = child.wait();
                 return Ok(HookOutcome {
                     event: hook.event.clone(),
-                    command,
+                    command: command.to_string(),
                     on_failure: hook.on_failure,
                     exit_code: -1,
                     stdout: String::new(),
@@ -179,6 +191,10 @@ impl HookRunner {
             std::thread::sleep(Duration::from_millis(10));
         }
     }
+}
+
+fn hook_text_file_busy(outcome: &HookOutcome) -> bool {
+    outcome.exit_code == 126 && outcome.stderr.contains("Text file busy")
 }
 
 /// Builds standard tool-hook variables.

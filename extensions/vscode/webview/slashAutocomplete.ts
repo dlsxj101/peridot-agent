@@ -84,6 +84,10 @@ export function slashArgumentContext(
   if (mcpAddContext) return mcpAddContext;
   const branchContext = branchSnapshotArgumentContext(query, branches);
   if (branchContext) return branchContext;
+  const goalContext = goalControlArgumentContext(query);
+  if (goalContext) return goalContext;
+  const notesContext = notesLastArgumentContext(query);
+  if (notesContext) return notesContext;
   const command = [...slashCommands]
     .sort((a, b) => b.name.length - a.name.length)
     .find(
@@ -100,6 +104,46 @@ export function slashArgumentContext(
     ? options.filter((option) => option.toLowerCase().startsWith(rest))
     : options;
   return { command, options: filtered };
+}
+
+function goalControlArgumentContext(query: string): SlashArgumentContext | undefined {
+  return staticSubcommandArgumentContext(
+    query,
+    '/goal',
+    ['pause', 'resume', 'clear', 'status'],
+    false,
+    true,
+  );
+}
+
+function notesLastArgumentContext(query: string): SlashArgumentContext | undefined {
+  return staticSubcommandArgumentContext(query, '/notes', ['last'], true, false);
+}
+
+function staticSubcommandArgumentContext(
+  query: string,
+  commandName: string,
+  candidates: string[],
+  appendSpace: boolean,
+  closeOnExact: boolean,
+): SlashArgumentContext | undefined {
+  if (!query.startsWith(`${commandName} `)) return undefined;
+  const hasTrailingSpace = /\s$/.test(query);
+  const needle = query.slice(commandName.length).trim().toLowerCase();
+  if (/\s/.test(needle)) return undefined;
+  const exact = needle.length > 0 && candidates.some((candidate) => candidate.toLowerCase() === needle);
+  if (exact && (closeOnExact || hasTrailingSpace)) return undefined;
+  const options = candidates.filter((candidate) => needle.length === 0 || candidate.startsWith(needle));
+  if (options.length === 0) return undefined;
+  return {
+    command: {
+      name: commandName,
+      description: 'subcommand',
+      category: 'session',
+    },
+    options,
+    appendSpace,
+  };
 }
 
 function branchSnapshotArgumentContext(

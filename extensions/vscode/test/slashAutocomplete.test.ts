@@ -213,6 +213,30 @@ test('slashArgumentContext filters branch snapshot arguments', () => {
   );
 });
 
+test('slashArgumentContext filters goal and notes subcommands', () => {
+  assert.equal(slashArgumentContext('/goal', commands), undefined);
+  const goal = slashArgumentContext('/goal p', commands);
+
+  assert.equal(goal?.command.name, '/goal');
+  assert.deepEqual(goal?.options, ['pause']);
+  assert.equal(goal?.appendSpace, false);
+  assert.deepEqual(
+    slashArgumentContext('/goal ', commands)?.options,
+    ['pause', 'resume', 'clear', 'status'],
+  );
+  assert.equal(slashArgumentContext('/goal pause', commands), undefined);
+  assert.equal(slashArgumentContext('/goal fix tests', commands), undefined);
+
+  assert.equal(slashArgumentContext('/notes', commands), undefined);
+  const notes = slashArgumentContext('/notes l', commands);
+
+  assert.equal(notes?.command.name, '/notes');
+  assert.deepEqual(notes?.options, ['last']);
+  assert.equal(notes?.appendSpace, true);
+  assert.deepEqual(slashArgumentContext('/notes last', commands)?.options, ['last']);
+  assert.equal(slashArgumentContext('/notes last ', commands), undefined);
+});
+
 test('slashExactSelectionIsRunnable allows optional-arg exact commands only', () => {
   assert.equal(slashExactSelectionIsRunnable('/skills', commands, 0), true);
   assert.equal(slashExactSelectionIsRunnable('/reasoning', commands, 0), false);
@@ -224,4 +248,6 @@ test('slashPickerItemCount uses argument options when an argument picker is open
   assert.equal(slashPickerItemCount('/mcp test ', commands, [], mcpServers), 2);
   assert.equal(slashPickerItemCount('/model ', commands, [], [], modelSuggestions), 2);
   assert.equal(slashPickerItemCount('/branch restore ', commands, [], [], [], branchSnapshots), 2);
+  assert.equal(slashPickerItemCount('/goal ', commands), 4);
+  assert.equal(slashPickerItemCount('/notes l', commands), 1);
 });
