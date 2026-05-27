@@ -33,13 +33,13 @@ polish and hardening around session ergonomics.
 - LLM-generated session titles: after the first successful agent run, a
   lightweight LLM call (main model, `ReasoningEffort::Off`) generates a
   3–8 word title that replaces the placeholder.
+- Startup reconciliation handles unclean shutdowns: sessions still marked
+  `Running` are downgraded to `Suspended`; clean Peridot-managed worktrees are
+  removed; dirty worktrees are preserved and surfaced as TUI / VS Code warnings.
 - The landed milestone log below is intentionally append-only so older
   release notes still map to the implementation sequence.
 
-Remaining scoped polish:
-
-- Continued hardening for abnormal shutdown paths, especially orphaned
-  worktree cleanup after process crashes.
+Remaining scoped polish: none currently tracked in this runbook.
 
 ## Milestones
 
@@ -84,6 +84,18 @@ Remaining scoped polish:
   context entries on the first turn. Parents with zero completed turns leave
   the child with an empty context (silent no-op), matching the previous
   behaviour for that edge case.
+
+### M39 — Stale worktree reconciliation (landed)
+- TUI startup and daemon `peridot.status` both call the shared worktree
+  reconciler before reporting session state.
+- Any `SessionRecord` still marked `Running` after a previous process exited is
+  saved as `Suspended`, matching the existing resume semantics.
+- If that stale record points at a Peridot-managed worktree under
+  `.peridot/worktrees/`, the reconciler removes it only when `git status` is
+  clean. Dirty worktrees are preserved with a warning so uncommitted operator or
+  agent changes are never discarded.
+- Missing worktree paths are treated as already cleaned: git worktree metadata
+  is pruned best-effort and the record is moved back to the shared workspace.
 
 ### M38 — `peridot session list --status <state>` filter (landed)
 - `peridot session list` now accepts `--status idle|running|suspended|done|failed` (case-insensitive). The match uses `SessionRecord.status` so sessions without a record are dropped from the filtered view (they would not match any lifecycle anyway).
@@ -295,7 +307,7 @@ Remaining scoped polish:
 |---|---|
 | Foreground swap deadlock on `Arc<RwLock<TuiState>>` | `try_read` with timeout + single-writer (`SessionRouter::tick`). |
 | Background event backpressure | bounded channel + oldest-drop; attention flag conveys "you missed N events". |
-| Worktree leak when process crashes mid-run | startup scan reconciles open worktrees against `SessionRecord` lifecycle. |
+| Worktree leak when process crashes mid-run | startup / daemon status reconciliation suspends stale records, removes clean Peridot worktrees, and preserves dirty worktrees with a warning. |
 | Cost double-counting across sessions | per-session totals + workspace aggregate stored separately, UI labels them. |
 | Snapshot corruption on partial write | atomic `tempfile + rename`; never write to the final path directly. |
 

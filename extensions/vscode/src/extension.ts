@@ -43,6 +43,23 @@ interface DaemonStatusResult {
     method?: string;
     source?: string;
   };
+  worktree_cleanup?: WorktreeCleanupResult;
+}
+
+interface WorktreeCleanupResult {
+  suspended_sessions?: string[];
+  removed_worktrees?: WorktreeCleanupItem[];
+  preserved_worktrees?: WorktreeCleanupItem[];
+  missing_worktrees?: WorktreeCleanupItem[];
+  errors?: Array<{ session_id?: string; path?: string; message?: string }>;
+}
+
+interface WorktreeCleanupItem {
+  session_id?: string;
+  path?: string;
+  branch?: string;
+  reason?: string;
+  changed_files?: number;
 }
 
 interface SlashCommandCatalogResult {
@@ -1277,6 +1294,9 @@ async function refreshStatus(
     const extensionVersion =
       vscode.extensions.getExtension('dlsxj101.peridot-vscode')?.packageJSON?.version ??
       'unknown';
+    const cleanupProblem = worktreeCleanupProblem(result.worktree_cleanup);
+    const cleanupSummary = worktreeCleanupSummary(result.worktree_cleanup);
+    if (cleanupSummary) output.appendLine(`[peridot] worktree cleanup: ${cleanupSummary}`);
     sidebar.setContext({
       workspace: result.project_root,
       provider: result.provider,
@@ -1290,7 +1310,8 @@ async function refreshStatus(
       authConfigured: Boolean(result.auth?.configured),
       authMethod: result.auth?.method,
       authSource: result.auth?.source,
-      status: activeRunCount() > 0 ? 'Running' : 'Idle',
+      status: cleanupProblem ? 'Needs attention' : activeRunCount() > 0 ? 'Running' : 'Idle',
+      problem: cleanupProblem,
       running: activeRunCount() > 0,
     });
   } catch (err) {
@@ -1303,6 +1324,43 @@ async function refreshStatus(
       running: activeRunCount() > 0,
     });
   }
+}
+
+function worktreeCleanupSummary(cleanup?: WorktreeCleanupResult): string | undefined {
+  if (!cleanup) return undefined;
+  const parts: string[] = [];
+  const suspended = cleanup.suspended_sessions?.length ?? 0;
+  const removed = cleanup.removed_worktrees?.length ?? 0;
+  const preserved = cleanup.preserved_worktrees?.length ?? 0;
+  const missing = cleanup.missing_worktrees?.length ?? 0;
+  const errors = cleanup.errors?.length ?? 0;
+  if (suspended > 0) parts.push(`${suspended} stale session(s) suspended`);
+  if (removed > 0) parts.push(`${removed} clean worktree(s) removed`);
+  if (preserved > 0) parts.push(`${preserved} dirty worktree(s) preserved`);
+  if (missing > 0) parts.push(`${missing} missing worktree record(s) reconciled`);
+  if (errors > 0) parts.push(`${errors} cleanup error(s)`);
+  return parts.length > 0 ? parts.join('; ') : undefined;
+}
+
+function worktreeCleanupProblem(cleanup?: WorktreeCleanupResult): string | undefined {
+  if (!cleanup) return undefined;
+  const preserved = cleanup.preserved_worktrees ?? [];
+  const errors = cleanup.errors ?? [];
+  if (preserved.length === 0 && errors.length === 0) return undefined;
+  const parts: string[] = [];
+  if (preserved.length > 0) {
+    const first = preserved[0];
+    const suffix = preserved.length > 1 ? ` and ${preserved.length - 1} more` : '';
+    parts.push(
+      `Dirty Peridot worktree preserved: ${first.path ?? first.session_id ?? 'unknown'}${suffix}`,
+    );
+  }
+  if (errors.length > 0) {
+    const first = errors[0];
+    const suffix = errors.length > 1 ? ` and ${errors.length - 1} more` : '';
+    parts.push(`Worktree cleanup error: ${first.message ?? first.path ?? 'unknown'}${suffix}`);
+  }
+  return parts.join(' · ');
 }
 
 async function fetchSlashCatalog(

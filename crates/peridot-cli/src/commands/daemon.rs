@@ -38,6 +38,7 @@ use crate::commands::{
 };
 use crate::run_loop::{AgentTaskOptions, MessageBusHookup, run_task_with_events};
 use crate::session_router::{RouterMessageBus, SessionHandle, SessionRouter, WorkspaceIsolation};
+use crate::worktree_cleanup::reconcile_stale_worktrees;
 
 /// Shared daemon state cloned into per-session tasks.
 #[derive(Clone)]
@@ -523,6 +524,7 @@ fn compact_chars(value: &str, max_chars: usize) -> String {
 async fn handle_status(state: &DaemonState, id: Value) -> Result<()> {
     let config = state.run_config.as_ref();
     let auth = auth_status(config).await;
+    let worktree_cleanup = reconcile_stale_worktrees(state.project_root.as_ref());
     emit_response(
         state,
         id,
@@ -535,6 +537,7 @@ async fn handle_status(state: &DaemonState, id: Value) -> Result<()> {
             "mode": format!("{:?}", config.defaults.mode),
             "permission": format!("{:?}", state.run_template.permission),
             "auth": auth,
+            "worktree_cleanup": worktree_cleanup,
         }),
     )
 }
@@ -3515,6 +3518,44 @@ mod tests {
         assert!(out[0]["result"]["project_root"].as_str().is_some());
         assert_eq!(out[0]["result"]["auth"]["provider"], "claude-api");
         assert_eq!(out[0]["result"]["auth"]["method"], "api_key");
+        assert!(out[0]["result"]["worktree_cleanup"].is_object());
+    }
+
+    #[tokio::test]
+    async fn status_reconciles_stale_worktree_records() {
+        let root = test_project("status-worktree-cleanup");
+        let store = MemoryStore::new(root.join(".peridot/memory.db"));
+        let mut record = SessionRecord::new("stale-worktree", root.join(".peridot/worktrees/wt"));
+        record.status = SessionLifecycle::Running;
+        record.worktree_branch = Some("peridot/stale-worktree".to_string());
+        store.save_session_record(&record).unwrap();
+        let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+        let state = DaemonState::new(
+            root.clone(),
+            PeridotConfig::default(),
+            test_options(None),
+            tx,
+        );
+
+        dispatch_line(
+            &state,
+            r#"{"jsonrpc":"2.0","id":91,"method":"peridot.status"}"#,
+        )
+        .await
+        .unwrap();
+
+        let line = rx.try_recv().unwrap();
+        let value: Value = serde_json::from_str(&line).unwrap();
+        let cleanup = &value["result"]["worktree_cleanup"];
+        assert_eq!(cleanup["suspended_sessions"][0], "stale-worktree");
+        assert_eq!(
+            cleanup["missing_worktrees"][0]["session_id"],
+            "stale-worktree"
+        );
+        let updated = store.get_session_record("stale-worktree").unwrap().unwrap();
+        assert_eq!(updated.status, SessionLifecycle::Suspended);
+        assert_eq!(updated.worktree_branch, None);
+        assert_eq!(updated.workspace_root, root);
     }
 
     #[tokio::test]

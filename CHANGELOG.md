@@ -81,6 +81,10 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
   `Peridot: Export Session Artifacts` from the command palette/sidebar
   plus a composer export card that can reveal the portable output
   directory.
+- **Stale worktree reconciliation** runs on TUI startup and daemon
+  status checks. Sessions left `running` by a crashed process are
+  marked `suspended`; clean Peridot-managed worktrees are removed,
+  dirty ones are preserved with a visible TUI / VS Code warning.
 
 ### Changed — TUI borderless transcript
 

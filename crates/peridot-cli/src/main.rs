@@ -59,6 +59,7 @@ mod run_state;
 mod session_router;
 #[cfg(test)]
 mod tests;
+mod worktree_cleanup;
 
 use checkpoints::restore_latest_checkpoint;
 use context_limits::project_context_limits_from_config;
@@ -673,7 +674,7 @@ async fn main() -> Result<()> {
                     }
                 } else {
                     maybe_print_update_notice(&config, cli.effective_headless(), cli.output).await;
-                    let suspended = scan_and_suspend_running_sessions(&project_root);
+                    let cleanup_report = worktree_cleanup::reconcile_stale_worktrees(&project_root);
                     let restored_state = cli
                         .resume
                         .as_deref()
@@ -714,12 +715,29 @@ async fn main() -> Result<()> {
                             state
                         }
                     };
-                    if !suspended.is_empty() {
+                    if !cleanup_report.suspended_sessions.is_empty() {
                         state.push_notice(format!(
                             "found {} stale session(s) marked Suspended: {}. \
                              Resume with `peridot --resume <id>`.",
-                            suspended.len(),
-                            suspended.join(", ")
+                            cleanup_report.suspended_sessions.len(),
+                            cleanup_report.suspended_sessions.join(", ")
+                        ));
+                    }
+                    if let Some(summary) = cleanup_report.summary() {
+                        state.push_notice(format!("worktree cleanup: {summary}"));
+                    }
+                    for item in &cleanup_report.preserved_worktrees {
+                        state.push_notice(format!(
+                            "worktree cleanup: preserved {} ({})",
+                            item.path.display(),
+                            item.reason
+                        ));
+                    }
+                    for error in &cleanup_report.errors {
+                        state.push_error(format!(
+                            "worktree cleanup failed for {}: {}",
+                            error.path.display(),
+                            error.message
                         ));
                     }
                     let router: std::sync::Arc<std::sync::Mutex<SessionRouter>> =
@@ -3250,23 +3268,9 @@ fn rename_persisted_session(project_root: &Path, id: &str, title: &str) {
 
 /// Downgrades any session record still marked `Running` to `Suspended` on
 /// startup. Returns the ids that were transitioned.
+#[cfg(test)]
 fn scan_and_suspend_running_sessions(project_root: &Path) -> Vec<String> {
-    let memory = MemoryStore::new(project_root.join(".peridot/memory.db"));
-    let Ok(records) = memory.list_session_records() else {
-        return Vec::new();
-    };
-    let mut suspended = Vec::new();
-    for record in records {
-        if record.status != SessionLifecycle::Running {
-            continue;
-        }
-        let mut updated = record;
-        updated.status = SessionLifecycle::Suspended;
-        if memory.save_session_record(&updated).is_ok() {
-            suspended.push(updated.id);
-        }
-    }
-    suspended
+    worktree_cleanup::reconcile_stale_worktrees(project_root).suspended_sessions
 }
 
 fn agent_status_from_lifecycle(status: SessionLifecycle) -> peridot_tui::AgentRunStatus {

@@ -48,6 +48,18 @@ shared daemon, TUI, and VS Code extension surfaces.
   timeline from the command palette, sidebar header, or composer slash,
   then reveals the generated portable directory.
 
+### E11. Stale Worktree Reconciliation
+
+- **Status**: landed.
+- **Goal**: make crash-leftover worktrees visible and safe across TUI and
+  editor clients.
+- **Where**: shared `peridot-cli` worktree reconciler, TUI startup, daemon
+  `peridot.status`, VS Code sidebar context.
+- **Result**: sessions still marked `Running` after an unclean shutdown are
+  downgraded to `Suspended`. Clean Peridot-managed worktrees under
+  `.peridot/worktrees/` are removed automatically, missing worktree records are
+  reconciled, and dirty worktrees are preserved with a TUI / VS Code warning.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.
