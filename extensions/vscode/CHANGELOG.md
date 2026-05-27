@@ -53,6 +53,8 @@
   hook before creating a package.
 - VSIX packaging now excludes TypeScript test outputs and source-only
   development files so `npm test` does not leak `out-test/` into packages.
+- VS Code CI/release packaging now relies on the same `vscode:prepublish`
+  test gate instead of running duplicate test/build steps before `vsce package`.
 
 ### Added — compaction snapshot details
 

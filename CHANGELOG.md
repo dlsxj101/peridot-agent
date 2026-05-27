@@ -72,6 +72,8 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
   test guard.
 - **VS Code VSIX ignore rules** exclude extension test output and
   source-only development files from packaged artifacts.
+- **VS Code workflow packaging** now avoids duplicate extension test/build
+  runs by relying on the shared `vscode:prepublish` test gate.
 
 ### Added — skill-aware slash autocomplete
 
