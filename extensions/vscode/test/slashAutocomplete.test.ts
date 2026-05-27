@@ -65,6 +65,7 @@ const sessions = [
 ];
 
 const mcpServers = [{ name: 'filesystem' }, { name: 'github' }];
+const modelSuggestions = ['claude-sonnet-4-6', 'gpt-5.1-codex'];
 
 test('filteredSlashCommands ranks prefixes before description matches', () => {
   const matches = filteredSlashCommands('/switch', commands);
@@ -168,6 +169,22 @@ test('slashArgumentContext filters mcp server arguments', () => {
   );
 });
 
+test('slashArgumentContext filters model-name arguments', () => {
+  const context = slashArgumentContext('/model g', commands, [], [], modelSuggestions);
+
+  assert.equal(context?.command.name, '/model');
+  assert.deepEqual(context?.options, ['gpt-5.1-codex']);
+  assert.equal(context?.appendSpace, undefined);
+  assert.equal(
+    slashArgumentContext('/model gpt-5.1-codex', commands, [], [], modelSuggestions),
+    undefined,
+  );
+  assert.deepEqual(
+    slashArgumentContext('/subagent model ', commands, [], [], modelSuggestions)?.options,
+    ['claude-sonnet-4-6', 'gpt-5.1-codex', 'reset'],
+  );
+});
+
 test('slashExactSelectionIsRunnable allows optional-arg exact commands only', () => {
   assert.equal(slashExactSelectionIsRunnable('/skills', commands, 0), true);
   assert.equal(slashExactSelectionIsRunnable('/reasoning', commands, 0), false);
@@ -177,4 +194,5 @@ test('slashPickerItemCount uses argument options when an argument picker is open
   assert.equal(slashPickerItemCount('/reasoning ', commands), 5);
   assert.equal(slashPickerItemCount('/session switch ', commands, sessions), 2);
   assert.equal(slashPickerItemCount('/mcp test ', commands, [], mcpServers), 2);
+  assert.equal(slashPickerItemCount('/model ', commands, [], [], modelSuggestions), 2);
 });

@@ -1970,6 +1970,40 @@ fn tab_autocompletes_mcp_server_name_arguments() {
 }
 
 #[test]
+fn tab_autocompletes_model_name_arguments() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "claude-sonnet-4-6",
+    ));
+    state.set_model_suggestions(vec![
+        "claude-sonnet-4-6".to_string(),
+        "gpt-5.1-codex".to_string(),
+    ]);
+
+    for character in "/model g".chars() {
+        handle_key_event(
+            &mut state,
+            KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE),
+        );
+    }
+    handle_key_event(&mut state, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    assert_eq!(state.input, "/model gpt-5.1-codex");
+
+    state.clear_input();
+    for character in "/subagent model r".chars() {
+        handle_key_event(
+            &mut state,
+            KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE),
+        );
+    }
+    handle_key_event(&mut state, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    assert_eq!(state.input, "/subagent model reset");
+}
+
+#[test]
 fn skills_slash_queues_skill_inventory_load() {
     let mut state = TuiState::new(HeaderState::new(
         ExecutionMode::Execute,

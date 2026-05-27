@@ -19,7 +19,7 @@ use commands::{
 };
 use peridot_common::{
     AskUserAnswer, AskUserRequest, ContextConfig, ExecutionMode, MemoryConfig, PeriError,
-    PeriResult, PeridotConfig, PermissionMode,
+    PeriResult, PeridotConfig, PermissionMode, configured_model_suggestions,
 };
 use peridot_context::{
     ContextEntry, ContextLimits, ContextManager, ContextSource, project_context_limits,
@@ -692,6 +692,10 @@ async fn main() -> Result<()> {
                             if state.service_tier.is_none() {
                                 state.service_tier = config.models.service_tier.clone();
                             }
+                            state.set_model_suggestions(configured_model_suggestions(
+                                &config,
+                                Some(&state.header.model),
+                            ));
                             state.set_skill_suggestions(load_auto_skill_suggestions(&project_root));
                             state.push_notice(format!("session: restored {id} from disk"));
                             state
@@ -702,6 +706,10 @@ async fn main() -> Result<()> {
                             let mut state = TuiState::new(header).with_config(config.tui.clone());
                             state.committee_mode = config.committee.mode;
                             state.service_tier = config.models.service_tier.clone();
+                            state.set_model_suggestions(configured_model_suggestions(
+                                &config,
+                                Some(&model),
+                            ));
                             // Warm the `@file` picker index up-front so the
                             // first `@` keystroke gets an instant suggestion
                             // list instead of having to walk the project

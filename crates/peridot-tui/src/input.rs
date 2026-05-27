@@ -847,6 +847,7 @@ fn apply_slash_state_delta(state: &mut TuiState, delta: &peridot_core::SlashStat
     }
     if let Some(model) = delta.model.as_ref() {
         state.header.model = model.clone();
+        state.add_model_suggestion(model);
     }
     if let Some(provider) = delta.provider.as_ref() {
         state.header.provider = Some(provider.clone());
@@ -865,6 +866,9 @@ fn apply_slash_state_delta(state: &mut TuiState, delta: &peridot_core::SlashStat
     }
     if let Some(subagent_default_model) = delta.subagent_default_model.as_ref() {
         state.subagent_default_model = subagent_default_model.clone();
+        if let Some(model) = subagent_default_model.as_ref() {
+            state.add_model_suggestion(model);
+        }
     }
 }
 

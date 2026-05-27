@@ -439,6 +439,48 @@ impl PeridotConfig {
     }
 }
 
+/// Returns model names worth suggesting in interactive `/model` pickers.
+///
+/// The list is intentionally config-derived instead of provider-catalog
+/// derived: Peridot supports several provider backends and custom compatible
+/// models, so the safest cross-surface completion source is the operator's
+/// own configured main/subagent/committee role model set plus the currently
+/// active runtime model when provided.
+pub fn configured_model_suggestions(
+    config: &PeridotConfig,
+    active_model: Option<&str>,
+) -> Vec<String> {
+    let mut models = vec![config.models.main.clone()];
+    if let Some(model) = active_model {
+        models.push(model.to_string());
+    }
+    if let Some(model) = config.subagents.default_model.as_deref() {
+        models.push(model.to_string());
+    }
+    models.extend(
+        [
+            config.committee.planner_model.as_str(),
+            config.committee.reviewer_model.as_str(),
+            config.committee.executor_model.as_str(),
+        ]
+        .into_iter()
+        .filter(|model| !model.trim().is_empty())
+        .map(str::to_string),
+    );
+    dedupe_sorted_nonempty(models)
+}
+
+fn dedupe_sorted_nonempty(values: Vec<String>) -> Vec<String> {
+    let mut values: Vec<String> = values
+        .into_iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .collect();
+    values.sort();
+    values.dedup_by(|left, right| left.eq_ignore_ascii_case(right));
+    values
+}
+
 /// Defaults applied when the main agent spawns a sub-agent via
 /// `agent_delegate` / `/fork` / `/teammate` / `/worktree`. When
 /// `default_model` is `None` the spawn reuses the caller's main model name
@@ -1657,6 +1699,27 @@ mod tests {
         assert!(config.committee.reviewer_model.is_empty());
         assert!(config.committee.executor_model.is_empty());
         assert_eq!(config.committee.max_review_passes, 3);
+    }
+
+    #[test]
+    fn configured_model_suggestions_collects_runtime_and_role_models() {
+        let mut config = PeridotConfig::default();
+        config.models.main = "main-model".to_string();
+        config.subagents.default_model = Some("subagent-model".to_string());
+        config.committee.planner_model = "planner-model".to_string();
+        config.committee.reviewer_model = "reviewer-model".to_string();
+        config.committee.executor_model = "main-model".to_string();
+
+        assert_eq!(
+            configured_model_suggestions(&config, Some("runtime-model")),
+            vec![
+                "main-model",
+                "planner-model",
+                "reviewer-model",
+                "runtime-model",
+                "subagent-model"
+            ]
+        );
     }
 
     #[test]

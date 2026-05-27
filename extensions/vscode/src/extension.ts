@@ -34,6 +34,7 @@ interface DaemonStatusResult {
   project_root: string;
   provider: string;
   model: string;
+  model_suggestions?: unknown;
   reasoning_effort?: string;
   mode?: string;
   permission?: string;
@@ -1853,6 +1854,7 @@ async function refreshStatus(
       authMethod: result.auth?.method,
       authSource: result.auth?.source,
       mcpServers: normalizeMcpServers(result.mcp),
+      modelSuggestions: normalizeStringList(result.model_suggestions),
       status: cleanupProblem ? 'Needs attention' : activeRunCount() > 0 ? 'Running' : 'Idle',
       problem: cleanupProblem,
       running: activeRunCount() > 0,
@@ -1867,6 +1869,16 @@ async function refreshStatus(
       running: activeRunCount() > 0,
     });
   }
+}
+
+function normalizeStringList(values: unknown): string[] {
+  if (!Array.isArray(values)) return [];
+  return [...new Set(
+    values
+      .filter((value): value is string => typeof value === 'string')
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0),
+  )].sort((a, b) => a.localeCompare(b));
 }
 
 function normalizeMcpServers(

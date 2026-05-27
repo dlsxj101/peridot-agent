@@ -277,6 +277,7 @@ export interface SidebarContext {
   problem?: string;
   running?: boolean;
   mcpServers?: McpServerSummary[];
+  modelSuggestions?: string[];
 }
 
 export interface McpServerSummary {

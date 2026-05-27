@@ -38,8 +38,9 @@ export function slashPickerItemCount(
   slashCommands: SlashCommandSpec[],
   sessionTargets: SlashSessionTarget[] = [],
   mcpServers: SlashMcpServerTarget[] = [],
+  models: string[] = [],
 ): number {
-  const argumentContext = slashArgumentContext(input, slashCommands, sessionTargets, mcpServers);
+  const argumentContext = slashArgumentContext(input, slashCommands, sessionTargets, mcpServers, models);
   if (argumentContext) return argumentContext.options.length;
   return filteredSlashCommands(input, slashCommands).length;
 }
@@ -50,8 +51,9 @@ export function slashExactSelectionIsRunnable(
   selected: number,
   sessionTargets: SlashSessionTarget[] = [],
   mcpServers: SlashMcpServerTarget[] = [],
+  models: string[] = [],
 ): boolean {
-  if (slashArgumentContext(input, slashCommands, sessionTargets, mcpServers)) return false;
+  if (slashArgumentContext(input, slashCommands, sessionTargets, mcpServers, models)) return false;
   const matches = filteredSlashCommands(input, slashCommands);
   const command = matches[selected];
   if (!command) return false;
@@ -63,9 +65,12 @@ export function slashArgumentContext(
   slashCommands: SlashCommandSpec[],
   sessionTargets: SlashSessionTarget[] = [],
   mcpServers: SlashMcpServerTarget[] = [],
+  models: string[] = [],
 ): SlashArgumentContext | undefined {
   const query = input;
   if (!query.startsWith('/') || query.includes('\n')) return undefined;
+  const modelContext = modelNameArgumentContext(query, models);
+  if (modelContext) return modelContext;
   const skillContext = skillNameArgumentContext(query, slashCommands);
   if (skillContext) return skillContext;
   const sessionContext = sessionTargetArgumentContext(query, sessionTargets);
@@ -90,6 +95,34 @@ export function slashArgumentContext(
     ? options.filter((option) => option.toLowerCase().startsWith(rest))
     : options;
   return { command, options: filtered };
+}
+
+function modelNameArgumentContext(
+  query: string,
+  models: string[],
+): SlashArgumentContext | undefined {
+  const commandName = ['/subagent model', '/model']
+    .filter((candidate) => query === candidate || query.startsWith(`${candidate} `))
+    .sort((a, b) => b.length - a.length)[0];
+  if (!commandName) return undefined;
+  const needle = query.slice(commandName.length).trim().toLowerCase();
+  if (/\s/.test(needle)) return undefined;
+  const options = [...new Set([
+    ...models.map((model) => model.trim()).filter((model) => model.length > 0),
+    ...(commandName === '/subagent model' ? ['reset'] : []),
+  ])]
+    .filter((model) => needle.length === 0 || model.toLowerCase().startsWith(needle))
+    .sort((a, b) => a.localeCompare(b));
+  if (needle && options.some((option) => option.toLowerCase() === needle)) return undefined;
+  if (options.length === 0) return undefined;
+  return {
+    command: {
+      name: commandName,
+      description: 'model',
+      category: 'session',
+    },
+    options,
+  };
 }
 
 function mcpServerArgumentContext(

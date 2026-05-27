@@ -738,6 +738,9 @@ pub struct TuiState {
     /// Dynamic auto-skills surfaced as `/skill-name` suggestions.
     #[serde(default)]
     pub skill_suggestions: Vec<crate::SkillSlashSuggestion>,
+    /// Model names discovered from project config for slash autocomplete.
+    #[serde(default, skip)]
+    pub model_suggestions: Vec<String>,
     /// Append-only log of parsed thinking text (for debug toggle re-render).
     #[serde(default)]
     pub thinking_log: Vec<String>,
@@ -1102,6 +1105,7 @@ impl TuiState {
             scroll_offset: 0,
             slash_picker: None,
             skill_suggestions: Vec::new(),
+            model_suggestions: Vec::new(),
             thinking_log: Vec::new(),
             last_session_save_unix: 0,
             current_turn: 0,
@@ -1228,6 +1232,27 @@ impl TuiState {
     pub fn set_skill_suggestions(&mut self, skills: Vec<crate::SkillSlashSuggestion>) {
         self.skill_suggestions = skills;
         self.refresh_slash_picker();
+    }
+
+    /// Replaces model-name slash suggestions.
+    pub fn set_model_suggestions(&mut self, models: Vec<String>) {
+        self.model_suggestions = dedupe_sorted_nonempty(models);
+        self.refresh_slash_picker();
+    }
+
+    /// Adds one model-name slash suggestion when it is not already present.
+    pub fn add_model_suggestion(&mut self, model: &str) {
+        let model = model.trim();
+        if model.is_empty()
+            || self
+                .model_suggestions
+                .iter()
+                .any(|entry| entry.eq_ignore_ascii_case(model))
+        {
+            return;
+        }
+        self.model_suggestions.push(model.to_string());
+        self.model_suggestions.sort();
     }
 
     /// Queues a free-form note that the host loop will append to the current
@@ -1577,6 +1602,7 @@ impl TuiState {
             &self.skill_suggestions,
             &self.sessions,
             &self.side_panel.mcp_status,
+            &self.model_suggestions,
         );
         if len == 0 {
             self.slash_picker = None;
@@ -1603,6 +1629,7 @@ impl TuiState {
             &self.skill_suggestions,
             &self.sessions,
             &self.side_panel.mcp_status,
+            &self.model_suggestions,
         );
         if len == 0 {
             picker.selected = 0;
@@ -1624,6 +1651,7 @@ impl TuiState {
             &self.skill_suggestions,
             &self.sessions,
             &self.side_panel.mcp_status,
+            &self.model_suggestions,
         ) {
             let Some(option) = context
                 .options
@@ -1669,6 +1697,7 @@ impl TuiState {
             &self.skill_suggestions,
             &self.sessions,
             &self.side_panel.mcp_status,
+            &self.model_suggestions,
         )
         .is_some()
         {
@@ -2854,6 +2883,17 @@ fn file_output_preview(tool_name: &str, output: &serde_json::Value) -> Vec<Strin
         .get("path")
         .map(|path| vec![format!("  path: {path}")])
         .unwrap_or_default()
+}
+
+fn dedupe_sorted_nonempty(values: Vec<String>) -> Vec<String> {
+    let mut values: Vec<String> = values
+        .into_iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .collect();
+    values.sort();
+    values.dedup_by(|left, right| left.eq_ignore_ascii_case(right));
+    values
 }
 
 fn preview_lines(text: &str, limit: usize) -> Vec<String> {

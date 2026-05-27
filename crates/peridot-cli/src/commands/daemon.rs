@@ -16,7 +16,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use peridot_common::{
     AskUserAnswer, AskUserRequest, CancelToken, ExecutionMode, McpTransport, PeridotConfig,
-    PermissionMode, ReasoningEffort, ToolCall,
+    PermissionMode, ReasoningEffort, ToolCall, configured_model_suggestions,
 };
 use peridot_context::{BranchJournal, ContextEntry, ContextSource, estimate_tokens_for_text};
 use peridot_core::{
@@ -667,6 +667,8 @@ async fn handle_status(state: &DaemonState, id: Value) -> Result<()> {
     let config = state.run_config.as_ref();
     let auth = auth_status(config).await;
     let worktree_cleanup = reconcile_stale_worktrees(state.project_root.as_ref());
+    let model_suggestions =
+        configured_model_suggestions(config, Some(state.run_template.model.as_str()));
     let mcp: Vec<Value> = config
         .mcp
         .iter()
@@ -685,6 +687,7 @@ async fn handle_status(state: &DaemonState, id: Value) -> Result<()> {
             "project_root": state.project_root.as_ref(),
             "provider": config.auth.primary,
             "model": config.models.main,
+            "model_suggestions": model_suggestions,
             "reasoning_effort": format!("{:?}", config.models.reasoning_effort),
             "mode": format!("{:?}", config.defaults.mode),
             "permission": format!("{:?}", state.run_template.permission),
@@ -5344,6 +5347,11 @@ mod tests {
         assert_eq!(out[0]["result"]["version"], env!("CARGO_PKG_VERSION"));
         assert_eq!(out[0]["result"]["provider"], "claude-api");
         assert_eq!(out[0]["result"]["model"], "claude-sonnet-4-6");
+        assert!(
+            out[0]["result"]["model_suggestions"]
+                .as_array()
+                .is_some_and(|models| models.iter().any(|model| model == "claude-sonnet-4-6"))
+        );
         assert!(out[0]["result"]["project_root"].as_str().is_some());
         assert_eq!(out[0]["result"]["auth"]["provider"], "claude-api");
         assert_eq!(out[0]["result"]["auth"]["method"], "api_key");

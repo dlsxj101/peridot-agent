@@ -1267,6 +1267,16 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         serviceTier: next.serviceTier,
       };
     }
+    if (delta) {
+      this.state.context = {
+        ...this.state.context,
+        modelSuggestions: appendModelSuggestions(
+          this.state.context.modelSuggestions,
+          delta.model,
+          delta.subagent_default_model ?? delta.subagentDefaultModel,
+        ),
+      };
+    }
     if (delta?.provider) {
       this.state.context = { ...this.state.context, provider: delta.provider };
     }
@@ -1804,6 +1814,20 @@ function taskStartedByCommandResult(result: CommandResultView): string | undefin
   if (result.kind !== 'start_task' && result.kind !== 'session_new') return undefined;
   const task = result.task?.trim();
   return task && task.length > 0 ? task : undefined;
+}
+
+function appendModelSuggestions(
+  current: string[] | undefined,
+  ...models: Array<string | null | undefined>
+): string[] | undefined {
+  const next = [...(current ?? [])];
+  for (const model of models) {
+    if (typeof model !== 'string') continue;
+    const trimmed = model.trim();
+    if (!trimmed || next.some((entry) => entry.toLowerCase() === trimmed.toLowerCase())) continue;
+    next.push(trimmed);
+  }
+  return next.length > 0 ? next.sort((a, b) => a.localeCompare(b)) : current;
 }
 
 function applyRunOptionDelta(

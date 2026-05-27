@@ -36,6 +36,8 @@
   `/mcp add <name> ` and leaves the composer ready for the command or URL.
 - MCP server-name autocomplete now fills configured server names for
   `/mcp remove <name>` and `/mcp test <name>` after status refresh.
+- Model-name autocomplete now fills configured main, subagent, and committee
+  role models for `/model <name>` and `/subagent model <name|reset>`.
 - The composer now keeps submitted prompt history per sidebar session.
   ArrowUp / ArrowDown recall previous prompts when the caret is on the
   first or last textarea line, and unsent drafts no longer leak across

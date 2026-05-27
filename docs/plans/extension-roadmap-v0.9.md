@@ -763,6 +763,21 @@ shared daemon, TUI, and VS Code extension surfaces.
   status refresh and passes them into the composer picker. Exact names and
   commands with extra arguments close the picker so Enter submits normally.
 
+### E64. Model-Name Autocomplete
+
+- **Status**: landed.
+- **Goal**: make runtime model switching less typo-prone from both TUI and
+  VS Code without hard-coding provider catalog assumptions.
+- **Where**: daemon `peridot.status` model suggestion summary, TUI startup
+  model suggestion state, TUI dynamic slash argument context, extension
+  status context, and VS Code webview slash autocomplete helper.
+- **Result**: `/model <name>` and `/subagent model <name|reset>` now suggest
+  configured main, subagent, and committee role model names. TUI seeds the
+  picker from project config and keeps manually selected runtime models in
+  the list, while VS Code receives the model suggestions during status
+  refresh and appends newly selected runtime models from slash state deltas.
+  `/subagent model` also keeps `reset` as a first-class completion.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

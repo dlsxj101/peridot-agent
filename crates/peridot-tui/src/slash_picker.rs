@@ -555,18 +555,22 @@ fn slash_argument_context_with_skills(
     query: &str,
     skills: &[SkillSlashSuggestion],
 ) -> Option<SlashArgumentContext> {
-    slash_argument_context_with_dynamic(query, skills, &[], &[])
+    slash_argument_context_with_dynamic(query, skills, &[], &[], &[])
 }
 
-/// Returns the active argument picker, including dynamic skill/session options.
+/// Returns the active argument picker, including dynamic skill/session/model options.
 pub(crate) fn slash_argument_context_with_dynamic(
     query: &str,
     skills: &[SkillSlashSuggestion],
     sessions: &[crate::session_directory::SessionDirectoryItem],
     mcp_servers: &[crate::state::McpServerSummary],
+    models: &[String],
 ) -> Option<SlashArgumentContext> {
     if !query.starts_with('/') || query.contains('\n') {
         return None;
+    }
+    if let Some(context) = model_name_argument_context(query, models) {
+        return Some(context);
     }
     if let Some(context) = skill_name_argument_context(query, skills) {
         return Some(context);
@@ -611,6 +615,45 @@ pub(crate) fn slash_argument_context_with_dynamic(
     Some(SlashArgumentContext {
         command_name: spec.name.to_string(),
         options: options.into_iter().map(str::to_string).collect(),
+        append_space: false,
+    })
+}
+
+fn model_name_argument_context(query: &str, models: &[String]) -> Option<SlashArgumentContext> {
+    let command_name = ["/subagent model", "/model"]
+        .into_iter()
+        .filter(|command| query == *command || query.starts_with(&format!("{command} ")))
+        .max_by_key(|command| command.len())?;
+    let rest = query[command_name.len()..].trim().to_ascii_lowercase();
+    if rest.contains(char::is_whitespace) {
+        return None;
+    }
+    let mut options: Vec<String> = models
+        .iter()
+        .map(|model| model.trim().to_string())
+        .filter(|model| !model.is_empty())
+        .collect();
+    if command_name == "/subagent model" {
+        options.push("reset".to_string());
+    }
+    options.sort();
+    options.dedup();
+    if !rest.is_empty() {
+        options.retain(|option| option.to_ascii_lowercase().starts_with(&rest));
+    }
+    if !rest.is_empty()
+        && options
+            .iter()
+            .any(|option| option.eq_ignore_ascii_case(&rest))
+    {
+        return None;
+    }
+    if options.is_empty() {
+        return None;
+    }
+    Some(SlashArgumentContext {
+        command_name: command_name.to_string(),
+        options,
         append_space: false,
     })
 }
@@ -804,8 +847,9 @@ pub(crate) fn picker_len_with_dynamic(
     skills: &[SkillSlashSuggestion],
     sessions: &[crate::session_directory::SessionDirectoryItem],
     mcp_servers: &[crate::state::McpServerSummary],
+    models: &[String],
 ) -> usize {
-    slash_argument_context_with_dynamic(query, skills, sessions, mcp_servers)
+    slash_argument_context_with_dynamic(query, skills, sessions, mcp_servers, models)
         .map(|context| context.options.len())
         .unwrap_or_else(|| filtered_suggestions(query, skills).len())
 }
@@ -1074,21 +1118,26 @@ mod tests {
             crate::session_directory::SessionDirectoryItem::new("s-2", "release prep"),
         ];
 
-        let context =
-            slash_argument_context_with_dynamic("/session switch release", &[], &sessions, &[])
-                .expect("session target");
+        let context = slash_argument_context_with_dynamic(
+            "/session switch release",
+            &[],
+            &sessions,
+            &[],
+            &[],
+        )
+        .expect("session target");
         assert_eq!(context.command_name, "/session switch");
         assert_eq!(context.options, vec!["s-2"]);
         assert!(!context.append_space);
 
         let context =
-            slash_argument_context_with_dynamic("/session rename parser", &[], &sessions, &[])
+            slash_argument_context_with_dynamic("/session rename parser", &[], &sessions, &[], &[])
                 .expect("rename target");
         assert_eq!(context.options, vec!["s-1"]);
         assert!(context.append_space);
 
         assert!(
-            slash_argument_context_with_dynamic("/session switch s-2", &[], &sessions, &[])
+            slash_argument_context_with_dynamic("/session switch s-2", &[], &sessions, &[], &[])
                 .is_none()
         );
         assert!(
@@ -1096,6 +1145,7 @@ mod tests {
                 "/session rename s-1 new title",
                 &[],
                 &sessions,
+                &[],
                 &[]
             )
             .is_none()
@@ -1117,21 +1167,55 @@ mod tests {
             },
         ];
 
-        let context = slash_argument_context_with_dynamic("/mcp test g", &[], &[], &servers)
+        let context = slash_argument_context_with_dynamic("/mcp test g", &[], &[], &servers, &[])
             .expect("mcp server");
         assert_eq!(context.command_name, "/mcp test");
         assert_eq!(context.options, vec!["github"]);
         assert!(!context.append_space);
 
-        let context = slash_argument_context_with_dynamic("/mcp remove ", &[], &[], &servers)
+        let context = slash_argument_context_with_dynamic("/mcp remove ", &[], &[], &servers, &[])
             .expect("mcp remove");
         assert_eq!(context.options, vec!["filesystem", "github"]);
         assert!(
-            slash_argument_context_with_dynamic("/mcp test github", &[], &[], &servers).is_none()
+            slash_argument_context_with_dynamic("/mcp test github", &[], &[], &servers, &[])
+                .is_none()
         );
         assert!(
-            slash_argument_context_with_dynamic("/mcp test github extra", &[], &[], &servers)
+            slash_argument_context_with_dynamic("/mcp test github extra", &[], &[], &servers, &[])
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn model_name_argument_context_filters_configured_models() {
+        let models = vec!["claude-sonnet-4-6".to_string(), "gpt-5.1-codex".to_string()];
+
+        let context =
+            slash_argument_context_with_dynamic("/model g", &[], &[], &[], &models).expect("model");
+        assert_eq!(context.command_name, "/model");
+        assert_eq!(context.options, vec!["gpt-5.1-codex"]);
+        assert!(!context.append_space);
+
+        let context =
+            slash_argument_context_with_dynamic("/subagent model ", &[], &[], &[], &models)
+                .expect("subagent model");
+        assert_eq!(
+            context.options,
+            vec!["claude-sonnet-4-6", "gpt-5.1-codex", "reset"]
+        );
+        assert!(
+            slash_argument_context_with_dynamic("/model gpt-5.1-codex", &[], &[], &[], &models)
+                .is_none()
+        );
+        assert!(
+            slash_argument_context_with_dynamic(
+                "/subagent model gpt-5.1-codex extra",
+                &[],
+                &[],
+                &[],
+                &models
+            )
+            .is_none()
         );
     }
 
