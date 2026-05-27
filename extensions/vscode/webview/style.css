@@ -2085,6 +2085,59 @@ textarea {
   font-family: var(--vscode-editor-font-family, ui-monospace, monospace);
 }
 
+.attachment-block {
+  gap: 9px;
+}
+
+.attachment-header,
+.attachment-title,
+.attachment-chips,
+.attachment-actions,
+.attachment-path-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.attachment-header,
+.attachment-title {
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.attachment-chips {
+  flex-wrap: wrap;
+}
+
+.attachment-actions {
+  flex: 0 0 auto;
+}
+
+.attachment-path-row {
+  flex-wrap: wrap;
+}
+
+.attachment-preview {
+  margin: 0;
+  padding: 7px 8px;
+  max-height: 220px;
+  overflow: auto;
+  border: 1px solid var(--peri-border-subtle);
+  border-radius: var(--peri-radius-tight);
+  background: var(--vscode-textCodeBlock-background, var(--peri-bg-elev-soft));
+  color: var(--peri-fg-soft);
+  font-family: var(--vscode-editor-font-family, ui-monospace, monospace);
+  font-size: 11.5px;
+  line-height: 1.4;
+  white-space: pre;
+}
+
+.attachment-placeholder {
+  color: var(--peri-fg-muted);
+  font-size: 12px;
+}
+
 .codemap-block {
   gap: 10px;
 }

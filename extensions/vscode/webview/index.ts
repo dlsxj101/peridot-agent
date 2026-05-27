@@ -2,6 +2,7 @@ import './style.css';
 import autoAnimate from '@formkit/auto-animate';
 import MarkdownIt from 'markdown-it';
 import type {
+  AttachmentView,
   CompactionDetailItem,
   CompactionSnapshotView,
   CommandResultItem,
@@ -955,6 +956,8 @@ function iconSvg(kind: string): string {
       return `<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M4 4l8 8M12 4l-8 8"/></svg>`;
     case 'copy':
       return `<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="5" width="8" height="8" rx="1.5"/><path d="M3 10.5H2.8A1.8 1.8 0 0 1 1 8.7V2.8A1.8 1.8 0 0 1 2.8 1h5.9A1.8 1.8 0 0 1 10.5 2.8V3"/></svg>`;
+    case 'open':
+      return `<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5.5 3.5H3.2A1.7 1.7 0 0 0 1.5 5.2v7.6a1.7 1.7 0 0 0 1.7 1.7h7.6a1.7 1.7 0 0 0 1.7-1.7v-2.3"/><path d="M8.5 1.5h6v6"/><path d="M7.5 8.5l7-7"/></svg>`;
     case 'check':
       return `<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l3 3L13 4"/></svg>`;
     case 'edit':
@@ -2448,6 +2451,7 @@ function renderDiffBlock(item: TranscriptItem): HTMLElement {
 function renderCommandBlock(item: TranscriptItem): HTMLElement {
   const result = item.commandResult;
   if (result?.kind === 'codemap') return renderCodeMapBlock(item);
+  if (result?.kind === 'attach') return renderAttachmentBlock(item);
   const wrap = el('section', `command-block ${result?.severity === 'error' ? 'error' : ''}`);
   const header = el('div', 'command-header');
   header.append(el('span', 'command-title', result?.title ?? result?.kind ?? 'Command'));
@@ -2494,6 +2498,77 @@ function renderCommandBlock(item: TranscriptItem): HTMLElement {
     if (result.truncated) wrap.append(el('div', 'command-footnote', 'further hits truncated'));
   }
   return wrap;
+}
+
+function renderAttachmentBlock(item: TranscriptItem): HTMLElement {
+  const result = item.commandResult;
+  const attachment = attachmentFromResult(result);
+  const path = attachment.path ?? 'attachment';
+  const bytes = typeof attachment.bytes === 'number' ? attachment.bytes : undefined;
+  const mediaType = attachment.media_type ?? attachment.mediaType ?? 'text/plain';
+  const inlined = attachment.inlined === true;
+  const content = typeof attachment.content === 'string' ? attachment.content : undefined;
+  const wrap = el('section', 'command-block attachment-block');
+  const header = el('div', 'attachment-header');
+  const title = el('div', 'attachment-title');
+  title.append(el('span', 'command-title', result?.title ?? 'Attachment'));
+  const chips = el('div', 'attachment-chips');
+  chips.append(el('span', 'command-chip', inlined ? 'inlined' : 'placeholder'));
+  if (bytes !== undefined) chips.append(el('span', 'command-chip', `${bytes} bytes`));
+  chips.append(el('span', 'command-chip', mediaType));
+  title.append(chips);
+  header.append(title);
+
+  const actions = el('div', 'attachment-actions');
+  const open = iconButton('open', `Open ${path}`, () => {
+    vscode.postMessage({ type: 'openFile', path });
+  });
+  actions.append(open);
+  const copyPath = iconButton('copy', `Copy ${path}`, () => {
+    void markCopied(copyPath, path);
+  });
+  actions.append(copyPath);
+  if (content !== undefined) {
+    const copyContent = iconButton('copy', `Copy attached content from ${path}`, () => {
+      void markCopied(copyContent, content);
+    });
+    actions.append(copyContent);
+  }
+  header.append(actions);
+  wrap.append(header);
+
+  const pathRow = el('div', 'attachment-path-row');
+  pathRow.append(renderFilePathButton(path, 'command-path'));
+  wrap.append(pathRow);
+
+  if (content !== undefined) {
+    const preview = el('pre', 'attachment-preview');
+    preview.textContent = previewAttachmentContent(content);
+    wrap.append(preview);
+  } else {
+    wrap.append(el('div', 'attachment-placeholder', `${mediaType} attachment placeholder`));
+  }
+  return wrap;
+}
+
+function attachmentFromResult(result: TranscriptItem['commandResult']): AttachmentView {
+  if (result?.attachment) return result.attachment;
+  const row = Array.isArray(result?.items)
+    ? result.items.find((item) => item.source === 'attachment') ?? result.items[0]
+    : undefined;
+  return {
+    path: row?.path ?? row?.label,
+    bytes: row?.bytes,
+    media_type: row?.media_type ?? row?.mediaType,
+    inlined: row?.inlined,
+  };
+}
+
+function previewAttachmentContent(content: string): string {
+  const lines = content.split(/\r?\n/);
+  const preview = lines.slice(0, 20).join('\n');
+  if (lines.length > 20) return `${preview}\n...`;
+  return preview;
 }
 
 function renderCodeMapBlock(item: TranscriptItem): HTMLElement {

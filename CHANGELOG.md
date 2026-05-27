@@ -65,6 +65,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **Code map search** adds `/codemap find <query>` over the persisted
   index, with matching rows rendered through the same TUI and VS Code
   code-map surfaces.
+- **Attachment blocks** now carry structured attachment metadata from the
+  daemon so VS Code can show compact file cards with open and copy
+  actions for both inlined text and image-placeholder attachments.
 
 ### Changed — TUI borderless transcript
 

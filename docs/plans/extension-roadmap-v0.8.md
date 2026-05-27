@@ -34,13 +34,14 @@ use, while keeping the daemon/TUI/extension surfaces shared.
 
 ### E7. Attachment Follow-up
 
-- **Status**: next.
+- **Status**: landed.
 - **Goal**: make attachments visible in the sidebar transcript as durable
   context artifacts, not just command-result rows.
 - **Where**: `extensions/vscode/webview/index.ts`,
   `crates/peridot-cli/src/commands/attach.rs`
-- **Done when**: attached text/image-placeholder entries show a compact
-  attachment block and can be reopened or copied.
+- **Result**: `/attach` daemon results now include structured attachment
+  metadata. VS Code renders inlined text and image-placeholder
+  attachments as compact blocks with file-open and copy actions.
 
 ## Notes
 

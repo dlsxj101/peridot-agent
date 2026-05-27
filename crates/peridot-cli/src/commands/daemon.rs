@@ -2511,6 +2511,19 @@ fn handle_command_attach(
     let session_id = require_session_id(session_id, "attach")?;
     let attachment =
         crate::commands::load_text_attachment(&state.project_root, path, MAX_ATTACHMENT_BYTES)?;
+    let inlined = attachment.content.is_some();
+    let path = attachment.path.clone();
+    let bytes = attachment.bytes;
+    let media_type = attachment
+        .media_type
+        .clone()
+        .unwrap_or_else(|| "text/plain".to_string());
+    let content = attachment.content.clone();
+    let detail = if inlined {
+        format!("{bytes} bytes · inlined")
+    } else {
+        format!("{bytes} bytes · {media_type} placeholder")
+    };
     append_plan_reminder_to_context(
         state,
         &session_id,
@@ -2519,14 +2532,24 @@ fn handle_command_attach(
     Ok(serde_json::json!({
         "kind": "attach",
         "title": "Attachment",
-        "message": format!("attach: added {} ({} bytes) to session context", attachment.path, attachment.bytes),
+        "message": format!("attach: added {path} ({bytes} bytes) to session context"),
         "severity": "info",
         "command": raw_command,
+        "attachment": {
+            "path": path,
+            "bytes": bytes,
+            "media_type": media_type,
+            "inlined": inlined,
+            "content": content,
+        },
         "items": [{
             "source": "attachment",
-            "label": attachment.path,
-            "path": attachment.path,
-            "detail": format!("{} bytes", attachment.bytes),
+            "label": path,
+            "path": path,
+            "detail": detail,
+            "bytes": bytes,
+            "media_type": media_type,
+            "inlined": inlined,
         }],
     }))
 }
@@ -3555,17 +3578,53 @@ mod tests {
         while let Ok(line) = rx.try_recv() {
             values.push(serde_json::from_str::<Value>(&line).unwrap());
         }
+        let response = values
+            .iter()
+            .find(|value| value["id"] == 44 && value["result"]["kind"] == "attach")
+            .expect("attach response");
+        assert_eq!(response["result"]["attachment"]["path"], "src/lib.rs");
+        assert_eq!(response["result"]["attachment"]["media_type"], "text/plain");
+        assert_eq!(response["result"]["attachment"]["inlined"], true);
         assert!(
-            values
-                .iter()
-                .any(|value| { value["id"] == 44 && value["result"]["kind"] == "attach" })
+            response["result"]["attachment"]["content"]
+                .as_str()
+                .unwrap()
+                .contains("pub fn attached()")
         );
+        assert_eq!(response["result"]["items"][0]["source"], "attachment");
+        assert_eq!(response["result"]["items"][0]["inlined"], true);
         let entries = read_context_snapshot(&state, "session-attach").unwrap();
         let last = entries.last().unwrap();
         assert_eq!(last.source, ContextSource::PlanReminder);
         assert!(last.content.contains("[attachment]"));
         assert!(last.content.contains("path: src/lib.rs"));
         assert!(last.content.contains("pub fn attached()"));
+
+        std::fs::write(root.join("screen.png"), [0x89, b'P', b'N', b'G']).unwrap();
+        let _ = dispatch_line(
+            &state,
+            r#"{"jsonrpc":"2.0","id":45,"method":"session.command","params":{"session_id":"session-attach","command":"/attach screen.png"}}"#,
+        )
+        .await
+        .unwrap();
+        let mut image_response = None;
+        while let Ok(line) = rx.try_recv() {
+            let value: Value = serde_json::from_str(&line).unwrap();
+            if value["id"] == 45 {
+                image_response = Some(value);
+                break;
+            }
+        }
+        let image_response = image_response.expect("image attach response");
+        assert_eq!(image_response["result"]["kind"], "attach");
+        assert_eq!(
+            image_response["result"]["attachment"]["media_type"],
+            "image/png"
+        );
+        assert_eq!(image_response["result"]["attachment"]["inlined"], false);
+        assert!(image_response["result"]["attachment"]["content"].is_null());
+        assert_eq!(image_response["result"]["items"][0]["inlined"], false);
+
         let _ = std::fs::remove_dir_all(root);
     }
 

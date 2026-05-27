@@ -25,6 +25,8 @@
 - File attachments are available through `/attach <path>` and the VS
   Code file picker. UTF-8 files are inlined into session context; image
   files are represented with a metadata placeholder.
+- Attachment results now render as compact attachment blocks with open
+  and copy actions, including image-placeholder metadata.
 - `/codemap` now uses a persisted `.peridot/codemap.json` index, and
   `Peridot: Refresh Workspace Code Map Index` rebuilds it explicitly.
 - `Peridot: Search Workspace Code Map` runs `/codemap find <query>`

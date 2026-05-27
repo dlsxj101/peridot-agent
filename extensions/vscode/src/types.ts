@@ -51,9 +51,22 @@ export interface CommandResultItem {
   line?: number;
   column?: number;
   tokens?: number;
+  bytes?: number;
   turn_id?: number;
   source?: string;
   transport?: string;
+  media_type?: string;
+  mediaType?: string;
+  inlined?: boolean;
+}
+
+export interface AttachmentView {
+  path?: string;
+  bytes?: number;
+  media_type?: string;
+  mediaType?: string;
+  inlined?: boolean;
+  content?: string | null;
 }
 
 export interface SlashStateDeltaView {
@@ -83,6 +96,7 @@ export interface CommandResultView {
   label?: string;
   diff?: string;
   items?: CommandResultItem[];
+  attachment?: AttachmentView;
   source_totals?: Record<string, number>;
   symbol_count?: number;
   todo_count?: number;
