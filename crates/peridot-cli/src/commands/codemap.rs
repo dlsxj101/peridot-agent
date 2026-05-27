@@ -20,6 +20,8 @@ const TODO_MARKERS: &[&str] = &["TODO", "FIXME", "HACK", "XXX", "BUG"];
 pub(crate) struct CodeMapIndex {
     pub version: u32,
     pub generated_at_unix: u64,
+    #[serde(default)]
+    pub source_fingerprint: String,
     pub report: CodeMapReport,
 }
 
@@ -108,10 +110,13 @@ pub(crate) fn refresh_code_map_index(
     max_symbols: usize,
     max_todos: usize,
 ) -> Result<CodeMapIndex> {
+    let report = build_code_map(project_root, max_symbols, max_todos);
+    let source_fingerprint = source_status(project_root).fingerprint_hex();
     let index = CodeMapIndex {
         version: 1,
         generated_at_unix: unix_seconds(),
-        report: build_code_map(project_root, max_symbols, max_todos),
+        source_fingerprint,
+        report,
     };
     write_code_map_index(project_root, &index)?;
     Ok(index)
@@ -158,8 +163,7 @@ pub(crate) fn load_or_refresh_code_map_index_with_status(
 
 pub(crate) fn code_map_status(project_root: &Path) -> Result<CodeMapStatus> {
     let index = load_code_map_index(project_root)?;
-    let mut source_status = SourceStatus::default();
-    walk_source_status(project_root, &mut source_status);
+    let source_status = source_status(project_root);
     let generated_at_unix = index.as_ref().map(|index| index.generated_at_unix);
     let stale = index
         .as_ref()
@@ -344,12 +348,16 @@ fn write_code_map_index(project_root: &Path, index: &CodeMapIndex) -> Result<()>
 }
 
 fn code_map_index_is_stale(project_root: &Path, index: &CodeMapIndex) -> bool {
-    let mut source_status = SourceStatus::default();
-    walk_source_status(project_root, &mut source_status);
+    let source_status = source_status(project_root);
     code_map_index_is_stale_from_status(index, &source_status)
 }
 
 fn code_map_index_is_stale_from_status(index: &CodeMapIndex, source_status: &SourceStatus) -> bool {
+    if !index.source_fingerprint.is_empty()
+        && index.source_fingerprint != source_status.fingerprint_hex()
+    {
+        return true;
+    }
     if source_status.source_files != index.report.walked_files {
         return true;
     }
@@ -358,13 +366,40 @@ fn code_map_index_is_stale_from_status(index: &CodeMapIndex, source_status: &Sou
         .is_some_and(|newest| newest > index.generated_at_unix)
 }
 
-#[derive(Default)]
 struct SourceStatus {
     source_files: usize,
     newest_mtime_unix: Option<u64>,
+    fingerprint: Sha256,
 }
 
-fn walk_source_status(path: &Path, status: &mut SourceStatus) {
+impl Default for SourceStatus {
+    fn default() -> Self {
+        Self {
+            source_files: 0,
+            newest_mtime_unix: None,
+            fingerprint: Sha256::new(),
+        }
+    }
+}
+
+impl SourceStatus {
+    fn fingerprint_hex(&self) -> String {
+        self.fingerprint
+            .clone()
+            .finalize()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    }
+}
+
+fn source_status(project_root: &Path) -> SourceStatus {
+    let mut status = SourceStatus::default();
+    walk_source_status(project_root, project_root, &mut status);
+    status
+}
+
+fn walk_source_status(root: &Path, path: &Path, status: &mut SourceStatus) {
     if path.is_dir() {
         if should_skip_dir(path) {
             return;
@@ -378,7 +413,7 @@ fn walk_source_status(path: &Path, status: &mut SourceStatus) {
             .collect::<Vec<_>>();
         entries.sort();
         for entry in entries {
-            walk_source_status(&entry, status);
+            walk_source_status(root, &entry, status);
         }
         return;
     }
@@ -391,10 +426,29 @@ fn walk_source_status(path: &Path, status: &mut SourceStatus) {
     if metadata.len() > MAX_SYMBOL_FILE_BYTES {
         return;
     }
-    if fs::read_to_string(path).is_err() {
+    let Ok(content) = fs::read_to_string(path) else {
         return;
-    }
+    };
     status.source_files += 1;
+    let relative = path
+        .strip_prefix(root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/");
+    status.fingerprint.update(relative.as_bytes());
+    status.fingerprint.update([0]);
+    status.fingerprint.update(metadata.len().to_le_bytes());
+    status.fingerprint.update([0]);
+    if let Ok(modified) = metadata.modified() {
+        let modified_nanos = modified
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or_default();
+        status.fingerprint.update(modified_nanos.to_le_bytes());
+    }
+    status.fingerprint.update([0]);
+    status.fingerprint.update(content.as_bytes());
+    status.fingerprint.update([0xff]);
     let modified = metadata
         .modified()
         .ok()
@@ -873,6 +927,7 @@ mod tests {
         let index = CodeMapIndex {
             version: 1,
             generated_at_unix: 1,
+            source_fingerprint: String::new(),
             report: build_code_map(&root, 100, 100),
         };
         write_code_map_index(&root, &index).unwrap();
@@ -894,6 +949,7 @@ mod tests {
         let stale = CodeMapIndex {
             version: 1,
             generated_at_unix: 1,
+            source_fingerprint: String::new(),
             report: CodeMapReport {
                 walked_files: 0,
                 symbols: Vec::new(),
@@ -914,6 +970,53 @@ mod tests {
                 .symbols
                 .iter()
                 .any(|symbol| symbol.name == "fresh_symbol")
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn load_or_refresh_rebuilds_when_source_fingerprint_changes() {
+        let root = temp_project("fingerprint-load");
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src/lib.rs"), "pub fn current_symbol() {}\n").unwrap();
+        let stale = CodeMapIndex {
+            version: 1,
+            generated_at_unix: u64::MAX,
+            source_fingerprint: "not-the-current-fingerprint".to_string(),
+            report: CodeMapReport {
+                walked_files: 1,
+                symbols: vec![CodeMapSymbol {
+                    path: "src/lib.rs".to_string(),
+                    line: 1,
+                    kind: "fn".to_string(),
+                    name: "old_symbol".to_string(),
+                    signature: "pub fn old_symbol() {}".to_string(),
+                }],
+                todos: Vec::new(),
+                references: Vec::new(),
+                symbols_truncated: false,
+                todos_truncated: false,
+                references_truncated: false,
+            },
+        };
+        write_code_map_index(&root, &stale).unwrap();
+
+        let load = load_or_refresh_code_map_index_with_status(&root, 100, 100).unwrap();
+        assert!(load.refreshed);
+        assert!(
+            load.index
+                .report
+                .symbols
+                .iter()
+                .any(|symbol| symbol.name == "current_symbol")
+        );
+        assert!(
+            !load
+                .index
+                .report
+                .symbols
+                .iter()
+                .any(|symbol| symbol.name == "old_symbol")
         );
         let _ = fs::remove_dir_all(root);
     }
@@ -960,6 +1063,7 @@ mod tests {
         let index = CodeMapIndex {
             version: 1,
             generated_at_unix: 42,
+            source_fingerprint: String::new(),
             report: CodeMapReport {
                 walked_files: 2,
                 symbols: vec![
@@ -1008,6 +1112,7 @@ mod tests {
         let index = CodeMapIndex {
             version: 1,
             generated_at_unix: 42,
+            source_fingerprint: String::new(),
             report: CodeMapReport {
                 walked_files: 2,
                 symbols: vec![
@@ -1050,6 +1155,7 @@ mod tests {
         let index = CodeMapIndex {
             version: 1,
             generated_at_unix: 42,
+            source_fingerprint: String::new(),
             report: CodeMapReport {
                 walked_files: 2,
                 symbols: vec![
@@ -1130,6 +1236,7 @@ mod tests {
           }
         }"#;
         let index: CodeMapIndex = serde_json::from_str(json).unwrap();
+        assert!(index.source_fingerprint.is_empty());
         assert!(index.report.references.is_empty());
         assert!(!index.report.references_truncated);
     }
