@@ -1918,6 +1918,26 @@ fn tab_autocompletes_session_target_arguments() {
 }
 
 #[test]
+fn tab_autocompletes_mcp_add_transport_argument() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+
+    for character in "/mcp add local h".chars() {
+        handle_key_event(
+            &mut state,
+            KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE),
+        );
+    }
+    handle_key_event(&mut state, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    assert_eq!(state.input, "/mcp add local http ");
+}
+
+#[test]
 fn skills_slash_queues_skill_inventory_load() {
     let mut state = TuiState::new(HeaderState::new(
         ExecutionMode::Execute,

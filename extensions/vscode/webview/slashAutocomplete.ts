@@ -63,6 +63,8 @@ export function slashArgumentContext(
   if (skillContext) return skillContext;
   const sessionContext = sessionTargetArgumentContext(query, sessionTargets);
   if (sessionContext) return sessionContext;
+  const mcpAddContext = mcpAddTransportArgumentContext(query);
+  if (mcpAddContext) return mcpAddContext;
   const command = [...slashCommands]
     .sort((a, b) => b.name.length - a.name.length)
     .find(
@@ -113,6 +115,33 @@ function sessionTargetArgumentContext(
     },
     options,
     appendSpace: commandName === '/session rename',
+  };
+}
+
+function mcpAddTransportArgumentContext(query: string): SlashArgumentContext | undefined {
+  const commandName = '/mcp add';
+  if (!query.startsWith(`${commandName} `)) return undefined;
+  const rest = query.slice(commandName.length).trimStart();
+  const hasTrailingSpace = /\s$/.test(rest);
+  const parts = rest.split(/\s+/).filter((part) => part.length > 0);
+  const serverName = parts[0]?.trim();
+  if (!serverName) return undefined;
+  const transportPrefix = parts[1];
+  if (parts.length > 2) return undefined;
+  if (transportPrefix === undefined && !hasTrailingSpace) return undefined;
+  const needle = (transportPrefix ?? '').toLowerCase();
+  const candidates = ['stdio', 'http'];
+  if (needle && candidates.some((candidate) => candidate.toLowerCase() === needle)) return undefined;
+  const options = candidates.filter((candidate) => needle.length === 0 || candidate.startsWith(needle));
+  if (options.length === 0) return undefined;
+  return {
+    command: {
+      name: `${commandName} ${serverName}`,
+      description: 'MCP transport',
+      category: 'mcp',
+    },
+    options,
+    appendSpace: true,
   };
 }
 

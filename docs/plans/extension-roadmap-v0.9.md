@@ -735,6 +735,20 @@ shared daemon, TUI, and VS Code extension surfaces.
   query/path/symbol. TUI and VS Code filter those subcommands as the
   operator types and close the picker once an exact subcommand is present.
 
+### E62. MCP Add Transport Autocomplete
+
+- **Status**: landed.
+- **Goal**: make MCP server registration less error-prone from both TUI
+  and VS Code by completing the finite transport argument even though the
+  server name before it is free-form.
+- **Where**: TUI dynamic slash argument context, TUI Tab acceptance path,
+  and VS Code webview slash autocomplete helper.
+- **Result**: after `/mcp add <name> `, both clients now suggest `stdio`
+  and `http`, filter the suggestions as the operator types, and leave a
+  trailing space after accepting the transport so the command or URL can
+  be entered immediately. The picker stays closed once a complete transport
+  is present or a command/URL argument has started.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

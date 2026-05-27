@@ -113,6 +113,14 @@ test('slashArgumentContext filters finite options and closes after exact option'
   assert.equal(codemap?.command.name, '/codemap');
   assert.deepEqual(codemap?.options, ['locate']);
   assert.equal(slashArgumentContext('/codemap locate', commands), undefined);
+
+  assert.equal(slashArgumentContext('/mcp add local', commands), undefined);
+  const mcpTransport = slashArgumentContext('/mcp add local h', commands);
+  assert.equal(mcpTransport?.command.name, '/mcp add local');
+  assert.deepEqual(mcpTransport?.options, ['http']);
+  assert.equal(mcpTransport?.appendSpace, true);
+  assert.equal(slashArgumentContext('/mcp add local http', commands), undefined);
+  assert.equal(slashArgumentContext('/mcp add local http http://localhost', commands), undefined);
 });
 
 test('slashArgumentContext filters skill-name arguments', () => {

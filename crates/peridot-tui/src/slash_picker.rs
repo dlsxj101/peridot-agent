@@ -573,6 +573,9 @@ pub(crate) fn slash_argument_context_with_dynamic(
     if let Some(context) = session_target_argument_context(query, sessions) {
         return Some(context);
     }
+    if let Some(context) = mcp_add_transport_argument_context(query) {
+        return Some(context);
+    }
     let spec = slash_command_catalog()
         .iter()
         .filter(|spec| !finite_argument_options(spec).is_empty())
@@ -662,6 +665,49 @@ fn skill_applies_to_command(command_name: &str, archived: bool) -> bool {
         "/skills show" | "/skills view" => true,
         _ => !archived,
     }
+}
+
+fn mcp_add_transport_argument_context(query: &str) -> Option<SlashArgumentContext> {
+    let command_name = "/mcp add";
+    if !query.starts_with(&format!("{command_name} ")) {
+        return None;
+    }
+    let rest = query[command_name.len()..].trim_start();
+    let has_trailing_space = rest.chars().last().is_some_and(char::is_whitespace);
+    let mut parts = rest.split_whitespace();
+    let server_name = parts.next()?.trim();
+    if server_name.is_empty() {
+        return None;
+    }
+    let transport_prefix = parts.next();
+    if parts.next().is_some() {
+        return None;
+    }
+    if transport_prefix.is_none() && !has_trailing_space {
+        return None;
+    }
+    let prefix = transport_prefix.unwrap_or("").to_ascii_lowercase();
+    let options = ["stdio", "http"];
+    if !prefix.is_empty()
+        && options
+            .iter()
+            .any(|option| option.eq_ignore_ascii_case(&prefix))
+    {
+        return None;
+    }
+    let options: Vec<String> = options
+        .into_iter()
+        .filter(|option| prefix.is_empty() || option.starts_with(&prefix))
+        .map(str::to_string)
+        .collect();
+    if options.is_empty() {
+        return None;
+    }
+    Some(SlashArgumentContext {
+        command_name: format!("{command_name} {server_name}"),
+        options,
+        append_space: true,
+    })
 }
 
 fn session_target_argument_context(
@@ -921,6 +967,17 @@ mod tests {
         assert_eq!(context.command_name, "/codemap");
         assert_eq!(context.options, vec!["locate"]);
         assert!(slash_argument_context("/codemap locate").is_none());
+
+        assert!(slash_argument_context("/mcp add local").is_none());
+        let context = slash_argument_context("/mcp add local ").expect("mcp transport options");
+        assert_eq!(context.command_name, "/mcp add local");
+        assert_eq!(context.options, vec!["stdio", "http"]);
+        assert!(context.append_space);
+
+        let context = slash_argument_context("/mcp add local h").expect("filtered transport");
+        assert_eq!(context.options, vec!["http"]);
+        assert!(slash_argument_context("/mcp add local http").is_none());
+        assert!(slash_argument_context("/mcp add local http http://localhost").is_none());
     }
 
     #[test]

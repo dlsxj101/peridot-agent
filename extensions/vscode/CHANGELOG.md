@@ -32,6 +32,8 @@
   shared daemon slash catalog.
 - Code-map subcommand autocomplete now fills `/codemap status|refresh|find|locate|outline|refs`
   from the shared daemon slash catalog.
+- MCP add transport autocomplete now fills `stdio` or `http` after
+  `/mcp add <name> ` and leaves the composer ready for the command or URL.
 - The composer now keeps submitted prompt history per sidebar session.
   ArrowUp / ArrowDown recall previous prompts when the caret is on the
   first or last textarea line, and unsent drafts no longer leak across
