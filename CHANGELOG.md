@@ -29,6 +29,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **Daemon-backed `/help` for editor clients** now returns structured,
   surface-filtered command rows instead of relying on VS Code to format a
   local help message.
+- **VS Code skill autocomplete refresh** now reloads the slash catalog
+  when the skill store changes or when `/skills archive|restore` mutates
+  active `/skill-name` suggestions.
 
 ### Added — skill-aware slash autocomplete
 

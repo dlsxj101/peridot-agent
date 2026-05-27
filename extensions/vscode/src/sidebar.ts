@@ -41,6 +41,7 @@ export interface SidebarHandlers {
   clearSession: (options?: { skipDaemonCancel?: boolean }) => Promise<void>;
   loginOpenAi: () => Promise<void>;
   refreshStatus: () => Promise<void>;
+  refreshSlashCatalog: () => Promise<void>;
   showCodeMap: () => Promise<void>;
   showCodeMapStatus: () => Promise<void>;
   refreshCodeMap: () => Promise<void>;
@@ -1331,6 +1332,9 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         await this.handlers.finishDaemonSession(result.session_id);
       }
       this.appendCommandResult(result);
+      if (slashCommandChangesSkillCatalog(input)) {
+        await this.handlers.refreshSlashCatalog();
+      }
       if (result.kind === 'start_task' && result.task) {
         await this.handlers.runTask(result.task, this.state.runOptions);
       }
@@ -1876,6 +1880,15 @@ function sessionResultClosesDaemonRun(result: CommandResultView): boolean {
     (result.kind === 'session_delete' || result.kind === 'session_close') &&
     result.cancelled === true
   );
+}
+
+function slashCommandChangesSkillCatalog(input: string): boolean {
+  const [command, subcommand] = input
+    .slice(1)
+    .trim()
+    .split(/\s+/)
+    .map((part) => part.toLowerCase());
+  return command === 'skills' && (subcommand === 'archive' || subcommand === 'restore');
 }
 
 function applyRunOptionDelta(

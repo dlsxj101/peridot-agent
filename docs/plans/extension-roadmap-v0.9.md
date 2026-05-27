@@ -483,6 +483,19 @@ shared daemon, TUI, and VS Code extension surfaces.
   `surface: "vscode"` through `session.command`, so the help list and
   composer autocomplete are derived from the same filtered catalog.
 
+### E43. Live Skill Autocomplete Refresh
+
+- **Status**: landed.
+- **Goal**: keep VS Code `/skill-name` autocomplete current when the
+  stored skill inventory changes after the initial catalog load.
+- **Where**: VS Code memory watcher, sidebar slash dispatch, shared daemon
+  slash catalog fetch.
+- **Result**: VS Code now refreshes the slash catalog when
+  `.peridot/memory.db` changes and immediately after `/skills archive` or
+  `/skills restore`. Active auto-skills added, archived, or restored during
+  the session therefore appear or disappear from composer autocomplete
+  without requiring a manual status refresh.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

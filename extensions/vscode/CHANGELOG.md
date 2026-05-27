@@ -16,6 +16,9 @@
   commands before the catalog reaches the webview.
 - `/help` now runs through daemon `session.command` and renders the same
   structured, surface-filtered catalog rows as other command results.
+- Skill-aware slash autocomplete now refreshes when `.peridot/memory.db`
+  changes and immediately after `/skills archive` or `/skills restore`, so
+  `/skill-name` suggestions stay current without a manual status refresh.
 
 ### Added — compaction snapshot details
 

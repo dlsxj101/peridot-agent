@@ -130,6 +130,7 @@ export function activate(context: vscode.ExtensionContext) {
       clearExtensionSession(output, sidebar, options?.skipDaemonCancel === true),
     loginOpenAi: async (): Promise<void> => loginOpenAi(output, sidebar),
     refreshStatus: async (): Promise<void> => refreshStatus(output, sidebar, { force: true }),
+    refreshSlashCatalog: async (): Promise<void> => refreshSlashCatalog(output, sidebar),
     showCodeMap: async (): Promise<void> => showWorkspaceCodeMap(output, sidebar, false),
     showCodeMapStatus: async (): Promise<void> => showWorkspaceCodeMapStatus(output, sidebar),
     refreshCodeMap: async (): Promise<void> => showWorkspaceCodeMap(output, sidebar, true),
@@ -193,6 +194,7 @@ export function activate(context: vscode.ExtensionContext) {
       const message = err instanceof Error ? err.message : String(err);
       output.appendLine(`[peridot] session list refresh failed: ${message}`);
     });
+    void refreshSlashCatalog(output, sidebar);
   };
   context.subscriptions.push(
     memoryWatcher,
@@ -1239,6 +1241,7 @@ async function archiveSkill(
       sidebar.currentRunOptions(),
     );
     sidebar.appendCommandResult(result);
+    await refreshSlashCatalog(output, sidebar);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     output.appendLine(`[peridot] skill archive failed: ${message}`);
@@ -1270,6 +1273,7 @@ async function restoreSkill(
       sidebar.currentRunOptions(),
     );
     sidebar.appendCommandResult(result);
+    await refreshSlashCatalog(output, sidebar);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     output.appendLine(`[peridot] skill restore failed: ${message}`);
@@ -1782,6 +1786,20 @@ interface RefreshOptions {
   force?: boolean;
 }
 
+async function refreshSlashCatalog(
+  output: vscode.OutputChannel,
+  sidebar: PeridotSidebarProvider,
+): Promise<void> {
+  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!folder) return;
+  try {
+    sidebar.setSlashCommands(await fetchSlashCatalog(folder, output));
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    output.appendLine(`[peridot] slash catalog failed: ${message}`);
+  }
+}
+
 async function refreshStatus(
   output: vscode.OutputChannel,
   sidebar: PeridotSidebarProvider,
@@ -1807,12 +1825,7 @@ async function refreshStatus(
 
   try {
     const result = await statusCache.get(options.force ?? false);
-    void fetchSlashCatalog(folder, output)
-      .then((commands) => sidebar.setSlashCommands(commands))
-      .catch((err) => {
-        const message = err instanceof Error ? err.message : String(err);
-        output.appendLine(`[peridot] slash catalog failed: ${message}`);
-      });
+    void refreshSlashCatalog(output, sidebar);
     void refreshSessionList(output, sidebar).catch((err: unknown) => {
       const message = err instanceof Error ? err.message : String(err);
       output.appendLine(`[peridot] session list refresh failed: ${message}`);
