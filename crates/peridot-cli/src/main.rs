@@ -20,7 +20,9 @@ use peridot_common::{
     AskUserAnswer, AskUserRequest, ContextConfig, ExecutionMode, MemoryConfig, PeriError,
     PeriResult, PeridotConfig, PermissionMode,
 };
-use peridot_context::{ContextLimits, ContextManager, project_context_limits};
+use peridot_context::{
+    ContextEntry, ContextLimits, ContextManager, ContextSource, project_context_limits,
+};
 use peridot_core::{
     AgentRunEvent, AgentRunRequest, AgentRunSummary, AgentState, HarnessAgent, StopReason,
 };
@@ -38,7 +40,8 @@ use peridot_tools::hooks::{HookRunner, HookVariables, lifecycle_hook_variables};
 use peridot_tools::{AskUserPort, ToolRegistry, register_builtin_tools, register_mcp_tools};
 use peridot_tui::{
     ApprovalDecision, ApprovalGrant, ApprovalScope, HeaderState, SessionCommandEvent,
-    SessionDirectoryItem, TuiRuntimeEvent, TuiState, run_interactive_with_events,
+    SessionDirectoryItem, SkillSlashSuggestion, TuiRuntimeEvent, TuiState,
+    run_interactive_with_events,
 };
 
 mod checkpoints;
@@ -681,6 +684,7 @@ async fn main() -> Result<()> {
                             if state.service_tier.is_none() {
                                 state.service_tier = config.models.service_tier.clone();
                             }
+                            state.set_skill_suggestions(load_auto_skill_suggestions(&project_root));
                             state.push_notice(format!("session: restored {id} from disk"));
                             state
                         }
@@ -695,6 +699,7 @@ async fn main() -> Result<()> {
                             // list instead of having to walk the project
                             // tree under the keystroke event.
                             state.ensure_at_picker_index(&project_root);
+                            state.set_skill_suggestions(load_auto_skill_suggestions(&project_root));
                             state.push_transcript("Peridot ready. Type a task, /plan, /execute, /goal <objective>, /safe, /auto, /yolo, or Esc.");
                             state.push_transcript(
                                 "Submitted tasks continue inside this TUI; tool activity and run status stream here.",
@@ -1160,6 +1165,7 @@ fn spawn_tui_agent_run(
         } else {
             None
         };
+        let skill_project_root = project_root.clone();
         let result = run_task_with_events(
             task,
             mode,
@@ -1195,6 +1201,12 @@ fn spawn_tui_agent_run(
                 },
             ));
         }
+        let _ = event_tx.send((
+            session_id.clone(),
+            TuiRuntimeEvent::SkillSuggestionsUpdated {
+                skills: load_auto_skill_suggestions(&skill_project_root),
+            },
+        ));
         if result.is_ok()
             && let (Some(task_text), Some(cfg), Some(root)) =
                 (title_task, title_config, title_project_root)
@@ -1448,6 +1460,9 @@ fn apply_session_command(
         SessionCommandEvent::ScanTodos => {
             handle_scan_todos(state, project_template);
         }
+        SessionCommandEvent::CodeMap => {
+            handle_code_map(state, project_template);
+        }
         SessionCommandEvent::BranchSave(name) => {
             handle_branch_save(state, project_template, &name);
         }
@@ -1471,6 +1486,9 @@ fn apply_session_command(
         }
         SessionCommandEvent::CompactContext => {
             handle_compact_context(state, router);
+        }
+        SessionCommandEvent::Skill { name, args } => {
+            handle_skill_load(state, project_template, &name, &args);
         }
         SessionCommandEvent::ContextTop => {
             handle_context_top(state, project_template);
@@ -1544,6 +1562,74 @@ fn read_context_snapshot(
         .map_err(|err| format!("failed to read {}: {err}", snapshot_path.display()))?;
     serde_json::from_slice(&bytes)
         .map_err(|err| format!("failed to parse {}: {err}", snapshot_path.display()))
+}
+
+fn write_context_snapshot(
+    project_root: &Path,
+    session_id: &str,
+    entries: &[ContextEntry],
+) -> Result<(), String> {
+    let snapshot_path = context_snapshot_path(project_root, session_id);
+    if let Some(parent) = snapshot_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|err| format!("failed to create {}: {err}", parent.display()))?;
+    }
+    let bytes = serde_json::to_vec(entries)
+        .map_err(|err| format!("failed to serialize context snapshot: {err}"))?;
+    std::fs::write(&snapshot_path, bytes)
+        .map_err(|err| format!("failed to write {}: {err}", snapshot_path.display()))
+}
+
+fn append_plan_reminder_to_context(
+    project_root: &Path,
+    session_id: &str,
+    content: String,
+) -> Result<(), String> {
+    let mut entries = read_context_snapshot(project_root, session_id).unwrap_or_default();
+    entries.push(ContextEntry::trusted(ContextSource::PlanReminder, content));
+    write_context_snapshot(project_root, session_id, &entries)
+}
+
+fn load_auto_skill_suggestions(project_root: &Path) -> Vec<SkillSlashSuggestion> {
+    let store = MemoryStore::new(project_root.join(".peridot/memory.db"));
+    let Ok(skills) = store.list_skills() else {
+        return Vec::new();
+    };
+    skills
+        .into_iter()
+        .filter(|skill| skill.scope == "auto")
+        .map(|skill| SkillSlashSuggestion {
+            description: skill_description(&skill),
+            name: skill.name,
+        })
+        .collect()
+}
+
+fn skill_description(skill: &StoredSkill) -> String {
+    if !skill.description.trim().is_empty() {
+        return skill.description.trim().to_string();
+    }
+    skill
+        .body
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty() && !line.starts_with('#'))
+        .unwrap_or("stored auto-skill")
+        .chars()
+        .take(120)
+        .collect()
+}
+
+fn skill_plan_reminder(skill: &StoredSkill, args: &str) -> String {
+    let trimmed_args = args.trim();
+    if trimmed_args.is_empty() {
+        format!("[skill:{}]\n{}", skill.name, skill.body)
+    } else {
+        format!(
+            "[skill:{}]\nOperator passed args: {}\n\n{}",
+            skill.name, trimmed_args, skill.body
+        )
+    }
 }
 
 fn estimate_context_tokens(text: &str) -> usize {
@@ -1742,6 +1828,44 @@ fn handle_compact_context(
     } else {
         state.push_error(format!("compact: session {session_id} not found"));
     }
+}
+
+fn handle_skill_load(state: &mut TuiState, project_root: &Path, name: &str, args: &str) {
+    let session_id = state.current_session_id.clone();
+    if session_id.is_empty() {
+        state.push_error("skill: no active session".to_string());
+        return;
+    }
+    let store = MemoryStore::new(project_root.join(".peridot/memory.db"));
+    let active = match store.list_skills() {
+        Ok(skills) => skills,
+        Err(err) => {
+            state.push_error(format!("skill `{name}`: failed to read skill store: {err}"));
+            return;
+        }
+    };
+    let Some(skill) = active.into_iter().find(|skill| skill.name == name) else {
+        state.push_error(format!(
+            "skill not found: {name}. Run `peridot run \"...\"` once to build relevant auto-skills, or type `/help`."
+        ));
+        return;
+    };
+    if let Err(err) = append_plan_reminder_to_context(
+        project_root,
+        &session_id,
+        skill_plan_reminder(&skill, args),
+    ) {
+        state.push_error(format!("skill `{name}`: failed to update context: {err}"));
+        return;
+    }
+    let _ = store.mark_skill_viewed(&skill.name, unix_timestamp());
+    state.set_skill_suggestions(load_auto_skill_suggestions(project_root));
+    let args_note = if args.trim().is_empty() {
+        String::new()
+    } else {
+        format!(" with args `{}`", args.trim())
+    };
+    state.push_transcript(format!("Loaded skill `{}`{args_note}", skill.name));
 }
 
 /// Forks the live session's context at the given turn id by rewriting
@@ -2079,6 +2203,49 @@ fn handle_scan_todos(state: &mut TuiState, project_root: &Path) {
         body.push_str("\n(further hits truncated)");
     }
     state.push_transcript(body);
+}
+
+fn handle_code_map(state: &mut TuiState, project_root: &Path) {
+    let report = commands::build_code_map(project_root, 120, 80);
+    if report.symbols.is_empty() && report.todos.is_empty() {
+        state.push_transcript(format!(
+            "codemap: no symbols or TODO markers found (scanned {} file(s))",
+            report.walked_files
+        ));
+        return;
+    }
+    state.push_transcript(render_code_map_text(&report));
+}
+
+fn render_code_map_text(report: &commands::CodeMapReport) -> String {
+    let mut body = format!(
+        "codemap: {} symbol(s), {} TODO marker(s) across {} file(s)",
+        report.symbols.len(),
+        report.todos.len(),
+        report.walked_files,
+    );
+    if !report.symbols.is_empty() {
+        body.push_str("\n\nSymbols:");
+        for symbol in report.symbols.iter().take(40) {
+            body.push_str(&format!(
+                "\n{}:{}  {}  {}",
+                symbol.path, symbol.line, symbol.kind, symbol.name
+            ));
+        }
+        if report.symbols.len() > 40 || report.symbols_truncated {
+            body.push_str("\n(symbols truncated)");
+        }
+    }
+    if !report.todos.is_empty() {
+        body.push_str("\n\nTODOs:");
+        for todo in report.todos.iter().take(20) {
+            body.push_str(&format!("\n{}:{}  {}", todo.path, todo.line, todo.text));
+        }
+        if report.todos.len() > 20 || report.todos_truncated {
+            body.push_str("\n(TODO markers truncated)");
+        }
+    }
+    body
 }
 
 #[allow(clippy::too_many_arguments)]

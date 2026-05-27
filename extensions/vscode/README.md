@@ -24,9 +24,15 @@ native tool calling, and 2-Tier context management.
 | `Peridot: Cancel Current Task` | Sends `session.cancel` for the active daemon session. |
 | `Peridot: Login with ChatGPT` | Runs `peridot login openai-oauth` from the active workspace. |
 | `Peridot: Refresh Status` | Refreshes daemon workspace/provider/model/auth status. |
+| `Peridot: Show Workspace Code Map` | Runs the shared `/codemap` scan and appends public symbols plus TODO markers to the sidebar transcript. |
 | `Peridot: Open Settings` | Opens an editor-area form for `.peridot/config.toml`. Toggle autonomy loops, defaults, committee mode, security, git automation, language, and updates. New sessions started after a save pick up the values automatically; running sessions keep their boot snapshot. Also reachable from the gear icon in the Peridot sidebar title bar. |
 
 ## First run
+
+The extension contributes a **Get Started with Peridot** walkthrough in
+VS Code's welcome flow. It links the same surfaces used day to day:
+open the Peridot sidebar, connect a provider, review workspace settings,
+then run a first task.
 
 When you open the Peridot Activity Bar with no provider configured, you
 land on a three-button onboarding screen:
@@ -53,7 +59,7 @@ diffs, plus approve/deny controls with a diff preview for `file_write` /
 the TUI through the daemon `session.command_catalog` RPC, and supported
 session-control slashes run through `session.command` so mode, permission,
 model, provider, committee, goal control, note, compact, branch, MCP,
-TODO, diff, undo, and context results stay aligned with the daemon.
+TODO, codemap, diff, undo, and context results stay aligned with the daemon.
 Typing `/branch` opens a picker backed by the current context turns;
 selecting a row runs `/branch turn <id>`.
 
@@ -132,6 +138,23 @@ gitignored so local binary copies never land on `main`. The release
 pipeline drops platform-specific binaries into `resources/peridot[.exe]`
 for target packages and into `resources/bin/<target>/` for the universal
 fallback package.
+
+## Release
+
+Extension releases use `vsce/v<version>` tags so they do not collide with
+Rust CLI `v*` releases. Before publishing, update
+`extensions/vscode/package.json`, then push a matching tag:
+
+```bash
+git tag vsce/v0.5.20
+git push origin vsce/v0.5.20
+```
+
+The release workflow verifies that the tag matches the extension package
+version, builds six bundled CLI binaries, publishes platform-specific
+VSIX packages to VS Code Marketplace and Open VSX, publishes the universal
+fallback VSIX, and attaches all VSIX assets to the GitHub Release. The
+workflow requires `VSCE_PAT` and `OVSX_PAT` repository secrets.
 
 ## Roadmap
 

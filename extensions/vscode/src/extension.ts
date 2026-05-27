@@ -10,7 +10,7 @@ import { resetBinaryCache, resolvePeridotBinary } from './peridotBin';
 import { peridotChildEnv } from './processEnv';
 import { SettingsPanelManager } from './settingsPanel';
 import { StatusCache } from './statusCache';
-import type { CommandResultView, SlashCommandSpec } from './types';
+import type { CommandResultView, DaemonSessionSummary, SlashCommandSpec } from './types';
 import {
   PeridotSidebarProvider,
   type ApprovalResponse,
@@ -53,6 +53,18 @@ interface SlashCommandCatalogResult {
   }>;
 }
 
+interface SkillsListResult {
+  skills?: Array<{
+    name?: string;
+    description?: string;
+    scope?: string;
+  }>;
+}
+
+interface SessionListResult {
+  sessions?: DaemonSessionSummary[];
+}
+
 interface ActiveRun {
   daemon: PeridotDaemon;
   clientSessionId: string;
@@ -65,6 +77,7 @@ interface WorkspaceRun {
   disposeNotification: () => void;
   disposeExit: () => void;
   activeRuns: Map<string, ActiveRun>;
+  keepAlive: boolean;
 }
 
 let workspaceRun: WorkspaceRun | undefined;
@@ -96,6 +109,7 @@ export function activate(context: vscode.ExtensionContext) {
     clearSession: async (): Promise<void> => clearExtensionSession(output, sidebar),
     loginOpenAi: async (): Promise<void> => loginOpenAi(output, sidebar),
     refreshStatus: async (): Promise<void> => refreshStatus(output, sidebar, { force: true }),
+    showCodeMap: async (): Promise<void> => showWorkspaceCodeMap(output, sidebar),
     respondAskUser: async (requestId: string, answer: AskUserAnswer): Promise<void> =>
       respondAskUser(requestId, answer, output, sidebar),
     respondApproval: async (decision: ApprovalResponse): Promise<void> =>
@@ -123,6 +137,18 @@ export function activate(context: vscode.ExtensionContext) {
       invalidateStatusCache();
       void refreshStatus(output, sidebar, { force: true });
     }),
+  );
+  const memoryWatcher = vscode.workspace.createFileSystemWatcher('**/.peridot/memory.db');
+  const refreshFromMemory = () => {
+    void refreshSessionList(output, sidebar).catch((err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err);
+      output.appendLine(`[peridot] session list refresh failed: ${message}`);
+    });
+  };
+  context.subscriptions.push(
+    memoryWatcher,
+    memoryWatcher.onDidChange(refreshFromMemory),
+    memoryWatcher.onDidCreate(refreshFromMemory),
   );
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((event) => {
@@ -197,6 +223,12 @@ export function activate(context: vscode.ExtensionContext) {
     }),
   );
 
+  context.subscriptions.push(
+    vscode.commands.registerCommand('peridot.showCodeMap', async () => {
+      await showWorkspaceCodeMap(output, sidebar);
+    }),
+  );
+
   // Editor-area settings panel. Uses the workspace daemon to read+write
   // `.peridot/config.toml`. If no daemon is running yet (user hasn't
   // started a task), spawning one just to read settings is fine —
@@ -250,6 +282,7 @@ async function ensureWorkspaceRun(
     activeRuns: new Map(),
     disposeNotification: () => undefined,
     disposeExit: () => undefined,
+    keepAlive: false,
   };
   run.disposeNotification = daemon.onNotification((notification) => {
     void handleDaemonNotification(notification, output, sidebar);
@@ -283,7 +316,23 @@ async function ensureWorkspaceRun(
     void refreshStatus(output, sidebar, { force: true });
   });
   workspaceRun = run;
+  void subscribeSessionList(run, output, sidebar);
   return run;
+}
+
+async function subscribeSessionList(
+  run: WorkspaceRun,
+  output: vscode.OutputChannel,
+  sidebar: PeridotSidebarProvider,
+): Promise<void> {
+  try {
+    const result = (await run.daemon.send('session.subscribe_list')) as SessionListResult;
+    run.keepAlive = true;
+    sidebar.reconcileDaemonSessions(normalizeDaemonSessions(result));
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    output.appendLine(`[peridot] session.subscribe_list failed: ${message}`);
+  }
 }
 
 function activeRunCount(): number {
@@ -472,6 +521,35 @@ async function runSlashCommand(
   }
 }
 
+async function showWorkspaceCodeMap(
+  output: vscode.OutputChannel,
+  sidebar: PeridotSidebarProvider,
+): Promise<void> {
+  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!folder) {
+    const message = 'Open a workspace folder before scanning the code map.';
+    sidebar.setWorkspaceProblem(message);
+    await vscode.window.showWarningMessage(message);
+    return;
+  }
+  await vscode.commands.executeCommand('peridot.chatView.focus');
+  try {
+    const result = await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Window,
+        title: 'Peridot: scanning workspace code map',
+      },
+      async () => runSlashCommand('/codemap', output, sidebar, sidebar.currentRunOptions()),
+    );
+    sidebar.appendCommandResult(result);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    output.appendLine(`[peridot] codemap failed: ${message}`);
+    sidebar.appendError(message);
+    await vscode.window.showErrorMessage(`Peridot code map failed: ${message}`);
+  }
+}
+
 function asCommandResult(value: unknown): CommandResultView {
   if (typeof value === 'object' && value !== null) {
     return value as CommandResultView;
@@ -519,6 +597,10 @@ async function refreshStatus(
         const message = err instanceof Error ? err.message : String(err);
         output.appendLine(`[peridot] slash catalog failed: ${message}`);
       });
+    void refreshSessionList(output, sidebar).catch((err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err);
+      output.appendLine(`[peridot] session list refresh failed: ${message}`);
+    });
     const extensionVersion =
       vscode.extensions.getExtension('dlsxj101.peridot-vscode')?.packageJSON?.version ??
       'unknown';
@@ -555,19 +637,48 @@ async function fetchSlashCatalog(
   output: vscode.OutputChannel,
 ): Promise<SlashCommandSpec[]> {
   if (workspaceRun?.daemon) {
-    return normalizeSlashCatalog(
-      (await workspaceRun.daemon.send('session.command_catalog')) as SlashCommandCatalogResult,
-    );
+    const catalog = (await workspaceRun.daemon.send(
+      'session.command_catalog',
+    )) as SlashCommandCatalogResult;
+    const skills = await fetchSkillsList(workspaceRun.daemon, output);
+    return mergeSlashCatalogAndSkills(catalog, skills);
   }
   output.appendLine(`[peridot] slash catalog fetch (spawn) for ${folder}`);
   const daemon = await PeridotDaemon.spawn(folder);
   try {
-    return normalizeSlashCatalog(
-      (await daemon.send('session.command_catalog')) as SlashCommandCatalogResult,
-    );
+    const catalog = (await daemon.send('session.command_catalog')) as SlashCommandCatalogResult;
+    const skills = await fetchSkillsList(daemon, output);
+    return mergeSlashCatalogAndSkills(catalog, skills);
   } finally {
     await daemon.shutdown();
   }
+}
+
+async function fetchSkillsList(
+  daemon: PeridotDaemon,
+  output: vscode.OutputChannel,
+): Promise<SkillsListResult> {
+  try {
+    return (await daemon.send('skills.list')) as SkillsListResult;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    output.appendLine(`[peridot] skills.list failed: ${message}`);
+    return {};
+  }
+}
+
+function mergeSlashCatalogAndSkills(
+  catalog: SlashCommandCatalogResult,
+  skillsResult: SkillsListResult,
+): SlashCommandSpec[] {
+  const commands = normalizeSlashCatalog(catalog);
+  const existing = new Set(commands.map((command) => command.name));
+  for (const skill of normalizeSkillSlashEntries(skillsResult)) {
+    if (existing.has(skill.name)) continue;
+    existing.add(skill.name);
+    commands.push(skill);
+  }
+  return commands;
 }
 
 function normalizeSlashCatalog(result: SlashCommandCatalogResult): SlashCommandSpec[] {
@@ -580,6 +691,23 @@ function normalizeSlashCatalog(result: SlashCommandCatalogResult): SlashCommandS
       ...(typeof entry.arg_hint === 'string' ? { argHint: entry.arg_hint } : {}),
       ...(typeof entry.category === 'string' ? { category: entry.category } : {}),
     }));
+}
+
+function normalizeSkillSlashEntries(result: SkillsListResult): SlashCommandSpec[] {
+  const skills = Array.isArray(result.skills) ? result.skills : [];
+  return skills
+    .filter((entry) => typeof entry.name === 'string' && entry.name.trim().length > 0)
+    .map((entry) => {
+      const name = String(entry.name).replace(/^\/+/, '');
+      return {
+        name: `/${name}`,
+        description:
+          typeof entry.description === 'string' && entry.description.trim().length > 0
+            ? entry.description.trim()
+            : 'stored auto-skill',
+        category: 'skill',
+      };
+    });
 }
 
 async function fetchStatus(
@@ -598,6 +726,54 @@ async function fetchStatus(
   } finally {
     await daemon.shutdown();
   }
+}
+
+async function refreshSessionList(
+  output: vscode.OutputChannel,
+  sidebar: PeridotSidebarProvider,
+): Promise<void> {
+  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!folder) return;
+  const result = await fetchSessionList(folder, output);
+  sidebar.reconcileDaemonSessions(normalizeDaemonSessions(result));
+}
+
+async function fetchSessionList(
+  folder: string,
+  output: vscode.OutputChannel,
+): Promise<SessionListResult> {
+  if (workspaceRun?.daemon) {
+    return (await workspaceRun.daemon.send('session.list')) as SessionListResult;
+  }
+  output.appendLine(`[peridot] session list fetch (spawn) for ${folder}`);
+  const daemon = await PeridotDaemon.spawn(folder);
+  try {
+    return (await daemon.send('session.list')) as SessionListResult;
+  } finally {
+    await daemon.shutdown();
+  }
+}
+
+function normalizeDaemonSessions(value: unknown): DaemonSessionSummary[] {
+  const sessions = isRecord(value) && Array.isArray(value.sessions) ? value.sessions : [];
+  return sessions
+    .filter(isRecord)
+    .map((entry): DaemonSessionSummary | undefined => {
+      const id = typeof entry.id === 'string' ? entry.id.trim() : '';
+      if (!id) return undefined;
+      const summary: DaemonSessionSummary = { id };
+      if (typeof entry.title === 'string') summary.title = entry.title;
+      if (typeof entry.summary === 'string') summary.summary = entry.summary;
+      if (typeof entry.status === 'string') summary.status = entry.status;
+      if (typeof entry.running === 'boolean') summary.running = entry.running;
+      if (typeof entry.updated_at_unix === 'number') summary.updated_at_unix = entry.updated_at_unix;
+      if (typeof entry.last_task === 'string') summary.last_task = entry.last_task;
+      if (typeof entry.total_tokens === 'number') summary.total_tokens = entry.total_tokens;
+      if (typeof entry.total_cost_usd === 'number') summary.total_cost_usd = entry.total_cost_usd;
+      if (typeof entry.turns_used === 'number') summary.turns_used = entry.turns_used;
+      return summary;
+    })
+    .filter((entry): entry is DaemonSessionSummary => Boolean(entry));
 }
 
 function invalidateStatusCache(): void {
@@ -1217,6 +1393,10 @@ async function handleDaemonNotification(
   output: vscode.OutputChannel,
   sidebar: PeridotSidebarProvider,
 ): Promise<void> {
+  if (notification.method === 'session.list_changed') {
+    sidebar.reconcileDaemonSessions(normalizeDaemonSessions(notification.params));
+    return;
+  }
   if (notification.method !== 'event') {
     output.appendLine(
       `[peridot] notification ${notification.method}: ${json(notification.params)}`,
@@ -1295,6 +1475,7 @@ async function finishRunBySession(
 
 async function shutdownWorkspaceDaemonIfIdle(output?: vscode.OutputChannel): Promise<void> {
   if (!workspaceRun || workspaceRun.activeRuns.size > 0) return;
+  if (workspaceRun.keepAlive) return;
   await finishWorkspaceRun(output);
 }
 

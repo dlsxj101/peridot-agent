@@ -1,5 +1,33 @@
 # Peridot Agent — Extension Changelog
 
+## Unreleased
+
+### Added — compaction snapshot details
+
+- `Context compacted` transcript rows now expand into a structured
+  snapshot with retained decisions, files read/changed, verification
+  records, approvals, todos, and untrusted inputs.
+- Slash autocomplete now includes active auto-skills from the daemon's
+  `skills.list` RPC, so stored skills appear as `/skill-name`
+  suggestions alongside built-in commands.
+- The bundled CLI now understands Hermes-style skill directories with
+  `SKILL.md`, `references/`, and `templates/`, including
+  `skill_view_ref` access for reference files.
+- `/codemap` is available through the shared slash catalog and renders
+  workspace public symbols plus TODO markers as structured command rows.
+- `Peridot: Show Workspace Code Map` and the sidebar header code-map
+  button run that shared `/codemap` scan without typing the slash command.
+- The sidebar subscribes to the daemon's session list and reconciles
+  `.peridot/memory.db` session records, so sessions started or finished
+  from another VS Code window can appear in the local session menu after
+  the shared store changes.
+- A VS Code Get Started walkthrough now walks users through opening the
+  sidebar, connecting a provider, reviewing settings, and running a
+  first task.
+- The `vsce/v*` release workflow now fails before publishing if the tag
+  version does not match `extensions/vscode/package.json`, preventing
+  accidental Marketplace/Open VSX version skew.
+
 ## [0.5.20] — 2026-05-26
 
 ### Added — run timing footer

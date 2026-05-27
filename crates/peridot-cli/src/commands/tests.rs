@@ -21,6 +21,10 @@ fn collects_project_skills() {
 
     assert!(skills.iter().any(|skill| skill.name == "rust"));
     assert!(skills.iter().any(|skill| skill.name == "release-ci-prep"));
+    assert!(
+        !skills.iter().any(|skill| skill.name == "SKILL"),
+        "directory skills should not also be listed as a nested SKILL.md file"
+    );
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -302,6 +306,96 @@ async fn installs_local_skill_into_project_community_dir() {
         skills
             .iter()
             .any(|skill| skill.name == "my-skill" && skill.scope == "project-community")
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn installs_directory_skill_with_references() {
+    let root = std::env::temp_dir().join(format!(
+        "peridot-cli-install-dir-skill-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(root.join("Review Skill/references")).unwrap();
+    fs::write(root.join("Review Skill/SKILL.md"), "Use review steps.").unwrap();
+    fs::write(
+        root.join("Review Skill/references/checklist.md"),
+        "- run tests",
+    )
+    .unwrap();
+
+    let installed = install_skill(&root, root.join("Review Skill").to_str().unwrap())
+        .await
+        .unwrap();
+    let skills = collect_skills(&root).unwrap();
+
+    assert_eq!(installed.name, "review-skill");
+    assert!(
+        installed
+            .path
+            .ends_with(".peridot/skills/community/review-skill/SKILL.md")
+    );
+    assert!(
+        root.join(".peridot/skills/community/review-skill/references/checklist.md")
+            .is_file()
+    );
+    assert!(
+        skills
+            .iter()
+            .any(|skill| skill.name == "review-skill" && skill.scope == "project-community")
+    );
+    assert!(!skills.iter().any(|skill| skill.name == "SKILL"));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn install_directory_skill_rejects_recursive_target() {
+    let root = std::env::temp_dir().join(format!(
+        "peridot-cli-install-recursive-skill-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("SKILL.md"), "Do not recursively copy.").unwrap();
+
+    let err = install_skill(&root, root.to_str().unwrap())
+        .await
+        .unwrap_err();
+
+    assert!(
+        err.to_string()
+            .contains("refusing to install a skill directory into itself")
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn move_auto_skill_to_archive_handles_directory_layout() {
+    let root = std::env::temp_dir().join(format!(
+        "peridot-cli-archive-dir-skill-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(root.join(".peridot/skills/auto/review-flow/references")).unwrap();
+    fs::write(
+        root.join(".peridot/skills/auto/review-flow/SKILL.md"),
+        "Review flow",
+    )
+    .unwrap();
+    fs::write(
+        root.join(".peridot/skills/auto/review-flow/references/checklist.md"),
+        "- verify",
+    )
+    .unwrap();
+
+    move_auto_skill_to_archive(&root, "review-flow").unwrap();
+
+    assert!(!root.join(".peridot/skills/auto/review-flow").exists());
+    assert!(
+        root.join(".peridot/skills/archive/review-flow/SKILL.md")
+            .is_file()
+    );
+    assert!(
+        root.join(".peridot/skills/archive/review-flow/references/checklist.md")
+            .is_file()
     );
     fs::remove_dir_all(root).unwrap();
 }

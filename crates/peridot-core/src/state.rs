@@ -89,6 +89,7 @@ impl AgentState {
             | SlashCommand::McpRemove(_)
             | SlashCommand::McpTest(_)
             | SlashCommand::Todos
+            | SlashCommand::CodeMap
             | SlashCommand::Rewind
             | SlashCommand::BranchSave(_)
             | SlashCommand::BranchRestore(_)

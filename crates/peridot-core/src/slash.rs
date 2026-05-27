@@ -133,6 +133,8 @@ pub enum SlashCommand {
     /// Scan the project for TODO / FIXME / HACK / XXX / BUG comments and
     /// list every hit in the transcript. Ad-hoc — no persistent index.
     Todos,
+    /// Show a lightweight workspace code map: public symbols plus TODO markers.
+    CodeMap,
     /// Pop the last user-agent exchange off the visible transcript and
     /// reload the user's previous prompt into the input buffer so the
     /// operator can edit and re-submit. Context is NOT rolled back — the
@@ -448,6 +450,8 @@ pub fn parse_slash_command(input: &str) -> Option<SlashCommand> {
                 .map(|max| SlashCommand::AutoFix(AutoFixAction::MaxAttempts(max))),
         },
         "todos" if rest.is_empty() => Some(SlashCommand::Todos),
+        "codemap" if rest.is_empty() => Some(SlashCommand::CodeMap),
+        "codemap" => None,
         "rewind" if rest.is_empty() => Some(SlashCommand::Rewind),
         "branch" => match rest {
             "" => Some(SlashCommand::BranchPicker),
@@ -604,6 +608,12 @@ mod tests {
         // satisfies `looks_like_skill_name`.
         let cmd = parse_slash_command("/help").unwrap();
         assert!(matches!(cmd, SlashCommand::Help));
+    }
+
+    #[test]
+    fn parses_codemap_builtin() {
+        assert_eq!(parse_slash_command("/codemap"), Some(SlashCommand::CodeMap));
+        assert_eq!(parse_slash_command("/codemap src"), None);
     }
 
     #[test]

@@ -66,6 +66,63 @@
         }
       ]
     },
+    "walkthroughs": [
+      {
+        "id": "peridot.getStarted",
+        "title": "Get Started with Peridot",
+        "description": "Connect a provider, review the workspace settings, and run your first Peridot task from VS Code.",
+        "steps": [
+          {
+            "id": "open-sidebar",
+            "title": "Open the Peridot sidebar",
+            "description": "Open the Peridot view from the Activity Bar. The sidebar shows the provider picker when no authentication is configured and switches to the chat session once Peridot is ready.",
+            "media": {
+              "image": "resources/peridot-icon.png",
+              "altText": "Peridot Agent icon"
+            },
+            "completionEvents": [
+              "onView:peridot.chatView"
+            ]
+          },
+          {
+            "id": "connect-provider",
+            "title": "Connect ChatGPT or another provider",
+            "description": "Use the sidebar provider picker, or run the ChatGPT login command. Peridot stores credentials in its local env store and refreshes the sidebar status after login.",
+            "media": {
+              "image": "resources/peridot-icon.png",
+              "altText": "Peridot Agent icon"
+            },
+            "completionEvents": [
+              "onCommand:peridot.loginOpenAi"
+            ]
+          },
+          {
+            "id": "review-settings",
+            "title": "Review workspace settings",
+            "description": "Open Peridot settings to check the model, autonomy defaults, security posture, committee mode, and memory options that new sessions will use.",
+            "media": {
+              "image": "resources/peridot-icon.png",
+              "altText": "Peridot Agent icon"
+            },
+            "completionEvents": [
+              "onCommand:peridot.openSettings"
+            ]
+          },
+          {
+            "id": "run-task",
+            "title": "Run a task",
+            "description": "Start with a small coding task. Peridot streams tool activity, approvals, diffs, context usage, and run status in the sidebar session transcript.",
+            "media": {
+              "image": "resources/peridot-icon.png",
+              "altText": "Peridot Agent icon"
+            },
+            "completionEvents": [
+              "onCommand:peridot.runTask"
+            ]
+          }
+        ]
+      }
+    ],
     "commands": [
       {
         "command": "peridot.hello",
@@ -98,6 +155,12 @@
         "category": "Peridot"
       },
       {
+        "command": "peridot.showCodeMap",
+        "title": "Peridot: Show Workspace Code Map",
+        "category": "Peridot",
+        "icon": "$(symbol-misc)"
+      },
+      {
         "command": "peridot.openSettings",
         "title": "Peridot: Open Settings",
         "category": "Peridot",
@@ -110,6 +173,11 @@
           "command": "peridot.openSettings",
           "when": "view == peridot.chatView",
           "group": "navigation@1"
+        },
+        {
+          "command": "peridot.showCodeMap",
+          "when": "view == peridot.chatView",
+          "group": "navigation@2"
         }
       ]
     },

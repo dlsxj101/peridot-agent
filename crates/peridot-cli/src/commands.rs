@@ -27,6 +27,7 @@ use sha2::{Digest, Sha256};
 
 mod agents;
 mod auth;
+mod codemap;
 mod config;
 mod daemon;
 mod doctor;
@@ -52,6 +53,7 @@ pub(crate) use auth::{
     read_stored_api_key, read_stored_openai_oauth_credentials, run_env_command, run_login_command,
     run_logout_command,
 };
+pub(crate) use codemap::{CodeMapReport, build_code_map};
 use config::init_project_config_value;
 pub(crate) use config::{
     load_effective_config, maybe_run_first_launch_wizard, run_config_command, set_config_key,
@@ -322,9 +324,10 @@ pub(crate) enum AgentsCommand {
 pub(crate) enum SkillCommand {
     /// List local and global skills.
     List,
-    /// Install a project-local community skill from a URL or file path.
+    /// Install a project-local community skill from a URL, Markdown file, or
+    /// directory containing SKILL.md.
     Install {
-        /// HTTP(S) URL or local Markdown file path.
+        /// HTTP(S) URL, local Markdown file path, or local skill directory.
         source: String,
     },
     /// Print a skill by name.
@@ -338,8 +341,8 @@ pub(crate) enum SkillCommand {
         name: String,
     },
     /// Restore an archived auto-skill: clears `archived_at_unix` in the
-    /// DB and moves `.peridot/skills/archive/<name>.md` back into
-    /// `.peridot/skills/auto/<name>.md`. Useful when the Curator was
+    /// DB and moves `.peridot/skills/archive/<name>.md` or
+    /// `.peridot/skills/archive/<name>/` back into auto skills. Useful when the Curator was
     /// over-zealous; manual auth/scope rules still apply.
     Restore {
         /// Skill name (file stem of `<name>.md`).

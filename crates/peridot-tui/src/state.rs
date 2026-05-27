@@ -374,6 +374,11 @@ pub enum TuiRuntimeEvent {
         /// Number of untrusted-external inputs in the conversation so far.
         untrusted_count: usize,
     },
+    /// The host refreshed dynamic auto-skill slash suggestions.
+    SkillSuggestionsUpdated {
+        /// Active auto-skills exposed as `/skill-name` suggestions.
+        skills: Vec<crate::SkillSlashSuggestion>,
+    },
     /// Background run finished.
     Finished {
         /// Stop reason.
@@ -728,6 +733,9 @@ pub struct TuiState {
     /// Floating slash-command picker, when active.
     #[serde(default)]
     pub slash_picker: Option<SlashPicker>,
+    /// Dynamic auto-skills surfaced as `/skill-name` suggestions.
+    #[serde(default)]
+    pub skill_suggestions: Vec<crate::SkillSlashSuggestion>,
     /// Append-only log of parsed thinking text (for debug toggle re-render).
     #[serde(default)]
     pub thinking_log: Vec<String>,
@@ -895,6 +903,8 @@ pub enum SessionCommandEvent {
     /// `/todos` — walk the project for TODO / FIXME / HACK / XXX / BUG
     /// markers and dump the hit list (path:line: text) to the transcript.
     ScanTodos,
+    /// `/codemap` — scan source files for public symbols and TODO markers.
+    CodeMap,
     /// `/branch save <name>` — copy the active session's context
     /// snapshot under `.peridot/branches/<name>/` for later restore.
     BranchSave(String),
@@ -923,6 +933,14 @@ pub enum SessionCommandEvent {
     /// auto threshold. Fire-and-forget; the agent loop consumes the
     /// flag and resets it.
     CompactContext,
+    /// `/skill-name [args]` — load a stored skill into the active
+    /// session context so the next model turn can use it.
+    Skill {
+        /// Skill name without the leading slash.
+        name: String,
+        /// Free-form trailing args supplied by the operator.
+        args: String,
+    },
     /// `/context top` — render the largest entries from the persisted
     /// context snapshot so operators can see what is consuming the window.
     ContextTop,
@@ -1038,6 +1056,7 @@ impl TuiState {
             lifecycle_events: Vec::new(),
             scroll_offset: 0,
             slash_picker: None,
+            skill_suggestions: Vec::new(),
             thinking_log: Vec::new(),
             last_session_save_unix: 0,
             current_turn: 0,
@@ -1158,6 +1177,12 @@ impl TuiState {
     /// Records a session-router intent that the host loop will pick up next tick.
     pub fn push_pending_session_command(&mut self, command: SessionCommandEvent) {
         self.pending_session_commands.push(command);
+    }
+
+    /// Replaces dynamic auto-skill slash suggestions.
+    pub fn set_skill_suggestions(&mut self, skills: Vec<crate::SkillSlashSuggestion>) {
+        self.skill_suggestions = skills;
+        self.refresh_slash_picker();
     }
 
     /// Queues a free-form note that the host loop will append to the current
@@ -1496,7 +1521,7 @@ impl TuiState {
             self.slash_picker = None;
             return;
         }
-        let len = crate::slash_picker::picker_len(&query);
+        let len = crate::slash_picker::picker_len_with_skills(&query, &self.skill_suggestions);
         if len == 0 {
             self.slash_picker = None;
             return;
@@ -1517,7 +1542,8 @@ impl TuiState {
         let Some(picker) = self.slash_picker.as_mut() else {
             return;
         };
-        let len = crate::slash_picker::picker_len(&picker.query);
+        let len =
+            crate::slash_picker::picker_len_with_skills(&picker.query, &self.skill_suggestions);
         if len == 0 {
             picker.selected = 0;
             return;
@@ -1546,17 +1572,20 @@ impl TuiState {
             return;
         }
 
-        let matches = crate::filtered_specs(&query);
+        let matches = crate::slash_picker::filtered_suggestions(&query, &self.skill_suggestions);
         let Some(spec) = matches.get(picker.selected) else {
             return;
         };
-        self.input = if !crate::slash_picker::finite_argument_options(spec).is_empty() {
-            format!("{} ", spec.name)
-        } else if let Some(arg) = spec.arg_hint {
-            format!("{} {arg}", spec.name)
-        } else {
-            spec.name.to_string()
-        };
+        self.input =
+            if !crate::slash_picker::finite_argument_options_from_hint(spec.arg_hint.as_deref())
+                .is_empty()
+            {
+                format!("{} ", spec.name)
+            } else if let Some(arg) = spec.arg_hint.as_deref() {
+                format!("{} {arg}", spec.name)
+            } else {
+                spec.name.to_string()
+            };
         self.input_cursor = self.input.chars().count();
         self.refresh_input_pickers();
     }
@@ -1569,12 +1598,17 @@ impl TuiState {
         if crate::slash_picker::slash_argument_context(&picker.query).is_some() {
             return false;
         }
-        let matches = crate::filtered_specs(&picker.query);
+        let matches =
+            crate::slash_picker::filtered_suggestions(&picker.query, &self.skill_suggestions);
         let Some(spec) = matches.get(picker.selected) else {
             return false;
         };
         let input = self.input.trim();
-        input == spec.name && spec.arg_hint.is_none_or(|hint| hint.starts_with('['))
+        input == spec.name
+            && spec
+                .arg_hint
+                .as_deref()
+                .is_none_or(|hint| hint.starts_with('['))
     }
 
     /// Refreshes the cached file index that powers the `@file` picker.
@@ -2110,6 +2144,9 @@ impl TuiState {
                     format!("{label}\n{narrative}")
                 };
                 self.push_activity(ActivityKind::Verification, "compact", detail);
+            }
+            TuiRuntimeEvent::SkillSuggestionsUpdated { skills } => {
+                self.set_skill_suggestions(skills);
             }
             TuiRuntimeEvent::Finished {
                 stop_reason,

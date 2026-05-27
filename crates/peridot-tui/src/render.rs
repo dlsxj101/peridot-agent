@@ -1282,7 +1282,7 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
         .iter()
         .filter(|item| matches!(item.status.as_str(), "running" | "starting"))
         .count();
-    if active_subagents > 0 {
+    if active_subagents > 0 || !state.config.show_subagent_panel {
         push_dim(format!("subagents {active_subagents}"));
     }
     if let Some(version) = state.header.update_available.as_ref() {
@@ -1787,7 +1787,8 @@ fn render_slash_picker(frame: &mut Frame<'_>, state: &TuiState, input_area: Rect
         return;
     }
 
-    let suggestions = filtered_specs(&picker.query);
+    let suggestions =
+        crate::slash_picker::filtered_suggestions(&picker.query, &state.skill_suggestions);
     if suggestions.is_empty() {
         return;
     }
@@ -1818,7 +1819,7 @@ fn render_slash_picker(frame: &mut Frame<'_>, state: &TuiState, input_area: Rect
                     .fg(Color::DarkGray)
                     .add_modifier(Modifier::DIM)
             };
-            let label = if let Some(arg) = spec.arg_hint {
+            let label = if let Some(arg) = spec.arg_hint.as_deref() {
                 format!("{}  {arg}", spec.name)
             } else {
                 spec.name.to_string()

@@ -63,7 +63,10 @@ pub use session_directory::{
     tab_bar_height, trim_directory,
 };
 pub use session_picker::SessionPickerState;
-pub use slash_picker::{SlashCommandSpec, filtered_specs, first_match, slash_command_catalog};
+pub use slash_picker::{
+    SkillSlashSuggestion, SlashCommandSpec, SlashSuggestion, filtered_specs, first_match,
+    slash_command_catalog,
+};
 
 pub use ask_user::{
     ApprovalDecision, ApprovalPanel, ApprovalScope, AskUserPanel, AskUserPanelKind, MenuState,

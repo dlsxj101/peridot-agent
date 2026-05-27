@@ -12,6 +12,51 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 
 ---
 
+## Unreleased
+
+### Added — skill-aware slash autocomplete
+
+- **`skills.list` daemon RPC** exposes active auto-skills for editor
+  clients without loading full skill bodies.
+- **VS Code and TUI slash pickers** now include `/skill-name`
+  suggestions from active auto-skills, ranking command-name prefix
+  matches ahead of description-only matches.
+- **TUI skill invocation** now loads stored skills into the active
+  session context instead of reporting that skills are extension-only.
+- **`skill_list` descriptions** now prefer the stored frontmatter
+  description, with a legacy body-line fallback capped at 80 chars.
+- **Hermes-style skill directories** are supported by `skill_view`,
+  `skill_view_ref`, and `peridot skill install/list/show/remove/restore`,
+  so skills can carry `SKILL.md` plus `references/` or `templates/`
+  without losing the legacy single-file layout.
+- **`/codemap` slash command** scans source files for public symbols and
+  TODO markers, works in both TUI and VS Code through the shared daemon
+  command catalog, renders structured rows in the extension, and is also
+  available as `Peridot: Show Workspace Code Map` from the VS Code command
+  palette/sidebar.
+- **Reflection noise filtering** now drops single-tool repeat n-grams
+  before the Curator LLM call and stamps them as handled, so historical
+  `file_read|file_read`-style rows do not burn review budget.
+- **Shared extension session index** adds `session.list` and
+  `session.subscribe_list` daemon RPCs plus `session.list_changed`
+  notifications. VS Code now reconciles its local session menu with
+  daemon-persisted session records and watches `.peridot/memory.db` so
+  another window's session changes surface after the shared DB updates.
+- **VS Code Get Started walkthrough** guides first-time users through
+  opening the sidebar, connecting a provider, reviewing settings, and
+  running a first task using existing Peridot commands and view
+  completion events.
+- **VS Code extension release guard** now validates that `vsce/v*`
+  release tags match `extensions/vscode/package.json` before publishing
+  Marketplace and Open VSX packages.
+
+### Changed — TUI borderless transcript
+
+- **TUI transcript layout** now defaults to a full-width borderless chat
+  pane, keeps the status side panel opt-in via `Ctrl+]`, surfaces session
+  id / steps / elapsed / subagent count in the header, and uses the
+  mascot mood as the status-bar glyph.
+
 ## [0.8.13 / extension 0.5.20] — 2026-05-27
 
 ### Added — committee replay and executor defaults

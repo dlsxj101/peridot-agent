@@ -2,6 +2,8 @@ import './style.css';
 import autoAnimate from '@formkit/auto-animate';
 import MarkdownIt from 'markdown-it';
 import type {
+  CompactionDetailItem,
+  CompactionSnapshotView,
   InboundMessage,
   OutboundMessage,
   PlanSlice,
@@ -744,6 +746,7 @@ function renderHeader(s: SidebarState): HTMLElement {
 
   const right = el('div', 'header-actions');
   right.append(renderSessionMenu(s));
+  right.append(iconButton('codemap', 'Workspace Code Map', () => vscode.postMessage({ type: 'showCodeMap' })));
   right.append(iconButton('refresh', 'Refresh', () => vscode.postMessage({ type: 'refreshStatus' })));
   right.append(
     iconButton('switch', 'Switch provider', () =>
@@ -954,6 +957,8 @@ function iconSvg(kind: string): string {
       return `<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4h10"/><path d="M6 4V2.8h4V4"/><path d="M5 6l.4 7h5.2L11 6"/><path d="M7 7.5v3.5M9 7.5v3.5"/></svg>`;
     case 'gear':
       return `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.5v1.3M8 13.2v1.3M3.4 3.4l.9.9M11.7 11.7l.9.9M1.5 8h1.3M13.2 8h1.3M3.4 12.6l.9-.9M11.7 4.3l.9-.9"/></svg>`;
+    case 'codemap':
+      return `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4.5h4l1.5 2h5.5v6.5h-11z"/><path d="M4.5 9h7"/><path d="M4.5 11h4"/><path d="M5 2.5h5"/></svg>`;
     default:
       return '';
   }
@@ -1327,6 +1332,7 @@ function transcriptItemSignature(item: TranscriptItem): string {
     pending: item.pending,
     toolParameters: item.toolParameters,
     toolResultSummary: item.toolResultSummary,
+    compaction: item.compaction,
   });
 }
 
@@ -2063,11 +2069,85 @@ function appendSelectOptions<Value extends string>(
 }
 
 function renderStatusLine(item: TranscriptItem): HTMLElement {
+  if (item.compaction) return renderCompactionStatus(item);
   const wrap = el('div', 'status-line');
   wrap.append(el('span', 'status-dot'));
   wrap.append(el('span', 'status-text', item.text));
   if (item.detail) wrap.append(el('span', 'status-detail', `· ${item.detail}`));
   return wrap;
+}
+
+function renderCompactionStatus(item: TranscriptItem): HTMLElement {
+  const snapshot = item.compaction;
+  const wrap = el('div', 'status-line status-line-compactable');
+  const row = el('div', 'status-line-row');
+  row.append(el('span', 'status-dot'));
+  row.append(el('span', 'status-text', item.text));
+  wrap.append(row);
+  if (snapshot) wrap.append(renderCompactionDetails(snapshot));
+  return wrap;
+}
+
+function renderCompactionDetails(snapshot: CompactionSnapshotView): HTMLElement {
+  const details = el('details', 'compaction-details');
+  const summary = el('summary', 'compaction-summary');
+  summary.append(el('span', 'compaction-toggle'));
+  summary.append(el('span', 'compaction-summary-text', 'Snapshot'));
+  summary.append(
+    el(
+      'span',
+      'compaction-summary-counts',
+      `${snapshot.filesRead.length + snapshot.filesChanged.length} files · ${snapshot.decisions.length} decisions`,
+    ),
+  );
+  details.append(summary);
+
+  const body = el('div', 'compaction-body');
+  if (snapshot.narrative) {
+    body.append(el('div', 'compaction-narrative', snapshot.narrative));
+  }
+  const sections = [
+    ['Decisions', snapshot.decisions],
+    ['Files read', snapshot.filesRead],
+    ['Files changed', snapshot.filesChanged],
+    ['Verifications', snapshot.verifications],
+    ['Open todos', snapshot.openTodos],
+    ['Approvals', snapshot.approvals],
+    ['Untrusted inputs', snapshot.untrustedInputs],
+  ] as const;
+  for (const [title, items] of sections) {
+    if (items.length > 0) body.append(renderCompactionSection(title, items));
+  }
+  if (body.childElementCount === 0) {
+    body.append(el('div', 'compaction-empty', 'No structured details'));
+  }
+  details.append(body);
+  return details;
+}
+
+function renderCompactionSection(title: string, items: readonly CompactionDetailItem[]): HTMLElement {
+  const section = el('section', 'compaction-section');
+  const header = el('div', 'compaction-section-title');
+  header.append(el('span', 'compaction-section-name', title));
+  header.append(el('span', 'compaction-section-count', String(items.length)));
+  section.append(header);
+  const list = el('ul', 'compaction-list');
+  for (const item of items) {
+    const li = el('li', 'compaction-item');
+    if (item.path) {
+      li.append(renderFilePathButton(item.path, 'compaction-path', item.line));
+      if (item.line) {
+        const suffix = item.endLine && item.endLine !== item.line ? `:${item.line}-${item.endLine}` : `:${item.line}`;
+        li.append(el('span', 'compaction-line-range', suffix));
+      }
+    } else {
+      li.append(el('span', 'compaction-label', item.label));
+    }
+    if (item.detail) li.append(el('span', 'compaction-detail', item.detail));
+    list.append(li);
+  }
+  section.append(list);
+  return section;
 }
 
 function renderErrorLine(item: TranscriptItem): HTMLElement {
@@ -2645,11 +2725,22 @@ function filteredSlashCommands(input: string): SlashCommandSpec[] {
   if (!query.startsWith('/') || query.includes('\n')) return [];
   const needle = query.slice(1).trim().toLowerCase();
   if (needle.length === 0) return slashCommands;
-  return slashCommands.filter((command) => {
-    const name = command.name.slice(1).toLowerCase();
-    const description = command.description.toLowerCase();
-    return name.startsWith(needle) || name.includes(` ${needle}`) || description.includes(needle);
-  });
+  return slashCommands
+    .filter((command) => {
+      const name = command.name.slice(1).toLowerCase();
+      const description = command.description.toLowerCase();
+      return name.startsWith(needle) || name.includes(` ${needle}`) || description.includes(needle);
+    })
+    .sort((a, b) => slashCommandRank(a, needle) - slashCommandRank(b, needle) || a.name.localeCompare(b.name));
+}
+
+function slashCommandRank(command: SlashCommandSpec, needle: string): number {
+  const name = command.name.slice(1).toLowerCase();
+  const description = command.description.toLowerCase();
+  if (name.startsWith(needle)) return 0;
+  if (name.includes(` ${needle}`)) return 1;
+  if (description.includes(needle)) return 2;
+  return 3;
 }
 
 interface SlashArgumentContext {

@@ -13,7 +13,7 @@
 //!   skill as recently viewed so the Curator's 7-day idle pass keeps
 //!   it active.
 
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
@@ -81,7 +81,7 @@ impl Tool for SkillListTool {
                 SkillMeta {
                     name: r.skill.name.clone(),
                     scope: r.skill.scope.clone(),
-                    description: description_of(&r.skill.body),
+                    description: description_of(&r.skill.description, &r.skill.body),
                     idle_days,
                 }
             })
@@ -194,14 +194,19 @@ impl Tool for SkillViewRefTool {
     async fn execute(&self, params: Value, ctx: &ToolContext) -> PeriResult<ToolResult> {
         let name = required_str(&params, "name")?;
         let ref_path = required_str(&params, "ref_path")?;
-        if ref_path.contains("..") {
+        let requested = Path::new(ref_path);
+        if requested.is_absolute()
+            || requested
+                .components()
+                .any(|component| matches!(component, Component::ParentDir | Component::Prefix(_)))
+        {
             return Err(PeriError::Tool(
-                "ref_path must not contain '..' components".into(),
+                "ref_path must be a relative path inside the skill directory".into(),
             ));
         }
         let skill_dir = find_skill_directory(&ctx.project_root, name)
             .ok_or_else(|| PeriError::Tool(format!("no skill directory found for: {name}")))?;
-        let target = skill_dir.join(ref_path);
+        let target = skill_dir.join(requested);
         let canonical = target
             .canonicalize()
             .map_err(|e| PeriError::Tool(format!("reference file not found: {e}")))?;
@@ -236,16 +241,30 @@ impl Tool for SkillViewRefTool {
     }
 }
 
-/// Returns a short single-line summary derived from the body. The auto
-/// Curator currently writes `# Auto Skill: <task>` as the first line, so
-/// stripping the leading `#`s yields the task name.
-fn description_of(body: &str) -> String {
-    body.lines()
-        .next()
-        .unwrap_or("")
-        .trim_start_matches('#')
-        .trim()
-        .to_string()
+/// Returns a short single-line summary, preferring the persisted
+/// frontmatter-derived description and falling back to the first body line.
+fn description_of(stored_description: &str, body: &str) -> String {
+    let raw = if stored_description.trim().is_empty() {
+        body.lines()
+            .next()
+            .unwrap_or("")
+            .trim_start_matches('#')
+            .trim()
+    } else {
+        stored_description.trim()
+    };
+    truncate_chars(raw, 80)
+}
+
+fn truncate_chars(value: &str, max_chars: usize) -> String {
+    if value.chars().count() <= max_chars {
+        return value.to_string();
+    }
+    value
+        .chars()
+        .take(max_chars.saturating_sub(1))
+        .chain(std::iter::once('…'))
+        .collect()
 }
 
 fn unix_now() -> u64 {
@@ -325,6 +344,7 @@ mod tests {
             .save_skill(&StoredSkill {
                 name: "auto-fix-parser".into(),
                 body: "# Auto Skill: fix parser\n\nstep one\nstep two".into(),
+                description: "Use when parser tests need repair".into(),
                 scope: "auto".into(),
                 ..Default::default()
             })
@@ -348,11 +368,39 @@ mod tests {
         let skills = result.output["skills"].as_array().unwrap();
         assert_eq!(skills.len(), 1, "archived rows are excluded");
         assert_eq!(skills[0]["name"], "auto-fix-parser");
-        assert_eq!(skills[0]["description"], "Auto Skill: fix parser");
+        assert_eq!(
+            skills[0]["description"],
+            "Use when parser tests need repair"
+        );
         assert!(
             result.output["skills"][0].get("body").is_none(),
             "L0 listing must not carry body bytes"
         );
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[tokio::test]
+    async fn skill_list_falls_back_to_body_description_and_truncates() {
+        let root = unique_root("list-fallback");
+        let store = MemoryStore::new(root.join(".peridot/memory.db"));
+        store
+            .save_skill(&StoredSkill {
+                name: "auto-long".into(),
+                body: format!("# {}", "x".repeat(100)),
+                scope: "auto".into(),
+                ..Default::default()
+            })
+            .unwrap();
+
+        let ctx = ToolContext::new(&root, PermissionMode::Auto);
+        let result = SkillListTool
+            .execute(serde_json::json!({}), &ctx)
+            .await
+            .unwrap();
+
+        let description = result.output["skills"][0]["description"].as_str().unwrap();
+        assert_eq!(description.chars().count(), 80);
+        assert!(description.ends_with('…'));
         std::fs::remove_dir_all(root).ok();
     }
 
@@ -386,6 +434,74 @@ mod tests {
             .unwrap();
         assert!(record.skill.last_used_at_unix >= before);
         assert!(record.skill.last_used_at_unix <= after + 1);
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[tokio::test]
+    async fn skill_view_lists_directory_references_and_skill_view_ref_loads_one() {
+        let root = unique_root("view-ref");
+        let store = MemoryStore::new(root.join(".peridot/memory.db"));
+        store
+            .save_skill(&StoredSkill {
+                name: "auto-review-flow".into(),
+                body: "review flow body".into(),
+                scope: "auto".into(),
+                ..Default::default()
+            })
+            .unwrap();
+        let skill_dir = root.join(".peridot/skills/auto/auto-review-flow");
+        std::fs::create_dir_all(skill_dir.join("references")).unwrap();
+        std::fs::create_dir_all(skill_dir.join("templates")).unwrap();
+        std::fs::write(skill_dir.join("SKILL.md"), "review flow body").unwrap();
+        std::fs::write(skill_dir.join("references/checklist.md"), "- cargo test").unwrap();
+        std::fs::write(skill_dir.join("templates/reply.md"), "Done").unwrap();
+
+        let ctx = ToolContext::new(&root, PermissionMode::Auto);
+        let view = SkillViewTool
+            .execute(serde_json::json!({"name": "auto-review-flow"}), &ctx)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            view.output["reference_files"],
+            serde_json::json!(["references/checklist.md", "templates/reply.md"])
+        );
+
+        let reference = SkillViewRefTool
+            .execute(
+                serde_json::json!({
+                    "name": "auto-review-flow",
+                    "ref_path": "references/checklist.md",
+                }),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        assert_eq!(reference.output["content"], "- cargo test");
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[tokio::test]
+    async fn skill_view_ref_rejects_parent_traversal() {
+        let root = unique_root("view-ref-traversal");
+        let skill_dir = root.join(".peridot/skills/auto/auto-review-flow");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(skill_dir.join("SKILL.md"), "review flow body").unwrap();
+        std::fs::write(root.join(".peridot/skills/auto/secret.md"), "secret").unwrap();
+        let ctx = ToolContext::new(&root, PermissionMode::Auto);
+
+        assert!(
+            SkillViewRefTool
+                .execute(
+                    serde_json::json!({
+                        "name": "auto-review-flow",
+                        "ref_path": "../secret.md",
+                    }),
+                    &ctx,
+                )
+                .await
+                .is_err()
+        );
         std::fs::remove_dir_all(root).ok();
     }
 

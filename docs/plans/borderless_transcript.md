@@ -1,4 +1,12 @@
-# Borderless transcript + status absorption + mascot relocation — plan
+# Borderless transcript + status absorption + mascot relocation
+
+## Status
+
+Landed. The TUI now defaults to a full-width borderless transcript,
+keeps the status side panel opt-in via `Ctrl+]`, absorbs session /
+steps / elapsed / active subagent count into the header, uses
+mood-driven status-bar glyphs, renders the mascot outside the side
+panel, and keeps modal overlays/input boxes bordered.
 
 ## 왜
 
@@ -197,15 +205,13 @@ peridot · gpt-4o · auto · session 1779011508 · steps 12 · 8s · subagents 0
 | C. 보더 유지하고 `Color::Reset`만 명시 | 빨간 보더만 해결, 복사 문제는 그대로 |
 | **D. + 마스코트 분산** ← 권장 | 복사 깨끗 + 빨간 보더 사라짐 + 마스코트 항상 mood 노출 |
 
-## 다음 단계
+## 완료 항목
 
-1. ✅ 마스코트 흰배경 수정 (완료)
-2. `TuiConfig::show_subagent_panel` 기본값 false
-3. transcript 보더 제거 + title을 dim Line으로 prepend
-4. side panel `Borders::LEFT`만
-5. header 확장 (session/steps/elapsed/subagents count)
-6. status bar `●` → mood glyph
-7. welcome 화면에 풀 마스코트 추가
-8. 테스트 fixture 갱신
-9. `cargo build --release` + 직접 띄워 시각 검증
-10. 커밋
+1. ✅ 마스코트 흰배경 수정
+2. ✅ `TuiConfig::show_subagent_panel` 기본값 false
+3. ✅ transcript 보더 제거 + title을 dim Line으로 prepend
+4. ✅ side panel `Borders::LEFT`만
+5. ✅ header 확장 (session/steps/elapsed/subagents count)
+6. ✅ status bar `●` → mood glyph
+7. ✅ welcome 화면에 풀 마스코트 추가
+8. ✅ 렌더 회귀 테스트 추가

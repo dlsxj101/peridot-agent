@@ -370,6 +370,88 @@ fn draws_with_ratatui_backend() {
 }
 
 #[test]
+fn borderless_transcript_keeps_status_panel_opt_in() {
+    use ratatui::{Terminal, backend::TestBackend};
+
+    let backend = TestBackend::new(120, 32);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    state.resize(120, 32);
+    state.current_session_id = "session-628850-1779011508".to_string();
+    state.side_panel.stats.steps = 12;
+    state.side_panel.stats.elapsed_seconds = 8;
+    state.push_assistant("borderless transcript body");
+
+    terminal.draw(|frame| draw(frame, &state)).unwrap();
+
+    let rendered = format!("{:?}", terminal.backend().buffer());
+    assert!(rendered.contains("session 1779011508"));
+    assert!(rendered.contains("steps 12"));
+    assert!(rendered.contains("8s"));
+    assert!(rendered.contains("subagents 0"));
+    assert!(rendered.contains("borderless transcript body"));
+    assert!(
+        !rendered.contains("Status"),
+        "right status panel should be hidden by default"
+    );
+}
+
+#[test]
+fn status_panel_toggle_renders_opt_in_status_column() {
+    use ratatui::{Terminal, backend::TestBackend};
+
+    let backend = TestBackend::new(120, 32);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ))
+    .with_config(TuiConfig {
+        show_subagent_panel: true,
+        ..TuiConfig::default()
+    });
+    state.resize(120, 32);
+    state.current_session_id = "session-628850-1779011508".to_string();
+    state.side_panel.stats.steps = 12;
+    state.push_assistant("transcript with panel");
+
+    terminal.draw(|frame| draw(frame, &state)).unwrap();
+
+    let rendered = format!("{:?}", terminal.backend().buffer());
+    assert!(rendered.contains("Status"));
+    assert!(rendered.contains("Session"));
+    assert!(rendered.contains("id: 1779011508"));
+    assert!(rendered.contains("transcript with panel"));
+}
+
+#[test]
+fn status_bar_uses_mood_glyph_for_running_agent() {
+    use ratatui::{Terminal, backend::TestBackend};
+
+    let backend = TestBackend::new(100, 28);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    state.resize(100, 28);
+    state.agent_run_status = AgentRunStatus::Running;
+    state.push_assistant("running transcript");
+
+    terminal.draw(|frame| draw(frame, &state)).unwrap();
+
+    let rendered = format!("{:?}", terminal.backend().buffer());
+    assert!(rendered.contains("\u{25D1}"));
+    assert!(rendered.contains("processing"));
+}
+
+#[test]
 fn key_events_edit_and_submit_input() {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -671,7 +753,7 @@ fn utility_slash_commands_update_tui_surface() {
     apply_slash_command(&mut state, SlashCommand::Model("next-model".to_string()));
     assert_eq!(state.header.model, "next-model");
 
-    state.input = "/not-real".to_string();
+    state.input = "/x".to_string();
     assert_eq!(
         handle_key_event(
             &mut state,
@@ -1674,6 +1756,31 @@ fn tab_autocompletes_slash_command_prefix() {
 }
 
 #[test]
+fn tab_autocompletes_dynamic_skill_slash() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    state.set_skill_suggestions(vec![SkillSlashSuggestion {
+        name: "auto-fix-parser".to_string(),
+        description: "repair parser tests".to_string(),
+    }]);
+
+    for character in "/auto-f".chars() {
+        handle_key_event(
+            &mut state,
+            KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE),
+        );
+    }
+    handle_key_event(&mut state, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+
+    assert_eq!(state.input, "/auto-fix-parser");
+}
+
+#[test]
 fn slash_picker_selects_finite_argument_options() {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -2027,6 +2134,30 @@ fn session_new_slash_queues_pending_command_with_task() {
             .unwrap()
             .text
             .contains("opening new session with task 'rewrite README'")
+    );
+}
+
+#[test]
+fn codemap_slash_queues_pending_command() {
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+
+    apply_slash_command(&mut state, SlashCommand::CodeMap);
+
+    assert_eq!(
+        state.drain_pending_session_commands(),
+        vec![SessionCommandEvent::CodeMap]
+    );
+    assert!(
+        state
+            .transcript
+            .last()
+            .unwrap()
+            .text
+            .contains("codemap: scanning workspace")
     );
 }
 

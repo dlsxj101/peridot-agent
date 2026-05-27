@@ -96,10 +96,30 @@ export interface SlashCommandSpec {
   category?: string;
 }
 
+export interface CompactionDetailItem {
+  label: string;
+  detail?: string;
+  path?: string;
+  line?: number;
+  endLine?: number;
+}
+
+export interface CompactionSnapshotView {
+  narrative?: string;
+  decisions: CompactionDetailItem[];
+  filesRead: CompactionDetailItem[];
+  filesChanged: CompactionDetailItem[];
+  verifications: CompactionDetailItem[];
+  openTodos: CompactionDetailItem[];
+  approvals: CompactionDetailItem[];
+  untrustedInputs: CompactionDetailItem[];
+}
+
 export interface TranscriptItem {
   role: TranscriptRole;
   text: string;
   detail?: string;
+  compaction?: CompactionSnapshotView;
   commandResult?: CommandResultView;
   requestId?: string;
   request?: unknown;
@@ -206,6 +226,19 @@ export interface ChatSessionSummary {
   active: boolean;
 }
 
+export interface DaemonSessionSummary {
+  id: string;
+  title?: string;
+  summary?: string;
+  status?: string;
+  running?: boolean;
+  updated_at_unix?: number;
+  last_task?: string;
+  total_tokens?: number;
+  total_cost_usd?: number;
+  turns_used?: number;
+}
+
 export type SidebarView = 'landing' | 'session';
 export type LandingScreen = 'home' | 'openrouter' | 'localLlm' | 'claude' | 'openai';
 
@@ -266,6 +299,7 @@ export type OutboundMessage =
   | { type: 'queueEdit'; id: string; text: string }
   | { type: 'queueClear' }
   | { type: 'dismissBranchPicker' }
+  | { type: 'showCodeMap' }
   | { type: 'openSettings' };
 
 /** Messages the extension host posts back to the webview. */

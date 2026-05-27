@@ -47,6 +47,10 @@ pub(crate) async fn run_skill_command(
                 .with_context(|| format!("skill not found: {name}"))?;
             let content = fs::read_to_string(&skill.path)
                 .with_context(|| format!("failed to read {}", skill.path.display()))?;
+            let reference_files = skill_directory(&skill.path)
+                .map(list_skill_reference_files)
+                .transpose()?
+                .unwrap_or_default();
             match output {
                 OutputFormat::Json => println!(
                     "{}",
@@ -54,6 +58,7 @@ pub(crate) async fn run_skill_command(
                         "name": skill.name,
                         "scope": skill.scope,
                         "path": skill.path,
+                        "reference_files": reference_files,
                         "content": content
                     }))?
                 ),
@@ -68,6 +73,7 @@ pub(crate) async fn run_skill_command(
             let archive_path = project_root
                 .join(".peridot/skills/archive")
                 .join(format!("{name}.md"));
+            let archive_dir = project_root.join(".peridot/skills/archive").join(name);
             let restored_file = if archive_path.exists() {
                 let target_dir = project_root.join(".peridot/skills/auto");
                 fs::create_dir_all(&target_dir)?;
@@ -76,6 +82,20 @@ pub(crate) async fn run_skill_command(
                     format!("rename {} -> {}", archive_path.display(), target.display())
                 })?;
                 Some(target)
+            } else if archive_dir.join("SKILL.md").is_file() {
+                let target_dir = project_root.join(".peridot/skills/auto");
+                fs::create_dir_all(&target_dir)?;
+                let target = target_dir.join(name);
+                if target.exists() {
+                    anyhow::bail!(
+                        "target skill directory already exists: {}",
+                        target.display()
+                    );
+                }
+                fs::rename(&archive_dir, &target).with_context(|| {
+                    format!("rename {} -> {}", archive_dir.display(), target.display())
+                })?;
+                Some(target.join("SKILL.md"))
             } else {
                 None
             };
@@ -225,13 +245,13 @@ pub(crate) async fn run_skill_command(
                     skill.path.display()
                 );
             }
-            fs::remove_file(&skill.path)
+            let removed_path = remove_project_skill_path(&skill.path, &skill.name)
                 .with_context(|| format!("failed to remove {}", skill.path.display()))?;
             print_json_or_text_result(
                 serde_json::json!({
                     "removed": true,
                     "name": skill.name,
-                    "path": skill.path
+                    "path": removed_path
                 }),
                 format!("removed skill {name}"),
                 output,
@@ -242,6 +262,10 @@ pub(crate) async fn run_skill_command(
 }
 
 pub(super) async fn install_skill(project_root: &Path, source: &str) -> Result<SkillEntry> {
+    let source_path = Path::new(source);
+    if source_path.is_dir() {
+        return install_skill_directory(project_root, source_path);
+    }
     let content = read_skill_source(source).await?;
     if content.trim().is_empty() {
         anyhow::bail!("skill source is empty: {source}");
@@ -255,6 +279,40 @@ pub(super) async fn install_skill(project_root: &Path, source: &str) -> Result<S
         name,
         scope: "project-community",
         path,
+    })
+}
+
+fn install_skill_directory(project_root: &Path, source: &Path) -> Result<SkillEntry> {
+    let skill_md = source.join("SKILL.md");
+    if !skill_md.is_file() {
+        anyhow::bail!(
+            "skill directory must contain SKILL.md: {}",
+            source.display()
+        );
+    }
+    let name = source
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(sanitize_skill_name)
+        .unwrap_or_else(|| "skill".to_string());
+    let target = project_root.join(".peridot/skills/community").join(&name);
+    if target.exists() {
+        anyhow::bail!("target skill already exists: {}", target.display());
+    }
+    let canonical_source = source
+        .canonicalize()
+        .with_context(|| format!("failed to resolve {}", source.display()))?;
+    if target.starts_with(&canonical_source) {
+        anyhow::bail!(
+            "refusing to install a skill directory into itself: {}",
+            source.display()
+        );
+    }
+    copy_dir_all(source, &target)?;
+    Ok(SkillEntry {
+        name,
+        scope: "project-community",
+        path: target.join("SKILL.md"),
     })
 }
 
@@ -362,6 +420,7 @@ pub(super) fn collect_skill_dir(
                     scope,
                     path: skill_path,
                 });
+                continue;
             }
             if recursive {
                 collect_skill_dir(&path, scope, recursive, skills)?;
@@ -390,22 +449,37 @@ pub(super) fn find_skill(project_root: &Path, name: &str) -> Result<Option<Skill
 }
 
 /// Renames `.peridot/skills/auto/<name>.md` to
-/// `.peridot/skills/archive/<name>.md` so the on-disk catalog matches
-/// the DB's `archived_at_unix` stamp. A missing source file is fine;
-/// only fs errors during create_dir_all / rename surface as failures.
+/// `.peridot/skills/archive/<name>.md`, or moves
+/// `.peridot/skills/auto/<name>/` to `.peridot/skills/archive/<name>/`,
+/// so the on-disk catalog matches the DB's `archived_at_unix` stamp. A
+/// missing source is fine; only fs errors during create_dir_all / rename
+/// surface as failures.
 pub(crate) fn move_auto_skill_to_archive(project_root: &Path, name: &str) -> Result<()> {
     let source = project_root
         .join(".peridot/skills/auto")
         .join(format!("{name}.md"));
-    if !source.exists() {
+    let source_dir = project_root.join(".peridot/skills/auto").join(name);
+    if !source.exists() && !source_dir.join("SKILL.md").is_file() {
         return Ok(());
     }
     let archive_dir = project_root.join(".peridot/skills/archive");
     fs::create_dir_all(&archive_dir)
         .with_context(|| format!("failed to create {}", archive_dir.display()))?;
-    let target = archive_dir.join(format!("{name}.md"));
-    fs::rename(&source, &target)
-        .with_context(|| format!("rename {} -> {}", source.display(), target.display()))?;
+    if source.exists() {
+        let target = archive_dir.join(format!("{name}.md"));
+        fs::rename(&source, &target)
+            .with_context(|| format!("rename {} -> {}", source.display(), target.display()))?;
+    } else {
+        let target = archive_dir.join(name);
+        if target.exists() {
+            anyhow::bail!(
+                "archive skill directory already exists: {}",
+                target.display()
+            );
+        }
+        fs::rename(&source_dir, &target)
+            .with_context(|| format!("rename {} -> {}", source_dir.display(), target.display()))?;
+    }
     Ok(())
 }
 
@@ -415,4 +489,77 @@ pub(super) fn skill_json(skill: &SkillEntry) -> serde_json::Value {
         "scope": skill.scope,
         "path": skill.path
     })
+}
+
+fn remove_project_skill_path(skill_path: &Path, skill_name: &str) -> Result<PathBuf> {
+    if skill_path.file_name().and_then(|name| name.to_str()) == Some("SKILL.md")
+        && let Some(dir) = skill_path.parent()
+        && dir.file_name().and_then(|name| name.to_str()) == Some(skill_name)
+        && dir.join("SKILL.md") == skill_path
+    {
+        fs::remove_dir_all(dir).with_context(|| format!("failed to remove {}", dir.display()))?;
+        return Ok(dir.to_path_buf());
+    }
+    fs::remove_file(skill_path)
+        .with_context(|| format!("failed to remove {}", skill_path.display()))?;
+    Ok(skill_path.to_path_buf())
+}
+
+fn copy_dir_all(source: &Path, target: &Path) -> Result<()> {
+    fs::create_dir_all(target).with_context(|| format!("failed to create {}", target.display()))?;
+    for entry in
+        fs::read_dir(source).with_context(|| format!("failed to read {}", source.display()))?
+    {
+        let entry = entry?;
+        let source_path = entry.path();
+        let target_path = target.join(entry.file_name());
+        if source_path.is_dir() {
+            copy_dir_all(&source_path, &target_path)?;
+        } else if source_path.is_file() {
+            fs::copy(&source_path, &target_path).with_context(|| {
+                format!(
+                    "copy {} -> {}",
+                    source_path.display(),
+                    target_path.display()
+                )
+            })?;
+        }
+    }
+    Ok(())
+}
+
+fn skill_directory(skill_path: &Path) -> Option<PathBuf> {
+    if skill_path.file_name().and_then(|name| name.to_str()) == Some("SKILL.md") {
+        skill_path.parent().map(Path::to_path_buf)
+    } else {
+        None
+    }
+}
+
+fn list_skill_reference_files(dir: PathBuf) -> Result<Vec<String>> {
+    let mut files = Vec::new();
+    collect_skill_reference_files(&dir, &dir, &mut files)?;
+    files.sort();
+    Ok(files)
+}
+
+fn collect_skill_reference_files(base: &Path, dir: &Path, files: &mut Vec<String>) -> Result<()> {
+    for entry in fs::read_dir(dir).with_context(|| format!("failed to read {}", dir.display()))? {
+        let path = entry?.path();
+        if path.is_dir() {
+            collect_skill_reference_files(base, &path, files)?;
+        } else if path.is_file() {
+            let is_root_skill = path.file_name().and_then(|name| name.to_str()) == Some("SKILL.md")
+                && path.parent() == Some(base);
+            if is_root_skill {
+                continue;
+            }
+            if let Ok(rel) = path.strip_prefix(base)
+                && let Some(value) = rel.to_str()
+            {
+                files.push(value.to_string());
+            }
+        }
+    }
+    Ok(())
 }

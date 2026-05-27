@@ -429,8 +429,16 @@ pub async fn run_ngram_reflection(
     let candidates = store
         .list_promotion_candidates(min_count, batch_cap)
         .map_err(|err| anyhow!("list_promotion_candidates: {err}"))?;
+    let (candidates, noisy_candidates) = split_reflection_candidates(candidates);
+    let mut report = ReflectionReport::default();
+    for candidate in noisy_candidates {
+        let _ = store.mark_ngram_promoted(&candidate.hash, now_unix);
+        report
+            .skipped
+            .push(format!("noise n-gram: {}", candidate.tools.join("|")));
+    }
     if candidates.is_empty() {
-        return Ok(ReflectionReport::default());
+        return Ok(report);
     }
     let prompt = build_reflection_prompt(&candidates);
     let request = CompletionRequest {
@@ -450,14 +458,37 @@ pub async fn run_ngram_reflection(
         .with_context(|| "Reflection LLM call failed")?;
     let parsed = parse_reflection_response(&response.text)
         .with_context(|| format!("invalid Reflection JSON: {}", response.text))?;
-    apply_reflection_items(
+    let llm_report = apply_reflection_items(
         store,
         project_root,
         &candidates,
         parsed,
         now_unix,
         needs_review,
-    )
+    )?;
+    report.promoted.extend(llm_report.promoted);
+    report.skipped.extend(llm_report.skipped);
+    Ok(report)
+}
+
+fn split_reflection_candidates(
+    candidates: Vec<peridot_memory::ToolNgram>,
+) -> (
+    Vec<peridot_memory::ToolNgram>,
+    Vec<peridot_memory::ToolNgram>,
+) {
+    candidates
+        .into_iter()
+        .partition(|candidate| !is_repetitive_ngram(candidate))
+}
+
+fn is_repetitive_ngram(candidate: &peridot_memory::ToolNgram) -> bool {
+    candidate
+        .tools
+        .iter()
+        .collect::<std::collections::HashSet<_>>()
+        .len()
+        <= 1
 }
 
 fn build_reflection_prompt(candidates: &[peridot_memory::ToolNgram]) -> String {
@@ -600,6 +631,18 @@ mod tests {
                 ..Default::default()
             },
             updated_at_unix: 0,
+        }
+    }
+
+    fn ngram(hash: &str, tools: &[&str]) -> peridot_memory::ToolNgram {
+        peridot_memory::ToolNgram {
+            hash: hash.into(),
+            tools: tools.iter().map(|tool| (*tool).into()).collect(),
+            occurrence_count: 5,
+            last_seen_unix: 1_700_000_000,
+            promoted_at_unix: 0,
+            last_session_id: "session-1".into(),
+            last_task_summary: "task".into(),
         }
     }
 
@@ -799,6 +842,27 @@ mod tests {
         assert!(parsed.items[0].promote);
         assert!(!parsed.items[1].promote);
         assert_eq!(parsed.items[0].tools, "verify_build|git_commit|git_push");
+    }
+
+    #[test]
+    fn reflection_candidates_drop_single_tool_noise_before_llm() {
+        let candidates = vec![
+            ngram("read-repeat", &["file_read", "file_read", "file_read"]),
+            ngram("mixed", &["file_read", "file_write", "verify_build"]),
+            ngram("shell-repeat", &["shell_exec", "shell_exec"]),
+        ];
+
+        let (eligible, noisy) = split_reflection_candidates(candidates);
+
+        assert_eq!(eligible.len(), 1);
+        assert_eq!(eligible[0].hash, "mixed");
+        assert_eq!(
+            noisy
+                .iter()
+                .map(|candidate| candidate.hash.as_str())
+                .collect::<Vec<_>>(),
+            vec!["read-repeat", "shell-repeat"]
+        );
     }
 
     #[test]

@@ -1842,6 +1842,158 @@ textarea {
   color: var(--peri-fg-soft);
 }
 
+.status-line-compactable {
+  align-items: stretch;
+  flex-direction: column;
+  gap: 5px;
+  padding: 2px 0 4px;
+}
+
+.status-line-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.compaction-details {
+  margin-left: 13px;
+  border-left: 1px solid var(--peri-border);
+  padding-left: 10px;
+  min-width: 0;
+}
+
+.compaction-summary {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  list-style: none;
+  cursor: pointer;
+  color: var(--peri-fg-muted);
+  font-size: 11.5px;
+}
+
+.compaction-summary::-webkit-details-marker {
+  display: none;
+}
+
+.compaction-toggle {
+  width: 13px;
+  height: 13px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid var(--peri-border);
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+
+.compaction-toggle::before {
+  content: '›';
+  transform: translateX(0.5px);
+}
+
+.compaction-details[open] .compaction-toggle::before {
+  transform: rotate(90deg) translateX(0.5px);
+}
+
+.compaction-summary-text {
+  color: var(--peri-fg-soft);
+}
+
+.compaction-summary-counts {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compaction-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 7px 0 2px;
+}
+
+.compaction-narrative,
+.compaction-empty {
+  color: var(--peri-fg-soft);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.compaction-section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.compaction-section-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--peri-fg-muted);
+}
+
+.compaction-section-count {
+  color: var(--peri-fg-soft);
+}
+
+.compaction-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.compaction-item {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  min-width: 0;
+  color: var(--peri-fg-soft);
+}
+
+.compaction-item::before {
+  content: '';
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--peri-fg-muted);
+  flex: 0 0 auto;
+  transform: translateY(-1px);
+}
+
+.compaction-label,
+.compaction-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compaction-path {
+  padding: 0;
+  font-family: var(--vscode-editor-font-family, ui-monospace, monospace);
+  color: var(--vscode-textLink-foreground);
+}
+
+.compaction-line-range,
+.compaction-detail {
+  color: var(--peri-fg-muted);
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .error-line {
   display: flex;
   gap: 8px;

@@ -24,6 +24,7 @@ use peridot_core::{
     parse_slash_command, slash_state_delta,
 };
 use peridot_git::GitManager;
+use peridot_memory::{MemoryStore, SessionLifecycle, SessionRecord};
 use peridot_tools::AskUserPort;
 use peridot_tui::SettingItem;
 use serde::{Deserialize, Serialize};
@@ -50,6 +51,7 @@ struct DaemonState {
     out: mpsc::UnboundedSender<String>,
     run_config: Arc<PeridotConfig>,
     run_template: Arc<AgentTaskOptions>,
+    session_list_subscribed: Arc<AtomicBool>,
 }
 
 impl DaemonState {
@@ -69,6 +71,7 @@ impl DaemonState {
             out,
             run_config: Arc::new(run_config),
             run_template: Arc::new(run_template),
+            session_list_subscribed: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -238,7 +241,10 @@ async fn writer_task(mut rx: mpsc::UnboundedReceiver<String>) {
 
 async fn shutdown_sessions(state: &DaemonState) {
     let mut sessions = state.sessions.lock().await;
-    for (_, entry) in sessions.drain() {
+    let now = crate::run_state::unix_timestamp();
+    let store = MemoryStore::new(state.project_root.join(".peridot/memory.db"));
+    for (session_id, entry) in sessions.drain() {
+        let _ = store.update_session_lifecycle(&session_id, SessionLifecycle::Suspended, now);
         entry.cancel.cancel();
         if let Some(task) = entry.task {
             task.abort();
@@ -293,6 +299,20 @@ async fn dispatch_request(state: &DaemonState, request: RpcRequest) -> Result<bo
                 request.id.unwrap_or(Value::Null),
                 slash_command_catalog_result(),
             )?;
+        }
+        "skills.list" => {
+            emit_response(
+                state,
+                request.id.unwrap_or(Value::Null),
+                skills_list_result(state),
+            )?;
+        }
+        "session.list" => {
+            handle_session_list(state, request.id.unwrap_or(Value::Null)).await?;
+        }
+        "session.subscribe_list" => {
+            state.session_list_subscribed.store(true, Ordering::Relaxed);
+            handle_session_list(state, request.id.unwrap_or(Value::Null)).await?;
         }
         "peridot.echo" => match request.params {
             Some(Value::Object(map)) => {
@@ -371,6 +391,133 @@ fn slash_command_catalog_result() -> Value {
         })
         .collect();
     serde_json::json!({ "commands": commands })
+}
+
+fn skills_list_result(state: &DaemonState) -> Value {
+    let store = peridot_memory::MemoryStore::new(state.project_root.join(".peridot/memory.db"));
+    let skills = store.list_skills().unwrap_or_default();
+    let skills: Vec<Value> = skills
+        .into_iter()
+        .filter(|skill| skill.scope == "auto")
+        .map(|skill| {
+            serde_json::json!({
+                "name": skill.name,
+                "description": skill_description(&skill),
+                "scope": skill.scope,
+            })
+        })
+        .collect();
+    serde_json::json!({ "skills": skills })
+}
+
+fn skill_description(skill: &peridot_memory::StoredSkill) -> String {
+    if !skill.description.trim().is_empty() {
+        return skill.description.trim().to_string();
+    }
+    skill
+        .body
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty() && !line.starts_with('#'))
+        .unwrap_or("stored auto-skill")
+        .chars()
+        .take(120)
+        .collect()
+}
+
+async fn handle_session_list(state: &DaemonState, id: Value) -> Result<()> {
+    emit_response(state, id, session_list_result(state).await)
+}
+
+async fn session_list_result(state: &DaemonState) -> Value {
+    let store = MemoryStore::new(state.project_root.join(".peridot/memory.db"));
+    let records = store.list_session_records().unwrap_or_default();
+    let legacy = store.list_sessions().unwrap_or_default();
+    let running_sessions = state.sessions.lock().await;
+    let mut rows = BTreeMap::<String, Value>::new();
+    for session in legacy {
+        rows.insert(
+            session.id.clone(),
+            serde_json::json!({
+                "id": session.id,
+                "title": session.summary,
+                "summary": session.summary,
+                "status": "idle",
+                "running": false,
+                "updated_at_unix": 0,
+            }),
+        );
+    }
+    for record in records {
+        let running =
+            running_sessions.contains_key(&record.id) || record.status == SessionLifecycle::Running;
+        rows.insert(
+            record.id.clone(),
+            serde_json::json!({
+                "id": record.id,
+                "title": record_title(&record),
+                "summary": record.summary,
+                "status": format!("{:?}", record.status).to_ascii_lowercase(),
+                "running": running,
+                "updated_at_unix": record.updated_at_unix,
+                "last_task": record.last_task,
+                "total_tokens": record.total_tokens,
+                "total_cost_usd": record.total_cost_usd,
+                "turns_used": record.turns_used,
+            }),
+        );
+    }
+    for (id, entry) in running_sessions.iter() {
+        rows.entry(id.clone()).or_insert_with(|| {
+            serde_json::json!({
+                "id": id,
+                "title": session_title_from_task(&entry.spec.task),
+                "summary": compact_daemon_summary(&entry.spec.task),
+                "status": "running",
+                "running": true,
+                "updated_at_unix": crate::run_state::unix_timestamp(),
+                "last_task": entry.spec.task,
+                "total_tokens": 0,
+                "total_cost_usd": 0.0,
+                "turns_used": 0,
+            })
+        });
+    }
+    serde_json::json!({
+        "sessions": rows.into_values().collect::<Vec<_>>(),
+    })
+}
+
+fn record_title(record: &SessionRecord) -> String {
+    record
+        .last_task
+        .as_deref()
+        .map(session_title_from_task)
+        .filter(|title| !title.is_empty())
+        .unwrap_or_else(|| record.summary.clone())
+}
+
+fn session_title_from_task(task: &str) -> String {
+    let trimmed = task.trim();
+    if trimmed.is_empty() {
+        return "Untitled session".to_string();
+    }
+    compact_chars(trimmed, 80)
+}
+
+fn compact_daemon_summary(task: &str) -> String {
+    format!("task=\"{}\" running", compact_chars(task.trim(), 160))
+}
+
+fn compact_chars(value: &str, max_chars: usize) -> String {
+    if value.chars().count() <= max_chars {
+        return value.to_string();
+    }
+    value
+        .chars()
+        .take(max_chars.saturating_sub(1))
+        .chain(std::iter::once('…'))
+        .collect()
 }
 
 async fn handle_status(state: &DaemonState, id: Value) -> Result<()> {
@@ -600,7 +747,7 @@ async fn handle_session_start(state: &DaemonState, id: Value, params: Option<Val
             cancel,
             compact_request,
             task: Some(handle),
-            spec,
+            spec: spec.clone(),
             approval_grants: Vec::new(),
             waiting_approval: None,
         },
@@ -614,7 +761,9 @@ async fn handle_session_start(state: &DaemonState, id: Value, params: Option<Val
             state.project_root.as_ref().clone(),
             WorkspaceIsolation::Shared,
         ));
+    save_daemon_session_record(state, &session_id, &spec, SessionLifecycle::Running, None).await;
     emit_response(state, id, serde_json::json!({ "session_id": session_id }))?;
+    emit_session_list_changed(state).await;
     let _ = start_tx.send(());
     Ok(())
 }
@@ -676,6 +825,70 @@ fn reload_run_config_from_disk(state: &DaemonState) -> Option<PeridotConfig> {
     let path = state.project_root.join(".peridot").join("config.toml");
     let raw = fs::read_to_string(&path).ok()?;
     toml::from_str(&raw).ok()
+}
+
+async fn save_daemon_session_record(
+    state: &DaemonState,
+    session_id: &str,
+    spec: &SessionRunSpec,
+    status: SessionLifecycle,
+    summary: Option<&peridot_core::AgentRunSummary>,
+) {
+    let store = MemoryStore::new(state.project_root.join(".peridot/memory.db"));
+    let now = crate::run_state::unix_timestamp();
+    let existing = store.get_session_record(session_id).ok().flatten();
+    let created_at = existing
+        .as_ref()
+        .map(|record| record.created_at_unix)
+        .filter(|value| *value > 0)
+        .unwrap_or(now);
+    let mut record = existing
+        .unwrap_or_else(|| SessionRecord::new(session_id, state.project_root.as_ref().clone()));
+    record.summary = match summary {
+        Some(summary) => format!(
+            "task=\"{}\" stopped={:?} turns={} cost=${:.6}",
+            compact_chars(&spec.task, 160),
+            summary.stopped_reason,
+            summary.turns.len(),
+            summary.usage.estimated_cost_usd
+        ),
+        None => compact_daemon_summary(&spec.task),
+    };
+    record.status = status;
+    record.created_at_unix = created_at;
+    record.updated_at_unix = now;
+    record.workspace_root = state.project_root.as_ref().clone();
+    record.last_task = Some(spec.task.clone());
+    if let Some(summary) = summary {
+        record.total_tokens = summary.usage.input_tokens
+            + summary.usage.output_tokens
+            + summary.usage.cache_read_tokens
+            + summary.usage.cache_creation_tokens
+            + summary.usage.reasoning_output_tokens;
+        record.total_cost_usd = summary.usage.estimated_cost_usd;
+        record.turns_used = summary.turns.len() as u32;
+    }
+    let _ = store.save_session_record(&record);
+}
+
+async fn update_daemon_session_lifecycle(
+    state: &DaemonState,
+    session_id: &str,
+    status: SessionLifecycle,
+) {
+    let store = MemoryStore::new(state.project_root.join(".peridot/memory.db"));
+    let _ = store.update_session_lifecycle(session_id, status, crate::run_state::unix_timestamp());
+}
+
+async fn emit_session_list_changed(state: &DaemonState) {
+    if !state.session_list_subscribed.load(Ordering::Relaxed) {
+        return;
+    }
+    let _ = emit_notification(
+        state,
+        "session.list_changed",
+        session_list_result(state).await,
+    );
 }
 
 /// JSON-RPC: `settings.list`
@@ -928,6 +1141,8 @@ async fn run_session_task(
                 );
                 return;
             }
+            let lifecycle = lifecycle_from_stop_reason(summary.stopped_reason.clone());
+            save_daemon_session_record(&state, &session_id, &spec, lifecycle, Some(&summary)).await;
             emit_event(
                 &state,
                 &session_id,
@@ -953,6 +1168,7 @@ async fn run_session_task(
                 );
                 return;
             }
+            update_daemon_session_lifecycle(&state, &session_id, SessionLifecycle::Failed).await;
             emit_event(
                 &state,
                 &session_id,
@@ -971,6 +1187,16 @@ async fn run_session_task(
         .expect("daemon session router mutex poisoned")
         .close(&session_id);
     clear_pending_ask_user_for_session(&state, &session_id);
+    emit_session_list_changed(&state).await;
+}
+
+fn lifecycle_from_stop_reason(reason: StopReason) -> SessionLifecycle {
+    match reason {
+        StopReason::Done => SessionLifecycle::Done,
+        StopReason::Interrupted => SessionLifecycle::Suspended,
+        StopReason::ApprovalRequired => SessionLifecycle::Running,
+        StopReason::MaxTurns | StopReason::Budget => SessionLifecycle::Failed,
+    }
 }
 
 fn daemon_message_bus(state: &DaemonState, session_id: &str) -> MessageBusHookup {
@@ -1047,6 +1273,7 @@ async fn handle_session_cancel(
             .expect("daemon session router mutex poisoned")
             .close(session_id);
         clear_pending_ask_user_for_session(state, session_id);
+        update_daemon_session_lifecycle(state, session_id, SessionLifecycle::Suspended).await;
         true
     } else {
         false
@@ -1058,7 +1285,11 @@ async fn handle_session_cancel(
             "cancelled": cancelled,
             "session_id": session_id,
         }),
-    )
+    )?;
+    if cancelled {
+        emit_session_list_changed(state).await;
+    }
+    Ok(())
 }
 
 async fn handle_session_command(
@@ -1291,6 +1522,13 @@ async fn execute_session_command(
             } else {
                 format!("\n\nOperator passed args: {trimmed_args}")
             };
+            if let Some(session_id) = session_id {
+                append_plan_reminder_to_context(
+                    state,
+                    session_id,
+                    skill_plan_reminder(&skill, &args),
+                )?;
+            }
             Ok(serde_json::json!({
                 "kind": "skill",
                 "title": format!("Skill: {}", skill.name),
@@ -1353,6 +1591,7 @@ async fn execute_session_command(
         SlashCommand::Diff => handle_command_diff(state, raw_command),
         SlashCommand::Undo => handle_command_undo(state, raw_command),
         SlashCommand::Todos => handle_command_todos(state, raw_command),
+        SlashCommand::CodeMap => handle_command_codemap(state, raw_command),
         SlashCommand::McpList => handle_command_mcp_list(state, raw_command),
         SlashCommand::McpAdd {
             name,
@@ -1943,6 +2182,44 @@ fn read_context_snapshot(
         .map_err(|err| format!("failed to parse {}: {err}", snapshot_path.display()))
 }
 
+fn write_context_snapshot(
+    state: &DaemonState,
+    session_id: &str,
+    entries: &[ContextEntry],
+) -> Result<(), String> {
+    let snapshot_path = context_snapshot_path(state, session_id);
+    if let Some(parent) = snapshot_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|err| format!("failed to create {}: {err}", parent.display()))?;
+    }
+    let bytes = serde_json::to_vec(entries)
+        .map_err(|err| format!("failed to serialize context snapshot: {err}"))?;
+    std::fs::write(&snapshot_path, bytes)
+        .map_err(|err| format!("failed to write {}: {err}", snapshot_path.display()))
+}
+
+fn append_plan_reminder_to_context(
+    state: &DaemonState,
+    session_id: &str,
+    content: String,
+) -> Result<(), String> {
+    let mut entries = read_context_snapshot(state, session_id).unwrap_or_default();
+    entries.push(ContextEntry::trusted(ContextSource::PlanReminder, content));
+    write_context_snapshot(state, session_id, &entries)
+}
+
+fn skill_plan_reminder(skill: &peridot_memory::StoredSkill, args: &str) -> String {
+    let trimmed_args = args.trim();
+    if trimmed_args.is_empty() {
+        format!("[skill:{}]\n{}", skill.name, skill.body)
+    } else {
+        format!(
+            "[skill:{}]\nOperator passed args: {}\n\n{}",
+            skill.name, trimmed_args, skill.body
+        )
+    }
+}
+
 fn source_label(source: &ContextSource) -> &'static str {
     match source {
         ContextSource::User => "user",
@@ -2109,6 +2386,50 @@ fn handle_command_todos(state: &DaemonState, raw_command: &str) -> Result<Value,
         "command": raw_command,
         "items": hits,
         "truncated": hits.len() == MAX_HITS,
+    }))
+}
+
+fn handle_command_codemap(state: &DaemonState, raw_command: &str) -> Result<Value, String> {
+    let report = crate::commands::build_code_map(state.project_root.as_ref(), 120, 80);
+    let mut items = Vec::new();
+    for symbol in report.symbols.iter().take(80) {
+        items.push(serde_json::json!({
+            "source": "symbol",
+            "label": format!("{} {}", symbol.kind, symbol.name),
+            "path": symbol.path,
+            "line": symbol.line,
+            "detail": symbol.signature,
+        }));
+    }
+    for todo in report.todos.iter().take(40) {
+        items.push(serde_json::json!({
+            "source": "todo",
+            "label": todo.marker,
+            "path": todo.path,
+            "line": todo.line,
+            "detail": todo.text,
+        }));
+    }
+    let truncated = report.symbols_truncated
+        || report.todos_truncated
+        || report.symbols.len() > 80
+        || report.todos.len() > 40;
+    Ok(serde_json::json!({
+        "kind": "codemap",
+        "title": "Workspace Code Map",
+        "message": format!(
+            "codemap: {} symbol(s), {} TODO marker(s) across {} file(s)",
+            report.symbols.len(),
+            report.todos.len(),
+            report.walked_files,
+        ),
+        "severity": "info",
+        "command": raw_command,
+        "items": items,
+        "symbol_count": report.symbols.len(),
+        "todo_count": report.todos.len(),
+        "walked_files": report.walked_files,
+        "truncated": truncated,
     }))
 }
 
@@ -2796,6 +3117,15 @@ fn emit_event(state: &DaemonState, session_id: &str, event: Value) {
     }
 }
 
+fn emit_notification(state: &DaemonState, method: &str, params: Value) -> Result<()> {
+    let envelope = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": method,
+        "params": params,
+    });
+    emit_json(state, &envelope)
+}
+
 fn emit_json<T: Serialize>(state: &DaemonState, value: &T) -> Result<()> {
     let line = serde_json::to_string(value)?;
     let _ = state.out.send(line);
@@ -2909,6 +3239,198 @@ mod tests {
                 .iter()
                 .all(|entry| entry["description"].as_str().is_some())
         );
+    }
+
+    #[tokio::test]
+    async fn skills_list_returns_active_auto_skills() {
+        let root = test_project("skills-list");
+        let store = peridot_memory::MemoryStore::new(root.join(".peridot/memory.db"));
+        store
+            .save_skill(&peridot_memory::StoredSkill {
+                name: "auto-fix-parser".into(),
+                body: "repair parser tests".into(),
+                description: "repair parser tests".into(),
+                scope: "auto".into(),
+                ..Default::default()
+            })
+            .unwrap();
+        store
+            .save_skill(&peridot_memory::StoredSkill {
+                name: "community-skill".into(),
+                body: "community".into(),
+                scope: "community".into(),
+                ..Default::default()
+            })
+            .unwrap();
+        store
+            .save_skill(&peridot_memory::StoredSkill {
+                name: "archived-auto".into(),
+                body: "old".into(),
+                scope: "auto".into(),
+                archived_at_unix: 1,
+                ..Default::default()
+            })
+            .unwrap();
+        let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+        let state = DaemonState::new(
+            root.clone(),
+            PeridotConfig::default(),
+            test_options(None),
+            tx,
+        );
+
+        let _ = dispatch_line(
+            &state,
+            r#"{"jsonrpc":"2.0","id":42,"method":"skills.list"}"#,
+        )
+        .await
+        .unwrap();
+
+        let line = rx.try_recv().unwrap();
+        let value: Value = serde_json::from_str(&line).unwrap();
+        let skills = value["result"]["skills"].as_array().unwrap();
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0]["name"], "auto-fix-parser");
+        assert_eq!(skills[0]["description"], "repair parser tests");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn session_list_returns_persisted_records() {
+        let root = test_project("session-list");
+        let store = MemoryStore::new(root.join(".peridot/memory.db"));
+        let mut record = SessionRecord::new("session-recorded", &root);
+        record.summary = "recorded summary".into();
+        record.status = SessionLifecycle::Suspended;
+        record.created_at_unix = 10;
+        record.updated_at_unix = 20;
+        record.last_task = Some("recorded task".into());
+        store.save_session_record(&record).unwrap();
+        let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+        let state = DaemonState::new(
+            root.clone(),
+            PeridotConfig::default(),
+            test_options(None),
+            tx,
+        );
+
+        let _ = dispatch_line(
+            &state,
+            r#"{"jsonrpc":"2.0","id":44,"method":"session.list"}"#,
+        )
+        .await
+        .unwrap();
+
+        let line = rx.try_recv().unwrap();
+        let value: Value = serde_json::from_str(&line).unwrap();
+        let sessions = value["result"]["sessions"].as_array().unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0]["id"], "session-recorded");
+        assert_eq!(sessions[0]["title"], "recorded task");
+        assert_eq!(sessions[0]["status"], "suspended");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn session_subscribe_list_emits_start_notifications() {
+        let root = test_project("session-list-subscribe");
+        let response_file = root.join("responses.jsonl");
+        std::fs::write(
+            &response_file,
+            r#"{"action":"agent_done","parameters":{"summary":"done"}}
+"#,
+        )
+        .unwrap();
+        let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+        let state = DaemonState::new(
+            root.clone(),
+            PeridotConfig::default(),
+            test_options(Some(response_file)),
+            tx,
+        );
+
+        let _ = dispatch_line(
+            &state,
+            r#"{"jsonrpc":"2.0","id":45,"method":"session.subscribe_list"}"#,
+        )
+        .await
+        .unwrap();
+        let _ = dispatch_line(
+            &state,
+            r#"{"jsonrpc":"2.0","id":46,"method":"session.start","params":{"task":"sync me"}}"#,
+        )
+        .await
+        .unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let mut values = Vec::new();
+        while let Ok(line) = rx.try_recv() {
+            values.push(serde_json::from_str::<Value>(&line).unwrap());
+        }
+        let start_response = values
+            .iter()
+            .find(|value| value["id"] == 46)
+            .expect("start response");
+        let session_id = start_response["result"]["session_id"].as_str().unwrap();
+        assert!(values.iter().any(|value| {
+            value["method"] == "session.list_changed"
+                && value["params"]["sessions"]
+                    .as_array()
+                    .map(|sessions| {
+                        sessions.iter().any(|session| {
+                            session["id"] == session_id && session["running"] == true
+                        })
+                    })
+                    .unwrap_or(false)
+        }));
+        shutdown_sessions(&state).await;
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn session_command_skill_appends_plan_reminder_context() {
+        let root = test_project("skill-command");
+        let store = peridot_memory::MemoryStore::new(root.join(".peridot/memory.db"));
+        store
+            .save_skill(&peridot_memory::StoredSkill {
+                name: "auto-fix-parser".into(),
+                body: "## Steps\nRun parser tests".into(),
+                description: "repair parser tests".into(),
+                scope: "auto".into(),
+                ..Default::default()
+            })
+            .unwrap();
+        let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+        let state = DaemonState::new(
+            root.clone(),
+            PeridotConfig::default(),
+            test_options(None),
+            tx,
+        );
+
+        let _ = dispatch_line(
+            &state,
+            r#"{"jsonrpc":"2.0","id":43,"method":"session.command","params":{"session_id":"session-skill","command":"/auto-fix-parser --dry"}}"#,
+        )
+        .await
+        .unwrap();
+
+        let mut values = Vec::new();
+        while let Ok(line) = rx.try_recv() {
+            values.push(serde_json::from_str::<Value>(&line).unwrap());
+        }
+        assert!(
+            values
+                .iter()
+                .any(|value| { value["id"] == 43 && value["result"]["kind"] == "skill" })
+        );
+        let entries = read_context_snapshot(&state, "session-skill").unwrap();
+        let last = entries.last().unwrap();
+        assert_eq!(last.source, ContextSource::PlanReminder);
+        assert!(last.content.contains("[skill:auto-fix-parser]"));
+        assert!(last.content.contains("Operator passed args: --dry"));
+        assert!(last.content.contains("Run parser tests"));
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[tokio::test]
@@ -3156,6 +3678,58 @@ mod tests {
         assert_eq!(response["result"]["kind"], "todos");
         assert_eq!(response["result"]["items"][0]["path"], "src/lib.rs");
         assert_eq!(response["result"]["items"][0]["line"], 1);
+
+        shutdown_sessions(&state).await;
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn session_command_codemap_returns_symbols_and_todos() {
+        let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+        let root = test_project("command-codemap");
+        let src = root.join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(
+            src.join("lib.rs"),
+            "pub struct Runner;\n// TODO: finish codemap\n",
+        )
+        .unwrap();
+        let state = DaemonState::new(
+            root.clone(),
+            PeridotConfig::default(),
+            test_options(None),
+            tx,
+        );
+        let line = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "method": "session.command",
+            "params": { "command": "/codemap" }
+        })
+        .to_string();
+
+        let _ = dispatch_line(&state, &line).await.unwrap();
+        let response: Value = serde_json::from_str(&rx.recv().await.unwrap()).unwrap();
+
+        assert_eq!(response["id"], 42);
+        assert_eq!(response["result"]["kind"], "codemap");
+        assert_eq!(response["result"]["symbol_count"], 1);
+        assert_eq!(response["result"]["todo_count"], 1);
+        assert!(
+            response["result"]["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|item| item["source"] == "symbol" && item["label"] == "struct Runner")
+        );
+        assert!(
+            response["result"]["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|item| item["source"] == "todo"
+                    && item["detail"].as_str().unwrap().contains("TODO"))
+        );
 
         shutdown_sessions(&state).await;
         let _ = std::fs::remove_dir_all(root);

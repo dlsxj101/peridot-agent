@@ -13,9 +13,34 @@ env:
 
 jobs:
   verify-secrets:
-    name: Verify publish secrets present
+    name: Verify release inputs
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Validate extension version tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          version="${tag#vsce/v}"
+          if [ "${tag}" = "${version}" ] || [ -z "${version}" ]; then
+            echo "::error::Extension releases must use tags like vsce/v0.5.20; got ${tag}"
+            exit 1
+          fi
+          package_version="$(python3 - <<'PY'
+          import json
+          with open("extensions/vscode/package.json", encoding="utf-8") as handle:
+              print(json.load(handle)["version"])
+          PY
+          )"
+          if [ "${package_version}" != "${version}" ]; then
+            echo "::error::extensions/vscode/package.json version ${package_version} does not match ${tag} (${version})"
+            exit 1
+          fi
+          echo "Extension package version ${package_version} matches ${tag}."
+
       - name: Check secrets
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}

@@ -4,6 +4,8 @@
 //! prefix-matching helpers used by the input handler and the autocompletion
 //! overlay.
 
+use serde::{Deserialize, Serialize};
+
 /// Stable description of one slash command surfaced in the picker / help.
 #[derive(Clone, Copy, Debug)]
 pub struct SlashCommandSpec {
@@ -15,6 +17,31 @@ pub struct SlashCommandSpec {
     pub arg_hint: Option<&'static str>,
     /// Category for grouping / filtering.
     pub category: &'static str,
+}
+
+/// Dynamic auto-skill entry surfaced as a slash suggestion.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SkillSlashSuggestion {
+    /// Skill name without the leading slash.
+    pub name: String,
+    /// Short description shown in the picker.
+    #[serde(default)]
+    pub description: String,
+}
+
+/// Render-ready slash suggestion, covering both built-ins and dynamic skills.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SlashSuggestion {
+    /// Command keyword including the leading slash.
+    pub name: String,
+    /// One-line description shown in the picker.
+    pub description: String,
+    /// Optional argument hint.
+    pub arg_hint: Option<String>,
+    /// Category for grouping / filtering.
+    pub category: String,
+    /// Whether this row came from the auto-skill store.
+    pub skill: bool,
 }
 
 /// Returns the catalog of every slash command the TUI accepts.
@@ -231,6 +258,12 @@ pub fn slash_command_catalog() -> &'static [SlashCommandSpec] {
             category: "plan",
         },
         SlashCommandSpec {
+            name: "/codemap",
+            description: "show workspace public symbols and TODO markers",
+            arg_hint: None,
+            category: "plan",
+        },
+        SlashCommandSpec {
             name: "/rewind",
             description: "pop the last user-agent exchange and restore the prompt to the input box",
             arg_hint: None,
@@ -311,6 +344,38 @@ pub fn slash_command_catalog() -> &'static [SlashCommandSpec] {
     ]
 }
 
+/// Converts the static catalog plus dynamic skills into slash suggestions.
+pub fn slash_suggestions(skills: &[SkillSlashSuggestion]) -> Vec<SlashSuggestion> {
+    let mut suggestions: Vec<SlashSuggestion> = slash_command_catalog()
+        .iter()
+        .map(|spec| SlashSuggestion {
+            name: spec.name.to_string(),
+            description: spec.description.to_string(),
+            arg_hint: spec.arg_hint.map(str::to_string),
+            category: spec.category.to_string(),
+            skill: false,
+        })
+        .collect();
+    for skill in skills {
+        let name = format!("/{}", skill.name.trim_start_matches('/'));
+        if suggestions.iter().any(|entry| entry.name == name) {
+            continue;
+        }
+        suggestions.push(SlashSuggestion {
+            name,
+            description: if skill.description.trim().is_empty() {
+                "stored auto-skill".to_string()
+            } else {
+                skill.description.trim().to_string()
+            },
+            arg_hint: None,
+            category: "skill".to_string(),
+            skill: true,
+        });
+    }
+    suggestions
+}
+
 /// Finite argument options for a command such as `<off|low>` or `[on|off]`.
 pub(crate) struct SlashArgumentContext {
     /// Command whose first argument is being selected.
@@ -337,9 +402,51 @@ pub fn filtered_specs(query: &str) -> Vec<&'static SlashCommandSpec> {
         .collect()
 }
 
+/// Filters built-in slash commands plus dynamic skills by prefix/search text.
+pub fn filtered_suggestions(query: &str, skills: &[SkillSlashSuggestion]) -> Vec<SlashSuggestion> {
+    let needle = query.trim().trim_start_matches('/').to_ascii_lowercase();
+    let mut matches: Vec<SlashSuggestion> = slash_suggestions(skills)
+        .into_iter()
+        .filter(|suggestion| {
+            if needle.is_empty() {
+                return true;
+            }
+            let name = suggestion.name.trim_start_matches('/').to_ascii_lowercase();
+            let description = suggestion.description.to_ascii_lowercase();
+            name.starts_with(&needle)
+                || name.contains(&format!(" {needle}"))
+                || description.contains(&needle)
+        })
+        .collect();
+    if !needle.is_empty() {
+        matches.sort_by_key(|suggestion| suggestion_match_rank(suggestion, &needle));
+    }
+    matches
+}
+
+fn suggestion_match_rank(suggestion: &SlashSuggestion, needle: &str) -> (u8, String) {
+    let name = suggestion.name.trim_start_matches('/').to_ascii_lowercase();
+    let description = suggestion.description.to_ascii_lowercase();
+    let rank = if name.starts_with(needle) {
+        0
+    } else if name.contains(&format!(" {needle}")) {
+        1
+    } else if description.contains(needle) {
+        2
+    } else {
+        3
+    };
+    (rank, name)
+}
+
 /// Returns finite argument options from an arg hint, excluding placeholder arms.
 pub(crate) fn finite_argument_options(spec: &SlashCommandSpec) -> Vec<&'static str> {
-    let Some(hint) = spec.arg_hint.map(str::trim) else {
+    finite_argument_options_from_hint(spec.arg_hint)
+}
+
+/// Returns finite argument options from a raw arg hint.
+pub(crate) fn finite_argument_options_from_hint(hint: Option<&str>) -> Vec<&str> {
+    let Some(hint) = hint.map(str::trim) else {
         return Vec::new();
     };
     let opens_choice_list = (hint.starts_with('<') && hint.ends_with('>'))
@@ -393,11 +500,11 @@ pub(crate) fn slash_argument_context(query: &str) -> Option<SlashArgumentContext
     Some(SlashArgumentContext { spec, options })
 }
 
-/// Number of rows the slash picker would render for this query.
-pub(crate) fn picker_len(query: &str) -> usize {
+/// Number of rows the slash picker would render for this query and skill list.
+pub(crate) fn picker_len_with_skills(query: &str, skills: &[SkillSlashSuggestion]) -> usize {
     slash_argument_context(query)
         .map(|context| context.options.len())
-        .unwrap_or_else(|| filtered_specs(query).len())
+        .unwrap_or_else(|| filtered_suggestions(query, skills).len())
 }
 
 /// Returns the first match for `query`, if any.
@@ -457,6 +564,39 @@ mod tests {
             filtered_specs("/switch")
                 .iter()
                 .any(|spec| spec.name == "/session switch")
+        );
+    }
+
+    #[test]
+    fn filtered_suggestions_include_dynamic_skills() {
+        let skills = vec![SkillSlashSuggestion {
+            name: "auto-fix-parser".to_string(),
+            description: "repair parser tests".to_string(),
+        }];
+        let matches = filtered_suggestions("/auto-f", &skills);
+        assert!(matches.iter().any(|entry| {
+            entry.name == "/auto-fix-parser"
+                && entry.description == "repair parser tests"
+                && entry.category == "skill"
+                && entry.skill
+        }));
+    }
+
+    #[test]
+    fn built_in_commands_shadow_same_named_skills() {
+        let skills = vec![SkillSlashSuggestion {
+            name: "plan".to_string(),
+            description: "shadowed".to_string(),
+        }];
+        let matches = filtered_suggestions("/plan", &skills);
+        assert_eq!(
+            matches.iter().filter(|entry| entry.name == "/plan").count(),
+            1
+        );
+        assert!(
+            matches
+                .iter()
+                .any(|entry| entry.name == "/plan" && !entry.skill)
         );
     }
 

@@ -5,8 +5,10 @@ import {
   BudgetSlice,
   ChatSessionSummary,
   CommitteeRoleSlice,
+  CompactionSnapshotView,
   CommandResultView,
   ContextSlice,
+  DaemonSessionSummary,
   HudState,
   InboundMessage,
   OutboundMessage,
@@ -27,6 +29,7 @@ export type {
   ApprovalResponse,
   ApprovalScope,
   AskUserAnswer,
+  DaemonSessionSummary,
   ProviderChoice,
   RunOptions,
 } from './types';
@@ -38,6 +41,7 @@ export interface SidebarHandlers {
   clearSession: () => Promise<void>;
   loginOpenAi: () => Promise<void>;
   refreshStatus: () => Promise<void>;
+  showCodeMap: () => Promise<void>;
   respondAskUser: (requestId: string, answer: AskUserAnswer) => Promise<void>;
   respondApproval: (decision: ApprovalResponse) => Promise<void>;
   openFile: (relativePath: string, line?: number, column?: number, projectRoot?: string) => Promise<void>;
@@ -264,23 +268,18 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       this.state.phase = displayPhaseLabel(to);
       this.publish();
     } else if (kind === 'context_compacted') {
-      // B.6: structured CompactedContext snapshot. The harness still
-      // injects the legacy prose PlanReminder for backward compat;
-      // here we surface the structured counts so the user sees that
-      // compaction fired with a one-line "compact: X files read, Y
-      // untrusted" status entry.
       const compacted = isRecord(event.compacted) ? event.compacted : {};
-      const filesRead = Array.isArray(compacted.files_read) ? compacted.files_read.length : 0;
-      const untrusted = Array.isArray(compacted.untrusted_inputs)
-        ? compacted.untrusted_inputs.length
-        : 0;
-      const narrative =
-        typeof compacted.narrative === 'string' ? compacted.narrative.trim() : '';
-      const summary = `Context compacted (${filesRead} files read, ${untrusted} untrusted)`;
+      const snapshot = compactionSnapshotView(compacted);
+      const summary = [
+        `${snapshot.filesRead.length} files read`,
+        `${snapshot.filesChanged.length} changed`,
+        `${snapshot.decisions.length} decisions`,
+        `${snapshot.untrustedInputs.length} untrusted`,
+      ].join(', ');
       this.append({
         role: 'status',
-        text: summary,
-        detail: narrative || undefined,
+        text: `Context compacted (${summary})`,
+        compaction: snapshot,
       });
     } else if (approvalPayload) {
       this.appendApproval(approvalPayload, params.session_id);
@@ -538,6 +537,45 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
     }
     this.publish();
     return true;
+  }
+
+  public reconcileDaemonSessions(remoteSessions: DaemonSessionSummary[]): void {
+    if (remoteSessions.length === 0) return;
+    this.saveActiveSession();
+    const byDaemonId = new Map<string, StoredChatSession>();
+    for (const session of this.sessions.values()) {
+      if (session.daemonSessionId) {
+        byDaemonId.set(session.daemonSessionId, session);
+      }
+    }
+
+    for (const remote of remoteSessions) {
+      const daemonId = remote.id?.trim();
+      if (!daemonId) continue;
+      let session = byDaemonId.get(daemonId) ?? this.sessions.get(daemonId);
+      if (!session) {
+        session = this.createSession(remoteSessionTitle(remote));
+        this.sessions.delete(session.id);
+        session.id = daemonId;
+        this.sessions.set(session.id, session);
+      } else if (!session.userRenamed) {
+        session.title = remoteSessionTitle(remote);
+      }
+      session.daemonSessionId = daemonId;
+      session.status = remoteSessionStatus(remote);
+      session.running = Boolean(remote.running);
+      if (session.running && typeof session.runStartedAtMs !== 'number') {
+        session.runStartedAtMs = Date.now();
+      }
+      if (!session.running) {
+        session.runStartedAtMs = undefined;
+      }
+    }
+
+    if (this.state.activeChatId && this.sessions.has(this.state.activeChatId)) {
+      this.loadSessionIntoState(this.state.activeChatId, false);
+    }
+    this.publish();
   }
 
   private appendToolStarted(event: Record<string, unknown>): void {
@@ -866,6 +904,9 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         return;
       case 'refreshStatus':
         await this.handlers.refreshStatus();
+        return;
+      case 'showCodeMap':
+        await this.handlers.showCodeMap();
         return;
       case 'askUserRespond':
         if (message.requestId) {
@@ -1633,6 +1674,18 @@ function displayPhaseLabel(phase: string): string {
   return lower;
 }
 
+function remoteSessionTitle(session: DaemonSessionSummary): string {
+  const raw = session.title ?? session.last_task ?? session.summary ?? session.id;
+  const title = raw.trim();
+  return title.length > 0 ? title : session.id;
+}
+
+function remoteSessionStatus(session: DaemonSessionSummary): string {
+  const status = session.status?.trim();
+  if (!status) return session.running ? 'Running' : 'Idle';
+  return status.charAt(0).toUpperCase() + status.slice(1);
+}
+
 function slashHelpText(commands: SlashCommandSpec[]): string {
   if (commands.length === 0) {
     return 'Slash commands are loading from the Peridot daemon.';
@@ -1859,6 +1912,136 @@ function transcriptItemForEvent(
     default:
       return { role: 'status', text: kind };
   }
+}
+
+function compactionSnapshotView(compacted: Record<string, unknown>): CompactionSnapshotView {
+  const narrative =
+    typeof compacted.narrative === 'string' ? compacted.narrative.trim() : undefined;
+  return {
+    narrative,
+    decisions: arrayField(compacted, 'decisions').map(compactionDecisionItem),
+    filesRead: arrayField(compacted, 'files_read').map(compactionFileReadItem),
+    filesChanged: arrayField(compacted, 'files_changed').map(compactionFileChangedItem),
+    verifications: arrayField(compacted, 'verifications').map(compactionVerificationItem),
+    openTodos: arrayField(compacted, 'open_todos').map(compactionTodoItem),
+    approvals: arrayField(compacted, 'approvals').map(compactionApprovalItem),
+    untrustedInputs: arrayField(compacted, 'untrusted_inputs').map(compactionUntrustedItem),
+  };
+}
+
+function arrayField(record: Record<string, unknown>, key: string): unknown[] {
+  const value = record[key];
+  return Array.isArray(value) ? value : [];
+}
+
+function compactionDecisionItem(value: unknown) {
+  if (!isRecord(value)) return { label: compactLabel(value) };
+  const label = textField(value, 'summary') ?? compactLabel(value);
+  const turn = numberField(value, 'turn_id');
+  return {
+    label,
+    detail: turn > 0 ? `turn ${turn}` : undefined,
+  };
+}
+
+function compactionFileReadItem(value: unknown) {
+  if (!isRecord(value)) return { label: compactLabel(value) };
+  const path = pathField(value, 'path');
+  const [line, endLine] = lineRangeField(value, 'line_range');
+  const digest = textField(value, 'digest');
+  return {
+    label: path ?? compactLabel(value),
+    detail: digest ? `digest ${digest.slice(0, 12)}` : undefined,
+    path,
+    line,
+    endLine,
+  };
+}
+
+function compactionFileChangedItem(value: unknown) {
+  if (!isRecord(value)) return { label: compactLabel(value) };
+  const path = pathField(value, 'path');
+  const tool = textField(value, 'tool');
+  const before = textField(value, 'before_digest');
+  const after = textField(value, 'after_digest');
+  const digest = before || after ? `${shortDigest(before)} -> ${shortDigest(after)}` : undefined;
+  return {
+    label: path ?? compactLabel(value),
+    detail: [tool, digest].filter(Boolean).join(' · ') || undefined,
+    path,
+  };
+}
+
+function compactionVerificationItem(value: unknown) {
+  if (!isRecord(value)) return { label: compactLabel(value) };
+  const kind = textField(value, 'kind') ?? 'verification';
+  const passed = booleanField(value, 'passed');
+  const summary = textField(value, 'summary');
+  return {
+    label: kind,
+    detail: [passed === undefined ? undefined : passed ? 'passed' : 'failed', summary]
+      .filter(Boolean)
+      .join(' · ') || undefined,
+  };
+}
+
+function compactionTodoItem(value: unknown) {
+  if (!isRecord(value)) return { label: compactLabel(value) };
+  const text = textField(value, 'text') ?? compactLabel(value);
+  const status = textField(value, 'status');
+  const id = numberField(value, 'id');
+  return {
+    label: text,
+    detail: [id > 0 ? `#${id}` : undefined, status].filter(Boolean).join(' · ') || undefined,
+  };
+}
+
+function compactionApprovalItem(value: unknown) {
+  if (!isRecord(value)) return { label: compactLabel(value) };
+  const tool = textField(value, 'tool') ?? 'approval';
+  const scope = textField(value, 'scope');
+  const detail = textField(value, 'detail');
+  return {
+    label: tool,
+    detail: [scope, detail].filter(Boolean).join(' · ') || undefined,
+  };
+}
+
+function compactionUntrustedItem(value: unknown) {
+  if (!isRecord(value)) return { label: compactLabel(value) };
+  const label = textField(value, 'label') ?? compactLabel(value);
+  return {
+    label,
+    detail: textField(value, 'kind'),
+  };
+}
+
+function textField(record: Record<string, unknown>, key: string): string | undefined {
+  const value = record[key];
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function pathField(record: Record<string, unknown>, key: string): string | undefined {
+  const value = record[key];
+  if (typeof value === 'string' && value.trim().length > 0) return value;
+  return undefined;
+}
+
+function lineRangeField(record: Record<string, unknown>, key: string): [number | undefined, number | undefined] {
+  const value = record[key];
+  if (!Array.isArray(value) || value.length < 1) return [undefined, undefined];
+  const start = typeof value[0] === 'number' && Number.isFinite(value[0]) ? value[0] : undefined;
+  const end = typeof value[1] === 'number' && Number.isFinite(value[1]) ? value[1] : undefined;
+  return [start, end];
+}
+
+function shortDigest(value: string | undefined): string | undefined {
+  return value ? value.slice(0, 12) : undefined;
+}
+
+function compactLabel(value: unknown): string {
+  const text = json(value);
+  return text.length > 120 ? `${text.slice(0, 117)}...` : text;
 }
 
 function recoveryTranscriptItem(message: string): TranscriptItem | undefined {

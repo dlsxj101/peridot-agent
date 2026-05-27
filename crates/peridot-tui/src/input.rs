@@ -967,6 +967,17 @@ pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
                     spec.name, spec.description, spec.category
                 ));
             }
+            if !state.skill_suggestions.is_empty() {
+                lines.push("skills:".to_string());
+                for skill in &state.skill_suggestions {
+                    let description = if skill.description.trim().is_empty() {
+                        "stored auto-skill"
+                    } else {
+                        skill.description.trim()
+                    };
+                    lines.push(format!("  /{}  ·  {} [skill]", skill.name, description));
+                }
+            }
             state.push_transcript(lines.join("\n"));
         }
         SlashCommand::Cost => {
@@ -1241,6 +1252,10 @@ pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
             state.push_transcript("todos: scanning project…");
             state.push_pending_session_command(SessionCommandEvent::ScanTodos);
         }
+        SlashCommand::CodeMap => {
+            state.push_transcript("codemap: scanning workspace symbols and TODO markers…");
+            state.push_pending_session_command(SessionCommandEvent::CodeMap);
+        }
         SlashCommand::Rewind => apply_rewind(state),
         SlashCommand::BranchSave(name) => {
             state.push_transcript(format!("branch: saving '{name}'…"));
@@ -1293,18 +1308,9 @@ pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
                 state.push_pending_session_command(SessionCommandEvent::BranchPickerOpen);
             }
         }
-        SlashCommand::Skill { name, .. } => {
-            // The TUI surface doesn't have direct access to the
-            // project's MemoryStore — only the daemon code path does,
-            // because session storage is per-workspace and the TUI is
-            // process-wide. Surface a friendly note rather than
-            // crash, and explicitly mention `/help` so an operator
-            // who hit this via a typo (rather than a real skill
-            // invocation) sees the same hint the legacy
-            // "invalid slash" path used to provide.
-            state.push_transcript(format!(
-                "skill `{name}`: not loadable from the TUI yet — run from the VS Code extension to apply, or type `/help` for available commands."
-            ));
+        SlashCommand::Skill { name, args } => {
+            state.push_transcript(format!("skill `{name}`: loading..."));
+            state.push_pending_session_command(SessionCommandEvent::Skill { name, args });
         }
     }
 }

@@ -19,6 +19,12 @@ These are accessibility / data-loss regressions introduced by the
 new settings webview. Cheap fixes; mostly within
 `extensions/vscode/webview/settings.{ts,css}`.
 
+**Status**: landed in extension 0.5.18. The settings webview now has
+focus-visible toggle outlines, switch semantics, aria-live save
+feedback, an in-flight save guard, unsaved reload confirmation, empty
+number-input reset feedback, responsive rows, and a separated sticky
+footer.
+
 | # | Finding | Effort | Risk if skipped |
 |---|---|---|---|
 | S1 | Toggle has no visible focus indicator (`settings.css:118-152`) | 15 min | Keyboard users can't tell where they are |
@@ -47,10 +53,15 @@ pinned, LLM body, slash invocation, snapshot) in v0.8.11; these are
 the polish items that close out the comparison.
 
 ### A1. L2 reference-file tier
-Currently `.peridot/skills/auto/<name>.md` is a single file. Hermes
-allows `<name>/SKILL.md + references/*.md + templates/*` and exposes
-the reference list at `skill_view` time.
+Peridot supports both legacy `.peridot/skills/auto/<name>.md` skills
+and Hermes-style `<name>/SKILL.md + references/*.md + templates/*`
+directories.
 
+- **Status**: landed. `skill_view` reports reference files for
+  directory skills, `skill_view_ref` loads individual reference files
+  with path-boundary checks, `peridot skill install` can copy a local
+  skill directory, and list/remove/archive/restore paths handle
+  directory skills without duplicating nested `SKILL.md` rows.
 - **Where**: `crates/peridot-tools/src/tools/skill.rs:46`
   (`skill_view`), `crates/peridot-cli/src/run_state.rs:save_auto_skill`
 - **Effort**: ~3 hours
@@ -63,6 +74,9 @@ The column exists (v0.8.11 schema migration) but `skill_list` still
 returns just `name + first body line + idle days`. Hermes shows the
 frontmatter `description` so the model picks better.
 
+- **Status**: landed. `skill_list` now prefers the persisted
+  frontmatter-derived `description`, falls back to the first body line
+  for legacy rows, and truncates the L0 string to 80 chars.
 - **Where**: `crates/peridot-tools/src/tools/skill.rs::skill_list`
 - **Effort**: ~30 min
 - **What**: include `stored.description` in the L0 response;
@@ -72,6 +86,9 @@ frontmatter `description` so the model picks better.
 The `set_skill_pinned` API exists but there's no operator entry
 point. CLI subcommand is the missing surface.
 
+- **Status**: landed. `peridot skill pin <name>` and `unpin <name>`
+  are wired through the CLI and toggle `pinned_at_unix` via
+  `MemoryStore::set_skill_pinned`.
 - **Where**: `crates/peridot-cli/src/commands/skills.rs` (new file)
 - **Effort**: ~1 hour
 - **What**: `peridot skill {list,pin,unpin,view,delete}` mirroring
@@ -84,6 +101,9 @@ hours of agent idle." Peridot only checks the 7-day floor, so the
 Curator can spawn mid-session if the user reopens a project after a
 quiet week.
 
+- **Status**: landed. `maybe_run_idle_curator` requires the existing
+  7-day floor plus a 2-hour idle window from the later of
+  `last_activity_unix` and `last_session_end_unix`.
 - **Where**: `crates/peridot-cli/src/main.rs:maybe_run_idle_curator`
 - **Effort**: ~30 min
 - **What**: read `last_activity_unix` and require `now - last_activity
@@ -96,6 +116,9 @@ file_read | file_read` as a "skill." The LLM reflection gate filters
 most, but a deterministic pre-filter would catch repeating-pattern
 noise before the LLM call.
 
+- **Status**: landed. The reflection pass now drops single-tool repeat
+  n-grams before prompting the LLM and stamps those rows as handled so
+  historical noisy candidates do not reappear on every idle pass.
 - **Where**: `crates/peridot-cli/src/curator.rs:run_ngram_reflection`
 - **Effort**: ~1 hour
 - **What**: drop n-grams where all tools are identical or where the
@@ -114,6 +137,8 @@ The Rust-side settings labels are bilingual but the webview's own
 chrome (`"Save"`, `"Reload from disk"`, `"Saved to ..."`, `"Couldn't
 load settings"`, `"Loading settings…"`) is hardcoded English.
 
+- **Status**: landed in extension 0.5.18. The host injects VS Code
+  `l10n` strings into the settings webview load payload.
 - **Where**: `extensions/vscode/webview/settings.ts` (and
   `extension.ts:openSettings` for the panel title)
 - **Effort**: ~1 hour
@@ -128,6 +153,8 @@ column collapses the label cell. The panel currently opens in the
 editor area where this rarely happens, but a future "settings in
 sidebar" toggle would hit it.
 
+- **Status**: landed in extension 0.5.18. Settings rows stack label
+  and control cells below 480px.
 - **Where**: `extensions/vscode/webview/settings.css:60-67`
 - **Effort**: ~15 min
 - **What**: `@media (max-width: 480px)` rule stacking label / control
@@ -136,6 +163,8 @@ sidebar" toggle would hit it.
 ### B3. Sticky footer separator
 The Save/Reload bar visually merges with the last row on scroll.
 
+- **Status**: landed in extension 0.5.18. The sticky footer has a top
+  border and subtle shadow.
 - **Where**: `extensions/vscode/webview/settings.css:154-162`
 - **Effort**: ~5 min
 - **What**: top border + small shadow
@@ -146,6 +175,8 @@ the current `AgentPhase` as a chip in the sidebar header. Once
 that exists, `phase_changed` transitions never need to enter the
 transcript at all.
 
+- **Status**: landed in extension 0.5.19. Routine phase changes update
+  a color-coded header chip instead of adding transcript rows.
 - **Where**: `extensions/vscode/src/sidebar.ts:resolveWebviewView`
   + `webview/index.ts` header renderer
 - **Effort**: ~1.5 hours
@@ -158,9 +189,11 @@ The gear icon is a `view/title` menu item — many VS Code users
 never look at the title bar. A secondary entry from the composer's
 overflow menu or onboarding screen would help.
 
-- **Where**: `extensions/vscode/webview/index.ts` composer options
+- **Status**: landed. The sidebar session header includes an in-webview
+  Settings gear that posts `openSettings`.
+- **Where**: `extensions/vscode/webview/index.ts` session header
 - **Effort**: ~30 min
-- **What**: small "⚙ Settings" link in the session header, calling
+- **What**: small Settings entry in the session header, calling
   `vscode.commands.executeCommand('peridot.openSettings')`
 
 ---
@@ -171,14 +204,15 @@ Cost more, deliver less per hour, but worth tracking so the team
 knows where to invest when polish budget is exhausted.
 
 ### C1. Marketplace + Open VSX release pipeline
-The repo bundles platform-specific binaries but the actual `vsce
-publish` flow isn't automated yet. Manual release ≈ 30 min per
-target; missing this isn't blocking but adds friction.
+The repo bundles platform-specific binaries and publishes tagged
+extension builds through GitHub Actions.
 
 - **Effort**: ~4 hours
-- **What**: GitHub Actions workflow on tag push that builds 6
-  platform binaries, runs `npm run bundle-binary`, packages each as
-  `.vsix`, signs and publishes
+- **Status**: landed. Tags matching `vsce/v*` trigger a release
+  workflow that verifies the tag matches `extensions/vscode/package.json`,
+  builds six platform binaries, packages platform-specific VSIX files,
+  publishes to VS Code Marketplace and Open VSX, publishes the universal
+  fallback VSIX, and uploads VSIX assets to the GitHub Release.
 
 ### C2. Multi-window session sync
 Open Peridot in two VS Code windows on the same project; right now
@@ -186,6 +220,12 @@ each window has its own session list. A shared daemon means a
 shared session list — needs broadcast of `session.list_changed` and
 each window subscribing.
 
+- **Status**: landed. The daemon exposes `session.list` and
+  `session.subscribe_list`, emits `session.list_changed`, records
+  daemon-started sessions into `SessionRecord`, and the extension
+  reconciles those records into the sidebar session menu. VS Code also
+  watches `.peridot/memory.db` so updates from another window refresh
+  the local list after the shared store changes.
 - **Effort**: ~6 hours
 - **What**: new `session.subscribe_list` RPC, `session_list_changed`
   notification, sidebar reconcile-on-event
@@ -196,6 +236,10 @@ First-time users hit the auth selector and have to know what
 that picks the right one based on what's already stored would
 significantly lower the activation bar.
 
+- **Status**: landed. The extension contributes a VS Code Get Started
+  walkthrough that opens the Peridot sidebar, connects a provider,
+  reviews settings, and runs a first task through existing view and
+  command completion events.
 - **Effort**: ~3 hours
 - **What**: `contributes.walkthroughs` in `package.json`, three
   steps tied to commands
@@ -205,6 +249,10 @@ The slash command parser now recognises `/skill-name` as a Skill
 variant; the composer's autocomplete picker should pull the active
 auto-skill list from the daemon and offer them inline.
 
+- **Status**: landed for both VS Code and TUI. The daemon exposes
+  `skills.list`, the extension merges active auto-skills into its slash
+  picker, and the TUI loads the same active auto-skill suggestions from
+  the local memory store.
 - **Effort**: ~3 hours
 - **What**: new `skills.list` daemon RPC (filtered to non-archived,
   `scope=auto`), composer popup that merges built-in slashes with
@@ -217,6 +265,8 @@ shows a one-line summary. A click-to-expand panel that renders the
 file list and decision bullets would help operators audit what the
 agent thinks it knows.
 
+- **Status**: landed in the extension sidebar as expandable
+  `Context compacted` transcript rows.
 - **Effort**: ~2 hours
 - **What**: collapsible panel triggered by clicking the
   "Context compacted" row, rendering the `compacted` payload as a
