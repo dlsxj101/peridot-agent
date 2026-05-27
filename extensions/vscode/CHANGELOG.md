@@ -22,6 +22,9 @@
 - `Peridot: Locate Workspace Symbol` runs `/codemap locate <symbol>`,
   appends the ranked symbol-location result, and opens the first matching
   indexed definition in the editor.
+- `Peridot: Outline Current File` and the sidebar outline button run
+  `/codemap outline <path>` for the active editor file and render indexed
+  symbols in the existing code-map panel.
 - GitHub PR workflow commands are available from VS Code: PR status,
   preview-and-confirm `peridot ship`, and confirm-before-merge
   `gh pr merge`.

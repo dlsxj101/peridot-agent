@@ -1511,6 +1511,9 @@ fn apply_session_command(
         SessionCommandEvent::CodeMapLocate(query) => {
             handle_code_map_locate(state, project_template, &query);
         }
+        SessionCommandEvent::CodeMapOutline(path) => {
+            handle_code_map_outline(state, project_template, &path);
+        }
         SessionCommandEvent::Attach(path) => {
             handle_attach(state, project_template, &path);
         }
@@ -2328,6 +2331,27 @@ fn handle_code_map_locate(state: &mut TuiState, project_root: &Path, query: &str
         &report,
         index.generated_at_unix,
         Some(query),
+    ));
+}
+
+fn handle_code_map_outline(state: &mut TuiState, project_root: &Path, path: &str) {
+    let index = commands::load_or_refresh_code_map_index(project_root, 120, 80);
+    let Ok(index) = index else {
+        state.push_error("codemap: failed to load workspace code map index");
+        return;
+    };
+    let report = commands::outline_code_map_file(&index, path);
+    if report.symbols.is_empty() {
+        state.push_transcript(format!(
+            "codemap: no indexed symbols for '{path}' (indexed at {})",
+            index.generated_at_unix
+        ));
+        return;
+    }
+    state.push_transcript(render_code_map_report(
+        &report,
+        index.generated_at_unix,
+        Some(path),
     ));
 }
 

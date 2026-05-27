@@ -913,6 +913,8 @@ pub enum SessionCommandEvent {
     CodeMapFind(String),
     /// `/codemap locate <symbol>` — locate symbol definitions from the persisted code map index.
     CodeMapLocate(String),
+    /// `/codemap outline <path>` — list indexed symbols in one workspace file.
+    CodeMapOutline(String),
     /// `/attachments` — list files attached to the active session context.
     Attachments,
     /// `/attach <path>` — read a workspace file into the active session

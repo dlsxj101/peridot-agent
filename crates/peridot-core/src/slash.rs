@@ -145,6 +145,8 @@ pub enum SlashCommand {
     CodeMapFind(String),
     /// Locate symbol definitions from the persisted workspace code map index.
     CodeMapLocate(String),
+    /// List indexed symbols in one workspace file.
+    CodeMapOutline(String),
     /// List attachment artifacts already loaded into the current session context.
     Attachments,
     /// Remove attachment artifacts from the current session context by path.
@@ -516,6 +518,14 @@ pub fn parse_slash_command(input: &str) -> Option<SlashCommand> {
                 Some(SlashCommand::CodeMapLocate(query.to_string()))
             }
         }
+        "codemap" if rest.starts_with("outline ") => {
+            let path = rest.strip_prefix("outline ").unwrap_or("").trim();
+            if path.is_empty() {
+                None
+            } else {
+                Some(SlashCommand::CodeMapOutline(path.to_string()))
+            }
+        }
         "codemap" => None,
         "attachments" if rest.is_empty() => Some(SlashCommand::Attachments),
         "attachments" => None,
@@ -711,8 +721,13 @@ mod tests {
             parse_slash_command("/codemap locate Runner"),
             Some(SlashCommand::CodeMapLocate("Runner".to_string()))
         );
+        assert_eq!(
+            parse_slash_command("/codemap outline src/lib.rs"),
+            Some(SlashCommand::CodeMapOutline("src/lib.rs".to_string()))
+        );
         assert_eq!(parse_slash_command("/codemap find   "), None);
         assert_eq!(parse_slash_command("/codemap locate   "), None);
+        assert_eq!(parse_slash_command("/codemap outline   "), None);
         assert_eq!(parse_slash_command("/codemap src"), None);
     }
 

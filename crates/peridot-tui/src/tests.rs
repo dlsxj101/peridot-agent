@@ -2234,6 +2234,26 @@ fn codemap_slash_queues_pending_command() {
             .text
             .contains("codemap: locating symbol")
     );
+
+    apply_slash_command(
+        &mut state,
+        SlashCommand::CodeMapOutline("src/lib.rs".to_string()),
+    );
+
+    assert_eq!(
+        state.drain_pending_session_commands(),
+        vec![SessionCommandEvent::CodeMapOutline(
+            "src/lib.rs".to_string()
+        )]
+    );
+    assert!(
+        state
+            .transcript
+            .last()
+            .unwrap()
+            .text
+            .contains("codemap: outlining file")
+    );
 }
 
 #[test]

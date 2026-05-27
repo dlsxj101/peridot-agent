@@ -389,6 +389,7 @@ export type OutboundMessage =
   | { type: 'dismissBranchPicker' }
   | { type: 'showCodeMap' }
   | { type: 'searchCodeMap' }
+  | { type: 'outlineCurrentFile' }
   | { type: 'attachFile' }
   | { type: 'detachAttachment'; path: string }
   | { type: 'exportSessionArtifacts' }

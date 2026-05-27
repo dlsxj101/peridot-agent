@@ -179,6 +179,12 @@
         "icon": "$(symbol-method)"
       },
       {
+        "command": "peridot.outlineCurrentFile",
+        "title": "Peridot: Outline Current File",
+        "category": "Peridot",
+        "icon": "$(list-tree)"
+      },
+      {
         "command": "peridot.attachFile",
         "title": "Peridot: Attach File to Session",
         "category": "Peridot",
@@ -247,6 +253,11 @@
           "command": "peridot.locateCodeMapSymbol",
           "when": "view == peridot.chatView",
           "group": "navigation@4.5"
+        },
+        {
+          "command": "peridot.outlineCurrentFile",
+          "when": "view == peridot.chatView",
+          "group": "navigation@4.6"
         },
         {
           "command": "peridot.attachFile",

@@ -165,6 +165,32 @@ pub(crate) fn locate_code_map_symbols(index: &CodeMapIndex, query: &str) -> Code
     }
 }
 
+pub(crate) fn outline_code_map_file(index: &CodeMapIndex, path: &str) -> CodeMapReport {
+    let normalized = normalize_code_map_path(path);
+    if normalized.is_empty() {
+        return CodeMapReport {
+            walked_files: index.report.walked_files,
+            symbols: Vec::new(),
+            todos: Vec::new(),
+            symbols_truncated: index.report.symbols_truncated,
+            todos_truncated: false,
+        };
+    }
+    CodeMapReport {
+        walked_files: index.report.walked_files,
+        symbols: index
+            .report
+            .symbols
+            .iter()
+            .filter(|symbol| normalize_code_map_path(&symbol.path) == normalized)
+            .cloned()
+            .collect(),
+        todos: Vec::new(),
+        symbols_truncated: index.report.symbols_truncated,
+        todos_truncated: false,
+    }
+}
+
 pub(crate) fn code_map_index_path(project_root: &Path) -> PathBuf {
     project_root.join(".peridot").join("codemap.json")
 }
@@ -424,6 +450,14 @@ fn symbol_locate_rank(symbol: &CodeMapSymbol, query: &str) -> u8 {
     3
 }
 
+fn normalize_code_map_path(path: &str) -> String {
+    let mut value = path.trim().replace('\\', "/");
+    while let Some(rest) = value.strip_prefix("./") {
+        value = rest.to_string();
+    }
+    value.trim_start_matches('/').to_string()
+}
+
 fn unix_seconds() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -550,6 +584,46 @@ mod tests {
 
         let report = locate_code_map_symbols(&index, "runner");
         assert_eq!(report.symbols.len(), 2);
+        assert_eq!(report.symbols[0].name, "Runner");
+        assert!(report.todos.is_empty());
+    }
+
+    #[test]
+    fn outline_filters_symbols_to_one_file() {
+        let index = CodeMapIndex {
+            version: 1,
+            generated_at_unix: 42,
+            report: CodeMapReport {
+                walked_files: 2,
+                symbols: vec![
+                    CodeMapSymbol {
+                        path: "src/lib.rs".to_string(),
+                        line: 10,
+                        kind: "struct".to_string(),
+                        name: "Runner".to_string(),
+                        signature: "pub struct Runner;".to_string(),
+                    },
+                    CodeMapSymbol {
+                        path: "src/main.rs".to_string(),
+                        line: 20,
+                        kind: "fn".to_string(),
+                        name: "main".to_string(),
+                        signature: "pub fn main() {}".to_string(),
+                    },
+                ],
+                todos: vec![CodeMapTodo {
+                    path: "src/lib.rs".to_string(),
+                    line: 44,
+                    marker: "TODO".to_string(),
+                    text: "TODO: Runner".to_string(),
+                }],
+                symbols_truncated: false,
+                todos_truncated: false,
+            },
+        };
+
+        let report = outline_code_map_file(&index, "./src/lib.rs");
+        assert_eq!(report.symbols.len(), 1);
         assert_eq!(report.symbols[0].name, "Runner");
         assert!(report.todos.is_empty());
     }

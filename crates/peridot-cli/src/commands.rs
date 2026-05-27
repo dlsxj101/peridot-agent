@@ -60,7 +60,7 @@ pub(crate) use auth::{
 };
 pub(crate) use codemap::{
     CodeMapIndex, CodeMapReport, build_code_map, load_or_refresh_code_map_index,
-    locate_code_map_symbols, refresh_code_map_index, search_code_map_index,
+    locate_code_map_symbols, outline_code_map_file, refresh_code_map_index, search_code_map_index,
 };
 use config::init_project_config_value;
 pub(crate) use config::{

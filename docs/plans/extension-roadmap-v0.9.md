@@ -235,6 +235,21 @@ shared daemon, TUI, and VS Code extension surfaces.
   Code `Peridot: Locate Workspace Symbol` opens the first matching
   indexed definition after appending the result to the sidebar transcript.
 
+### E25. Current File Symbol Outline
+
+- **Status**: landed.
+- **Goal**: expose a lightweight file-outline workflow from the persisted
+  code map before taking on full LSP/tree-sitter indexing.
+- **Where**: shared slash parser/catalog, code map filtering helpers,
+  TUI host codemap handler, daemon `session.command`, VS Code sidebar
+  header and command palette.
+- **Result**: `/codemap outline <path>` returns indexed symbols for one
+  workspace file and omits TODO rows. TUI prints the file outline through
+  the existing codemap transcript report, daemon clients receive
+  structured file/line rows, and VS Code `Peridot: Outline Current File`
+  plus the sidebar outline button run the command for the active editor
+  file.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

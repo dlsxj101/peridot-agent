@@ -130,6 +130,7 @@ export function activate(context: vscode.ExtensionContext) {
     refreshStatus: async (): Promise<void> => refreshStatus(output, sidebar, { force: true }),
     showCodeMap: async (): Promise<void> => showWorkspaceCodeMap(output, sidebar, false),
     searchCodeMap: async (): Promise<void> => searchWorkspaceCodeMap(output, sidebar),
+    outlineCurrentFile: async (): Promise<void> => outlineCurrentFile(output, sidebar),
     attachFile: async (): Promise<void> => attachFileToSession(output, sidebar),
     detachAttachment: async (path: string): Promise<void> =>
       detachAttachmentFromSession(path, output, sidebar),
@@ -277,6 +278,12 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand('peridot.locateCodeMapSymbol', async () => {
       await locateWorkspaceCodeMapSymbol(output, sidebar);
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('peridot.outlineCurrentFile', async () => {
+      await outlineCurrentFile(output, sidebar);
     }),
   );
 
@@ -753,6 +760,47 @@ async function locateWorkspaceCodeMapSymbol(
     output.appendLine(`[peridot] codemap locate failed: ${message}`);
     sidebar.appendError(message);
     await vscode.window.showErrorMessage(`Peridot symbol locate failed: ${message}`);
+  }
+}
+
+async function outlineCurrentFile(
+  output: vscode.OutputChannel,
+  sidebar: PeridotSidebarProvider,
+): Promise<void> {
+  const editor = vscode.window.activeTextEditor;
+  if (!editor) {
+    await vscode.window.showWarningMessage('Open a source file before outlining it with Peridot.');
+    return;
+  }
+  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!folder) {
+    const message = 'Open a workspace folder before outlining a file.';
+    sidebar.setWorkspaceProblem(message);
+    await vscode.window.showWarningMessage(message);
+    return;
+  }
+  const relativePath = vscode.workspace.asRelativePath(editor.document.uri, false);
+  await vscode.commands.executeCommand('peridot.chatView.focus');
+  try {
+    const result = await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Window,
+        title: 'Peridot: outlining current file',
+      },
+      async () =>
+        runSlashCommand(
+          `/codemap outline ${relativePath}`,
+          output,
+          sidebar,
+          sidebar.currentRunOptions(),
+        ),
+    );
+    sidebar.appendCommandResult(result);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    output.appendLine(`[peridot] codemap outline failed: ${message}`);
+    sidebar.appendError(message);
+    await vscode.window.showErrorMessage(`Peridot file outline failed: ${message}`);
   }
 }
 

@@ -1716,6 +1716,9 @@ async fn execute_session_command(
         SlashCommand::CodeMapLocate(query) => {
             handle_command_codemap_locate(state, raw_command, &query)
         }
+        SlashCommand::CodeMapOutline(path) => {
+            handle_command_codemap_outline(state, raw_command, &path)
+        }
         SlashCommand::Attach(path) => handle_command_attach(state, session_id, raw_command, &path),
         SlashCommand::Attachments => handle_command_attachments(state, session_id, raw_command),
         SlashCommand::Detach(path) => handle_command_detach(state, session_id, raw_command, &path),
@@ -3617,6 +3620,25 @@ fn handle_command_codemap_locate(
         raw_command,
         "Workspace Symbol Locations",
         Some(query),
+        &report,
+        index.generated_at_unix,
+        false,
+    ))
+}
+
+fn handle_command_codemap_outline(
+    state: &DaemonState,
+    raw_command: &str,
+    path: &str,
+) -> Result<Value, String> {
+    let index =
+        crate::commands::load_or_refresh_code_map_index(state.project_root.as_ref(), 120, 80)
+            .map_err(|err| format!("codemap: failed to load index: {err}"))?;
+    let report = crate::commands::outline_code_map_file(&index, path);
+    Ok(code_map_result(
+        raw_command,
+        "Workspace File Outline",
+        Some(path),
         &report,
         index.generated_at_unix,
         false,
@@ -6240,6 +6262,32 @@ mod tests {
         assert_eq!(locate_response["result"]["todo_count"], 0);
         assert_eq!(locate_response["result"]["items"][0]["path"], "src/lib.rs");
         assert_eq!(locate_response["result"]["items"][0]["line"], 1);
+
+        let outline_line = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 46,
+            "method": "session.command",
+            "params": { "command": "/codemap outline src/lib.rs" }
+        })
+        .to_string();
+        let _ = dispatch_line(&state, &outline_line).await.unwrap();
+        let outline_response: Value = serde_json::from_str(&rx.recv().await.unwrap()).unwrap();
+        assert_eq!(outline_response["id"], 46);
+        assert_eq!(outline_response["result"]["kind"], "codemap");
+        assert_eq!(
+            outline_response["result"]["title"],
+            "Workspace File Outline"
+        );
+        assert_eq!(outline_response["result"]["query"], "src/lib.rs");
+        assert_eq!(outline_response["result"]["symbol_count"], 1);
+        assert_eq!(outline_response["result"]["todo_count"], 0);
+        assert!(
+            outline_response["result"]["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|item| item["source"] == "symbol")
+        );
 
         shutdown_sessions(&state).await;
         let _ = std::fs::remove_dir_all(root);
