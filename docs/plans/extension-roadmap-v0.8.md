@@ -21,13 +21,16 @@ use, while keeping the daemon/TUI/extension surfaces shared.
 
 ### E6. Code Map Search Commands
 
-- **Status**: next.
+- **Status**: landed.
 - **Goal**: add targeted symbol/TODO search over the persisted index so
   the model and operator can retrieve relevant entries without rescanning.
 - **Where**: daemon command catalog, TUI slash picker, extension command
   rendering
-- **Done when**: `/codemap find <query>` returns filtered index rows and
-  the extension renders them in the existing code-map panel.
+- **Result**: `/codemap find <query>` loads the persisted index, filters
+  symbols and TODO markers by query tokens, and returns the same
+  structured code-map result shape. TUI renders the filtered transcript,
+  and VS Code exposes command-palette/sidebar search into the existing
+  code-map panel.
 
 ### E7. Attachment Follow-up
 

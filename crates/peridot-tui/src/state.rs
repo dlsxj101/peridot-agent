@@ -907,6 +907,8 @@ pub enum SessionCommandEvent {
     CodeMap,
     /// `/codemap refresh` — rebuild the persisted code map index.
     CodeMapRefresh,
+    /// `/codemap find <query>` — search the persisted code map index.
+    CodeMapFind(String),
     /// `/attach <path>` — read a workspace file into the active session
     /// context as an operator-provided attachment.
     Attach(String),

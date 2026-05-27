@@ -167,6 +167,12 @@
         "icon": "$(sync)"
       },
       {
+        "command": "peridot.searchCodeMap",
+        "title": "Peridot: Search Workspace Code Map",
+        "category": "Peridot",
+        "icon": "$(search)"
+      },
+      {
         "command": "peridot.attachFile",
         "title": "Peridot: Attach File to Session",
         "category": "Peridot",
@@ -215,9 +221,14 @@
           "group": "navigation@3"
         },
         {
-          "command": "peridot.attachFile",
+          "command": "peridot.searchCodeMap",
           "when": "view == peridot.chatView",
           "group": "navigation@4"
+        },
+        {
+          "command": "peridot.attachFile",
+          "when": "view == peridot.chatView",
+          "group": "navigation@5"
         },
         {
           "command": "peridot.prStatus",

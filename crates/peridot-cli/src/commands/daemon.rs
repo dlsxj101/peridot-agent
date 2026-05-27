@@ -1593,6 +1593,7 @@ async fn execute_session_command(
         SlashCommand::Todos => handle_command_todos(state, raw_command),
         SlashCommand::CodeMap => handle_command_codemap(state, raw_command, false),
         SlashCommand::CodeMapRefresh => handle_command_codemap(state, raw_command, true),
+        SlashCommand::CodeMapFind(query) => handle_command_codemap_find(state, raw_command, &query),
         SlashCommand::Attach(path) => handle_command_attach(state, session_id, raw_command, &path),
         SlashCommand::McpList => handle_command_mcp_list(state, raw_command),
         SlashCommand::McpAdd {
@@ -2402,7 +2403,43 @@ fn handle_command_codemap(
         crate::commands::load_or_refresh_code_map_index(state.project_root.as_ref(), 120, 80)
     }
     .map_err(|err| format!("codemap: failed to load index: {err}"))?;
-    let report = &index.report;
+    Ok(code_map_result(
+        raw_command,
+        "Workspace Code Map",
+        None,
+        &index.report,
+        index.generated_at_unix,
+        refresh,
+    ))
+}
+
+fn handle_command_codemap_find(
+    state: &DaemonState,
+    raw_command: &str,
+    query: &str,
+) -> Result<Value, String> {
+    let index =
+        crate::commands::load_or_refresh_code_map_index(state.project_root.as_ref(), 120, 80)
+            .map_err(|err| format!("codemap: failed to load index: {err}"))?;
+    let report = crate::commands::search_code_map_index(&index, query);
+    Ok(code_map_result(
+        raw_command,
+        "Workspace Code Map Search",
+        Some(query),
+        &report,
+        index.generated_at_unix,
+        false,
+    ))
+}
+
+fn code_map_result(
+    raw_command: &str,
+    title: &str,
+    query: Option<&str>,
+    report: &crate::commands::CodeMapReport,
+    generated_at_unix: u64,
+    refreshed: bool,
+) -> Value {
     let mut items = Vec::new();
     for symbol in report.symbols.iter().take(80) {
         items.push(serde_json::json!({
@@ -2426,26 +2463,42 @@ fn handle_command_codemap(
         || report.todos_truncated
         || report.symbols.len() > 80
         || report.todos.len() > 40;
-    Ok(serde_json::json!({
-        "kind": "codemap",
-        "title": "Workspace Code Map",
-        "message": format!(
+    let message = if let Some(query) = query {
+        format!(
+            "codemap: {} symbol match(es), {} TODO match(es) for '{}' across {} file(s) (indexed at {})",
+            report.symbols.len(),
+            report.todos.len(),
+            query,
+            report.walked_files,
+            generated_at_unix,
+        )
+    } else {
+        format!(
             "codemap: {} symbol(s), {} TODO marker(s) across {} file(s) (indexed at {})",
             report.symbols.len(),
             report.todos.len(),
             report.walked_files,
-            index.generated_at_unix,
-        ),
+            generated_at_unix,
+        )
+    };
+    let mut result = serde_json::json!({
+        "kind": "codemap",
+        "title": title,
+        "message": message,
         "severity": "info",
         "command": raw_command,
         "items": items,
         "symbol_count": report.symbols.len(),
         "todo_count": report.todos.len(),
         "walked_files": report.walked_files,
-        "generated_at_unix": index.generated_at_unix,
-        "refreshed": refresh,
+        "generated_at_unix": generated_at_unix,
+        "refreshed": refreshed,
         "truncated": truncated,
-    }))
+    });
+    if let Some(query) = query {
+        result["query"] = serde_json::json!(query);
+    }
+    result
 }
 
 fn handle_command_attach(
@@ -3828,6 +3881,32 @@ mod tests {
         assert_eq!(refresh_response["id"], 43);
         assert_eq!(refresh_response["result"]["kind"], "codemap");
         assert_eq!(refresh_response["result"]["refreshed"], true);
+
+        let find_line = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 44,
+            "method": "session.command",
+            "params": { "command": "/codemap find runner" }
+        })
+        .to_string();
+        let _ = dispatch_line(&state, &find_line).await.unwrap();
+        let find_response: Value = serde_json::from_str(&rx.recv().await.unwrap()).unwrap();
+        assert_eq!(find_response["id"], 44);
+        assert_eq!(find_response["result"]["kind"], "codemap");
+        assert_eq!(
+            find_response["result"]["title"],
+            "Workspace Code Map Search"
+        );
+        assert_eq!(find_response["result"]["query"], "runner");
+        assert_eq!(find_response["result"]["symbol_count"], 1);
+        assert_eq!(find_response["result"]["todo_count"], 0);
+        assert!(
+            find_response["result"]["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|item| item["source"] == "symbol" && item["label"] == "struct Runner")
+        );
 
         shutdown_sessions(&state).await;
         let _ = std::fs::remove_dir_all(root);

@@ -105,6 +105,32 @@ pub(crate) fn load_or_refresh_code_map_index(
     refresh_code_map_index(project_root, max_symbols, max_todos)
 }
 
+pub(crate) fn search_code_map_index(index: &CodeMapIndex, query: &str) -> CodeMapReport {
+    let tokens = search_tokens(query);
+    if tokens.is_empty() {
+        return index.report.clone();
+    }
+    CodeMapReport {
+        walked_files: index.report.walked_files,
+        symbols: index
+            .report
+            .symbols
+            .iter()
+            .filter(|symbol| symbol_matches(symbol, &tokens))
+            .cloned()
+            .collect(),
+        todos: index
+            .report
+            .todos
+            .iter()
+            .filter(|todo| todo_matches(todo, &tokens))
+            .cloned()
+            .collect(),
+        symbols_truncated: index.report.symbols_truncated,
+        todos_truncated: index.report.todos_truncated,
+    }
+}
+
 pub(crate) fn code_map_index_path(project_root: &Path) -> PathBuf {
     project_root.join(".peridot").join("codemap.json")
 }
@@ -325,6 +351,30 @@ fn symbol_name(rest: &str) -> String {
         .to_string()
 }
 
+fn search_tokens(query: &str) -> Vec<String> {
+    query
+        .split_whitespace()
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+        .map(str::to_ascii_lowercase)
+        .collect()
+}
+
+fn symbol_matches(symbol: &CodeMapSymbol, tokens: &[String]) -> bool {
+    let haystack = format!(
+        "{} {} {} {} {}",
+        symbol.path, symbol.line, symbol.kind, symbol.name, symbol.signature
+    )
+    .to_ascii_lowercase();
+    tokens.iter().all(|token| haystack.contains(token))
+}
+
+fn todo_matches(todo: &CodeMapTodo, tokens: &[String]) -> bool {
+    let haystack =
+        format!("{} {} {} {}", todo.path, todo.line, todo.marker, todo.text).to_ascii_lowercase();
+    tokens.iter().all(|token| haystack.contains(token))
+}
+
 fn unix_seconds() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -367,6 +417,52 @@ mod tests {
         let loaded = load_code_map_index(&root).unwrap().unwrap();
         assert_eq!(loaded.report.symbols[0].name, "indexed");
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn search_filters_index_symbols_and_todos() {
+        let index = CodeMapIndex {
+            version: 1,
+            generated_at_unix: 42,
+            report: CodeMapReport {
+                walked_files: 2,
+                symbols: vec![
+                    CodeMapSymbol {
+                        path: "src/lib.rs".to_string(),
+                        line: 10,
+                        kind: "struct".to_string(),
+                        name: "Runner".to_string(),
+                        signature: "pub struct Runner;".to_string(),
+                    },
+                    CodeMapSymbol {
+                        path: "src/main.rs".to_string(),
+                        line: 20,
+                        kind: "fn".to_string(),
+                        name: "serve".to_string(),
+                        signature: "pub fn serve() {}".to_string(),
+                    },
+                ],
+                todos: vec![CodeMapTodo {
+                    path: "src/lib.rs".to_string(),
+                    line: 30,
+                    marker: "TODO".to_string(),
+                    text: "TODO: wire runner search".to_string(),
+                }],
+                symbols_truncated: false,
+                todos_truncated: false,
+            },
+        };
+
+        let report = search_code_map_index(&index, "runner src/lib");
+        assert_eq!(report.walked_files, 2);
+        assert_eq!(report.symbols.len(), 1);
+        assert_eq!(report.symbols[0].name, "Runner");
+        assert_eq!(report.todos.len(), 1);
+
+        let report = search_code_map_index(&index, "serve");
+        assert_eq!(report.symbols.len(), 1);
+        assert_eq!(report.symbols[0].name, "serve");
+        assert!(report.todos.is_empty());
     }
 
     fn temp_project(name: &str) -> PathBuf {

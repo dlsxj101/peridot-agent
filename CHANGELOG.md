@@ -62,6 +62,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
   `.peridot/codemap.json`, reuses the index on later views, and adds
   `/codemap refresh` plus `Peridot: Refresh Workspace Code Map Index`
   for explicit rescans.
+- **Code map search** adds `/codemap find <query>` over the persisted
+  index, with matching rows rendered through the same TUI and VS Code
+  code-map surfaces.
 
 ### Changed — TUI borderless transcript
 

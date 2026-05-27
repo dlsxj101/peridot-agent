@@ -111,6 +111,7 @@ export function activate(context: vscode.ExtensionContext) {
     loginOpenAi: async (): Promise<void> => loginOpenAi(output, sidebar),
     refreshStatus: async (): Promise<void> => refreshStatus(output, sidebar, { force: true }),
     showCodeMap: async (): Promise<void> => showWorkspaceCodeMap(output, sidebar, false),
+    searchCodeMap: async (): Promise<void> => searchWorkspaceCodeMap(output, sidebar),
     attachFile: async (): Promise<void> => attachFileToSession(output, sidebar),
     showPrStatus: async (): Promise<void> => showGitHubPrStatus(output, sidebar),
     shipChanges: async (): Promise<void> => shipChangesToPr(output, sidebar),
@@ -237,6 +238,12 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand('peridot.refreshCodeMap', async () => {
       await showWorkspaceCodeMap(output, sidebar, true);
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('peridot.searchCodeMap', async () => {
+      await searchWorkspaceCodeMap(output, sidebar);
     }),
   );
 
@@ -560,6 +567,7 @@ async function showWorkspaceCodeMap(
   output: vscode.OutputChannel,
   sidebar: PeridotSidebarProvider,
   refresh: boolean,
+  query?: string,
 ): Promise<void> {
   const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   if (!folder) {
@@ -570,16 +578,19 @@ async function showWorkspaceCodeMap(
   }
   await vscode.commands.executeCommand('peridot.chatView.focus');
   try {
+    const command = query ? `/codemap find ${query}` : refresh ? '/codemap refresh' : '/codemap';
     const result = await vscode.window.withProgress(
       {
         location: vscode.ProgressLocation.Window,
-        title: refresh
-          ? 'Peridot: refreshing workspace code map index'
-          : 'Peridot: loading workspace code map',
+        title: query
+          ? 'Peridot: searching workspace code map'
+          : refresh
+            ? 'Peridot: refreshing workspace code map index'
+            : 'Peridot: loading workspace code map',
       },
       async () =>
         runSlashCommand(
-          refresh ? '/codemap refresh' : '/codemap',
+          command,
           output,
           sidebar,
           sidebar.currentRunOptions(),
@@ -627,6 +638,21 @@ async function showGitHubPrStatus(
     sidebar.appendError(message);
     await vscode.window.showErrorMessage(`GitHub PR status failed: ${message}`);
   }
+}
+
+async function searchWorkspaceCodeMap(
+  output: vscode.OutputChannel,
+  sidebar: PeridotSidebarProvider,
+): Promise<void> {
+  const query = await vscode.window.showInputBox({
+    title: 'Search Workspace Code Map',
+    prompt: 'Search indexed symbols, TODO markers, signatures, and paths',
+    placeHolder: 'Runner TODO src/lib.rs',
+    ignoreFocusOut: true,
+  });
+  const trimmed = query?.trim();
+  if (!trimmed) return;
+  await showWorkspaceCodeMap(output, sidebar, false, trimmed);
 }
 
 async function attachFileToSession(

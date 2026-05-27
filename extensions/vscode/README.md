@@ -26,6 +26,7 @@ native tool calling, and 2-Tier context management.
 | `Peridot: Refresh Status` | Refreshes daemon workspace/provider/model/auth status. |
 | `Peridot: Show Workspace Code Map` | Runs the shared `/codemap` scan and appends public symbols plus TODO markers to the sidebar transcript. |
 | `Peridot: Refresh Workspace Code Map Index` | Rebuilds `.peridot/codemap.json` through `/codemap refresh`. |
+| `Peridot: Search Workspace Code Map` | Prompts for a query and runs `/codemap find <query>` against the persisted index. |
 | `Peridot: Attach File to Session` | Picks a workspace file and runs `/attach <path>` so the current session sees it as explicit context. |
 | `Peridot: Show GitHub PR Status` | Runs `gh pr status` from the workspace and appends the result to the sidebar transcript. |
 | `Peridot: Ship Changes to PR` | Previews `peridot ship --dry-run`, asks for confirmation, then commits, pushes, and optionally opens a PR. |

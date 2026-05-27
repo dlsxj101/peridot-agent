@@ -1471,6 +1471,9 @@ fn apply_session_command(
         SessionCommandEvent::CodeMapRefresh => {
             handle_code_map(state, project_template, true);
         }
+        SessionCommandEvent::CodeMapFind(query) => {
+            handle_code_map_find(state, project_template, &query);
+        }
         SessionCommandEvent::Attach(path) => {
             handle_attach(state, project_template, &path);
         }
@@ -2237,6 +2240,27 @@ fn handle_code_map(state: &mut TuiState, project_root: &Path, refresh: bool) {
     state.push_transcript(render_code_map_text(&index));
 }
 
+fn handle_code_map_find(state: &mut TuiState, project_root: &Path, query: &str) {
+    let index = commands::load_or_refresh_code_map_index(project_root, 120, 80);
+    let Ok(index) = index else {
+        state.push_error("codemap: failed to load workspace code map index");
+        return;
+    };
+    let report = commands::search_code_map_index(&index, query);
+    if report.symbols.is_empty() && report.todos.is_empty() {
+        state.push_transcript(format!(
+            "codemap: no matches for '{query}' (indexed at {})",
+            index.generated_at_unix
+        ));
+        return;
+    }
+    state.push_transcript(render_code_map_report(
+        &report,
+        index.generated_at_unix,
+        Some(query),
+    ));
+}
+
 fn handle_attach(state: &mut TuiState, project_root: &Path, path: &str) {
     const MAX_ATTACHMENT_BYTES: usize = 64 * 1024;
     match commands::load_text_attachment(project_root, path, MAX_ATTACHMENT_BYTES) {
@@ -2260,14 +2284,32 @@ fn handle_attach(state: &mut TuiState, project_root: &Path, path: &str) {
 }
 
 fn render_code_map_text(index: &commands::CodeMapIndex) -> String {
-    let report = &index.report;
-    let mut body = format!(
-        "codemap: {} symbol(s), {} TODO marker(s) across {} file(s) (indexed at {})",
-        report.symbols.len(),
-        report.todos.len(),
-        report.walked_files,
-        index.generated_at_unix,
-    );
+    render_code_map_report(&index.report, index.generated_at_unix, None)
+}
+
+fn render_code_map_report(
+    report: &commands::CodeMapReport,
+    generated_at_unix: u64,
+    query: Option<&str>,
+) -> String {
+    let mut body = if let Some(query) = query {
+        format!(
+            "codemap: {} symbol match(es), {} TODO match(es) for '{}' across {} file(s) (indexed at {})",
+            report.symbols.len(),
+            report.todos.len(),
+            query,
+            report.walked_files,
+            generated_at_unix,
+        )
+    } else {
+        format!(
+            "codemap: {} symbol(s), {} TODO marker(s) across {} file(s) (indexed at {})",
+            report.symbols.len(),
+            report.todos.len(),
+            report.walked_files,
+            generated_at_unix,
+        )
+    };
     if !report.symbols.is_empty() {
         body.push_str("\n\nSymbols:");
         for symbol in report.symbols.iter().take(40) {

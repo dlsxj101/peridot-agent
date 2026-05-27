@@ -2174,6 +2174,21 @@ fn codemap_slash_queues_pending_command() {
             .text
             .contains("codemap: refreshing workspace")
     );
+
+    apply_slash_command(&mut state, SlashCommand::CodeMapFind("Runner".to_string()));
+
+    assert_eq!(
+        state.drain_pending_session_commands(),
+        vec![SessionCommandEvent::CodeMapFind("Runner".to_string())]
+    );
+    assert!(
+        state
+            .transcript
+            .last()
+            .unwrap()
+            .text
+            .contains("codemap: searching workspace code map")
+    );
 }
 
 #[test]

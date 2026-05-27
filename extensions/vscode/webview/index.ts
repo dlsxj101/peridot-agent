@@ -748,6 +748,7 @@ function renderHeader(s: SidebarState): HTMLElement {
   const right = el('div', 'header-actions');
   right.append(renderSessionMenu(s));
   right.append(iconButton('codemap', 'Workspace Code Map', () => vscode.postMessage({ type: 'showCodeMap' })));
+  right.append(iconButton('search', 'Search Workspace Code Map', () => vscode.postMessage({ type: 'searchCodeMap' })));
   right.append(iconButton('attach', 'Attach File', () => vscode.postMessage({ type: 'attachFile' })));
   right.append(iconButton('pr', 'GitHub PR Status', () => vscode.postMessage({ type: 'showPrStatus' })));
   right.append(iconButton('ship', 'Ship Changes to PR', () => vscode.postMessage({ type: 'shipChanges' })));
@@ -2512,6 +2513,9 @@ function renderCodeMapBlock(item: TranscriptItem): HTMLElement {
   }
   if (typeof result?.generated_at_unix === 'number') {
     chips.append(el('span', 'command-chip', result.refreshed ? 'refreshed' : 'cached'));
+  }
+  if (typeof result?.query === 'string' && result.query.trim().length > 0) {
+    chips.append(el('span', 'command-chip', `query: ${result.query.trim()}`));
   }
   title.append(chips);
   header.append(title);

@@ -27,6 +27,8 @@
   files are represented with a metadata placeholder.
 - `/codemap` now uses a persisted `.peridot/codemap.json` index, and
   `Peridot: Refresh Workspace Code Map Index` rebuilds it explicitly.
+- `Peridot: Search Workspace Code Map` runs `/codemap find <query>`
+  against the persisted index and renders matches in the code-map panel.
 - The sidebar subscribes to the daemon's session list and reconciles
   `.peridot/memory.db` session records, so sessions started or finished
   from another VS Code window can appear in the local session menu after

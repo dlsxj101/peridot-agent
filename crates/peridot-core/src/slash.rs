@@ -139,6 +139,8 @@ pub enum SlashCommand {
     CodeMap,
     /// Rebuild the persisted workspace code map index.
     CodeMapRefresh,
+    /// Search the persisted workspace code map index.
+    CodeMapFind(String),
     /// Pop the last user-agent exchange off the visible transcript and
     /// reload the user's previous prompt into the input buffer so the
     /// operator can edit and re-submit. Context is NOT rolled back — the
@@ -458,6 +460,14 @@ pub fn parse_slash_command(input: &str) -> Option<SlashCommand> {
         "todos" if rest.is_empty() => Some(SlashCommand::Todos),
         "codemap" if rest.is_empty() => Some(SlashCommand::CodeMap),
         "codemap" if rest == "refresh" => Some(SlashCommand::CodeMapRefresh),
+        "codemap" if rest.starts_with("find ") => {
+            let query = rest.strip_prefix("find ").unwrap_or("").trim();
+            if query.is_empty() {
+                None
+            } else {
+                Some(SlashCommand::CodeMapFind(query.to_string()))
+            }
+        }
         "codemap" => None,
         "rewind" if rest.is_empty() => Some(SlashCommand::Rewind),
         "branch" => match rest {
@@ -624,6 +634,11 @@ mod tests {
             parse_slash_command("/codemap refresh"),
             Some(SlashCommand::CodeMapRefresh)
         );
+        assert_eq!(
+            parse_slash_command("/codemap find runner"),
+            Some(SlashCommand::CodeMapFind("runner".to_string()))
+        );
+        assert_eq!(parse_slash_command("/codemap find   "), None);
         assert_eq!(parse_slash_command("/codemap src"), None);
     }
 

@@ -89,6 +89,7 @@ export interface CommandResultView {
   walked_files?: number;
   generated_at_unix?: number;
   refreshed?: boolean;
+  query?: string;
   truncated?: boolean;
   state_delta?: SlashStateDeltaView;
   stateDelta?: SlashStateDeltaView;
@@ -305,6 +306,7 @@ export type OutboundMessage =
   | { type: 'queueClear' }
   | { type: 'dismissBranchPicker' }
   | { type: 'showCodeMap' }
+  | { type: 'searchCodeMap' }
   | { type: 'attachFile' }
   | { type: 'showPrStatus' }
   | { type: 'shipChanges' }
