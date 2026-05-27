@@ -597,6 +597,9 @@ pub(crate) fn slash_argument_context_with_dynamic(
     if let Some(context) = export_artifact_argument_context(query) {
         return Some(context);
     }
+    if let Some(context) = think_alias_argument_context(query) {
+        return Some(context);
+    }
     let spec = slash_command_catalog()
         .iter()
         .filter(|spec| !finite_argument_options(spec).is_empty())
@@ -958,6 +961,13 @@ fn export_artifact_argument_context(query: &str) -> Option<SlashArgumentContext>
 }
 
 const EXPORT_ARTIFACT_OPTIONS: &[&str] = &["attachments", "notes", "timeline", "full"];
+const THINK_ALIAS_OPTIONS: &[&str] = &[
+    "hard", "harder", "more", "high", "xhigh", "medium", "low", "off", "stop", "less",
+];
+
+fn think_alias_argument_context(query: &str) -> Option<SlashArgumentContext> {
+    static_subcommand_argument_context(query, "/think", THINK_ALIAS_OPTIONS, false, true)
+}
 
 fn static_subcommand_argument_context(
     query: &str,
@@ -1209,6 +1219,13 @@ mod tests {
         assert_eq!(context.command_name, "/codemap");
         assert_eq!(context.options, vec!["locate"]);
         assert!(slash_argument_context("/codemap locate").is_none());
+
+        assert!(slash_argument_context("/think").is_none());
+        let context = slash_argument_context("/think h").expect("think alias options");
+        assert_eq!(context.command_name, "/think");
+        assert_eq!(context.options, vec!["hard", "harder", "high"]);
+        assert!(slash_argument_context("/think hard").is_none());
+        assert!(slash_argument_context("/think fix tests").is_none());
 
         assert!(slash_argument_context("/mcp add local").is_none());
         let context = slash_argument_context("/mcp add local ").expect("mcp transport options");

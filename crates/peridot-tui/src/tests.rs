@@ -2087,6 +2087,36 @@ fn tab_autocompletes_export_artifact_arguments() {
 }
 
 #[test]
+fn tab_autocompletes_think_alias_arguments() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+
+    for character in "/think ha".chars() {
+        handle_key_event(
+            &mut state,
+            KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE),
+        );
+    }
+    handle_key_event(&mut state, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    assert_eq!(state.input, "/think hard");
+
+    state.clear_input();
+    for character in "/think st".chars() {
+        handle_key_event(
+            &mut state,
+            KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE),
+        );
+    }
+    handle_key_event(&mut state, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    assert_eq!(state.input, "/think stop");
+}
+
+#[test]
 fn skills_slash_queues_skill_inventory_load() {
     let mut state = TuiState::new(HeaderState::new(
         ExecutionMode::Execute,

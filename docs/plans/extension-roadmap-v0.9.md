@@ -821,6 +821,18 @@ shared daemon, TUI, and VS Code extension surfaces.
   Accepting an artifact leaves a trailing space for the next artifact, and
   already-selected artifacts are hidden from the remaining suggestions.
 
+### E68. Think Alias Argument Autocomplete
+
+- **Status**: landed.
+- **Goal**: keep reasoning shortcut autocomplete aligned with the parser
+  so operators can discover `/think` aliases without memorizing them.
+- **Where**: TUI dynamic slash argument context, TUI Tab acceptance path,
+  and VS Code webview slash autocomplete helper.
+- **Result**: `/think <arg>` now suggests parser-supported aliases and
+  canonical tiers in both clients: `hard`, `harder`, `more`, `high`,
+  `xhigh`, `medium`, `low`, `off`, `stop`, and `less`. Bare `/think`
+  remains runnable as the high-reasoning shortcut.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

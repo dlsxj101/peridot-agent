@@ -46,6 +46,8 @@
 - Export artifact autocomplete now supports multi-artifact
   `/export attachments notes timeline` composition and suggests only
   remaining artifact classes after each accepted token.
+- Think alias autocomplete now suggests the parser-supported `/think`
+  arguments, including `hard`, `harder`, `more`, `stop`, and `less`.
 - The composer now keeps submitted prompt history per sidebar session.
   ArrowUp / ArrowDown recall previous prompts when the caret is on the
   first or last textarea line, and unsent drafts no longer leak across

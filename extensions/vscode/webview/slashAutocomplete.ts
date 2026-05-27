@@ -90,6 +90,8 @@ export function slashArgumentContext(
   if (notesContext) return notesContext;
   const exportContext = exportArtifactArgumentContext(query);
   if (exportContext) return exportContext;
+  const thinkContext = thinkAliasArgumentContext(query);
+  if (thinkContext) return thinkContext;
   const command = [...slashCommands]
     .sort((a, b) => b.name.length - a.name.length)
     .find(
@@ -105,6 +107,7 @@ export function slashArgumentContext(
   const filtered = rest
     ? options.filter((option) => option.toLowerCase().startsWith(rest))
     : options;
+  if (filtered.length === 0) return undefined;
   return { command, options: filtered };
 }
 
@@ -123,6 +126,7 @@ function notesLastArgumentContext(query: string): SlashArgumentContext | undefin
 }
 
 const EXPORT_ARTIFACT_OPTIONS = ['attachments', 'notes', 'timeline', 'full'];
+const THINK_ALIAS_OPTIONS = ['hard', 'harder', 'more', 'high', 'xhigh', 'medium', 'low', 'off', 'stop', 'less'];
 
 function exportArtifactArgumentContext(query: string): SlashArgumentContext | undefined {
   const commandName = '/export';
@@ -150,6 +154,10 @@ function exportArtifactArgumentContext(query: string): SlashArgumentContext | un
     options,
     appendSpace: true,
   };
+}
+
+function thinkAliasArgumentContext(query: string): SlashArgumentContext | undefined {
+  return staticSubcommandArgumentContext(query, '/think', THINK_ALIAS_OPTIONS, false, true);
 }
 
 function staticSubcommandArgumentContext(

@@ -70,6 +70,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
   `/export attachments notes timeline` composition in both TUI and VS
   Code, suggesting only remaining artifact classes after each accepted
   token.
+- **Think alias autocomplete** now mirrors the parser's `/think` aliases
+  in both TUI and VS Code, including `hard`, `harder`, `more`, `stop`,
+  and `less` alongside the canonical reasoning tiers.
 - **VS Code per-session composer history** now mirrors the TUI input
   history ergonomics: ArrowUp/ArrowDown recall submitted prompts per
   sidebar session, while in-progress drafts stay isolated across session

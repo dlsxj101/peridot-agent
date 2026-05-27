@@ -33,6 +33,12 @@ const commands: SlashCommandSpec[] = [
     argOptions: ['claude-api', 'openai-api', 'openrouter-api', 'openai-oauth'],
   },
   {
+    name: '/think',
+    description: 'increase reasoning effort',
+    argHint: '[off|low|medium|high|xhigh]',
+    argOptions: ['off', 'low', 'medium', 'high', 'xhigh'],
+  },
+  {
     name: '/codemap',
     description: 'show code map',
     argHint: '[status|refresh|find <query>|locate <symbol>|outline <path>|refs <symbol>]',
@@ -237,6 +243,19 @@ test('slashArgumentContext filters goal and notes subcommands', () => {
   assert.equal(slashArgumentContext('/notes last ', commands), undefined);
 });
 
+test('slashArgumentContext filters think alias arguments', () => {
+  assert.equal(slashArgumentContext('/think', commands), undefined);
+
+  const hard = slashArgumentContext('/think h', commands);
+  assert.equal(hard?.command.name, '/think');
+  assert.deepEqual(hard?.options, ['hard', 'harder', 'high']);
+  assert.equal(hard?.appendSpace, false);
+
+  assert.deepEqual(slashArgumentContext('/think st', commands)?.options, ['stop']);
+  assert.equal(slashArgumentContext('/think hard', commands), undefined);
+  assert.equal(slashArgumentContext('/think fix tests', commands), undefined);
+});
+
 test('slashArgumentContext filters export artifact arguments across tokens', () => {
   assert.equal(slashArgumentContext('/export', commands), undefined);
   const first = slashArgumentContext('/export a', commands);
@@ -270,5 +289,6 @@ test('slashPickerItemCount uses argument options when an argument picker is open
   assert.equal(slashPickerItemCount('/branch restore ', commands, [], [], [], branchSnapshots), 2);
   assert.equal(slashPickerItemCount('/goal ', commands), 4);
   assert.equal(slashPickerItemCount('/notes l', commands), 1);
+  assert.equal(slashPickerItemCount('/think h', commands), 3);
   assert.equal(slashPickerItemCount('/export attachments ', commands), 3);
 });
