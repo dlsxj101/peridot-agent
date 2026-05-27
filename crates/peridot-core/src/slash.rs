@@ -143,6 +143,8 @@ pub enum SlashCommand {
     CodeMapRefresh,
     /// Search the persisted workspace code map index.
     CodeMapFind(String),
+    /// Locate symbol definitions from the persisted workspace code map index.
+    CodeMapLocate(String),
     /// List attachment artifacts already loaded into the current session context.
     Attachments,
     /// Remove attachment artifacts from the current session context by path.
@@ -506,6 +508,14 @@ pub fn parse_slash_command(input: &str) -> Option<SlashCommand> {
                 Some(SlashCommand::CodeMapFind(query.to_string()))
             }
         }
+        "codemap" if rest.starts_with("locate ") => {
+            let query = rest.strip_prefix("locate ").unwrap_or("").trim();
+            if query.is_empty() {
+                None
+            } else {
+                Some(SlashCommand::CodeMapLocate(query.to_string()))
+            }
+        }
         "codemap" => None,
         "attachments" if rest.is_empty() => Some(SlashCommand::Attachments),
         "attachments" => None,
@@ -697,7 +707,12 @@ mod tests {
             parse_slash_command("/codemap find runner"),
             Some(SlashCommand::CodeMapFind("runner".to_string()))
         );
+        assert_eq!(
+            parse_slash_command("/codemap locate Runner"),
+            Some(SlashCommand::CodeMapLocate("Runner".to_string()))
+        );
         assert_eq!(parse_slash_command("/codemap find   "), None);
+        assert_eq!(parse_slash_command("/codemap locate   "), None);
         assert_eq!(parse_slash_command("/codemap src"), None);
     }
 

@@ -131,6 +131,40 @@ pub(crate) fn search_code_map_index(index: &CodeMapIndex, query: &str) -> CodeMa
     }
 }
 
+pub(crate) fn locate_code_map_symbols(index: &CodeMapIndex, query: &str) -> CodeMapReport {
+    let tokens = search_tokens(query);
+    if tokens.is_empty() {
+        return CodeMapReport {
+            walked_files: index.report.walked_files,
+            symbols: Vec::new(),
+            todos: Vec::new(),
+            symbols_truncated: index.report.symbols_truncated,
+            todos_truncated: false,
+        };
+    }
+    let mut symbols = index
+        .report
+        .symbols
+        .iter()
+        .filter(|symbol| symbol_matches(symbol, &tokens))
+        .cloned()
+        .collect::<Vec<_>>();
+    symbols.sort_by_key(|symbol| {
+        (
+            symbol_locate_rank(symbol, query),
+            symbol.path.clone(),
+            symbol.line,
+        )
+    });
+    CodeMapReport {
+        walked_files: index.report.walked_files,
+        symbols,
+        todos: Vec::new(),
+        symbols_truncated: index.report.symbols_truncated,
+        todos_truncated: false,
+    }
+}
+
 pub(crate) fn code_map_index_path(project_root: &Path) -> PathBuf {
     project_root.join(".peridot").join("codemap.json")
 }
@@ -375,6 +409,21 @@ fn todo_matches(todo: &CodeMapTodo, tokens: &[String]) -> bool {
     tokens.iter().all(|token| haystack.contains(token))
 }
 
+fn symbol_locate_rank(symbol: &CodeMapSymbol, query: &str) -> u8 {
+    let name = symbol.name.to_ascii_lowercase();
+    let query = query.trim().to_ascii_lowercase();
+    if name == query {
+        return 0;
+    }
+    if name.starts_with(&query) {
+        return 1;
+    }
+    if name.contains(&query) {
+        return 2;
+    }
+    3
+}
+
 fn unix_seconds() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -462,6 +511,46 @@ mod tests {
         let report = search_code_map_index(&index, "serve");
         assert_eq!(report.symbols.len(), 1);
         assert_eq!(report.symbols[0].name, "serve");
+        assert!(report.todos.is_empty());
+    }
+
+    #[test]
+    fn locate_returns_ranked_symbol_only_matches() {
+        let index = CodeMapIndex {
+            version: 1,
+            generated_at_unix: 42,
+            report: CodeMapReport {
+                walked_files: 2,
+                symbols: vec![
+                    CodeMapSymbol {
+                        path: "src/lib.rs".to_string(),
+                        line: 30,
+                        kind: "struct".to_string(),
+                        name: "RunnerConfig".to_string(),
+                        signature: "pub struct RunnerConfig;".to_string(),
+                    },
+                    CodeMapSymbol {
+                        path: "src/main.rs".to_string(),
+                        line: 10,
+                        kind: "struct".to_string(),
+                        name: "Runner".to_string(),
+                        signature: "pub struct Runner;".to_string(),
+                    },
+                ],
+                todos: vec![CodeMapTodo {
+                    path: "src/lib.rs".to_string(),
+                    line: 44,
+                    marker: "TODO".to_string(),
+                    text: "TODO: Runner".to_string(),
+                }],
+                symbols_truncated: false,
+                todos_truncated: false,
+            },
+        };
+
+        let report = locate_code_map_symbols(&index, "runner");
+        assert_eq!(report.symbols.len(), 2);
+        assert_eq!(report.symbols[0].name, "Runner");
         assert!(report.todos.is_empty());
     }
 

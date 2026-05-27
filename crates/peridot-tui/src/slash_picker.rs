@@ -259,8 +259,8 @@ pub fn slash_command_catalog() -> &'static [SlashCommandSpec] {
         },
         SlashCommandSpec {
             name: "/codemap",
-            description: "show, refresh, or search workspace public symbols and TODO markers",
-            arg_hint: Some("[refresh|find <query>]"),
+            description: "show, refresh, search, or locate workspace public symbols",
+            arg_hint: Some("[refresh|find <query>|locate <symbol>]"),
             category: "plan",
         },
         SlashCommandSpec {

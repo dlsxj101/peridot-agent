@@ -275,6 +275,12 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   context.subscriptions.push(
+    vscode.commands.registerCommand('peridot.locateCodeMapSymbol', async () => {
+      await locateWorkspaceCodeMapSymbol(output, sidebar);
+    }),
+  );
+
+  context.subscriptions.push(
     vscode.commands.registerCommand('peridot.attachFile', async () => {
       await attachFileToSession(output, sidebar);
     }),
@@ -692,6 +698,62 @@ async function searchWorkspaceCodeMap(
   const trimmed = query?.trim();
   if (!trimmed) return;
   await showWorkspaceCodeMap(output, sidebar, false, trimmed);
+}
+
+async function locateWorkspaceCodeMapSymbol(
+  output: vscode.OutputChannel,
+  sidebar: PeridotSidebarProvider,
+): Promise<void> {
+  const query = await vscode.window.showInputBox({
+    title: 'Locate Workspace Symbol',
+    prompt: 'Open the first matching indexed symbol definition',
+    placeHolder: 'Runner',
+    ignoreFocusOut: true,
+  });
+  const trimmed = query?.trim();
+  if (!trimmed) return;
+  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!folder) {
+    const message = 'Open a workspace folder before locating a workspace symbol.';
+    sidebar.setWorkspaceProblem(message);
+    await vscode.window.showWarningMessage(message);
+    return;
+  }
+  await vscode.commands.executeCommand('peridot.chatView.focus');
+  try {
+    const result = await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Window,
+        title: 'Peridot: locating workspace symbol',
+      },
+      async () =>
+        runSlashCommand(
+          `/codemap locate ${trimmed}`,
+          output,
+          sidebar,
+          sidebar.currentRunOptions(),
+        ),
+    );
+    sidebar.appendCommandResult(result);
+    const first = result.items?.find((item) => typeof item.path === 'string');
+    if (first?.path) {
+      await openWorkspaceFile(
+        first.path,
+        output,
+        first.line,
+        first.column,
+        { preview: true },
+        folder,
+      );
+    } else {
+      await vscode.window.showInformationMessage(`No indexed symbol matched "${trimmed}".`);
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    output.appendLine(`[peridot] codemap locate failed: ${message}`);
+    sidebar.appendError(message);
+    await vscode.window.showErrorMessage(`Peridot symbol locate failed: ${message}`);
+  }
 }
 
 async function attachFileToSession(

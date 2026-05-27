@@ -1713,6 +1713,9 @@ async fn execute_session_command(
         SlashCommand::CodeMap => handle_command_codemap(state, raw_command, false),
         SlashCommand::CodeMapRefresh => handle_command_codemap(state, raw_command, true),
         SlashCommand::CodeMapFind(query) => handle_command_codemap_find(state, raw_command, &query),
+        SlashCommand::CodeMapLocate(query) => {
+            handle_command_codemap_locate(state, raw_command, &query)
+        }
         SlashCommand::Attach(path) => handle_command_attach(state, session_id, raw_command, &path),
         SlashCommand::Attachments => handle_command_attachments(state, session_id, raw_command),
         SlashCommand::Detach(path) => handle_command_detach(state, session_id, raw_command, &path),
@@ -3594,6 +3597,25 @@ fn handle_command_codemap_find(
     Ok(code_map_result(
         raw_command,
         "Workspace Code Map Search",
+        Some(query),
+        &report,
+        index.generated_at_unix,
+        false,
+    ))
+}
+
+fn handle_command_codemap_locate(
+    state: &DaemonState,
+    raw_command: &str,
+    query: &str,
+) -> Result<Value, String> {
+    let index =
+        crate::commands::load_or_refresh_code_map_index(state.project_root.as_ref(), 120, 80)
+            .map_err(|err| format!("codemap: failed to load index: {err}"))?;
+    let report = crate::commands::locate_code_map_symbols(&index, query);
+    Ok(code_map_result(
+        raw_command,
+        "Workspace Symbol Locations",
         Some(query),
         &report,
         index.generated_at_unix,
@@ -6197,6 +6219,27 @@ mod tests {
                 .iter()
                 .any(|item| item["source"] == "symbol" && item["label"] == "struct Runner")
         );
+
+        let locate_line = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 45,
+            "method": "session.command",
+            "params": { "command": "/codemap locate runner" }
+        })
+        .to_string();
+        let _ = dispatch_line(&state, &locate_line).await.unwrap();
+        let locate_response: Value = serde_json::from_str(&rx.recv().await.unwrap()).unwrap();
+        assert_eq!(locate_response["id"], 45);
+        assert_eq!(locate_response["result"]["kind"], "codemap");
+        assert_eq!(
+            locate_response["result"]["title"],
+            "Workspace Symbol Locations"
+        );
+        assert_eq!(locate_response["result"]["query"], "runner");
+        assert_eq!(locate_response["result"]["symbol_count"], 1);
+        assert_eq!(locate_response["result"]["todo_count"], 0);
+        assert_eq!(locate_response["result"]["items"][0]["path"], "src/lib.rs");
+        assert_eq!(locate_response["result"]["items"][0]["line"], 1);
 
         shutdown_sessions(&state).await;
         let _ = std::fs::remove_dir_all(root);

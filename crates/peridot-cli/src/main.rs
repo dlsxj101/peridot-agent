@@ -1508,6 +1508,9 @@ fn apply_session_command(
         SessionCommandEvent::CodeMapFind(query) => {
             handle_code_map_find(state, project_template, &query);
         }
+        SessionCommandEvent::CodeMapLocate(query) => {
+            handle_code_map_locate(state, project_template, &query);
+        }
         SessionCommandEvent::Attach(path) => {
             handle_attach(state, project_template, &path);
         }
@@ -2296,6 +2299,27 @@ fn handle_code_map_find(state: &mut TuiState, project_root: &Path, query: &str) 
     if report.symbols.is_empty() && report.todos.is_empty() {
         state.push_transcript(format!(
             "codemap: no matches for '{query}' (indexed at {})",
+            index.generated_at_unix
+        ));
+        return;
+    }
+    state.push_transcript(render_code_map_report(
+        &report,
+        index.generated_at_unix,
+        Some(query),
+    ));
+}
+
+fn handle_code_map_locate(state: &mut TuiState, project_root: &Path, query: &str) {
+    let index = commands::load_or_refresh_code_map_index(project_root, 120, 80);
+    let Ok(index) = index else {
+        state.push_error("codemap: failed to load workspace code map index");
+        return;
+    };
+    let report = commands::locate_code_map_symbols(&index, query);
+    if report.symbols.is_empty() {
+        state.push_transcript(format!(
+            "codemap: no symbol matches for '{query}' (indexed at {})",
             index.generated_at_unix
         ));
         return;

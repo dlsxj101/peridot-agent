@@ -221,6 +221,20 @@ shared daemon, TUI, and VS Code extension surfaces.
   path, while `/goal` with no objective remains a local composer-mode
   toggle.
 
+### E24. Workspace Symbol Locate
+
+- **Status**: landed.
+- **Goal**: make the existing persisted code map useful as a quick
+  definition-jump surface before a full LSP/tree-sitter implementation.
+- **Where**: shared slash parser/catalog, TUI host codemap handler,
+  daemon `session.command`, VS Code command palette integration.
+- **Result**: `/codemap locate <symbol>` returns ranked symbol locations
+  from `.peridot/codemap.json` without including TODO matches. TUI
+  prints the ranked locations through the existing codemap report, daemon
+  clients get structured `codemap` rows with file/line metadata, and VS
+  Code `Peridot: Locate Workspace Symbol` opens the first matching
+  indexed definition after appending the result to the sidebar transcript.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

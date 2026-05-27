@@ -173,6 +173,12 @@
         "icon": "$(search)"
       },
       {
+        "command": "peridot.locateCodeMapSymbol",
+        "title": "Peridot: Locate Workspace Symbol",
+        "category": "Peridot",
+        "icon": "$(symbol-method)"
+      },
+      {
         "command": "peridot.attachFile",
         "title": "Peridot: Attach File to Session",
         "category": "Peridot",
@@ -236,6 +242,11 @@
           "command": "peridot.searchCodeMap",
           "when": "view == peridot.chatView",
           "group": "navigation@4"
+        },
+        {
+          "command": "peridot.locateCodeMapSymbol",
+          "when": "view == peridot.chatView",
+          "group": "navigation@4.5"
         },
         {
           "command": "peridot.attachFile",
