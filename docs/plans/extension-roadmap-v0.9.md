@@ -250,6 +250,21 @@ shared daemon, TUI, and VS Code extension surfaces.
   plus the sidebar outline button run the command for the active editor
   file.
 
+### E26. Workspace Symbol References
+
+- **Status**: landed.
+- **Goal**: add a pragmatic reference-search workflow on top of the
+  persisted code map before full LSP/tree-sitter integration.
+- **Where**: shared slash parser/catalog, code map reference scanner,
+  TUI host codemap handler, daemon `session.command`, VS Code sidebar
+  header and command palette.
+- **Result**: `/codemap refs <symbol>` resolves indexed symbol names and
+  scans source files for word-boundary textual references while skipping
+  known definition lines. TUI prints a references section in the codemap
+  report, daemon clients receive structured `reference` rows, and VS Code
+  `Peridot: Find Workspace Symbol References` plus the sidebar references
+  button render those rows in the existing code-map panel.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

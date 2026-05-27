@@ -27,6 +27,9 @@ native tool calling, and 2-Tier context management.
 | `Peridot: Show Workspace Code Map` | Runs the shared `/codemap` scan and appends public symbols plus TODO markers to the sidebar transcript. |
 | `Peridot: Refresh Workspace Code Map Index` | Rebuilds `.peridot/codemap.json` through `/codemap refresh`. |
 | `Peridot: Search Workspace Code Map` | Prompts for a query and runs `/codemap find <query>` against the persisted index. |
+| `Peridot: Locate Workspace Symbol` | Prompts for a symbol, runs `/codemap locate <symbol>`, and opens the first indexed definition. |
+| `Peridot: Outline Current File` | Runs `/codemap outline <path>` for the active editor file and renders indexed symbols. |
+| `Peridot: Find Workspace Symbol References` | Prompts for a symbol and runs `/codemap refs <symbol>` to render matching reference lines. |
 | `Peridot: Attach File to Session` | Picks a workspace file, runs `/attach <path>`, and renders a compact attachment block with open/copy actions. |
 | `Peridot: Show Session Attachments` | Runs `/attachments` and renders files already loaded into the current session context, with open/copy/detach actions. |
 | `Peridot: Export Session Artifacts` | Exports the active session's attachments, notes, and replay timeline to a portable directory, then opens it. |

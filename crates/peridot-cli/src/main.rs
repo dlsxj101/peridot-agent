@@ -1514,6 +1514,9 @@ fn apply_session_command(
         SessionCommandEvent::CodeMapOutline(path) => {
             handle_code_map_outline(state, project_template, &path);
         }
+        SessionCommandEvent::CodeMapRefs(query) => {
+            handle_code_map_refs(state, project_template, &query);
+        }
         SessionCommandEvent::Attach(path) => {
             handle_attach(state, project_template, &path);
         }
@@ -2355,6 +2358,27 @@ fn handle_code_map_outline(state: &mut TuiState, project_root: &Path, path: &str
     ));
 }
 
+fn handle_code_map_refs(state: &mut TuiState, project_root: &Path, query: &str) {
+    let index = commands::load_or_refresh_code_map_index(project_root, 120, 80);
+    let Ok(index) = index else {
+        state.push_error("codemap: failed to load workspace code map index");
+        return;
+    };
+    let report = commands::find_code_map_references(project_root, &index, query, 80);
+    if report.references.is_empty() {
+        state.push_transcript(format!(
+            "codemap: no references for '{query}' (indexed at {})",
+            index.generated_at_unix
+        ));
+        return;
+    }
+    state.push_transcript(render_code_map_report(
+        &report,
+        index.generated_at_unix,
+        Some(query),
+    ));
+}
+
 fn handle_attach(state: &mut TuiState, project_root: &Path, path: &str) {
     const MAX_ATTACHMENT_BYTES: usize = 64 * 1024;
     match commands::load_text_attachment(project_root, path, MAX_ATTACHMENT_BYTES) {
@@ -2547,14 +2571,24 @@ fn render_code_map_report(
     query: Option<&str>,
 ) -> String {
     let mut body = if let Some(query) = query {
-        format!(
-            "codemap: {} symbol match(es), {} TODO match(es) for '{}' across {} file(s) (indexed at {})",
-            report.symbols.len(),
-            report.todos.len(),
-            query,
-            report.walked_files,
-            generated_at_unix,
-        )
+        if report.references.is_empty() {
+            format!(
+                "codemap: {} symbol match(es), {} TODO match(es) for '{}' across {} file(s) (indexed at {})",
+                report.symbols.len(),
+                report.todos.len(),
+                query,
+                report.walked_files,
+                generated_at_unix,
+            )
+        } else {
+            format!(
+                "codemap: {} reference match(es) for '{}' across {} file(s) (indexed at {})",
+                report.references.len(),
+                query,
+                report.walked_files,
+                generated_at_unix,
+            )
+        }
     } else {
         format!(
             "codemap: {} symbol(s), {} TODO marker(s) across {} file(s) (indexed at {})",
@@ -2583,6 +2617,18 @@ fn render_code_map_report(
         }
         if report.todos.len() > 20 || report.todos_truncated {
             body.push_str("\n(TODO markers truncated)");
+        }
+    }
+    if !report.references.is_empty() {
+        body.push_str("\n\nReferences:");
+        for reference in report.references.iter().take(40) {
+            body.push_str(&format!(
+                "\n{}:{}  {}  {}",
+                reference.path, reference.line, reference.symbol, reference.text
+            ));
+        }
+        if report.references.len() > 40 || report.references_truncated {
+            body.push_str("\n(references truncated)");
         }
     }
     body

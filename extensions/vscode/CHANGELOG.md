@@ -25,6 +25,9 @@
 - `Peridot: Outline Current File` and the sidebar outline button run
   `/codemap outline <path>` for the active editor file and render indexed
   symbols in the existing code-map panel.
+- `Peridot: Find Workspace Symbol References` and the sidebar references
+  button run `/codemap refs <symbol>` and render matching source lines as
+  a dedicated code-map references group.
 - GitHub PR workflow commands are available from VS Code: PR status,
   preview-and-confirm `peridot ship`, and confirm-before-merge
   `gh pr merge`.

@@ -758,6 +758,7 @@ function renderHeader(s: SidebarState): HTMLElement {
   right.append(iconButton('codemap', 'Workspace Code Map', () => vscode.postMessage({ type: 'showCodeMap' })));
   right.append(iconButton('search', 'Search Workspace Code Map', () => vscode.postMessage({ type: 'searchCodeMap' })));
   right.append(iconButton('list-tree', 'Outline Current File', () => vscode.postMessage({ type: 'outlineCurrentFile' })));
+  right.append(iconButton('references', 'Find Symbol References', () => vscode.postMessage({ type: 'findSymbolReferences' })));
   right.append(iconButton('attach', 'Attach File', () => vscode.postMessage({ type: 'attachFile' })));
   right.append(iconButton('export', 'Export Session Artifacts', () => vscode.postMessage({ type: 'exportSessionArtifacts' })));
   right.append(iconButton('pr', 'GitHub PR Status', () => vscode.postMessage({ type: 'showPrStatus' })));
@@ -2763,6 +2764,7 @@ function renderCodeMapBlock(item: TranscriptItem): HTMLElement {
   const rows = Array.isArray(result?.items) ? result.items : [];
   const symbols = rows.filter((row) => row.source === 'symbol');
   const todos = rows.filter((row) => row.source === 'todo');
+  const references = rows.filter((row) => row.source === 'reference');
   const wrap = el('section', 'command-block codemap-block');
   const header = el('div', 'codemap-header');
   const title = el('div', 'codemap-title');
@@ -2770,6 +2772,9 @@ function renderCodeMapBlock(item: TranscriptItem): HTMLElement {
   const chips = el('div', 'codemap-chips');
   chips.append(el('span', 'command-chip', `${result?.symbol_count ?? symbols.length} symbols`));
   chips.append(el('span', 'command-chip', `${result?.todo_count ?? todos.length} todos`));
+  if (references.length > 0 || typeof result?.reference_count === 'number') {
+    chips.append(el('span', 'command-chip', `${result?.reference_count ?? references.length} refs`));
+  }
   if (typeof result?.walked_files === 'number') {
     chips.append(el('span', 'command-chip', `${result.walked_files} files`));
   }
@@ -2800,10 +2805,12 @@ function renderCodeMapBlock(item: TranscriptItem): HTMLElement {
     const query = filter.value.trim().toLowerCase();
     const symbolMatches = symbols.filter((row) => codemapRowMatches(row, query));
     const todoMatches = todos.filter((row) => codemapRowMatches(row, query));
+    const referenceMatches = references.filter((row) => codemapRowMatches(row, query));
     body.replaceChildren();
     appendCodeMapGroup(body, 'Symbols', symbolMatches);
     appendCodeMapGroup(body, 'TODO Markers', todoMatches);
-    if (symbolMatches.length === 0 && todoMatches.length === 0) {
+    appendCodeMapGroup(body, 'References', referenceMatches);
+    if (symbolMatches.length === 0 && todoMatches.length === 0 && referenceMatches.length === 0) {
       body.append(el('div', 'codemap-empty', 'No code map entries match this filter.'));
     }
   };
@@ -2828,7 +2835,7 @@ function appendCodeMapGroup(parent: HTMLElement, title: string, rows: CommandRes
 
 function renderCodeMapRow(row: CommandResultItem): HTMLElement {
   const line = el('div', `codemap-row codemap-row-${row.source ?? 'entry'}`);
-  line.append(el('span', 'codemap-source', row.source === 'todo' ? 'todo' : 'symbol'));
+  line.append(el('span', 'codemap-source', codemapSourceLabel(row.source)));
   const main = el('div', 'codemap-row-main');
   const top = el('div', 'codemap-row-top');
   if (row.path) {
@@ -2847,6 +2854,12 @@ function renderCodeMapRow(row: CommandResultItem): HTMLElement {
   if (row.detail) main.append(el('div', 'command-row-detail', row.detail));
   line.append(main);
   return line;
+}
+
+function codemapSourceLabel(source?: string): string {
+  if (source === 'todo') return 'todo';
+  if (source === 'reference') return 'ref';
+  return 'symbol';
 }
 
 function codemapRowMatches(row: CommandResultItem, query: string): boolean {

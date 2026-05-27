@@ -147,6 +147,8 @@ pub enum SlashCommand {
     CodeMapLocate(String),
     /// List indexed symbols in one workspace file.
     CodeMapOutline(String),
+    /// Find textual references for an indexed symbol.
+    CodeMapRefs(String),
     /// List attachment artifacts already loaded into the current session context.
     Attachments,
     /// Remove attachment artifacts from the current session context by path.
@@ -526,6 +528,14 @@ pub fn parse_slash_command(input: &str) -> Option<SlashCommand> {
                 Some(SlashCommand::CodeMapOutline(path.to_string()))
             }
         }
+        "codemap" if rest.starts_with("refs ") => {
+            let query = rest.strip_prefix("refs ").unwrap_or("").trim();
+            if query.is_empty() {
+                None
+            } else {
+                Some(SlashCommand::CodeMapRefs(query.to_string()))
+            }
+        }
         "codemap" => None,
         "attachments" if rest.is_empty() => Some(SlashCommand::Attachments),
         "attachments" => None,
@@ -725,9 +735,14 @@ mod tests {
             parse_slash_command("/codemap outline src/lib.rs"),
             Some(SlashCommand::CodeMapOutline("src/lib.rs".to_string()))
         );
+        assert_eq!(
+            parse_slash_command("/codemap refs Runner"),
+            Some(SlashCommand::CodeMapRefs("Runner".to_string()))
+        );
         assert_eq!(parse_slash_command("/codemap find   "), None);
         assert_eq!(parse_slash_command("/codemap locate   "), None);
         assert_eq!(parse_slash_command("/codemap outline   "), None);
+        assert_eq!(parse_slash_command("/codemap refs   "), None);
         assert_eq!(parse_slash_command("/codemap src"), None);
     }
 

@@ -165,6 +165,7 @@ export interface CommandResultView {
   source_totals?: Record<string, number>;
   symbol_count?: number;
   todo_count?: number;
+  reference_count?: number;
   walked_files?: number;
   generated_at_unix?: number;
   refreshed?: boolean;
@@ -390,6 +391,7 @@ export type OutboundMessage =
   | { type: 'showCodeMap' }
   | { type: 'searchCodeMap' }
   | { type: 'outlineCurrentFile' }
+  | { type: 'findSymbolReferences' }
   | { type: 'attachFile' }
   | { type: 'detachAttachment'; path: string }
   | { type: 'exportSessionArtifacts' }

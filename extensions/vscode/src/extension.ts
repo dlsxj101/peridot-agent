@@ -131,6 +131,7 @@ export function activate(context: vscode.ExtensionContext) {
     showCodeMap: async (): Promise<void> => showWorkspaceCodeMap(output, sidebar, false),
     searchCodeMap: async (): Promise<void> => searchWorkspaceCodeMap(output, sidebar),
     outlineCurrentFile: async (): Promise<void> => outlineCurrentFile(output, sidebar),
+    findSymbolReferences: async (): Promise<void> => findWorkspaceSymbolReferences(output, sidebar),
     attachFile: async (): Promise<void> => attachFileToSession(output, sidebar),
     detachAttachment: async (path: string): Promise<void> =>
       detachAttachmentFromSession(path, output, sidebar),
@@ -284,6 +285,12 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand('peridot.outlineCurrentFile', async () => {
       await outlineCurrentFile(output, sidebar);
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('peridot.findSymbolReferences', async () => {
+      await findWorkspaceSymbolReferences(output, sidebar);
     }),
   );
 
@@ -801,6 +808,49 @@ async function outlineCurrentFile(
     output.appendLine(`[peridot] codemap outline failed: ${message}`);
     sidebar.appendError(message);
     await vscode.window.showErrorMessage(`Peridot file outline failed: ${message}`);
+  }
+}
+
+async function findWorkspaceSymbolReferences(
+  output: vscode.OutputChannel,
+  sidebar: PeridotSidebarProvider,
+): Promise<void> {
+  const query = await vscode.window.showInputBox({
+    title: 'Find Workspace Symbol References',
+    prompt: 'Find text references to an indexed symbol',
+    placeHolder: 'Runner',
+    ignoreFocusOut: true,
+  });
+  const trimmed = query?.trim();
+  if (!trimmed) return;
+  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!folder) {
+    const message = 'Open a workspace folder before finding symbol references.';
+    sidebar.setWorkspaceProblem(message);
+    await vscode.window.showWarningMessage(message);
+    return;
+  }
+  await vscode.commands.executeCommand('peridot.chatView.focus');
+  try {
+    const result = await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Window,
+        title: 'Peridot: finding symbol references',
+      },
+      async () =>
+        runSlashCommand(
+          `/codemap refs ${trimmed}`,
+          output,
+          sidebar,
+          sidebar.currentRunOptions(),
+        ),
+    );
+    sidebar.appendCommandResult(result);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    output.appendLine(`[peridot] codemap refs failed: ${message}`);
+    sidebar.appendError(message);
+    await vscode.window.showErrorMessage(`Peridot symbol references failed: ${message}`);
   }
 }
 

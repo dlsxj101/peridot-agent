@@ -1278,6 +1278,10 @@ pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
             state.push_transcript(format!("codemap: outlining file '{path}'…"));
             state.push_pending_session_command(SessionCommandEvent::CodeMapOutline(path));
         }
+        SlashCommand::CodeMapRefs(query) => {
+            state.push_transcript(format!("codemap: finding references for '{query}'…"));
+            state.push_pending_session_command(SessionCommandEvent::CodeMapRefs(query));
+        }
         SlashCommand::Attachments => {
             state.push_transcript("attachments: loading session attachment inventory…");
             state.push_pending_session_command(SessionCommandEvent::Attachments);

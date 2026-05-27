@@ -185,6 +185,12 @@
         "icon": "$(list-tree)"
       },
       {
+        "command": "peridot.findSymbolReferences",
+        "title": "Peridot: Find Workspace Symbol References",
+        "category": "Peridot",
+        "icon": "$(references)"
+      },
+      {
         "command": "peridot.attachFile",
         "title": "Peridot: Attach File to Session",
         "category": "Peridot",
@@ -258,6 +264,11 @@
           "command": "peridot.outlineCurrentFile",
           "when": "view == peridot.chatView",
           "group": "navigation@4.6"
+        },
+        {
+          "command": "peridot.findSymbolReferences",
+          "when": "view == peridot.chatView",
+          "group": "navigation@4.7"
         },
         {
           "command": "peridot.attachFile",

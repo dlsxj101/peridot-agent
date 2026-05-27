@@ -915,6 +915,8 @@ pub enum SessionCommandEvent {
     CodeMapLocate(String),
     /// `/codemap outline <path>` — list indexed symbols in one workspace file.
     CodeMapOutline(String),
+    /// `/codemap refs <symbol>` — find textual references to a workspace symbol.
+    CodeMapRefs(String),
     /// `/attachments` — list files attached to the active session context.
     Attachments,
     /// `/attach <path>` — read a workspace file into the active session

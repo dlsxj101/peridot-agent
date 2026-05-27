@@ -41,6 +41,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **`/codemap outline <path>`** lists indexed symbols for one workspace
   file, giving TUI and editor clients a lightweight file-outline surface
   before full LSP/tree-sitter integration.
+- **`/codemap refs <symbol>`** finds word-boundary text references for
+  indexed symbols and renders them as structured code-map rows in TUI
+  and editor clients.
 - **Reflection noise filtering** now drops single-tool repeat n-grams
   before the Curator LLM call and stamps them as handled, so historical
   `file_read|file_read`-style rows do not burn review budget.

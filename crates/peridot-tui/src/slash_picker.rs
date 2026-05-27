@@ -259,8 +259,8 @@ pub fn slash_command_catalog() -> &'static [SlashCommandSpec] {
         },
         SlashCommandSpec {
             name: "/codemap",
-            description: "show, refresh, search, locate, or outline workspace symbols",
-            arg_hint: Some("[refresh|find <query>|locate <symbol>|outline <path>]"),
+            description: "show, refresh, search, locate, outline, or reference workspace symbols",
+            arg_hint: Some("[refresh|find <query>|locate <symbol>|outline <path>|refs <symbol>]"),
             category: "plan",
         },
         SlashCommandSpec {

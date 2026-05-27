@@ -2254,6 +2254,21 @@ fn codemap_slash_queues_pending_command() {
             .text
             .contains("codemap: outlining file")
     );
+
+    apply_slash_command(&mut state, SlashCommand::CodeMapRefs("Runner".to_string()));
+
+    assert_eq!(
+        state.drain_pending_session_commands(),
+        vec![SessionCommandEvent::CodeMapRefs("Runner".to_string())]
+    );
+    assert!(
+        state
+            .transcript
+            .last()
+            .unwrap()
+            .text
+            .contains("codemap: finding references")
+    );
 }
 
 #[test]

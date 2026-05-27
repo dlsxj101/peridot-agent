@@ -1,5 +1,7 @@
 use super::*;
 
+use std::collections::HashSet;
+
 const MAX_SYMBOL_FILE_BYTES: u64 = 256 * 1024;
 const SKIP_DIRS: &[&str] = &[
     ".git",
@@ -26,8 +28,12 @@ pub(crate) struct CodeMapReport {
     pub walked_files: usize,
     pub symbols: Vec<CodeMapSymbol>,
     pub todos: Vec<CodeMapTodo>,
+    #[serde(default)]
+    pub references: Vec<CodeMapReference>,
     pub symbols_truncated: bool,
     pub todos_truncated: bool,
+    #[serde(default)]
+    pub references_truncated: bool,
 }
 
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
@@ -47,6 +53,14 @@ pub(crate) struct CodeMapTodo {
     pub text: String,
 }
 
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+pub(crate) struct CodeMapReference {
+    pub path: String,
+    pub line: usize,
+    pub symbol: String,
+    pub text: String,
+}
+
 pub(crate) fn build_code_map(
     project_root: &Path,
     max_symbols: usize,
@@ -56,8 +70,10 @@ pub(crate) fn build_code_map(
         walked_files: 0,
         symbols: Vec::new(),
         todos: Vec::new(),
+        references: Vec::new(),
         symbols_truncated: false,
         todos_truncated: false,
+        references_truncated: false,
     };
     walk_code_map(
         project_root,
@@ -126,8 +142,10 @@ pub(crate) fn search_code_map_index(index: &CodeMapIndex, query: &str) -> CodeMa
             .filter(|todo| todo_matches(todo, &tokens))
             .cloned()
             .collect(),
+        references: Vec::new(),
         symbols_truncated: index.report.symbols_truncated,
         todos_truncated: index.report.todos_truncated,
+        references_truncated: false,
     }
 }
 
@@ -138,8 +156,10 @@ pub(crate) fn locate_code_map_symbols(index: &CodeMapIndex, query: &str) -> Code
             walked_files: index.report.walked_files,
             symbols: Vec::new(),
             todos: Vec::new(),
+            references: Vec::new(),
             symbols_truncated: index.report.symbols_truncated,
             todos_truncated: false,
+            references_truncated: false,
         };
     }
     let mut symbols = index
@@ -160,8 +180,10 @@ pub(crate) fn locate_code_map_symbols(index: &CodeMapIndex, query: &str) -> Code
         walked_files: index.report.walked_files,
         symbols,
         todos: Vec::new(),
+        references: Vec::new(),
         symbols_truncated: index.report.symbols_truncated,
         todos_truncated: false,
+        references_truncated: false,
     }
 }
 
@@ -172,8 +194,10 @@ pub(crate) fn outline_code_map_file(index: &CodeMapIndex, path: &str) -> CodeMap
             walked_files: index.report.walked_files,
             symbols: Vec::new(),
             todos: Vec::new(),
+            references: Vec::new(),
             symbols_truncated: index.report.symbols_truncated,
             todos_truncated: false,
+            references_truncated: false,
         };
     }
     CodeMapReport {
@@ -186,8 +210,57 @@ pub(crate) fn outline_code_map_file(index: &CodeMapIndex, path: &str) -> CodeMap
             .cloned()
             .collect(),
         todos: Vec::new(),
+        references: Vec::new(),
         symbols_truncated: index.report.symbols_truncated,
         todos_truncated: false,
+        references_truncated: false,
+    }
+}
+
+pub(crate) fn find_code_map_references(
+    project_root: &Path,
+    index: &CodeMapIndex,
+    query: &str,
+    max_references: usize,
+) -> CodeMapReport {
+    let names = reference_symbol_names(index, query);
+    if names.is_empty() || max_references == 0 {
+        return CodeMapReport {
+            walked_files: index.report.walked_files,
+            symbols: Vec::new(),
+            todos: Vec::new(),
+            references: Vec::new(),
+            symbols_truncated: false,
+            todos_truncated: false,
+            references_truncated: false,
+        };
+    }
+    let definition_lines = index
+        .report
+        .symbols
+        .iter()
+        .filter(|symbol| names.contains(&symbol.name))
+        .map(|symbol| (normalize_code_map_path(&symbol.path), symbol.line))
+        .collect::<HashSet<_>>();
+    let mut references = Vec::new();
+    let mut truncated = false;
+    walk_code_map_references(
+        project_root,
+        project_root,
+        &names,
+        &definition_lines,
+        max_references,
+        &mut references,
+        &mut truncated,
+    );
+    CodeMapReport {
+        walked_files: index.report.walked_files,
+        symbols: Vec::new(),
+        todos: Vec::new(),
+        references,
+        symbols_truncated: false,
+        todos_truncated: false,
+        references_truncated: truncated,
     }
 }
 
@@ -276,6 +349,78 @@ fn walk_code_map(
             }
         } else if detect_todo(line).is_some() {
             report.todos_truncated = true;
+        }
+    }
+}
+
+fn walk_code_map_references(
+    root: &Path,
+    path: &Path,
+    names: &[String],
+    definition_lines: &HashSet<(String, usize)>,
+    max_references: usize,
+    references: &mut Vec<CodeMapReference>,
+    truncated: &mut bool,
+) {
+    if path.is_dir() {
+        if should_skip_dir(path) {
+            return;
+        }
+        let Ok(entries) = fs::read_dir(path) else {
+            return;
+        };
+        let mut entries = entries
+            .flatten()
+            .map(|entry| entry.path())
+            .collect::<Vec<_>>();
+        entries.sort();
+        for entry in entries {
+            walk_code_map_references(
+                root,
+                &entry,
+                names,
+                definition_lines,
+                max_references,
+                references,
+                truncated,
+            );
+        }
+        return;
+    }
+    if !is_source_file(path) {
+        return;
+    }
+    let Ok(metadata) = fs::metadata(path) else {
+        return;
+    };
+    if metadata.len() > MAX_SYMBOL_FILE_BYTES {
+        return;
+    }
+    let Ok(content) = fs::read_to_string(path) else {
+        return;
+    };
+    let relative = path
+        .strip_prefix(root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/");
+    let normalized = normalize_code_map_path(&relative);
+    for (line_idx, line) in content.lines().enumerate() {
+        let line_number = line_idx + 1;
+        if definition_lines.contains(&(normalized.clone(), line_number)) {
+            continue;
+        }
+        if let Some(name) = names.iter().find(|name| line_contains_symbol(line, name)) {
+            if references.len() >= max_references {
+                *truncated = true;
+                return;
+            }
+            references.push(CodeMapReference {
+                path: relative.clone(),
+                line: line_number,
+                symbol: name.clone(),
+                text: line.trim().to_string(),
+            });
         }
     }
 }
@@ -435,6 +580,52 @@ fn todo_matches(todo: &CodeMapTodo, tokens: &[String]) -> bool {
     tokens.iter().all(|token| haystack.contains(token))
 }
 
+fn reference_symbol_names(index: &CodeMapIndex, query: &str) -> Vec<String> {
+    let trimmed = query.trim();
+    if trimmed.is_empty() {
+        return Vec::new();
+    }
+    let needle = trimmed.to_ascii_lowercase();
+    let exact = index
+        .report
+        .symbols
+        .iter()
+        .filter(|symbol| symbol.name.eq_ignore_ascii_case(trimmed))
+        .map(|symbol| symbol.name.clone())
+        .collect::<Vec<_>>();
+    let mut names = if exact.is_empty() {
+        index
+            .report
+            .symbols
+            .iter()
+            .filter(|symbol| symbol.name.to_ascii_lowercase().contains(&needle))
+            .map(|symbol| symbol.name.clone())
+            .collect::<Vec<_>>()
+    } else {
+        exact
+    };
+    if names.is_empty() {
+        let tokens = search_tokens(trimmed);
+        names = index
+            .report
+            .symbols
+            .iter()
+            .filter(|symbol| symbol_matches(symbol, &tokens))
+            .map(|symbol| symbol.name.clone())
+            .collect::<Vec<_>>();
+    }
+    if names.is_empty()
+        && trimmed
+            .chars()
+            .all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+    {
+        names.push(trimmed.to_string());
+    }
+    names.sort();
+    names.dedup();
+    names
+}
+
 fn symbol_locate_rank(symbol: &CodeMapSymbol, query: &str) -> u8 {
     let name = symbol.name.to_ascii_lowercase();
     let query = query.trim().to_ascii_lowercase();
@@ -448,6 +639,27 @@ fn symbol_locate_rank(symbol: &CodeMapSymbol, query: &str) -> u8 {
         return 2;
     }
     3
+}
+
+fn line_contains_symbol(line: &str, symbol: &str) -> bool {
+    if symbol.is_empty() {
+        return false;
+    }
+    let mut start = 0;
+    while let Some(offset) = line[start..].find(symbol) {
+        let idx = start + offset;
+        let before = line[..idx].chars().next_back();
+        let after = line[idx + symbol.len()..].chars().next();
+        if !is_identifier_char(before) && !is_identifier_char(after) {
+            return true;
+        }
+        start = idx + symbol.len();
+    }
+    false
+}
+
+fn is_identifier_char(ch: Option<char>) -> bool {
+    ch.is_some_and(|ch| ch == '_' || ch.is_ascii_alphanumeric())
 }
 
 fn normalize_code_map_path(path: &str) -> String {
@@ -531,8 +743,10 @@ mod tests {
                     marker: "TODO".to_string(),
                     text: "TODO: wire runner search".to_string(),
                 }],
+                references: Vec::new(),
                 symbols_truncated: false,
                 todos_truncated: false,
+                references_truncated: false,
             },
         };
 
@@ -577,8 +791,10 @@ mod tests {
                     marker: "TODO".to_string(),
                     text: "TODO: Runner".to_string(),
                 }],
+                references: Vec::new(),
                 symbols_truncated: false,
                 todos_truncated: false,
+                references_truncated: false,
             },
         };
 
@@ -617,8 +833,10 @@ mod tests {
                     marker: "TODO".to_string(),
                     text: "TODO: Runner".to_string(),
                 }],
+                references: Vec::new(),
                 symbols_truncated: false,
                 todos_truncated: false,
+                references_truncated: false,
             },
         };
 
@@ -626,6 +844,53 @@ mod tests {
         assert_eq!(report.symbols.len(), 1);
         assert_eq!(report.symbols[0].name, "Runner");
         assert!(report.todos.is_empty());
+    }
+
+    #[test]
+    fn references_find_non_definition_symbol_uses() {
+        let root = temp_project("refs");
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(
+            root.join("src/lib.rs"),
+            "pub struct Runner;\nimpl Runner {}\npub fn run(value: Runner) {}\nlet RunnerConfig = 1;\n",
+        )
+        .unwrap();
+        let index = refresh_code_map_index(&root, 100, 100).unwrap();
+
+        let report = find_code_map_references(&root, &index, "Runner", 10);
+        assert_eq!(report.references.len(), 2);
+        assert!(
+            report
+                .references
+                .iter()
+                .all(|entry| entry.symbol == "Runner")
+        );
+        assert!(report.references.iter().all(|entry| entry.line != 1));
+        assert!(
+            report
+                .references
+                .iter()
+                .all(|entry| !entry.text.contains("RunnerConfig"))
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn old_code_map_index_deserializes_without_references() {
+        let json = r#"{
+          "version": 1,
+          "generated_at_unix": 42,
+          "report": {
+            "walked_files": 1,
+            "symbols": [],
+            "todos": [],
+            "symbols_truncated": false,
+            "todos_truncated": false
+          }
+        }"#;
+        let index: CodeMapIndex = serde_json::from_str(json).unwrap();
+        assert!(index.report.references.is_empty());
+        assert!(!index.report.references_truncated);
     }
 
     fn temp_project(name: &str) -> PathBuf {

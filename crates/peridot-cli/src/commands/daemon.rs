@@ -1719,6 +1719,7 @@ async fn execute_session_command(
         SlashCommand::CodeMapOutline(path) => {
             handle_command_codemap_outline(state, raw_command, &path)
         }
+        SlashCommand::CodeMapRefs(query) => handle_command_codemap_refs(state, raw_command, &query),
         SlashCommand::Attach(path) => handle_command_attach(state, session_id, raw_command, &path),
         SlashCommand::Attachments => handle_command_attachments(state, session_id, raw_command),
         SlashCommand::Detach(path) => handle_command_detach(state, session_id, raw_command, &path),
@@ -3645,6 +3646,26 @@ fn handle_command_codemap_outline(
     ))
 }
 
+fn handle_command_codemap_refs(
+    state: &DaemonState,
+    raw_command: &str,
+    query: &str,
+) -> Result<Value, String> {
+    let index =
+        crate::commands::load_or_refresh_code_map_index(state.project_root.as_ref(), 120, 80)
+            .map_err(|err| format!("codemap: failed to load index: {err}"))?;
+    let report =
+        crate::commands::find_code_map_references(state.project_root.as_ref(), &index, query, 80);
+    Ok(code_map_result(
+        raw_command,
+        "Workspace Symbol References",
+        Some(query),
+        &report,
+        index.generated_at_unix,
+        false,
+    ))
+}
+
 fn code_map_result(
     raw_command: &str,
     title: &str,
@@ -3672,19 +3693,41 @@ fn code_map_result(
             "detail": todo.text,
         }));
     }
+    for reference in report.references.iter().take(80) {
+        items.push(serde_json::json!({
+            "source": "reference",
+            "label": reference.symbol,
+            "path": reference.path,
+            "line": reference.line,
+            "detail": reference.text,
+        }));
+    }
     let truncated = report.symbols_truncated
         || report.todos_truncated
+        || report.references_truncated
         || report.symbols.len() > 80
-        || report.todos.len() > 40;
+        || report.todos.len() > 40
+        || report.references.len() > 80;
+    let reference_result = title.contains("References");
     let message = if let Some(query) = query {
-        format!(
-            "codemap: {} symbol match(es), {} TODO match(es) for '{}' across {} file(s) (indexed at {})",
-            report.symbols.len(),
-            report.todos.len(),
-            query,
-            report.walked_files,
-            generated_at_unix,
-        )
+        if reference_result {
+            format!(
+                "codemap: {} reference match(es) for '{}' across {} file(s) (indexed at {})",
+                report.references.len(),
+                query,
+                report.walked_files,
+                generated_at_unix,
+            )
+        } else {
+            format!(
+                "codemap: {} symbol match(es), {} TODO match(es) for '{}' across {} file(s) (indexed at {})",
+                report.symbols.len(),
+                report.todos.len(),
+                query,
+                report.walked_files,
+                generated_at_unix,
+            )
+        }
     } else {
         format!(
             "codemap: {} symbol(s), {} TODO marker(s) across {} file(s) (indexed at {})",
@@ -3703,6 +3746,7 @@ fn code_map_result(
         "items": items,
         "symbol_count": report.symbols.len(),
         "todo_count": report.todos.len(),
+        "reference_count": report.references.len(),
         "walked_files": report.walked_files,
         "generated_at_unix": generated_at_unix,
         "refreshed": refreshed,
@@ -6154,7 +6198,7 @@ mod tests {
         std::fs::create_dir_all(&src).unwrap();
         std::fs::write(
             src.join("lib.rs"),
-            "pub struct Runner;\n// TODO: finish codemap\n",
+            "pub struct Runner;\n// TODO: finish codemap\nfn use_runner(value: Runner) {}\n",
         )
         .unwrap();
         let state = DaemonState::new(
@@ -6288,6 +6332,28 @@ mod tests {
                 .iter()
                 .all(|item| item["source"] == "symbol")
         );
+
+        let refs_line = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 47,
+            "method": "session.command",
+            "params": { "command": "/codemap refs Runner" }
+        })
+        .to_string();
+        let _ = dispatch_line(&state, &refs_line).await.unwrap();
+        let refs_response: Value = serde_json::from_str(&rx.recv().await.unwrap()).unwrap();
+        assert_eq!(refs_response["id"], 47);
+        assert_eq!(refs_response["result"]["kind"], "codemap");
+        assert_eq!(
+            refs_response["result"]["title"],
+            "Workspace Symbol References"
+        );
+        assert_eq!(refs_response["result"]["query"], "Runner");
+        assert_eq!(refs_response["result"]["reference_count"], 1);
+        assert_eq!(refs_response["result"]["symbol_count"], 0);
+        assert_eq!(refs_response["result"]["todo_count"], 0);
+        assert_eq!(refs_response["result"]["items"][0]["source"], "reference");
+        assert_eq!(refs_response["result"]["items"][0]["line"], 3);
 
         shutdown_sessions(&state).await;
         let _ = std::fs::remove_dir_all(root);
