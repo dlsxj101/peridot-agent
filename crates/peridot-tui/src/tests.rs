@@ -554,6 +554,41 @@ fn input_history_and_control_shortcuts_work() {
 }
 
 #[test]
+fn input_history_dedupes_and_keeps_recent_entries_bounded() {
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+
+    for index in 0..55 {
+        state.record_input_history(&format!("task {index}"));
+    }
+    state.record_input_history("task 10");
+
+    assert_eq!(state.input_history.len(), 50);
+    assert_eq!(
+        state.input_history.first().map(String::as_str),
+        Some("task 5")
+    );
+    assert_eq!(
+        state.input_history.last().map(String::as_str),
+        Some("task 10")
+    );
+    assert_eq!(
+        state
+            .input_history
+            .iter()
+            .filter(|entry| entry.as_str() == "task 10")
+            .count(),
+        1
+    );
+
+    state.previous_input_history();
+    assert_eq!(state.input, "task 10");
+}
+
+#[test]
 fn shift_enter_inserts_newline_without_submitting() {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 

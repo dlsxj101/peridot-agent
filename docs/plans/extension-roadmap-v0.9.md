@@ -665,6 +665,18 @@ shared daemon, TUI, and VS Code extension surfaces.
   VS Code webview state, so they survive webview reloads without involving
   daemon or workspace storage.
 
+### E57. Bounded Shared Input History Semantics
+
+- **Status**: landed.
+- **Goal**: keep TUI and VS Code prompt history behavior aligned now that
+  both clients expose per-session recall.
+- **Where**: TUI `TuiState::record_input_history`, VS Code composer
+  history helper.
+- **Result**: TUI input history now deduplicates repeated prompts by
+  moving them to the newest slot and caps each session at the 50 most
+  recent entries, matching the VS Code composer history policy while
+  preserving per-session state swaps.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

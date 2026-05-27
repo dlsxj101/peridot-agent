@@ -9,6 +9,8 @@ fn current_unix_seconds() -> u64 {
         .unwrap_or_default()
 }
 
+const MAX_INPUT_HISTORY_ENTRIES: usize = 50;
+
 /// Formats a millisecond duration as a compact human-readable string. Sub-
 /// second durations show milliseconds so a 200 ms call doesn't render as
 /// "0s"; longer durations promote into `Xm Ys` and then `Xh Ym` so the
@@ -1436,11 +1438,17 @@ impl TuiState {
 
     /// Records a submitted input line for history navigation.
     pub fn record_input_history(&mut self, input: &str) {
-        if input.trim().is_empty() {
+        let input = input.trim();
+        if input.is_empty() {
             return;
         }
-        if self.input_history.last().is_none_or(|last| last != input) {
-            self.input_history.push(input.to_string());
+        if let Some(index) = self.input_history.iter().position(|entry| entry == input) {
+            self.input_history.remove(index);
+        }
+        self.input_history.push(input.to_string());
+        if self.input_history.len() > MAX_INPUT_HISTORY_ENTRIES {
+            let overflow = self.input_history.len() - MAX_INPUT_HISTORY_ENTRIES;
+            self.input_history.drain(0..overflow);
         }
         self.input_history_cursor = None;
     }
