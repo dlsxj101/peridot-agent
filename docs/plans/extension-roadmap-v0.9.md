@@ -84,6 +84,20 @@ shared daemon, TUI, and VS Code extension surfaces.
   keeps its existing local transcript summary while editor clients get
   daemon-backed data from the same command path.
 
+### E14. Cost Slash Parity
+
+- **Status**: landed.
+- **Goal**: make `/cost` useful from the VS Code composer and keep it
+  aligned with TUI aggregate usage semantics.
+- **Where**: daemon live session bookkeeping, `session.command`, VS Code
+  command-result typing.
+- **Result**: `/cost` now returns a structured `cost` command result
+  with current-session usage, aggregate executor usage, committee role
+  usage, total all-in tokens/cost, per-session rows, and the active
+  budget cap when one exists. Running daemon sessions track
+  `UsageUpdated`, `BudgetUpdated`, and `CommitteeRoleUsage` events so
+  editor clients do not have to wait for persisted records at run end.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

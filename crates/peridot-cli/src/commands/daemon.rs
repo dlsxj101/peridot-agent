@@ -90,8 +90,64 @@ struct SessionEntry {
     compact_request: Arc<AtomicBool>,
     task: Option<tokio::task::JoinHandle<()>>,
     spec: SessionRunSpec,
+    usage: Arc<StdMutex<LiveSessionUsage>>,
     approval_grants: Vec<ApprovalGrant>,
     waiting_approval: Option<ApprovalRequestSnapshot>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct LiveSessionUsage {
+    total_tokens: u64,
+    cost_usd: f64,
+    turns_used: u32,
+    cost_limit: Option<f64>,
+    turns_limit: Option<u32>,
+    committee_planner_tokens: u64,
+    committee_planner_cost_usd: f64,
+    committee_reviewer_tokens: u64,
+    committee_reviewer_cost_usd: f64,
+}
+
+impl LiveSessionUsage {
+    fn record_event(&mut self, event: &AgentRunEvent) {
+        match event {
+            AgentRunEvent::UsageUpdated { usage } => {
+                self.total_tokens = usage.input_tokens
+                    + usage.output_tokens
+                    + usage.cache_read_tokens
+                    + usage.cache_creation_tokens
+                    + usage.reasoning_output_tokens;
+                self.cost_usd = usage.estimated_cost_usd;
+            }
+            AgentRunEvent::BudgetUpdated {
+                cost_used,
+                cost_limit,
+                turns_used,
+                turns_limit,
+            } => {
+                self.cost_usd = *cost_used;
+                self.cost_limit = *cost_limit;
+                self.turns_used = *turns_used;
+                self.turns_limit = *turns_limit;
+            }
+            AgentRunEvent::CommitteeRoleUsage {
+                role,
+                cost_usd,
+                tokens,
+            } => match role.as_str() {
+                "planner" => {
+                    self.committee_planner_cost_usd += *cost_usd;
+                    self.committee_planner_tokens += *tokens;
+                }
+                "reviewer" => {
+                    self.committee_reviewer_cost_usd += *cost_usd;
+                    self.committee_reviewer_tokens += *tokens;
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -731,6 +787,8 @@ async fn handle_session_start(state: &DaemonState, id: Value, params: Option<Val
         config: fresh_config,
     };
     let spec_for_task = spec.clone();
+    let usage = Arc::new(StdMutex::new(LiveSessionUsage::default()));
+    let usage_for_task = usage.clone();
     let (start_tx, start_rx) = oneshot::channel::<()>();
 
     let handle = tokio::spawn(async move {
@@ -741,6 +799,7 @@ async fn handle_session_start(state: &DaemonState, id: Value, params: Option<Val
             spec_for_task,
             cancel_for_task,
             compact_request_for_task,
+            usage_for_task,
         )
         .await;
     });
@@ -752,6 +811,7 @@ async fn handle_session_start(state: &DaemonState, id: Value, params: Option<Val
             compact_request,
             task: Some(handle),
             spec: spec.clone(),
+            usage,
             approval_grants: Vec::new(),
             waiting_approval: None,
         },
@@ -1059,6 +1119,7 @@ async fn run_session_task(
     spec: SessionRunSpec,
     cancel: CancelToken,
     compact_request: Arc<AtomicBool>,
+    usage: Arc<StdMutex<LiveSessionUsage>>,
 ) {
     let mut options = (*state.run_template).clone();
     options.permission = spec.permission;
@@ -1091,6 +1152,7 @@ async fn run_session_task(
     let approval_snapshot: Arc<std::sync::Mutex<Option<ApprovalRequestSnapshot>>> =
         Arc::new(std::sync::Mutex::new(None));
     let approval_snapshot_for_events = approval_snapshot.clone();
+    let usage_for_events = usage.clone();
     let session_id_inner = session_id.clone();
     let state_inner = state.clone();
     let result = run_task_with_events(
@@ -1124,6 +1186,7 @@ async fn run_session_task(
                     parameters: parameters.clone(),
                 });
             }
+            usage_for_events.lock().unwrap().record_event(&event);
             let value = serde_json::to_value(&event).unwrap_or(Value::Null);
             emit_event(&state_inner, &session_id_inner, value);
         },
@@ -1495,6 +1558,7 @@ async fn execute_session_command(
             "severity": "info",
             "command": raw_command,
         })),
+        SlashCommand::Cost => handle_command_cost(state, session_id, raw_command).await,
         SlashCommand::Info => handle_command_info(state, session_id, raw_command).await,
         SlashCommand::Skill { name, args } => {
             // Try the project's skill store. If the name exists, inject
@@ -1555,8 +1619,7 @@ async fn execute_session_command(
             "severity": "info",
             "command": raw_command,
         })),
-        SlashCommand::Cost
-        | SlashCommand::PlanShow
+        SlashCommand::PlanShow
         | SlashCommand::SessionSave
         | SlashCommand::SidepanelToggle
         | SlashCommand::Collapse
@@ -1796,6 +1859,174 @@ fn handle_command_session_count(state: &DaemonState, raw_command: &str) -> Resul
         "done": summary.done,
         "failed": summary.failed,
     }))
+}
+
+#[derive(Clone, Debug)]
+struct CostSessionRow {
+    id: String,
+    title: String,
+    status: String,
+    task: Option<String>,
+    executor_tokens: u64,
+    executor_cost_usd: f64,
+    committee_tokens: u64,
+    committee_cost_usd: f64,
+    turns_used: u32,
+}
+
+impl CostSessionRow {
+    fn all_in_tokens(&self) -> u64 {
+        self.executor_tokens + self.committee_tokens
+    }
+
+    fn all_in_cost_usd(&self) -> f64 {
+        self.executor_cost_usd + self.committee_cost_usd
+    }
+}
+
+async fn handle_command_cost(
+    state: &DaemonState,
+    session_id: Option<&str>,
+    raw_command: &str,
+) -> Result<Value, String> {
+    let rows = cost_session_rows(state).await?;
+    let current = session_id.and_then(|id| rows.iter().find(|row| row.id == id).cloned());
+    let executor_tokens: u64 = rows.iter().map(|row| row.executor_tokens).sum();
+    let executor_cost_usd: f64 = rows.iter().map(|row| row.executor_cost_usd).sum();
+    let committee_tokens: u64 = rows.iter().map(|row| row.committee_tokens).sum();
+    let committee_cost_usd: f64 = rows.iter().map(|row| row.committee_cost_usd).sum();
+    let total_tokens = executor_tokens + committee_tokens;
+    let total_cost_usd = executor_cost_usd + committee_cost_usd;
+    let budget_limit = current_budget_limit(state, session_id).await;
+    let budget_pct = budget_limit
+        .filter(|limit| *limit > 0.0)
+        .map(|limit| total_cost_usd / limit * 100.0);
+    let current_cost = current
+        .as_ref()
+        .map(CostSessionRow::all_in_cost_usd)
+        .unwrap_or(total_cost_usd);
+    let current_tokens = current
+        .as_ref()
+        .map(CostSessionRow::all_in_tokens)
+        .unwrap_or(total_tokens);
+    let items: Vec<Value> = rows
+        .iter()
+        .map(|row| {
+            serde_json::json!({
+                "label": row.title,
+                "detail": format!(
+                    "${:.4} · {} tok · {} turn(s)",
+                    row.all_in_cost_usd(),
+                    row.all_in_tokens(),
+                    row.turns_used
+                ),
+                "source": row.status,
+                "session_id": row.id,
+                "tokens": row.all_in_tokens(),
+                "total_cost_usd": row.all_in_cost_usd(),
+                "executor_tokens": row.executor_tokens,
+                "executor_cost_usd": row.executor_cost_usd,
+                "committee_tokens": row.committee_tokens,
+                "committee_cost_usd": row.committee_cost_usd,
+                "turns_used": row.turns_used,
+                "last_task": row.task,
+            })
+        })
+        .collect();
+    let message = if rows.is_empty() {
+        "cost: $0.0000 · tokens: 0 · sessions: 0".to_string()
+    } else if let Some(limit) = budget_limit.filter(|limit| *limit > 0.0) {
+        format!(
+            "cost: ${current_cost:.4} · tokens: {current_tokens} · aggregate: ${total_cost_usd:.4} / ${limit:.4} ({:.0}%) across {} session(s)",
+            budget_pct.unwrap_or_default(),
+            rows.len()
+        )
+    } else {
+        format!(
+            "cost: ${current_cost:.4} · tokens: {current_tokens} · aggregate: ${total_cost_usd:.4} across {} session(s)",
+            rows.len()
+        )
+    };
+    Ok(serde_json::json!({
+        "kind": "cost",
+        "title": "Cost",
+        "message": message,
+        "severity": "info",
+        "command": raw_command,
+        "items": items,
+        "session_id": session_id,
+        "session_count": rows.len(),
+        "current_cost_usd": current_cost,
+        "current_tokens": current_tokens,
+        "total_tokens": total_tokens,
+        "total_cost_usd": total_cost_usd,
+        "executor_tokens": executor_tokens,
+        "executor_cost_usd": executor_cost_usd,
+        "committee_tokens": committee_tokens,
+        "committee_cost_usd": committee_cost_usd,
+        "budget_limit_usd": budget_limit,
+        "budget_pct": budget_pct,
+    }))
+}
+
+async fn cost_session_rows(state: &DaemonState) -> Result<Vec<CostSessionRow>, String> {
+    let store = MemoryStore::new(state.project_root.join(".peridot/memory.db"));
+    let records = store
+        .list_session_records()
+        .map_err(|err| format!("failed to read session records: {err}"))?;
+    let mut rows = BTreeMap::<String, CostSessionRow>::new();
+    for record in records {
+        rows.insert(
+            record.id.clone(),
+            CostSessionRow {
+                id: record.id.clone(),
+                title: record_title(&record),
+                status: format!("{:?}", record.status).to_ascii_lowercase(),
+                task: record.last_task.clone(),
+                executor_tokens: record.total_tokens,
+                executor_cost_usd: record.total_cost_usd,
+                committee_tokens: 0,
+                committee_cost_usd: 0.0,
+                turns_used: record.turns_used,
+            },
+        );
+    }
+    for (id, entry) in state.sessions.lock().await.iter() {
+        let usage = entry.usage.lock().unwrap().clone();
+        let row = rows.entry(id.clone()).or_insert_with(|| CostSessionRow {
+            id: id.clone(),
+            title: session_title_from_task(&entry.spec.task),
+            status: "running".to_string(),
+            task: Some(entry.spec.task.clone()),
+            executor_tokens: 0,
+            executor_cost_usd: 0.0,
+            committee_tokens: 0,
+            committee_cost_usd: 0.0,
+            turns_used: 0,
+        });
+        row.status = "running".to_string();
+        row.task = Some(entry.spec.task.clone());
+        row.executor_tokens = row.executor_tokens.max(usage.total_tokens);
+        row.executor_cost_usd = row.executor_cost_usd.max(usage.cost_usd);
+        row.turns_used = row.turns_used.max(usage.turns_used);
+        row.committee_tokens = usage.committee_planner_tokens + usage.committee_reviewer_tokens;
+        row.committee_cost_usd =
+            usage.committee_planner_cost_usd + usage.committee_reviewer_cost_usd;
+    }
+    Ok(rows.into_values().collect())
+}
+
+async fn current_budget_limit(state: &DaemonState, session_id: Option<&str>) -> Option<f64> {
+    if let Some(session_id) = session_id
+        && let Some(entry) = state.sessions.lock().await.get(session_id)
+    {
+        let usage = entry.usage.lock().unwrap().clone();
+        return usage.cost_limit.or_else(|| {
+            (entry.spec.config.defaults.budget_usd > 0.0)
+                .then_some(entry.spec.config.defaults.budget_usd)
+        });
+    }
+    (state.run_template.budget_usd > 0.0).then_some(state.run_template.budget_usd)
 }
 
 async fn handle_command_info(
@@ -2074,7 +2305,7 @@ async fn handle_approval_respond(
         return Ok(());
     }
 
-    let (spec, cancel_for_task, compact_request, parameters_overridden) = {
+    let (spec, cancel_for_task, compact_request, usage, parameters_overridden) = {
         let mut sessions = state.sessions.lock().await;
         let Some(entry) = sessions.get_mut(session_id) else {
             emit_response(
@@ -2125,7 +2356,8 @@ async fn handle_approval_respond(
             handle.cancel = cancel.clone();
         }
         let spec = entry.spec.clone();
-        (spec, cancel, compact_request, parameters_overridden)
+        let usage = entry.usage.clone();
+        (spec, cancel, compact_request, usage, parameters_overridden)
     };
 
     if parameters_overridden {
@@ -2142,6 +2374,7 @@ async fn handle_approval_respond(
             spec_for_task,
             cancel_for_task,
             compact_request,
+            usage,
         )
         .await;
     });
@@ -3939,6 +4172,83 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn session_command_cost_returns_live_and_aggregate_usage() {
+        let root = test_project("session-command-cost");
+        let store = MemoryStore::new(root.join(".peridot/memory.db"));
+        let mut active_record = SessionRecord::new("active-cost", &root);
+        active_record.status = SessionLifecycle::Running;
+        active_record.last_task = Some("active work".into());
+        active_record.total_tokens = 1000;
+        active_record.total_cost_usd = 0.05;
+        active_record.turns_used = 2;
+        store.save_session_record(&active_record).unwrap();
+        let mut background_record = SessionRecord::new("background-cost", &root);
+        background_record.status = SessionLifecycle::Done;
+        background_record.last_task = Some("background work".into());
+        background_record.total_tokens = 700;
+        background_record.total_cost_usd = 0.04;
+        background_record.turns_used = 1;
+        store.save_session_record(&background_record).unwrap();
+
+        let (tx, _rx) = mpsc::unbounded_channel::<String>();
+        let mut options = test_options(None);
+        options.budget_usd = 0.5;
+        let state = DaemonState::new(root.clone(), PeridotConfig::default(), options, tx);
+        let usage = Arc::new(StdMutex::new(LiveSessionUsage {
+            total_tokens: 2000,
+            cost_usd: 0.10,
+            turns_used: 3,
+            cost_limit: Some(0.5),
+            turns_limit: Some(5),
+            committee_planner_tokens: 120,
+            committee_planner_cost_usd: 0.01,
+            committee_reviewer_tokens: 180,
+            committee_reviewer_cost_usd: 0.01,
+        }));
+        state.sessions.lock().await.insert(
+            "active-cost".to_string(),
+            SessionEntry {
+                cancel: CancelToken::new(),
+                compact_request: Arc::new(AtomicBool::new(false)),
+                task: None,
+                spec: SessionRunSpec {
+                    task: "active work".to_string(),
+                    mode: ExecutionMode::Execute,
+                    permission: PermissionMode::Auto,
+                    model: None,
+                    reasoning_effort: None,
+                    service_tier: None,
+                    config: PeridotConfig::default(),
+                },
+                usage,
+                approval_grants: Vec::new(),
+                waiting_approval: None,
+            },
+        );
+
+        let result =
+            execute_session_command(&state, Some("active-cost"), "/cost", SlashCommand::Cost)
+                .await
+                .unwrap();
+
+        assert_eq!(result["kind"], "cost");
+        assert_eq!(result["session_id"], "active-cost");
+        assert_eq!(result["session_count"], 2);
+        assert_eq!(result["current_tokens"], 2300);
+        assert_eq!(result["total_tokens"], 3000);
+        assert_eq!(result["executor_tokens"], 2700);
+        assert_eq!(result["committee_tokens"], 300);
+        assert!((result["current_cost_usd"].as_f64().unwrap() - 0.12).abs() < 1e-9);
+        assert!((result["total_cost_usd"].as_f64().unwrap() - 0.16).abs() < 1e-9);
+        assert!((result["executor_cost_usd"].as_f64().unwrap() - 0.14).abs() < 1e-9);
+        assert!((result["committee_cost_usd"].as_f64().unwrap() - 0.02).abs() < 1e-9);
+        assert_eq!(result["budget_limit_usd"], 0.5);
+        assert_eq!(result["items"].as_array().unwrap().len(), 2);
+        shutdown_sessions(&state).await;
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
     async fn session_command_info_returns_live_and_persisted_context() {
         let root = test_project("session-command-info");
         let store = MemoryStore::new(root.join(".peridot/memory.db"));
@@ -3972,6 +4282,7 @@ mod tests {
                     service_tier: Some(Some("fast".to_string())),
                     config: spec_config,
                 },
+                usage: Arc::new(StdMutex::new(LiveSessionUsage::default())),
                 approval_grants: Vec::new(),
                 waiting_approval: None,
             },
@@ -4812,6 +5123,7 @@ mod tests {
                     service_tier: None,
                     config: PeridotConfig::default(),
                 },
+                usage: Arc::new(StdMutex::new(LiveSessionUsage::default())),
                 approval_grants: Vec::new(),
                 waiting_approval: None,
             },

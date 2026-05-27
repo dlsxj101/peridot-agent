@@ -46,6 +46,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **Daemon-backed `/info` parity** returns structured session metadata
   for editor clients, including provider/model/mode/permission plus
   persisted turn, token, and cost totals when a session record exists.
+- **Daemon-backed `/cost` parity** returns current and aggregate usage
+  for editor clients, including live running-session usage, persisted
+  background sessions, committee role totals, and the active budget cap.
 - **VS Code Get Started walkthrough** guides first-time users through
   opening the sidebar, connecting a provider, reviewing settings, and
   running a first task using existing Peridot commands and view

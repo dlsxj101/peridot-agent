@@ -47,6 +47,9 @@
 - `/info` now runs through the daemon-backed slash path and returns a
   structured session info card with session id, workspace, provider,
   model, mode, permission, turn, token, and cost context.
+- `/cost` now runs through the daemon-backed slash path and returns
+  current-session plus aggregate executor/committee token and cost
+  totals, including the active budget limit when available.
 - `/codemap` now uses a persisted `.peridot/codemap.json` index, and
   `Peridot: Refresh Workspace Code Map Index` rebuilds it explicitly.
 - `Peridot: Search Workspace Code Map` runs `/codemap find <query>`
