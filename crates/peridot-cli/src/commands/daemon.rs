@@ -371,7 +371,7 @@ async fn dispatch_request(state: &DaemonState, request: RpcRequest) -> Result<bo
             emit_response(
                 state,
                 request.id.unwrap_or(Value::Null),
-                slash_command_catalog_result(),
+                slash_command_catalog_result(command_catalog_surface(request.params.as_ref())),
             )?;
         }
         "skills.list" => {
@@ -452,9 +452,21 @@ async fn dispatch_request(state: &DaemonState, request: RpcRequest) -> Result<bo
     Ok(false)
 }
 
-fn slash_command_catalog_result() -> Value {
+fn command_catalog_surface(params: Option<&Value>) -> Option<&str> {
+    params
+        .and_then(Value::as_object)
+        .and_then(|object| object.get("surface"))
+        .and_then(Value::as_str)
+        .filter(|surface| !surface.trim().is_empty())
+}
+
+fn slash_command_catalog_result(surface: Option<&str>) -> Value {
     let commands: Vec<Value> = peridot_tui::slash_command_catalog()
         .iter()
+        .filter(|spec| {
+            surface
+                .is_none_or(|surface| peridot_tui::slash_command_surfaces(spec).contains(&surface))
+        })
         .map(|spec| {
             serde_json::json!({
                 "name": spec.name,
@@ -5241,6 +5253,26 @@ mod tests {
                 .iter()
                 .all(|entry| entry["description"].as_str().is_some())
         );
+    }
+
+    #[tokio::test]
+    async fn command_catalog_method_filters_by_surface() {
+        let out = dispatch_and_collect(
+            r#"{"jsonrpc":"2.0","id":10,"method":"session.command_catalog","params":{"surface":"vscode"}}"#,
+        )
+        .await;
+        assert_eq!(out[0]["jsonrpc"], "2.0");
+        let commands = out[0]["result"]["commands"].as_array().unwrap();
+        assert!(commands.iter().any(|entry| entry["name"] == "/plan"));
+        assert!(!commands.iter().any(|entry| entry["name"] == "/collapse"));
+        assert!(!commands.iter().any(|entry| entry["name"] == "/lang"));
+        assert!(commands.iter().all(|entry| {
+            entry["surfaces"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|surface| surface == "vscode")
+        }));
     }
 
     #[tokio::test]

@@ -23,6 +23,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **Structured slash argument options** now ship in the same command
   catalog so editor clients can offer choices such as `/reasoning high`
   without reparsing the human-readable `arg_hint` string.
+- **`session.command_catalog` surface filtering** lets editor clients ask
+  the daemon for only `vscode` commands while callers without params keep
+  receiving the full TUI catalog.
 
 ### Added — skill-aware slash autocomplete
 

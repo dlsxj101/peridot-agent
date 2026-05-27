@@ -458,6 +458,19 @@ shared daemon, TUI, and VS Code extension surfaces.
   VS Code prefers those structured options and keeps its legacy
   `arg_hint` parser as a compatibility fallback for older daemons.
 
+### E41. Command Catalog Surface Filter
+
+- **Status**: landed.
+- **Goal**: let editor clients request an already-filtered slash catalog
+  while preserving the full TUI catalog for existing callers.
+- **Where**: daemon `session.command_catalog`, VS Code catalog fetch.
+- **Result**: `session.command_catalog` now accepts optional params such
+  as `{ "surface": "vscode" }` and returns only commands whose
+  `surfaces` include that client. Calls without params keep returning the
+  full catalog for backwards compatibility. VS Code now requests the
+  `vscode` surface explicitly and retains client-side filtering as an
+  older-daemon compatibility guard.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

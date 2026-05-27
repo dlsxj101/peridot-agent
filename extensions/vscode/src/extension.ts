@@ -1895,6 +1895,7 @@ async function fetchSlashCatalog(
   if (workspaceRun?.daemon) {
     const catalog = (await workspaceRun.daemon.send(
       'session.command_catalog',
+      { surface: 'vscode' },
     )) as SlashCommandCatalogResult;
     const skills = await fetchSkillsList(workspaceRun.daemon, output);
     return mergeSlashCatalogAndSkills(catalog, skills);
@@ -1902,7 +1903,9 @@ async function fetchSlashCatalog(
   output.appendLine(`[peridot] slash catalog fetch (spawn) for ${folder}`);
   const daemon = await PeridotDaemon.spawn(folder);
   try {
-    const catalog = (await daemon.send('session.command_catalog')) as SlashCommandCatalogResult;
+    const catalog = (await daemon.send('session.command_catalog', {
+      surface: 'vscode',
+    })) as SlashCommandCatalogResult;
     const skills = await fetchSkillsList(daemon, output);
     return mergeSlashCatalogAndSkills(catalog, skills);
   } finally {

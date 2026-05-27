@@ -11,6 +11,9 @@
 - Slash catalog entries may also carry structured `arg_options`; the
   composer uses those choices before falling back to legacy `arg_hint`
   parsing.
+- The extension now requests `session.command_catalog` with
+  `surface: "vscode"`, so modern daemons filter editor-inapplicable
+  commands before the catalog reaches the webview.
 
 ### Added — compaction snapshot details
 
