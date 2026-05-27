@@ -1615,6 +1615,7 @@ async fn execute_session_command(
             "severity": "info",
             "command": raw_command,
         })),
+        SlashCommand::SkillList => handle_command_skill_list(state, raw_command),
         SlashCommand::Cost => handle_command_cost(state, session_id, raw_command).await,
         SlashCommand::Info => handle_command_info(state, session_id, raw_command).await,
         SlashCommand::PlanShow => handle_command_plan_show(state, session_id, raw_command).await,
@@ -3369,6 +3370,40 @@ fn skill_plan_reminder(skill: &peridot_memory::StoredSkill, args: &str) -> Strin
     }
 }
 
+fn handle_command_skill_list(state: &DaemonState, raw_command: &str) -> Result<Value, String> {
+    let store = peridot_memory::MemoryStore::new(state.project_root.join(".peridot/memory.db"));
+    let mut skills = store
+        .list_skills()
+        .map_err(|err| format!("skills: failed to read skill store: {err}"))?;
+    skills.sort_by(|a, b| a.scope.cmp(&b.scope).then_with(|| a.name.cmp(&b.name)));
+    let rows: Vec<Value> = skills
+        .iter()
+        .map(|skill| {
+            serde_json::json!({
+                "label": format!("/{}", skill.name),
+                "detail": skill_description(skill),
+                "source": "skill",
+                "scope": skill.scope,
+                "last_used_at_unix": skill.last_used_at_unix,
+                "pinned": skill.pinned_at_unix > 0,
+            })
+        })
+        .collect();
+    Ok(serde_json::json!({
+        "kind": "skills",
+        "title": "Skills",
+        "message": if rows.is_empty() {
+            "skills: <none>".to_string()
+        } else {
+            format!("skills: {} active", rows.len())
+        },
+        "severity": "info",
+        "command": raw_command,
+        "total": rows.len(),
+        "items": rows,
+    }))
+}
+
 fn source_label(source: &ContextSource) -> &'static str {
     match source {
         ContextSource::User => "user",
@@ -4963,6 +4998,63 @@ mod tests {
         assert_eq!(skills.len(), 1);
         assert_eq!(skills[0]["name"], "auto-fix-parser");
         assert_eq!(skills[0]["description"], "repair parser tests");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn session_command_skills_returns_active_skill_inventory() {
+        let root = test_project("command-skills");
+        let store = peridot_memory::MemoryStore::new(root.join(".peridot/memory.db"));
+        store
+            .save_skill(&peridot_memory::StoredSkill {
+                name: "auto-fix-parser".into(),
+                body: "repair parser tests".into(),
+                description: "repair parser tests".into(),
+                scope: "auto".into(),
+                last_used_at_unix: 123,
+                ..Default::default()
+            })
+            .unwrap();
+        store
+            .save_skill(&peridot_memory::StoredSkill {
+                name: "review-flow".into(),
+                body: "review checklist".into(),
+                scope: "community".into(),
+                pinned_at_unix: 456,
+                ..Default::default()
+            })
+            .unwrap();
+        let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+        let state = DaemonState::new(
+            root.clone(),
+            PeridotConfig::default(),
+            test_options(None),
+            tx,
+        );
+
+        let _ = dispatch_line(
+            &state,
+            r#"{"jsonrpc":"2.0","id":43,"method":"session.command","params":{"command":"/skills"}}"#,
+        )
+        .await
+        .unwrap();
+
+        let line = rx.try_recv().unwrap();
+        let value: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(value["result"]["kind"], "skills");
+        assert_eq!(value["result"]["total"], 2);
+        let items = value["result"]["items"].as_array().unwrap();
+        assert!(items.iter().any(|item| {
+            item["label"] == "/auto-fix-parser"
+                && item["detail"] == "repair parser tests"
+                && item["scope"] == "auto"
+                && item["last_used_at_unix"] == 123
+        }));
+        assert!(items.iter().any(|item| {
+            item["label"] == "/review-flow"
+                && item["scope"] == "community"
+                && item["pinned"] == true
+        }));
         let _ = std::fs::remove_dir_all(root);
     }
 

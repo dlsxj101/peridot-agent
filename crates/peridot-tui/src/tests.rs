@@ -1781,6 +1781,30 @@ fn tab_autocompletes_dynamic_skill_slash() {
 }
 
 #[test]
+fn skills_slash_queues_skill_inventory_load() {
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+
+    apply_slash_command(&mut state, SlashCommand::SkillList);
+
+    assert_eq!(
+        state.drain_pending_session_commands(),
+        vec![SessionCommandEvent::SkillList]
+    );
+    assert!(
+        state
+            .transcript
+            .last()
+            .unwrap()
+            .text
+            .contains("skills: loading active skill inventory")
+    );
+}
+
+#[test]
 fn slash_picker_selects_finite_argument_options() {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 

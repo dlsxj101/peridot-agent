@@ -1562,6 +1562,9 @@ fn apply_session_command(
         SessionCommandEvent::Skill { name, args } => {
             handle_skill_load(state, project_template, &name, &args);
         }
+        SessionCommandEvent::SkillList => {
+            handle_skill_list(state, project_template);
+        }
         SessionCommandEvent::ContextTop => {
             handle_context_top(state, project_template);
         }
@@ -1938,6 +1941,38 @@ fn handle_skill_load(state: &mut TuiState, project_root: &Path, name: &str, args
         format!(" with args `{}`", args.trim())
     };
     state.push_transcript(format!("Loaded skill `{}`{args_note}", skill.name));
+}
+
+fn handle_skill_list(state: &mut TuiState, project_root: &Path) {
+    let store = MemoryStore::new(project_root.join(".peridot/memory.db"));
+    let mut active = match store.list_skills() {
+        Ok(skills) => skills,
+        Err(err) => {
+            state.push_error(format!("skills: failed to read skill store: {err}"));
+            return;
+        }
+    };
+    active.sort_by(|a, b| a.scope.cmp(&b.scope).then_with(|| a.name.cmp(&b.name)));
+    if active.is_empty() {
+        state.push_transcript("skills: <none>");
+        return;
+    }
+    let mut lines = vec![format!("skills: {} active", active.len())];
+    for skill in active {
+        let pinned = if skill.pinned_at_unix > 0 {
+            " · pinned"
+        } else {
+            ""
+        };
+        lines.push(format!(
+            "  /{}  ·  {} [{}{}]",
+            skill.name,
+            skill_description(&skill),
+            skill.scope,
+            pinned,
+        ));
+    }
+    state.push_transcript(lines.join("\n"));
 }
 
 /// Forks the live session's context at the given turn id by rewriting

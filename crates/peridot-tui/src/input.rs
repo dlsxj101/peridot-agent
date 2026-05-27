@@ -1358,6 +1358,13 @@ pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
             state.push_transcript(format!("skill `{name}`: loading..."));
             state.push_pending_session_command(SessionCommandEvent::Skill { name, args });
         }
+        SlashCommand::SkillList => {
+            state.push_transcript(crate::tr(
+                PhraseKey::NoticeSkillsLoading,
+                state.config.language,
+            ));
+            state.push_pending_session_command(SessionCommandEvent::SkillList);
+        }
     }
 }
 

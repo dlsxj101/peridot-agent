@@ -186,6 +186,12 @@ pub fn slash_command_catalog() -> &'static [SlashCommandSpec] {
             category: "tui",
         },
         SlashCommandSpec {
+            name: "/skills",
+            description: "list active stored skills available as slash commands",
+            arg_hint: Some("[list]"),
+            category: "skill",
+        },
+        SlashCommandSpec {
             name: "/fork",
             description: "spawn a Fork subagent inline (single-turn)",
             arg_hint: Some("<task>"),

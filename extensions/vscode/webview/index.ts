@@ -2469,6 +2469,7 @@ function renderCommandBlock(item: TranscriptItem): HTMLElement {
   if (result?.kind === 'attachments') return renderAttachmentInventoryBlock(item);
   if (result?.kind === 'detach') return renderDetachBlock(item);
   if (result?.kind === 'session_export') return renderSessionExportBlock(item);
+  if (result?.kind === 'skills') return renderSkillsBlock(item);
   const wrap = el('section', `command-block ${result?.severity === 'error' ? 'error' : ''}`);
   const header = el('div', 'command-header');
   header.append(el('span', 'command-title', result?.title ?? result?.kind ?? 'Command'));
@@ -2725,6 +2726,57 @@ function renderSessionExportBlock(item: TranscriptItem): HTMLElement {
     });
     wrap.append(list);
   }
+  return wrap;
+}
+
+function renderSkillsBlock(item: TranscriptItem): HTMLElement {
+  const result = item.commandResult;
+  const skills = Array.isArray(result?.items) ? result.items : [];
+  const wrap = el('section', 'command-block attachment-block');
+  const header = el('div', 'attachment-header');
+  const title = el('div', 'attachment-title');
+  title.append(el('span', 'command-title', result?.title ?? 'Skills'));
+  const chips = el('div', 'attachment-chips');
+  chips.append(el('span', 'command-chip', `${result?.total ?? skills.length} active`));
+  title.append(chips);
+  header.append(title);
+  wrap.append(header);
+  if (result?.message) wrap.append(el('div', 'command-message', result.message));
+  if (skills.length === 0) {
+    wrap.append(el('div', 'attachment-placeholder', 'No active skills in this workspace.'));
+    return wrap;
+  }
+  const list = el('div', 'attachment-list');
+  skills.forEach((skill) => {
+    const row = el('div', 'attachment-inventory-row');
+    const main = el('div', 'attachment-row-main');
+    const top = el('div', 'attachment-path-row');
+    const label = skill.label ?? 'skill';
+    const lastUsed = typeof skill.last_used_at_unix === 'number'
+      ? skill.last_used_at_unix
+      : skill.lastUsedAtUnix;
+    top.append(el('span', 'command-row-label', label));
+    const meta = [
+      skill.scope,
+      skill.pinned ? 'pinned' : '',
+      typeof lastUsed === 'number' && lastUsed > 0
+        ? `used ${lastUsed}`
+        : '',
+    ].filter(Boolean).join(' · ');
+    if (meta) top.append(el('span', 'command-row-meta', meta));
+    main.append(top);
+    if (skill.detail) main.append(el('div', 'command-row-detail', skill.detail));
+    row.append(main);
+    const actions = el('div', 'attachment-actions');
+    const command = String(label);
+    const copy = iconButton('copy', `Copy ${command}`, () => {
+      void markCopied(copy, command);
+    });
+    actions.append(copy);
+    row.append(actions);
+    list.append(row);
+  });
+  wrap.append(list);
   return wrap;
 }
 

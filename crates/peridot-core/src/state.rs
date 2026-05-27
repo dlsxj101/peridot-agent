@@ -48,6 +48,7 @@ impl AgentState {
                 self.goal = Some(goal.clone());
             }
             SlashCommand::Skill { .. }
+            | SlashCommand::SkillList
             | SlashCommand::Plan
             | SlashCommand::Execute
             | SlashCommand::Safe

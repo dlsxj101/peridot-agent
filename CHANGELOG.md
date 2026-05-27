@@ -55,6 +55,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
   walked-file count, preventing removed symbols from lingering.
 - **Codemap indexes now store a source fingerprint** so rapid same-second
   edits and same-file-count content changes also trigger automatic refresh.
+- **Skill inventory is available from shared slash UX** via `/skills` and
+  `/skills list`, with TUI output and structured daemon results for editor
+  clients.
 - **Reflection noise filtering** now drops single-tool repeat n-grams
   before the Curator LLM call and stamps them as handled, so historical
   `file_read|file_read`-style rows do not burn review budget.

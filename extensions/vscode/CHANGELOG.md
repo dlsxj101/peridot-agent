@@ -38,6 +38,8 @@
   symbols do not linger in VS Code code-map results.
 - Source fingerprints now make stale detection robust for rapid same-second
   edits and same-file-count content changes.
+- The composer now supports `/skills` and `/skills list`, rendering active
+  stored skills in a VS Code card with copyable slash invocations.
 - GitHub PR workflow commands are available from VS Code: PR status,
   preview-and-confirm `peridot ship`, and confirm-before-merge
   `gh pr merge`.

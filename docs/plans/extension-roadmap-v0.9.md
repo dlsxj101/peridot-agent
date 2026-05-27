@@ -295,6 +295,19 @@ shared daemon, TUI, and VS Code extension surfaces.
   same-second edits and source-file deletion, while explicit `/codemap
   status` remains a non-mutating check.
 
+### E29. Skill Inventory Slash Parity
+
+- **Status**: landed.
+- **Goal**: make stored skills discoverable from the same shared
+  composer surface that can already invoke `/skill-name`.
+- **Where**: shared slash parser/catalog, TUI host skill inventory
+  handler, daemon `session.command`, VS Code command-result rendering.
+- **Result**: `/skills` and `/skills list` now list active stored skills
+  through the shared slash path. TUI prints the active inventory with
+  scope and pinned markers, daemon clients receive a structured
+  `skills` command result, and VS Code renders a skill inventory card
+  with copyable slash invocations.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

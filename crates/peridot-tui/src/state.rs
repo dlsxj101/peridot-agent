@@ -966,6 +966,8 @@ pub enum SessionCommandEvent {
         /// Free-form trailing args supplied by the operator.
         args: String,
     },
+    /// `/skills` — list active stored skills available to slash invocation.
+    SkillList,
     /// `/context top` — render the largest entries from the persisted
     /// context snapshot so operators can see what is consuming the window.
     ContextTop,

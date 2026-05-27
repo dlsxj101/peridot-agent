@@ -65,10 +65,14 @@ export interface CommandResultItem {
   bytes?: number;
   turn_id?: number;
   source?: string;
+  scope?: string;
   transport?: string;
   media_type?: string;
   mediaType?: string;
   inlined?: boolean;
+  pinned?: boolean;
+  last_used_at_unix?: number;
+  lastUsedAtUnix?: number;
 }
 
 export interface AttachmentView {

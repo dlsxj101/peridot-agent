@@ -23,6 +23,8 @@ pub enum SlashCommand {
         /// --dry` keep their arguments.
         args: String,
     },
+    /// List active stored skills available to slash invocation.
+    SkillList,
     /// Switch to plan mode.
     Plan,
     /// Switch to execute mode.
@@ -375,6 +377,8 @@ pub fn parse_slash_command(input: &str) -> Option<SlashCommand> {
         "yolo" if rest.is_empty() => Some(SlashCommand::Yolo),
         "clear" if rest.is_empty() => Some(SlashCommand::Clear),
         "help" if rest.is_empty() => Some(SlashCommand::Help),
+        "skills" if rest.is_empty() || rest == "list" => Some(SlashCommand::SkillList),
+        "skills" => None,
         "cost" if rest.is_empty() => Some(SlashCommand::Cost),
         "compact" if rest.is_empty() => Some(SlashCommand::Compact),
         "sidepanel" if rest.is_empty() => Some(SlashCommand::SidepanelToggle),
@@ -717,6 +721,19 @@ mod tests {
         // satisfies `looks_like_skill_name`.
         let cmd = parse_slash_command("/help").unwrap();
         assert!(matches!(cmd, SlashCommand::Help));
+    }
+
+    #[test]
+    fn parse_skills_builtin_takes_priority_over_skill_lookup() {
+        assert_eq!(
+            parse_slash_command("/skills"),
+            Some(SlashCommand::SkillList)
+        );
+        assert_eq!(
+            parse_slash_command("/skills list"),
+            Some(SlashCommand::SkillList)
+        );
+        assert_eq!(parse_slash_command("/skills bogus"), None);
     }
 
     #[test]
