@@ -519,6 +519,19 @@ shared daemon, TUI, and VS Code extension surfaces.
   new local session from that daemon result and starts the task when one is
   present, while retaining the old local fallback for older daemons.
 
+### E46. Session List Sidebar Reconcile
+
+- **Status**: landed.
+- **Goal**: make `/session list` update the VS Code session cards from the
+  daemon's authoritative persisted/live session inventory instead of only
+  rendering rows in the transcript.
+- **Where**: VS Code command-result typing and sidebar slash result
+  application.
+- **Result**: VS Code now accepts the `sessions` array returned by
+  daemon-backed `/session list` and reconciles the sidebar's local session
+  cards from it. The command still renders the structured transcript rows,
+  while the session switcher/menu immediately reflects daemon state.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

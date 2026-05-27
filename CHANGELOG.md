@@ -38,6 +38,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **Daemon-backed `/session new [task]` intent** now lets VS Code apply a
   structured `session_new` result instead of locally re-parsing the slash
   command after daemon parsing.
+- **VS Code `/session list` reconciliation** now applies daemon returned
+  session rows to the sidebar's local session cards as well as rendering
+  the command result.
 
 ### Added — skill-aware slash autocomplete
 

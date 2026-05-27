@@ -1409,6 +1409,10 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
   }
 
   private applySessionMutationResult(result: CommandResultView): void {
+    if (result.kind === 'session_list') {
+      this.reconcileDaemonSessions(Array.isArray(result.sessions) ? result.sessions : []);
+      return;
+    }
     if (result.kind === 'session_new') {
       this.createNewSession(this.state.context.workspace);
       return;

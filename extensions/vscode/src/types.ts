@@ -171,6 +171,7 @@ export interface CommandResultView {
   budget_limit_usd?: number | null;
   budget_pct?: number | null;
   steps?: PlanStepView[];
+  sessions?: DaemonSessionSummary[];
   current?: number | null;
   done?: number;
   restored_prompt?: string;

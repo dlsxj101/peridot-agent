@@ -24,6 +24,9 @@
 - `/session new [task]` now applies the daemon's structured
   `session_new` result, so the extension no longer has to re-parse that
   slash command on modern daemons.
+- `/session list` now reconciles the sidebar's session cards from the
+  daemon's returned session inventory in addition to rendering the
+  transcript result.
 
 ### Added — compaction snapshot details
 
