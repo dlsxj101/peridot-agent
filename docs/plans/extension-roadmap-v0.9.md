@@ -557,6 +557,19 @@ shared daemon, TUI, and VS Code extension surfaces.
   routes the command through the daemon instead of special-casing it
   locally.
 
+### E49. Session Switch Metadata Reconcile
+
+- **Status**: landed.
+- **Goal**: make `/session switch <id|title>` carry the same persisted
+  session metadata that `/session list` and `/session save` already expose
+  so editor clients do not need a follow-up list call after switching.
+- **Where**: daemon `session.command`, VS Code sidebar slash result
+  application.
+- **Result**: daemon-backed `session_switch` results now include summary,
+  updated timestamp, total tokens, total cost, and turn count when known.
+  VS Code feeds that switch result through the same sidebar reconciliation
+  path as list/save before selecting the target session card.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

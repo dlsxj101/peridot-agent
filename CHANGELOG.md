@@ -47,6 +47,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **Bare `/goal` slash parity** now routes goal-mode switching through
   the shared parser, TUI state delta, and daemon `session.command` result
   path instead of requiring a VS Code-local special case.
+- **VS Code `/session switch` reconciliation** now applies persisted
+  usage metadata from the daemon switch result before selecting the
+  target sidebar session.
 
 ### Added — skill-aware slash autocomplete
 

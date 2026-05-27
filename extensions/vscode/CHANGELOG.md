@@ -33,6 +33,8 @@
 - Bare `/goal` now routes through daemon `session.command` like `/plan`
   and `/execute`, applying the shared goal-mode state delta instead of a
   VS Code-local parser branch.
+- `/session switch` now reconciles the selected sidebar session from the
+  daemon result, including persisted usage metadata when present.
 
 ### Added — compaction snapshot details
 
