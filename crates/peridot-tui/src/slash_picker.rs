@@ -260,7 +260,7 @@ pub fn slash_command_catalog() -> &'static [SlashCommandSpec] {
         SlashCommandSpec {
             name: "/codemap",
             description: "show workspace public symbols and TODO markers",
-            arg_hint: None,
+            arg_hint: Some("[refresh]"),
             category: "plan",
         },
         SlashCommandSpec {

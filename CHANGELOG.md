@@ -58,6 +58,10 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
   picker. Workspace-local UTF-8 files are inlined into the current
   session context, while image files use a metadata placeholder until
   provider-level multimodal input lands.
+- **Persistent code map index** stores `/codemap` results in
+  `.peridot/codemap.json`, reuses the index on later views, and adds
+  `/codemap refresh` plus `Peridot: Refresh Workspace Code Map Index`
+  for explicit rescans.
 
 ### Changed — TUI borderless transcript
 

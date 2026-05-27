@@ -1591,7 +1591,8 @@ async fn execute_session_command(
         SlashCommand::Diff => handle_command_diff(state, raw_command),
         SlashCommand::Undo => handle_command_undo(state, raw_command),
         SlashCommand::Todos => handle_command_todos(state, raw_command),
-        SlashCommand::CodeMap => handle_command_codemap(state, raw_command),
+        SlashCommand::CodeMap => handle_command_codemap(state, raw_command, false),
+        SlashCommand::CodeMapRefresh => handle_command_codemap(state, raw_command, true),
         SlashCommand::Attach(path) => handle_command_attach(state, session_id, raw_command, &path),
         SlashCommand::McpList => handle_command_mcp_list(state, raw_command),
         SlashCommand::McpAdd {
@@ -2390,8 +2391,18 @@ fn handle_command_todos(state: &DaemonState, raw_command: &str) -> Result<Value,
     }))
 }
 
-fn handle_command_codemap(state: &DaemonState, raw_command: &str) -> Result<Value, String> {
-    let report = crate::commands::build_code_map(state.project_root.as_ref(), 120, 80);
+fn handle_command_codemap(
+    state: &DaemonState,
+    raw_command: &str,
+    refresh: bool,
+) -> Result<Value, String> {
+    let index = if refresh {
+        crate::commands::refresh_code_map_index(state.project_root.as_ref(), 120, 80)
+    } else {
+        crate::commands::load_or_refresh_code_map_index(state.project_root.as_ref(), 120, 80)
+    }
+    .map_err(|err| format!("codemap: failed to load index: {err}"))?;
+    let report = &index.report;
     let mut items = Vec::new();
     for symbol in report.symbols.iter().take(80) {
         items.push(serde_json::json!({
@@ -2419,10 +2430,11 @@ fn handle_command_codemap(state: &DaemonState, raw_command: &str) -> Result<Valu
         "kind": "codemap",
         "title": "Workspace Code Map",
         "message": format!(
-            "codemap: {} symbol(s), {} TODO marker(s) across {} file(s)",
+            "codemap: {} symbol(s), {} TODO marker(s) across {} file(s) (indexed at {})",
             report.symbols.len(),
             report.todos.len(),
             report.walked_files,
+            index.generated_at_unix,
         ),
         "severity": "info",
         "command": raw_command,
@@ -2430,6 +2442,8 @@ fn handle_command_codemap(state: &DaemonState, raw_command: &str) -> Result<Valu
         "symbol_count": report.symbols.len(),
         "todo_count": report.todos.len(),
         "walked_files": report.walked_files,
+        "generated_at_unix": index.generated_at_unix,
+        "refreshed": refresh,
         "truncated": truncated,
     }))
 }
@@ -3784,6 +3798,8 @@ mod tests {
         assert_eq!(response["result"]["kind"], "codemap");
         assert_eq!(response["result"]["symbol_count"], 1);
         assert_eq!(response["result"]["todo_count"], 1);
+        assert_eq!(response["result"]["refreshed"], false);
+        assert!(root.join(".peridot/codemap.json").is_file());
         assert!(
             response["result"]["items"]
                 .as_array()
@@ -3799,6 +3815,19 @@ mod tests {
                 .any(|item| item["source"] == "todo"
                     && item["detail"].as_str().unwrap().contains("TODO"))
         );
+
+        let refresh_line = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 43,
+            "method": "session.command",
+            "params": { "command": "/codemap refresh" }
+        })
+        .to_string();
+        let _ = dispatch_line(&state, &refresh_line).await.unwrap();
+        let refresh_response: Value = serde_json::from_str(&rx.recv().await.unwrap()).unwrap();
+        assert_eq!(refresh_response["id"], 43);
+        assert_eq!(refresh_response["result"]["kind"], "codemap");
+        assert_eq!(refresh_response["result"]["refreshed"], true);
 
         shutdown_sessions(&state).await;
         let _ = std::fs::remove_dir_all(root);

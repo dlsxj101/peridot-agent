@@ -161,6 +161,12 @@
         "icon": "$(symbol-misc)"
       },
       {
+        "command": "peridot.refreshCodeMap",
+        "title": "Peridot: Refresh Workspace Code Map Index",
+        "category": "Peridot",
+        "icon": "$(sync)"
+      },
+      {
         "command": "peridot.attachFile",
         "title": "Peridot: Attach File to Session",
         "category": "Peridot",
@@ -204,24 +210,29 @@
           "group": "navigation@2"
         },
         {
-          "command": "peridot.attachFile",
+          "command": "peridot.refreshCodeMap",
           "when": "view == peridot.chatView",
           "group": "navigation@3"
         },
         {
-          "command": "peridot.prStatus",
+          "command": "peridot.attachFile",
           "when": "view == peridot.chatView",
           "group": "navigation@4"
         },
         {
-          "command": "peridot.shipChanges",
+          "command": "peridot.prStatus",
           "when": "view == peridot.chatView",
           "group": "navigation@5"
         },
         {
-          "command": "peridot.mergePr",
+          "command": "peridot.shipChanges",
           "when": "view == peridot.chatView",
           "group": "navigation@6"
+        },
+        {
+          "command": "peridot.mergePr",
+          "when": "view == peridot.chatView",
+          "group": "navigation@7"
         }
       ]
     },

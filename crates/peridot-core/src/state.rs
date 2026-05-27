@@ -90,6 +90,7 @@ impl AgentState {
             | SlashCommand::McpTest(_)
             | SlashCommand::Todos
             | SlashCommand::CodeMap
+            | SlashCommand::CodeMapRefresh
             | SlashCommand::Attach(_)
             | SlashCommand::Rewind
             | SlashCommand::BranchSave(_)

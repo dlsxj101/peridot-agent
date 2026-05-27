@@ -87,6 +87,8 @@ export interface CommandResultView {
   symbol_count?: number;
   todo_count?: number;
   walked_files?: number;
+  generated_at_unix?: number;
+  refreshed?: boolean;
   truncated?: boolean;
   state_delta?: SlashStateDeltaView;
   stateDelta?: SlashStateDeltaView;

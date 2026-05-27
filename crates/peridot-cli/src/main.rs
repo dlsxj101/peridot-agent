@@ -1466,7 +1466,10 @@ fn apply_session_command(
             handle_scan_todos(state, project_template);
         }
         SessionCommandEvent::CodeMap => {
-            handle_code_map(state, project_template);
+            handle_code_map(state, project_template, false);
+        }
+        SessionCommandEvent::CodeMapRefresh => {
+            handle_code_map(state, project_template, true);
         }
         SessionCommandEvent::Attach(path) => {
             handle_attach(state, project_template, &path);
@@ -2213,8 +2216,17 @@ fn handle_scan_todos(state: &mut TuiState, project_root: &Path) {
     state.push_transcript(body);
 }
 
-fn handle_code_map(state: &mut TuiState, project_root: &Path) {
-    let report = commands::build_code_map(project_root, 120, 80);
+fn handle_code_map(state: &mut TuiState, project_root: &Path, refresh: bool) {
+    let index = if refresh {
+        commands::refresh_code_map_index(project_root, 120, 80)
+    } else {
+        commands::load_or_refresh_code_map_index(project_root, 120, 80)
+    };
+    let Ok(index) = index else {
+        state.push_error("codemap: failed to load workspace code map index");
+        return;
+    };
+    let report = &index.report;
     if report.symbols.is_empty() && report.todos.is_empty() {
         state.push_transcript(format!(
             "codemap: no symbols or TODO markers found (scanned {} file(s))",
@@ -2222,7 +2234,7 @@ fn handle_code_map(state: &mut TuiState, project_root: &Path) {
         ));
         return;
     }
-    state.push_transcript(render_code_map_text(&report));
+    state.push_transcript(render_code_map_text(&index));
 }
 
 fn handle_attach(state: &mut TuiState, project_root: &Path, path: &str) {
@@ -2247,12 +2259,14 @@ fn handle_attach(state: &mut TuiState, project_root: &Path, path: &str) {
     }
 }
 
-fn render_code_map_text(report: &commands::CodeMapReport) -> String {
+fn render_code_map_text(index: &commands::CodeMapIndex) -> String {
+    let report = &index.report;
     let mut body = format!(
-        "codemap: {} symbol(s), {} TODO marker(s) across {} file(s)",
+        "codemap: {} symbol(s), {} TODO marker(s) across {} file(s) (indexed at {})",
         report.symbols.len(),
         report.todos.len(),
         report.walked_files,
+        index.generated_at_unix,
     );
     if !report.symbols.is_empty() {
         body.push_str("\n\nSymbols:");

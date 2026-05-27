@@ -14,7 +14,14 @@ const SKIP_DIRS: &[&str] = &[
 ];
 const TODO_MARKERS: &[&str] = &["TODO", "FIXME", "HACK", "XXX", "BUG"];
 
-#[derive(Clone, Debug, serde::Serialize)]
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+pub(crate) struct CodeMapIndex {
+    pub version: u32,
+    pub generated_at_unix: u64,
+    pub report: CodeMapReport,
+}
+
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
 pub(crate) struct CodeMapReport {
     pub walked_files: usize,
     pub symbols: Vec<CodeMapSymbol>,
@@ -23,7 +30,7 @@ pub(crate) struct CodeMapReport {
     pub todos_truncated: bool,
 }
 
-#[derive(Clone, Debug, serde::Serialize)]
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
 pub(crate) struct CodeMapSymbol {
     pub path: String,
     pub line: usize,
@@ -32,7 +39,7 @@ pub(crate) struct CodeMapSymbol {
     pub signature: String,
 }
 
-#[derive(Clone, Debug, serde::Serialize)]
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
 pub(crate) struct CodeMapTodo {
     pub path: String,
     pub line: usize,
@@ -60,6 +67,56 @@ pub(crate) fn build_code_map(
         &mut report,
     );
     report
+}
+
+pub(crate) fn refresh_code_map_index(
+    project_root: &Path,
+    max_symbols: usize,
+    max_todos: usize,
+) -> Result<CodeMapIndex> {
+    let index = CodeMapIndex {
+        version: 1,
+        generated_at_unix: unix_seconds(),
+        report: build_code_map(project_root, max_symbols, max_todos),
+    };
+    write_code_map_index(project_root, &index)?;
+    Ok(index)
+}
+
+pub(crate) fn load_code_map_index(project_root: &Path) -> Result<Option<CodeMapIndex>> {
+    let path = code_map_index_path(project_root);
+    if !path.exists() {
+        return Ok(None);
+    }
+    let bytes = fs::read(&path).with_context(|| format!("failed to read {}", path.display()))?;
+    let index = serde_json::from_slice(&bytes)
+        .with_context(|| format!("failed to parse {}", path.display()))?;
+    Ok(Some(index))
+}
+
+pub(crate) fn load_or_refresh_code_map_index(
+    project_root: &Path,
+    max_symbols: usize,
+    max_todos: usize,
+) -> Result<CodeMapIndex> {
+    if let Some(index) = load_code_map_index(project_root)? {
+        return Ok(index);
+    }
+    refresh_code_map_index(project_root, max_symbols, max_todos)
+}
+
+pub(crate) fn code_map_index_path(project_root: &Path) -> PathBuf {
+    project_root.join(".peridot").join("codemap.json")
+}
+
+fn write_code_map_index(project_root: &Path, index: &CodeMapIndex) -> Result<()> {
+    let path = code_map_index_path(project_root);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+    let bytes = serde_json::to_vec_pretty(index).context("failed to serialize code map index")?;
+    fs::write(&path, bytes).with_context(|| format!("failed to write {}", path.display()))
 }
 
 fn walk_code_map(
@@ -266,4 +323,60 @@ fn symbol_name(rest: &str) -> String {
         .unwrap_or("<anonymous>")
         .trim_matches('&')
         .to_string()
+}
+
+fn unix_seconds() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn refresh_writes_and_loads_code_map_index() {
+        let root = temp_project("index");
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(
+            root.join("src/lib.rs"),
+            "pub fn indexed() {}\n// TODO: wire search\n",
+        )
+        .unwrap();
+
+        let index = refresh_code_map_index(&root, 100, 100).unwrap();
+        assert_eq!(index.version, 1);
+        assert!(code_map_index_path(&root).is_file());
+        assert!(
+            index
+                .report
+                .symbols
+                .iter()
+                .any(|symbol| symbol.name == "indexed")
+        );
+        assert!(
+            index
+                .report
+                .todos
+                .iter()
+                .any(|todo| todo.text.contains("TODO"))
+        );
+
+        let loaded = load_code_map_index(&root).unwrap().unwrap();
+        assert_eq!(loaded.report.symbols[0].name, "indexed");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    fn temp_project(name: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "peridot-codemap-{name}-{}-{}",
+            std::process::id(),
+            unix_seconds()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        root
+    }
 }

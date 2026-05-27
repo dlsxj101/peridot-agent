@@ -905,6 +905,8 @@ pub enum SessionCommandEvent {
     ScanTodos,
     /// `/codemap` — scan source files for public symbols and TODO markers.
     CodeMap,
+    /// `/codemap refresh` — rebuild the persisted code map index.
+    CodeMapRefresh,
     /// `/attach <path>` — read a workspace file into the active session
     /// context as an operator-provided attachment.
     Attach(String),

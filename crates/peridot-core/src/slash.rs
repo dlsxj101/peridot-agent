@@ -137,6 +137,8 @@ pub enum SlashCommand {
     Todos,
     /// Show a lightweight workspace code map: public symbols plus TODO markers.
     CodeMap,
+    /// Rebuild the persisted workspace code map index.
+    CodeMapRefresh,
     /// Pop the last user-agent exchange off the visible transcript and
     /// reload the user's previous prompt into the input buffer so the
     /// operator can edit and re-submit. Context is NOT rolled back — the
@@ -455,6 +457,7 @@ pub fn parse_slash_command(input: &str) -> Option<SlashCommand> {
         },
         "todos" if rest.is_empty() => Some(SlashCommand::Todos),
         "codemap" if rest.is_empty() => Some(SlashCommand::CodeMap),
+        "codemap" if rest == "refresh" => Some(SlashCommand::CodeMapRefresh),
         "codemap" => None,
         "rewind" if rest.is_empty() => Some(SlashCommand::Rewind),
         "branch" => match rest {
@@ -617,6 +620,10 @@ mod tests {
     #[test]
     fn parses_codemap_builtin() {
         assert_eq!(parse_slash_command("/codemap"), Some(SlashCommand::CodeMap));
+        assert_eq!(
+            parse_slash_command("/codemap refresh"),
+            Some(SlashCommand::CodeMapRefresh)
+        );
         assert_eq!(parse_slash_command("/codemap src"), None);
     }
 

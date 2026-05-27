@@ -110,7 +110,7 @@ export function activate(context: vscode.ExtensionContext) {
     clearSession: async (): Promise<void> => clearExtensionSession(output, sidebar),
     loginOpenAi: async (): Promise<void> => loginOpenAi(output, sidebar),
     refreshStatus: async (): Promise<void> => refreshStatus(output, sidebar, { force: true }),
-    showCodeMap: async (): Promise<void> => showWorkspaceCodeMap(output, sidebar),
+    showCodeMap: async (): Promise<void> => showWorkspaceCodeMap(output, sidebar, false),
     attachFile: async (): Promise<void> => attachFileToSession(output, sidebar),
     showPrStatus: async (): Promise<void> => showGitHubPrStatus(output, sidebar),
     shipChanges: async (): Promise<void> => shipChangesToPr(output, sidebar),
@@ -230,7 +230,13 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(
     vscode.commands.registerCommand('peridot.showCodeMap', async () => {
-      await showWorkspaceCodeMap(output, sidebar);
+      await showWorkspaceCodeMap(output, sidebar, false);
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('peridot.refreshCodeMap', async () => {
+      await showWorkspaceCodeMap(output, sidebar, true);
     }),
   );
 
@@ -553,6 +559,7 @@ async function runSlashCommand(
 async function showWorkspaceCodeMap(
   output: vscode.OutputChannel,
   sidebar: PeridotSidebarProvider,
+  refresh: boolean,
 ): Promise<void> {
   const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   if (!folder) {
@@ -566,9 +573,17 @@ async function showWorkspaceCodeMap(
     const result = await vscode.window.withProgress(
       {
         location: vscode.ProgressLocation.Window,
-        title: 'Peridot: scanning workspace code map',
+        title: refresh
+          ? 'Peridot: refreshing workspace code map index'
+          : 'Peridot: loading workspace code map',
       },
-      async () => runSlashCommand('/codemap', output, sidebar, sidebar.currentRunOptions()),
+      async () =>
+        runSlashCommand(
+          refresh ? '/codemap refresh' : '/codemap',
+          output,
+          sidebar,
+          sidebar.currentRunOptions(),
+        ),
     );
     sidebar.appendCommandResult(result);
   } catch (err) {

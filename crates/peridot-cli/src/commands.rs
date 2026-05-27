@@ -55,7 +55,10 @@ pub(crate) use auth::{
     read_stored_api_key, read_stored_openai_oauth_credentials, run_env_command, run_login_command,
     run_logout_command,
 };
-pub(crate) use codemap::{CodeMapReport, build_code_map};
+pub(crate) use codemap::{
+    CodeMapIndex, CodeMapReport, build_code_map, load_or_refresh_code_map_index,
+    refresh_code_map_index,
+};
 use config::init_project_config_value;
 pub(crate) use config::{
     load_effective_config, maybe_run_first_launch_wizard, run_config_command, set_config_key,

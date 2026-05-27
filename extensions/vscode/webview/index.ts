@@ -2510,6 +2510,9 @@ function renderCodeMapBlock(item: TranscriptItem): HTMLElement {
   if (typeof result?.walked_files === 'number') {
     chips.append(el('span', 'command-chip', `${result.walked_files} files`));
   }
+  if (typeof result?.generated_at_unix === 'number') {
+    chips.append(el('span', 'command-chip', result.refreshed ? 'refreshed' : 'cached'));
+  }
   title.append(chips);
   header.append(title);
   wrap.append(header);
