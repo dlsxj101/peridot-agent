@@ -1570,6 +1570,12 @@ fn cross_crate_events_update_side_panel_state() {
     assert!(snapshot.contains("- docs/notes.md"));
     assert!(snapshot.contains("- src/main.rs"));
 
+    state.set_note_summary(3, Some("latest operator note".to_string()));
+    let snapshot = render_text_snapshot(&state);
+    assert!(snapshot.contains("Notes"));
+    assert!(snapshot.contains("3 notes"));
+    assert!(snapshot.contains("latest: latest operator note"));
+
     state.side_panel.code_map = Some(CodeMapSummary {
         index_exists: true,
         stale: false,
@@ -3560,6 +3566,11 @@ fn note_slash_queues_pending_note_and_records_transcript() {
     assert_eq!(
         drained,
         vec!["kickoff observed for the migration".to_string()]
+    );
+    assert_eq!(state.note_summary.count, 1);
+    assert_eq!(
+        state.note_summary.latest.as_deref(),
+        Some("kickoff observed for the migration")
     );
     assert!(
         state

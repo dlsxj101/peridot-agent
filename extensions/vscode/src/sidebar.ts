@@ -12,6 +12,7 @@ import {
   HudState,
   InboundMessage,
   InlineImageAttachmentPayload,
+  NoteSummary,
   OutboundMessage,
   PlanSlice,
   PlanStepView,
@@ -40,6 +41,7 @@ import { agentsSummaryForLoadedEvent, mcpServersForStatusEvent } from './agentEv
 import { attachmentPathsFromCommandResult, normalizeAttachmentPaths } from './attachmentContext';
 import { codeMapFromCommandResult } from './codeMapContext';
 import { mcpConfigChangingSlashCommand, mcpServersFromCommandResult } from './mcpCommand';
+import { normalizeNoteSummary, noteSummaryFromCommandResult } from './noteContext';
 
 export type {
   ApprovalResponse,
@@ -139,6 +141,7 @@ interface StoredChatSession {
   runStartedAtMs?: number;
   lastRunElapsedMs?: number;
   attachmentPaths?: string[];
+  noteSummary?: NoteSummary;
   /**
    * True once the user has manually renamed this session (via the
    * session-menu rename action or `/session rename`). The async LLM
@@ -588,6 +591,13 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       this.state.context = {
         ...this.state.context,
         attachmentPaths,
+      };
+    }
+    const noteSummary = noteSummaryFromCommandResult(result, this.state.context.noteSummary);
+    if (noteSummary) {
+      this.state.context = {
+        ...this.state.context,
+        noteSummary,
       };
     }
     this.append({
@@ -1768,6 +1778,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       runStartedAtMs: undefined,
       lastRunElapsedMs: undefined,
       attachmentPaths: [],
+      noteSummary: undefined,
     };
     this.nextSessionOrdinal += 1;
     this.sessions.set(id, session);
@@ -1789,6 +1800,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
     session.runStartedAtMs = this.state.runStartedAtMs;
     session.lastRunElapsedMs = this.state.lastRunElapsedMs;
     session.attachmentPaths = normalizeAttachmentPaths(this.state.context.attachmentPaths);
+    session.noteSummary = normalizeNoteSummary(this.state.context.noteSummary);
   }
 
   private restorePersistedState(): void {
@@ -1809,6 +1821,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         runStartedAtMs: undefined,
         lastRunElapsedMs: raw.lastRunElapsedMs,
         attachmentPaths: normalizeAttachmentPaths(raw.attachmentPaths),
+        noteSummary: normalizeNoteSummary(raw.noteSummary),
       };
       this.sessions.set(session.id, session);
     }
@@ -1824,6 +1837,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         running: false,
         problem: undefined,
         attachmentPaths: [],
+        noteSummary: undefined,
       },
       queue: Array.isArray(snapshot.queue) ? snapshot.queue : [],
       runOptions: snapshot.runOptions ?? freshState().runOptions,
@@ -1853,6 +1867,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         status: this.state.running ? 'Idle' : this.state.status,
         running: false,
         attachmentPaths: [],
+        noteSummary: undefined,
       },
       view: this.state.view,
       landing: this.state.landing,
@@ -1887,6 +1902,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       reasoningEffort: session.runOptions.reasoningEffort,
       serviceTier: session.runOptions.serviceTier,
       attachmentPaths: normalizeAttachmentPaths(session.attachmentPaths),
+      noteSummary: normalizeNoteSummary(session.noteSummary),
     };
     this.state.view = 'session';
     if (publish) this.publish();
@@ -1915,6 +1931,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       reasoningEffort: undefined,
       serviceTier: undefined,
       attachmentPaths: [],
+      noteSummary: undefined,
     };
     this.state.view = 'session';
   }
@@ -1945,6 +1962,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       status: 'Idle',
       running: false,
       attachmentPaths: [],
+      noteSummary: undefined,
     };
     const session = this.activeStoredSession();
     if (session) {
@@ -1957,6 +1975,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       session.runStartedAtMs = undefined;
       session.lastRunElapsedMs = undefined;
       session.attachmentPaths = [];
+      session.noteSummary = undefined;
     }
     this.publish();
   }

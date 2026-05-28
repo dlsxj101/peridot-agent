@@ -146,6 +146,8 @@ export interface CommandResultView {
   lastUsedAtUnix?: number;
   diff?: string;
   items?: CommandResultItem[];
+  note?: CommandResultItem;
+  notes?: CommandResultItem[];
   attachment?: AttachmentView;
   attachments?: AttachmentView[];
   artifacts?: ExportedArtifactView[];
@@ -301,6 +303,7 @@ export interface SidebarContext {
   agents?: AgentsSummary;
   mcpServers?: McpServerSummary[];
   codeMap?: CodeMapSummary;
+  noteSummary?: NoteSummary;
   modelSuggestions?: string[];
   branchSnapshots?: string[];
   workspaceFiles?: string[];
@@ -330,6 +333,11 @@ export interface CodeMapSummary {
   newestSourceMtimeUnix?: number;
   refreshed?: boolean;
   reason?: string;
+}
+
+export interface NoteSummary {
+  count: number;
+  latest?: string;
 }
 
 export interface UsageSlice {

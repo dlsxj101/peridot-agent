@@ -42,6 +42,7 @@ import { runMetricChips } from './runMetrics';
 import { riskChipView } from './riskChip';
 import { codeMapContextPill } from './codeMapContext';
 import { mcpContextPill } from './mcpContext';
+import { noteContextPill } from './noteContext';
 import { el, formatTokens, highlightLite, isRecord, json } from './util';
 
 declare function acquireVsCodeApi(): {
@@ -1201,6 +1202,12 @@ function renderContextStrip(context: SidebarContext): HTMLElement {
   if (attachmentPill) {
     const element = pill(attachmentPill.label, attachmentPill.tone);
     element.title = attachmentPill.title;
+    pills.append(element);
+  }
+  const notePill = noteContextPill(context.noteSummary);
+  if (notePill) {
+    const element = pill(notePill.label, notePill.tone);
+    element.title = notePill.title;
     pills.append(element);
   }
   if (context.serviceTier && context.serviceTier !== 'standard') {

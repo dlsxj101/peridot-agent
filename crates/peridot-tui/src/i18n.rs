@@ -59,6 +59,12 @@ pub enum PhraseKey {
     AttachmentFilesAttached,
     /// TUI side-panel attachment overflow suffix.
     AttachmentMore,
+    /// TUI side-panel notes block title.
+    NotesPanelTitle,
+    /// TUI side-panel notes count suffix.
+    NotesCountSuffix,
+    /// TUI side-panel latest note label.
+    NotesLatestLabel,
 }
 
 /// Looks up the rendered phrase for `key` in `locale`.
@@ -112,6 +118,12 @@ pub fn tr(key: PhraseKey, locale: Locale) -> &'static str {
         (PhraseKey::AttachmentFilesAttached, Locale::Ko) => "개 파일 첨부됨",
         (PhraseKey::AttachmentMore, Locale::En) => "more",
         (PhraseKey::AttachmentMore, Locale::Ko) => "개 더 있음",
+        (PhraseKey::NotesPanelTitle, Locale::En) => "Notes",
+        (PhraseKey::NotesPanelTitle, Locale::Ko) => "노트",
+        (PhraseKey::NotesCountSuffix, Locale::En) => "notes",
+        (PhraseKey::NotesCountSuffix, Locale::Ko) => "개 노트",
+        (PhraseKey::NotesLatestLabel, Locale::En) => "latest",
+        (PhraseKey::NotesLatestLabel, Locale::Ko) => "최근",
     }
 }
 

@@ -126,6 +126,8 @@
   the code-map pill can appear before the user runs a codemap command.
 - The sidebar context strip now shows a session attachment count from the
   session-local attachment cache, with the attached paths in the tooltip.
+- The sidebar context strip now shows a session note count from `/note`,
+  `/notes`, and `/notes clear` results, with the latest note in the tooltip.
 - Image attachments now render bounded inline previews in the VS Code/Cursor
   attachment cards while keeping the daemon/model context as the existing
   placeholder metadata.

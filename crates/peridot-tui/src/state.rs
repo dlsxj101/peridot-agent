@@ -177,6 +177,16 @@ pub struct CodeMapSummary {
     pub refreshed: bool,
 }
 
+/// Operator-note summary shown in the side panel.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct NoteSummary {
+    /// Number of notes known for the active session.
+    pub count: usize,
+    /// Most recent note text, when known.
+    #[serde(default)]
+    pub latest: Option<String>,
+}
+
 /// Budget and turn guardrail gauge shown in the side panel.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct BudgetGauge {
@@ -879,6 +889,9 @@ pub struct TuiState {
     /// `/detach <path>` before the operator reloads the inventory.
     #[serde(default)]
     pub attachment_paths: Vec<String>,
+    /// Operator-note summary for the active session.
+    #[serde(default)]
+    pub note_summary: NoteSummary,
     /// Whether the auto-fix loop is enabled for this session.
     #[serde(default)]
     pub auto_fix_enabled: bool,
@@ -1200,6 +1213,7 @@ impl TuiState {
             current_session_id: String::new(),
             pending_session_commands: Vec::new(),
             pending_notes: Vec::new(),
+            note_summary: NoteSummary::default(),
             committee_mode: peridot_common::CommitteeMode::Off,
             committee_planner_cost: 0.0,
             committee_planner_tokens: 0,
@@ -1367,7 +1381,29 @@ impl TuiState {
     /// Queues a free-form note that the host loop will append to the current
     /// session's `notes.ndjson` on the next tick.
     pub fn push_pending_note(&mut self, text: String) {
+        let text = text.trim().to_string();
+        if text.is_empty() {
+            return;
+        }
+        self.note_summary.count = self.note_summary.count.saturating_add(1);
+        self.note_summary.latest = Some(text.clone());
         self.pending_notes.push(text);
+    }
+
+    /// Replaces the active-session note summary.
+    pub fn set_note_summary(&mut self, count: usize, latest: Option<String>) {
+        self.note_summary = NoteSummary {
+            count,
+            latest: latest.and_then(|value| {
+                let value = value.trim().to_string();
+                if value.is_empty() { None } else { Some(value) }
+            }),
+        };
+    }
+
+    /// Clears the active-session note summary.
+    pub fn clear_note_summary(&mut self) {
+        self.note_summary = NoteSummary::default();
     }
 
     /// Removes and returns every queued note in FIFO order.

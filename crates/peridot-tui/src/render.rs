@@ -384,6 +384,29 @@ fn render_attachment_block(state: &TuiState) -> String {
     format!("{}\n\n", lines.join("\n"))
 }
 
+fn render_notes_block(state: &TuiState) -> String {
+    if state.note_summary.count == 0 {
+        return String::new();
+    }
+    let locale = state.config.language;
+    let mut lines = vec![
+        tr(PhraseKey::NotesPanelTitle, locale).to_string(),
+        format!(
+            "{} {}",
+            state.note_summary.count,
+            tr(PhraseKey::NotesCountSuffix, locale)
+        ),
+    ];
+    if let Some(latest) = state.note_summary.latest.as_deref() {
+        lines.push(format!(
+            "{}: {}",
+            tr(PhraseKey::NotesLatestLabel, locale),
+            truncate_display_width(latest, 42)
+        ));
+    }
+    format!("{}\n\n", lines.join("\n"))
+}
+
 /// Renders the side-panel Goal block as plain text (joined later into the
 /// side panel string). When no goal is active the block collapses to an
 /// empty string so the panel doesn't carry a "Goal" header for nothing.
@@ -1387,6 +1410,9 @@ pub fn render_text_snapshot(state: &TuiState) -> String {
         if !state.attachment_paths.is_empty() {
             let _ = write!(output, "{}", render_attachment_block(state));
         }
+        if state.note_summary.count > 0 {
+            let _ = write!(output, "{}", render_notes_block(state));
+        }
         if state.side_panel.code_map.is_some() {
             let _ = write!(output, "{}", render_code_map_block(state));
         }
@@ -1824,11 +1850,12 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
         };
         let mcp_block = render_mcp_block(state);
         let attachment_block = render_attachment_block(state);
+        let notes_block = render_notes_block(state);
         let code_map_block = render_code_map_block(state);
         let committee_block = render_committee_block(state);
         let request_context_block = render_request_context_block(state);
         let side = format!(
-            "{goal}Plan {done}/{}\n{}\n\nSession\n{session_id_line}agent: {}\nsteps: {}\nerrors: {}\nelapsed: {}s\n\n{}{}{}{}{}{}",
+            "{goal}Plan {done}/{}\n{}\n\nSession\n{session_id_line}agent: {}\nsteps: {}\nerrors: {}\nelapsed: {}s\n\n{}{}{}{}{}{}{}",
             state.side_panel.plan.len(),
             plan,
             agent_run_status_label(&state.agent_run_status),
@@ -1838,6 +1865,7 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
             request_context_block,
             mcp_block,
             attachment_block,
+            notes_block,
             code_map_block,
             committee_block,
             render_subagent_monitor(&state.subagents),

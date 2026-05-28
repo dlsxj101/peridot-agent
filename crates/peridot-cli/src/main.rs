@@ -2321,6 +2321,11 @@ fn handle_notes_list(state: &mut TuiState, project_root: &Path, last: Option<usi
             return;
         }
     };
+    let latest = notes
+        .last()
+        .and_then(|note| note["text"].as_str())
+        .map(ToString::to_string);
+    state.set_note_summary(total, latest);
     if notes.is_empty() {
         state.push_transcript(format!("notes: none for {session_id}"));
         return;
@@ -2345,8 +2350,14 @@ fn handle_notes_clear(state: &mut TuiState, project_root: &Path) {
         return;
     }
     match commands::clear_session_notes(project_root, &session_id) {
-        Ok(true) => state.push_transcript(format!("notes: cleared for {session_id}")),
-        Ok(false) => state.push_transcript(format!("notes: none for {session_id}")),
+        Ok(true) => {
+            state.clear_note_summary();
+            state.push_transcript(format!("notes: cleared for {session_id}"));
+        }
+        Ok(false) => {
+            state.clear_note_summary();
+            state.push_transcript(format!("notes: none for {session_id}"));
+        }
         Err(err) => state.push_error(format!("notes: failed to clear session notes: {err}")),
     }
 }

@@ -1807,6 +1807,19 @@ shared daemon, TUI, and VS Code extension surfaces.
   pill with attached paths in the tooltip, and both surfaces stay in sync with
   `/attach`, `/attachments`, `/detach`, and session switches.
 
+### E142. Operator Notes Context Status
+
+- **Status**: landed.
+- **Goal**: keep active-session operator notes visible after `/note` or
+  `/notes` output scrolls away.
+- **Where**: TUI side-panel rendering, localized note labels, VS Code
+  note context normalization, context-strip pill, persisted sidebar session
+  state, README, changelogs, and unit tests.
+- **Result**: TUI side panels now show a Notes block with the active
+  session's note count and latest note text. VS Code/Cursor folds `/note`,
+  `/notes`, and `/notes clear` results into a session-local `Notes N`
+  context pill and persists that summary per chat session.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.
