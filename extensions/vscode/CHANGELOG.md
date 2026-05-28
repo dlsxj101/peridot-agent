@@ -55,6 +55,10 @@
   individual persisted session lifecycle edits from the command palette and
   sidebar title bar. Delete asks for explicit confirmation before running
   `/session delete <id>`.
+- `Peridot: New Session`, `Peridot: Switch Session`, and `Peridot: Close
+  Session` now expose the remaining persisted session lifecycle commands
+  from the command palette and sidebar title bar, with daemon-backed
+  selection and session-list reconciliation.
 - `/session prune [--status <state>] [--older-than-days N] [--dry-run]`
   now runs through the daemon command path and returns a structured prune
   result so editor users can preview or remove stale persisted sessions.

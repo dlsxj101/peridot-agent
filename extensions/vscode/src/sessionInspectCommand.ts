@@ -10,6 +10,11 @@ export function sessionCountSlashCommand(): string {
   return '/session count';
 }
 
+export function sessionNewSlashCommand(task?: string): string {
+  const trimmedTask = task?.trim();
+  return trimmedTask ? `/session new ${trimmedTask}` : '/session new';
+}
+
 export function sessionTargetChoices(sessions: DaemonSessionSummary[]): SessionTargetChoice[] {
   const choices: SessionTargetChoice[] = [];
   const seen = new Set<string>();
@@ -28,6 +33,14 @@ export function sessionTargetChoices(sessions: DaemonSessionSummary[]): SessionT
 
 export function sessionShowSlashCommand(target: string): string {
   return `/session show ${sessionTargetArg(target)}`;
+}
+
+export function sessionSwitchSlashCommand(target: string): string {
+  return `/session switch ${sessionTargetArg(target)}`;
+}
+
+export function sessionCloseSlashCommand(target: string): string {
+  return `/session close ${sessionTargetArg(target)}`;
 }
 
 export function sessionLocateSlashCommand(target: string): string {

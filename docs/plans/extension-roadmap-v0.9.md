@@ -1462,6 +1462,21 @@ shared daemon, TUI, and VS Code extension surfaces.
   sessions, asks for explicit confirmation, runs `/session delete <id>`,
   finishes any cancelled live run, and refreshes the session list.
 
+### E115. VS Code Session New/Switch/Close GUI
+
+- **Status**: landed.
+- **Goal**: expose the remaining persisted session lifecycle controls from
+  the editor without requiring manual slash commands.
+- **Where**: VS Code command contributions, sidebar title-bar actions,
+  session lifecycle command construction, README, and changelog docs.
+- **Result**: `Peridot: New Session` runs `/session new [task]`, selects the
+  daemon-created persisted session, and starts the optional initial task.
+  `Peridot: Switch Session` prompts for a persisted session and runs
+  `/session switch <id>`, selecting the resolved sidebar session.
+  `Peridot: Close Session` prompts for a persisted session, asks for
+  explicit confirmation, runs `/session close <id>`, finishes any cancelled
+  live run, and refreshes the session list.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

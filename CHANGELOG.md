@@ -60,6 +60,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **VS Code session rename/delete GUI** now exposes individual persisted
   session rename and delete flows from the command palette and sidebar title
   bar, with explicit confirmation before deletion.
+- **VS Code session new/switch/close GUI** now exposes the remaining
+  persisted session lifecycle commands from the command palette and sidebar
+  title bar, keeping selection and session list state aligned with the daemon.
 - **`/session prune` slash parity** lets both TUI and VS Code users prune
   persisted sessions with `--status`, `--older-than-days`, and `--dry-run`
   filters through the shared session command path.
