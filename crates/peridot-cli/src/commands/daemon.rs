@@ -1872,6 +1872,9 @@ async fn execute_session_command(
         SlashCommand::SessionReplay { target, last } => {
             handle_command_session_replay(state, raw_command, &target, last).await
         }
+        SlashCommand::SessionExport { target, artifacts } => {
+            handle_command_session_export(state, raw_command, &target, &artifacts).await
+        }
         SlashCommand::SessionDelete(target) => {
             handle_command_session_delete(state, raw_command, &target).await
         }
@@ -4918,11 +4921,33 @@ fn handle_command_export(
     artifacts: &[ExportArtifact],
 ) -> Result<Value, String> {
     let session_id = require_session_id(session_id, "export")?;
+    export_session_id(state, &session_id, raw_command, artifacts, None)
+}
+
+async fn handle_command_session_export(
+    state: &DaemonState,
+    raw_command: &str,
+    target: &str,
+    artifacts: &[ExportArtifact],
+) -> Result<Value, String> {
+    let session_id = resolve_session_target_id(state, target)
+        .await?
+        .unwrap_or_else(|| target.to_string());
+    export_session_id(state, &session_id, raw_command, artifacts, Some(target))
+}
+
+fn export_session_id(
+    state: &DaemonState,
+    session_id: &str,
+    raw_command: &str,
+    artifacts: &[ExportArtifact],
+    target: Option<&str>,
+) -> Result<Value, String> {
     let selected = map_export_artifacts(artifacts);
-    let out_dir = default_session_export_dir(&state.project_root, &session_id);
+    let out_dir = default_session_export_dir(&state.project_root, session_id);
     let report = crate::commands::export_session_artifacts(
         &state.project_root,
-        &session_id,
+        session_id,
         &out_dir,
         &selected,
         false,
@@ -4945,6 +4970,7 @@ fn handle_command_export(
         "message": format!("export: wrote {} artifact file(s) to {}", report.artifacts.len(), report.destination),
         "severity": "info",
         "command": raw_command,
+        "target": target,
         "id": report.id,
         "source": report.source,
         "destination": report.destination,
@@ -6683,6 +6709,53 @@ mod tests {
         assert_eq!(result["timeline"].as_array().unwrap().len(), 2);
         assert_eq!(result["items"][0]["detail"], "first answer");
         assert_eq!(result["items"][1]["detail"], "second prompt");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn session_command_export_resolves_persisted_title() {
+        let root = test_project("session-command-export");
+        let store = MemoryStore::new(root.join(".peridot/memory.db"));
+        store
+            .save_session(&SessionSummary {
+                id: "export-session".into(),
+                summary: "export target".into(),
+            })
+            .unwrap();
+        let session_dir = root.join(".peridot/sessions/export-session");
+        std::fs::create_dir_all(&session_dir).unwrap();
+        std::fs::write(
+            session_dir.join("notes.ndjson"),
+            "{\"ts\":1,\"text\":\"remember\"}\n",
+        )
+        .unwrap();
+        let (tx, _rx) = mpsc::unbounded_channel::<String>();
+        let state = DaemonState::new(
+            root.clone(),
+            PeridotConfig::default(),
+            test_options(None),
+            tx,
+        );
+
+        let result = execute_session_command(
+            &state,
+            None,
+            "/session export export notes",
+            SlashCommand::SessionExport {
+                target: "export".into(),
+                artifacts: vec![ExportArtifact::Notes],
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result["kind"], "session_export");
+        assert_eq!(result["target"], "export");
+        assert_eq!(result["id"], "export-session");
+        assert_eq!(result["artifact_classes"], serde_json::json!(["notes"]));
+        let destination = result["destination"].as_str().unwrap();
+        assert!(Path::new(destination).join("notes.ndjson").is_file());
+        assert_eq!(result["artifacts"][0]["count"], 1);
         let _ = std::fs::remove_dir_all(root);
     }
 

@@ -908,6 +908,13 @@ pub enum SessionCommandEvent {
         /// Optional cap for the most recent timeline entries.
         last: Option<usize>,
     },
+    /// `/session export <id|title> [artifacts]` — export a persisted session.
+    SessionExport {
+        /// Session id, title, or index to export.
+        target: String,
+        /// Artifact classes to export. Empty means full copy.
+        artifacts: Vec<peridot_core::ExportArtifact>,
+    },
     /// `/fork <task>` — spawn a single-turn Fork subagent inline.
     Fork(String),
     /// `/teammate <task>` — spawn a worktree-isolated Teammate subagent.

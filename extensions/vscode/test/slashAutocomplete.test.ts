@@ -77,6 +77,11 @@ const commands: SlashCommandSpec[] = [
     argHint: '<id|title> [--last N]',
   },
   {
+    name: '/session export',
+    description: 'export session',
+    argHint: '<id|title> [attachments|notes|timeline|full]',
+  },
+  {
     name: '/session save',
     description: 'save session',
   },
@@ -360,6 +365,11 @@ test('slashArgumentContext filters session target arguments', () => {
   assert.equal(replay?.command.name, '/session replay');
   assert.deepEqual(replay?.options, ['s-1']);
   assert.equal(replay?.appendSpace, false);
+
+  const sessionExport = slashArgumentContext('/session export parser', commands, sessions);
+  assert.equal(sessionExport?.command.name, '/session export');
+  assert.deepEqual(sessionExport?.options, ['s-1']);
+  assert.equal(sessionExport?.appendSpace, true);
 });
 
 test('slashArgumentContext leaves argument room after session subcommands', () => {
@@ -384,9 +394,15 @@ test('slashArgumentContext leaves argument room after session subcommands', () =
   assert.deepEqual(replay?.options, ['replay']);
   assert.equal(replay?.appendSpace, true);
 
+  const sessionExport = slashArgumentContext('/session exp', commands);
+  assert.equal(sessionExport?.command.name, '/session');
+  assert.deepEqual(sessionExport?.options, ['export']);
+  assert.equal(sessionExport?.appendSpace, true);
+
   assert.equal(slashArgumentContext('/session rename ', commands), undefined);
   assert.equal(slashArgumentContext('/session resume ', commands), undefined);
   assert.equal(slashArgumentContext('/session replay ', commands), undefined);
+  assert.equal(slashArgumentContext('/session export ', commands), undefined);
   assert.equal(slashArgumentContext('/session s', commands), undefined);
   assert.deepEqual(
     filteredSlashCommands('/session s', commands).map((command) => command.name),
@@ -443,6 +459,20 @@ test('slashArgumentContext filters session replay arguments', () => {
   assert.equal(prefix?.appendSpace, true);
 
   assert.equal(slashArgumentContext('/session replay s-1 --last ', commands), undefined);
+});
+
+test('slashArgumentContext filters session export artifacts', () => {
+  const first = slashArgumentContext('/session export s-1 ', commands);
+  assert.equal(first?.command.name, '/session export');
+  assert.deepEqual(first?.options, ['attachments', 'notes', 'timeline', 'full']);
+  assert.equal(first?.appendSpace, true);
+
+  const next = slashArgumentContext('/session export s-1 attachments n', commands);
+  assert.equal(next?.command.name, '/session export s-1 attachments');
+  assert.deepEqual(next?.options, ['notes']);
+  assert.equal(next?.appendSpace, true);
+
+  assert.equal(slashArgumentContext('/session export s-1 attachments bad', commands), undefined);
 });
 
 test('slashArgumentContext filters mcp server arguments', () => {

@@ -3005,6 +3005,13 @@ fn session_switch_and_close_slashes_queue_router_intents() {
     );
     apply_slash_command(
         &mut state,
+        SlashCommand::SessionExport {
+            target: "s1".to_string(),
+            artifacts: vec![peridot_core::ExportArtifact::Notes],
+        },
+    );
+    apply_slash_command(
+        &mut state,
         SlashCommand::SessionRename {
             target: "s1".to_string(),
             title: "main work".to_string(),
@@ -3032,6 +3039,10 @@ fn session_switch_and_close_slashes_queue_router_intents() {
             SessionCommandEvent::SessionReplay {
                 target: "s1".to_string(),
                 last: Some(5),
+            },
+            SessionCommandEvent::SessionExport {
+                target: "s1".to_string(),
+                artifacts: vec![peridot_core::ExportArtifact::Notes],
             },
             SessionCommandEvent::SessionRename {
                 target: "s1".to_string(),

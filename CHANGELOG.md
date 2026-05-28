@@ -52,6 +52,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
   and VS Code users inspect persisted session replay timelines, including
   committee-weaved timeline entries, without leaving the interactive
   composer.
+- **`/session export <id|title> [attachments|notes|timeline|full]` slash
+  parity** lets both TUI and VS Code users export artifacts from any
+  persisted session, not only the active one.
 - **Skill-name argument autocomplete** now works in both TUI and VS Code
   for skill management commands such as `/skills show <name>` and
   `/skills use <name>`, while `/skills restore <name>` completes archived

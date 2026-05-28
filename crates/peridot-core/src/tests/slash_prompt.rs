@@ -74,6 +74,13 @@ fn parses_goal_slash_commands() {
         })
     );
     assert_eq!(
+        parse_slash_command("/session export s1 notes"),
+        Some(SlashCommand::SessionExport {
+            target: "s1".to_string(),
+            artifacts: vec![crate::ExportArtifact::Notes],
+        })
+    );
+    assert_eq!(
         parse_slash_command("/fast on"),
         Some(SlashCommand::Fast(Some(true)))
     );

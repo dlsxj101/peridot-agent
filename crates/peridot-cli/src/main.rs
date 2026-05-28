@@ -1592,6 +1592,10 @@ fn apply_session_command(
                 Err(err) => state.push_error(format!("session replay: {err}")),
             }
         }
+        SessionCommandEvent::SessionExport { target, artifacts } => {
+            let id = resolve_session_id(state, &target).unwrap_or(target);
+            handle_session_export_for_id(state, project_template, &id, &artifacts);
+        }
         SessionCommandEvent::Fork(task) => {
             let new_id = format!("fork-{}-{}", std::process::id(), unix_timestamp());
             let title = task.clone();
@@ -3066,15 +3070,19 @@ fn handle_session_export(state: &mut TuiState, project_root: &Path, artifacts: &
         state.push_error("export: no active session".to_string());
         return;
     }
+    let session_id = state.current_session_id.clone();
+    handle_session_export_for_id(state, project_root, &session_id, artifacts);
+}
+
+fn handle_session_export_for_id(
+    state: &mut TuiState,
+    project_root: &Path,
+    session_id: &str,
+    artifacts: &[ExportArtifact],
+) {
     let selected = map_export_artifacts(artifacts);
-    let out_dir = default_session_export_dir(project_root, &state.current_session_id);
-    match export_session_artifacts(
-        project_root,
-        &state.current_session_id,
-        &out_dir,
-        &selected,
-        false,
-    ) {
+    let out_dir = default_session_export_dir(project_root, session_id);
+    match export_session_artifacts(project_root, session_id, &out_dir, &selected, false) {
         Ok(report) => state.push_transcript(render_session_export_text(&report)),
         Err(err) => state.push_error(format!("export: failed: {err}")),
     }

@@ -93,6 +93,8 @@ export function slashArgumentContext(
   if (sessionPruneContext) return sessionPruneContext;
   const sessionReplayContext = sessionReplayArgumentContext(query);
   if (sessionReplayContext) return sessionReplayContext;
+  const sessionExportContext = sessionExportArgumentContext(query);
+  if (sessionExportContext) return sessionExportContext;
   const sessionContext = sessionTargetArgumentContext(query, sessionTargets);
   if (sessionContext) return sessionContext;
   const sessionSubcommandContext = sessionSubcommandArgumentContext(query);
@@ -359,6 +361,7 @@ function sessionTargetArgumentContext(
     '/session locate',
     '/session resume',
     '/session replay',
+    '/session export',
   ]
     .filter((candidate) => query === candidate || query.startsWith(`${candidate} `))
     .sort((a, b) => b.length - a.length)[0];
@@ -386,7 +389,7 @@ function sessionTargetArgumentContext(
       category: 'session',
     },
     options,
-    appendSpace: commandName === '/session rename',
+    appendSpace: commandName === '/session rename' || commandName === '/session export',
   };
 }
 
@@ -404,6 +407,7 @@ function sessionSubcommandArgumentContext(query: string): SlashArgumentContext |
     'locate',
     'resume',
     'replay',
+    'export',
   ];
   const terminalOptions = ['save', 'list', 'count'];
   const hasTrailingSpace = /\s$/.test(query);
@@ -453,6 +457,38 @@ function sessionReplayArgumentContext(query: string): SlashArgumentContext | und
   }
   if (parts.length === 2 && (parts[1] === '--last' || parts[1] === 'last')) return undefined;
   return undefined;
+}
+
+function sessionExportArgumentContext(query: string): SlashArgumentContext | undefined {
+  const commandName = '/session export';
+  if (!query.startsWith(`${commandName} `)) return undefined;
+  const rest = query.slice(commandName.length).trimStart();
+  if (rest.length === 0 || !/\s/.test(rest)) return undefined;
+  const hasTrailingSpace = /\s$/.test(query);
+  const parts = rest.split(/\s+/).filter((part) => part.length > 0);
+  const prefix = hasTrailingSpace ? '' : (parts.pop() ?? '');
+  if (parts.length === 0) return undefined;
+  if (parts.slice(1).some((token) => !EXPORT_ARTIFACT_OPTIONS.includes(token.toLowerCase()))) {
+    return undefined;
+  }
+  if (prefix && EXPORT_ARTIFACT_OPTIONS.some((option) => option.toLowerCase() === prefix.toLowerCase())) {
+    return undefined;
+  }
+  const selected = new Set(parts.slice(1).map((token) => token.toLowerCase()));
+  const needle = prefix.toLowerCase();
+  const options = EXPORT_ARTIFACT_OPTIONS
+    .filter((option) => !selected.has(option))
+    .filter((option) => needle.length === 0 || option.startsWith(needle));
+  if (options.length === 0) return undefined;
+  return {
+    command: {
+      name: parts.length === 1 ? commandName : `${commandName} ${parts.join(' ')}`,
+      description: 'session export artifact',
+      category: 'session',
+    },
+    options,
+    appendSpace: true,
+  };
 }
 
 function sessionListStatusArgumentContext(query: string): SlashArgumentContext | undefined {

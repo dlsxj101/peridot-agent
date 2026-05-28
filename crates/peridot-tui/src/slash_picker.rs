@@ -454,6 +454,12 @@ pub fn slash_command_catalog() -> &'static [SlashCommandSpec] {
             category: "session",
         },
         SlashCommandSpec {
+            name: "/session export",
+            description: "export artifacts for a persisted session",
+            arg_hint: Some("<id|title> [attachments|notes|timeline|full]"),
+            category: "session",
+        },
+        SlashCommandSpec {
             name: "/autofix",
             description: "toggle or configure the auto-fix loop (on|off|<max>)",
             arg_hint: Some("[on|off|<N>]"),
@@ -650,6 +656,9 @@ pub(crate) fn slash_argument_context_with_dynamic(
         return Some(context);
     }
     if let Some(context) = session_replay_argument_context(query) {
+        return Some(context);
+    }
+    if let Some(context) = session_export_argument_context(query) {
         return Some(context);
     }
     if let Some(context) = session_target_argument_context(query, sessions) {
@@ -928,6 +937,7 @@ fn session_target_argument_context(
         "/session locate",
         "/session resume",
         "/session replay",
+        "/session export",
     ]
     .into_iter()
     .filter(|command| query == *command || query.starts_with(&format!("{command} ")))
@@ -962,7 +972,7 @@ fn session_target_argument_context(
     Some(SlashArgumentContext {
         command_name: command_name.to_string(),
         options,
-        append_space: command_name == "/session rename",
+        append_space: matches!(command_name, "/session rename" | "/session export"),
     })
 }
 
@@ -1007,10 +1017,66 @@ fn session_replay_argument_context(query: &str) -> Option<SlashArgumentContext> 
     None
 }
 
+fn session_export_argument_context(query: &str) -> Option<SlashArgumentContext> {
+    let command_name = "/session export";
+    if !query.starts_with(&format!("{command_name} ")) {
+        return None;
+    }
+    let rest = query[command_name.len()..].trim_start();
+    if rest.is_empty() || !rest.contains(char::is_whitespace) {
+        return None;
+    }
+    let has_trailing_space = query.chars().last().is_some_and(char::is_whitespace);
+    let mut parts: Vec<&str> = rest.split_whitespace().collect();
+    let prefix = if has_trailing_space {
+        ""
+    } else {
+        parts.pop().unwrap_or("")
+    };
+    if parts.is_empty()
+        || parts[1..]
+            .iter()
+            .any(|token| !EXPORT_ARTIFACT_OPTIONS.contains(token))
+    {
+        return None;
+    }
+    if !prefix.is_empty()
+        && EXPORT_ARTIFACT_OPTIONS
+            .iter()
+            .any(|option| option.eq_ignore_ascii_case(prefix))
+    {
+        return None;
+    }
+    let prefix_lower = prefix.to_ascii_lowercase();
+    let options: Vec<String> = EXPORT_ARTIFACT_OPTIONS
+        .iter()
+        .filter(|option| {
+            !parts[1..]
+                .iter()
+                .any(|token| token.eq_ignore_ascii_case(option))
+        })
+        .filter(|option| prefix_lower.is_empty() || option.starts_with(&prefix_lower))
+        .map(|option| (*option).to_string())
+        .collect();
+    if options.is_empty() {
+        return None;
+    }
+    let command_name = if parts.len() == 1 {
+        command_name.to_string()
+    } else {
+        format!("{command_name} {}", parts.join(" "))
+    };
+    Some(SlashArgumentContext {
+        command_name,
+        options,
+        append_space: true,
+    })
+}
+
 fn session_subcommand_argument_context(query: &str) -> Option<SlashArgumentContext> {
     const CONTINUATION_OPTIONS: &[&str] = &[
         "new", "switch", "close", "delete", "rename", "search", "show", "locate", "resume",
-        "replay",
+        "replay", "export",
     ];
     const TERMINAL_OPTIONS: &[&str] = &["save", "list", "count"];
     let command_name = "/session";
@@ -1903,6 +1969,19 @@ mod tests {
         assert_eq!(context.options, vec!["s-1"]);
         assert!(!context.append_space);
 
+        let context = slash_argument_context_with_dynamic(
+            "/session export parser",
+            &[],
+            &sessions,
+            &[],
+            &[],
+            &[],
+        )
+        .expect("export target");
+        assert_eq!(context.command_name, "/session export");
+        assert_eq!(context.options, vec!["s-1"]);
+        assert!(context.append_space);
+
         assert!(
             slash_argument_context_with_dynamic(
                 "/session switch s-2",
@@ -1966,6 +2045,11 @@ mod tests {
         assert_eq!(context.options, vec!["replay"]);
         assert!(context.append_space);
 
+        let context = slash_argument_context_with_dynamic("/session exp", &[], &[], &[], &[], &[])
+            .expect("session export option");
+        assert_eq!(context.options, vec!["export"]);
+        assert!(context.append_space);
+
         assert!(
             slash_argument_context_with_dynamic("/session rename ", &[], &[], &[], &[], &[])
                 .is_none()
@@ -1988,6 +2072,10 @@ mod tests {
         );
         assert!(
             slash_argument_context_with_dynamic("/session replay ", &[], &[], &[], &[], &[])
+                .is_none()
+        );
+        assert!(
+            slash_argument_context_with_dynamic("/session export ", &[], &[], &[], &[], &[])
                 .is_none()
         );
         assert!(
@@ -2107,6 +2195,44 @@ mod tests {
         assert!(
             slash_argument_context_with_dynamic(
                 "/session replay s-1 --last ",
+                &[],
+                &[],
+                &[],
+                &[],
+                &[],
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn session_export_argument_context_filters_artifacts() {
+        let context =
+            slash_argument_context_with_dynamic("/session export s-1 ", &[], &[], &[], &[], &[])
+                .expect("session export artifacts");
+        assert_eq!(context.command_name, "/session export");
+        assert_eq!(
+            context.options,
+            vec!["attachments", "notes", "timeline", "full"]
+        );
+        assert!(context.append_space);
+
+        let context = slash_argument_context_with_dynamic(
+            "/session export s-1 attachments n",
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+        )
+        .expect("session export remaining artifact");
+        assert_eq!(context.command_name, "/session export s-1 attachments");
+        assert_eq!(context.options, vec!["notes"]);
+        assert!(context.append_space);
+
+        assert!(
+            slash_argument_context_with_dynamic(
+                "/session export s-1 attachments bad",
                 &[],
                 &[],
                 &[],

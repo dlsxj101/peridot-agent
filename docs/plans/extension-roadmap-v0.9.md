@@ -1312,6 +1312,23 @@ shared daemon, TUI, and VS Code extension surfaces.
   VS Code renders them through the generic command result list, and both
   composers complete replay targets plus the optional `--last` flag.
 
+### E104. Persisted Session Export Slash Parity
+
+- **Status**: landed.
+- **Goal**: let operators export artifacts from any persisted session from
+  the same interactive clients that can list, inspect, replay, and prune
+  sessions.
+- **Where**: shared slash parser/catalog, existing session export artifact
+  helper, TUI session command queue, daemon `session.command`, and VS Code
+  slash autocomplete.
+- **Result**: `/session export <id|title> [attachments|notes|timeline|full]`
+  resolves visible or persisted session targets and writes the selected
+  portable artifacts to `.peridot/exports/<session>-<timestamp>/`. Bare
+  artifact selection keeps the CLI-compatible full-copy default, TUI prints
+  the export summary, VS Code receives the existing `session_export`
+  structured result, and both composers complete target sessions plus
+  remaining artifact classes.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

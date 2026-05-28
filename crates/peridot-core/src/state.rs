@@ -100,6 +100,7 @@ impl AgentState {
             | SlashCommand::SessionLocate(_)
             | SlashCommand::SessionResume(_)
             | SlashCommand::SessionReplay { .. }
+            | SlashCommand::SessionExport { .. }
             | SlashCommand::SubagentModel(_)
             | SlashCommand::Reasoning(_)
             | SlashCommand::Fast(_)

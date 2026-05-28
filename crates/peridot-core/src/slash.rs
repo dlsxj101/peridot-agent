@@ -154,6 +154,13 @@ pub enum SlashCommand {
         /// Optional cap for the most recent timeline entries.
         last: Option<usize>,
     },
+    /// Export artifacts for one persisted session.
+    SessionExport {
+        /// Session id, title, or index to export.
+        target: String,
+        /// Artifact classes to export. Empty means full copy.
+        artifacts: Vec<ExportArtifact>,
+    },
     /// Override the default model used when spawning sub-agents. `reset`
     /// clears the override so future spawns inherit the caller's main model.
     SubagentModel(SubagentModelChange),
@@ -552,6 +559,9 @@ pub fn parse_slash_command(input: &str) -> Option<SlashCommand> {
         "session" if rest == "replay" || rest.starts_with("replay ") => {
             parse_session_replay(rest.strip_prefix("replay").unwrap_or("").trim())
         }
+        "session" if rest == "export" || rest.starts_with("export ") => {
+            parse_session_export(rest.strip_prefix("export").unwrap_or("").trim())
+        }
         "session" if rest.starts_with("new") => {
             let task = rest.strip_prefix("new").unwrap_or("").trim();
             Some(SlashCommand::SessionNew(if task.is_empty() {
@@ -868,6 +878,27 @@ fn parse_session_replay(rest: &str) -> Option<SlashCommand> {
         return None;
     }
     Some(SlashCommand::SessionReplay { target, last })
+}
+
+fn parse_session_export(rest: &str) -> Option<SlashCommand> {
+    if rest.is_empty() {
+        return None;
+    }
+    let mut parts: Vec<&str> = rest.split_whitespace().collect();
+    let mut artifacts = Vec::new();
+    while let Some(part) = parts.last().copied() {
+        let Ok(artifact) = ExportArtifact::from_str(part) else {
+            break;
+        };
+        artifacts.push(artifact);
+        parts.pop();
+    }
+    artifacts.reverse();
+    let target = parts.join(" ").trim().to_string();
+    if target.is_empty() {
+        return None;
+    }
+    Some(SlashCommand::SessionExport { target, artifacts })
 }
 
 fn parse_skill_use(request: &str) -> Option<SlashCommand> {
@@ -1238,6 +1269,28 @@ mod tests {
         );
         assert_eq!(parse_slash_command("/session replay s1 --last bad"), None);
         assert_eq!(parse_slash_command("/session replay"), None);
+        assert_eq!(
+            parse_slash_command("/session export s1 attachments timeline"),
+            Some(SlashCommand::SessionExport {
+                target: "s1".to_string(),
+                artifacts: vec![ExportArtifact::Attachments, ExportArtifact::Timeline],
+            })
+        );
+        assert_eq!(
+            parse_slash_command("/session export release prep notes"),
+            Some(SlashCommand::SessionExport {
+                target: "release prep".to_string(),
+                artifacts: vec![ExportArtifact::Notes],
+            })
+        );
+        assert_eq!(
+            parse_slash_command("/session export s1"),
+            Some(SlashCommand::SessionExport {
+                target: "s1".to_string(),
+                artifacts: Vec::new(),
+            })
+        );
+        assert_eq!(parse_slash_command("/session export"), None);
         assert_eq!(
             parse_slash_command("/session delete s1"),
             Some(SlashCommand::SessionDelete("s1".to_string()))
