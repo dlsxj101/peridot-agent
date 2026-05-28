@@ -8,6 +8,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { addAttachmentPreviewUris } from './attachmentPreview';
+import { markCodeMapStale } from './codeMapContext';
 import { formatAgentEventForOutput } from './agentEventOutput';
 import { decodeInlineImageAttachment } from './inlineImageAttachment';
 import {
@@ -193,6 +194,7 @@ let workspaceRun: WorkspaceRun | undefined;
 let statusCache: StatusCache<DaemonStatusResult> | undefined;
 let cachedFolder: string | undefined;
 let workspaceFileRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+let codeMapStaleTimer: ReturnType<typeof setTimeout> | undefined;
 /**
  * Module-level reference to the active sidebar provider. Set during
  * `activate()`. Helpers that need to reach the sidebar from outside the
@@ -307,10 +309,15 @@ export function activate(context: vscode.ExtensionContext) {
     }),
   );
   const workspaceFileWatcher = vscode.workspace.createFileSystemWatcher('**/*');
-  const refreshWorkspaceFiles = () => scheduleWorkspaceMentionFilesRefresh(output, sidebar);
+  const refreshWorkspaceFiles = () => {
+    scheduleWorkspaceMentionFilesRefresh(output, sidebar);
+    scheduleCodeMapStaleMark(sidebar);
+  };
+  const markCodeMapChanged = () => scheduleCodeMapStaleMark(sidebar);
   context.subscriptions.push(
     workspaceFileWatcher,
     workspaceFileWatcher.onDidCreate(refreshWorkspaceFiles),
+    workspaceFileWatcher.onDidChange(markCodeMapChanged),
     workspaceFileWatcher.onDidDelete(refreshWorkspaceFiles),
   );
   const memoryWatcher = vscode.workspace.createFileSystemWatcher('**/.peridot/memory.db');
@@ -774,6 +781,10 @@ export async function deactivate() {
   if (workspaceFileRefreshTimer) {
     clearTimeout(workspaceFileRefreshTimer);
     workspaceFileRefreshTimer = undefined;
+  }
+  if (codeMapStaleTimer) {
+    clearTimeout(codeMapStaleTimer);
+    codeMapStaleTimer = undefined;
   }
   if (workspaceRun) {
     await finishWorkspaceRun();
@@ -3873,6 +3884,19 @@ function scheduleWorkspaceMentionFilesRefresh(
   workspaceFileRefreshTimer = setTimeout(() => {
     workspaceFileRefreshTimer = undefined;
     void refreshWorkspaceMentionFiles(output, sidebar);
+  }, 250);
+}
+
+function scheduleCodeMapStaleMark(sidebar: PeridotSidebarProvider): void {
+  if (codeMapStaleTimer) {
+    clearTimeout(codeMapStaleTimer);
+  }
+  codeMapStaleTimer = setTimeout(() => {
+    codeMapStaleTimer = undefined;
+    const current = sidebar.currentContext();
+    sidebar.setContext({
+      codeMap: markCodeMapStale(current.codeMap),
+    });
   }, 250);
 }
 

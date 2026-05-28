@@ -119,6 +119,9 @@
 - `/todos` now reuses the persisted `.peridot/codemap.json` TODO marker index
   and refreshes stale or lower-cap indexes before rendering results in the
   sidebar.
+- `/codemap`, `/codemap status`, and `/todos` results now update a sidebar
+  code-map freshness pill, and workspace file changes mark that pill stale
+  until the next indexed command refreshes it.
 - Image attachments now render bounded inline previews in the VS Code/Cursor
   attachment cards while keeping the daemon/model context as the existing
   placeholder metadata.

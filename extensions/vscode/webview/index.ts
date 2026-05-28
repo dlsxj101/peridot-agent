@@ -39,6 +39,7 @@ import {
 import { inlineImagePayload, isAttachableInlineImage } from './inlineImageAttachment';
 import { runMetricChips } from './runMetrics';
 import { riskChipView } from './riskChip';
+import { codeMapContextPill } from './codeMapContext';
 import { mcpContextPill } from './mcpContext';
 import { el, formatTokens, highlightLite, isRecord, json } from './util';
 
@@ -1187,6 +1188,12 @@ function renderContextStrip(context: SidebarContext): HTMLElement {
   if (mcpPill) {
     const element = pill(mcpPill.label, mcpPill.tone);
     element.title = mcpPill.title;
+    pills.append(element);
+  }
+  const codeMapPill = codeMapContextPill(context.codeMap);
+  if (codeMapPill) {
+    const element = pill(codeMapPill.label, codeMapPill.tone);
+    element.title = codeMapPill.title;
     pills.append(element);
   }
   if (context.serviceTier && context.serviceTier !== 'standard') {

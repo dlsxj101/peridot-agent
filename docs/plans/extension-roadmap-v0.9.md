@@ -1757,6 +1757,18 @@ shared daemon, TUI, and VS Code extension surfaces.
   source files changed or when a previous index was built with too small a
   TODO cap, and renders the same indexed marker data in TUI and VS Code.
 
+### E138. VS Code Code-Map Freshness Context
+
+- **Status**: landed.
+- **Goal**: make the editor surface show whether the persisted code-map/TODO
+  index is fresh without requiring a separate status command.
+- **Where**: VS Code command-result context folding, workspace file watcher,
+  sidebar context strip, and webview unit tests.
+- **Result**: `/codemap`, `/codemap status`, and `/todos` results update a
+  code-map freshness pill with symbol/TODO counts. Workspace file
+  create/change/delete events mark the pill stale until the next indexed
+  command refreshes `.peridot/codemap.json`.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

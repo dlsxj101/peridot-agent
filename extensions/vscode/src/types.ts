@@ -300,6 +300,7 @@ export interface SidebarContext {
   running?: boolean;
   agents?: AgentsSummary;
   mcpServers?: McpServerSummary[];
+  codeMap?: CodeMapSummary;
   modelSuggestions?: string[];
   branchSnapshots?: string[];
   workspaceFiles?: string[];
@@ -316,6 +317,19 @@ export interface McpServerSummary {
   transport?: string;
   toolCount?: number;
   connected?: boolean;
+}
+
+export interface CodeMapSummary {
+  indexExists?: boolean;
+  stale?: boolean;
+  sourceFiles?: number;
+  walkedFiles?: number;
+  symbolCount?: number;
+  todoCount?: number;
+  generatedAtUnix?: number;
+  newestSourceMtimeUnix?: number;
+  refreshed?: boolean;
+  reason?: string;
 }
 
 export interface UsageSlice {

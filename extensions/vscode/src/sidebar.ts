@@ -38,6 +38,7 @@ import {
 } from './agentEventLifecycle';
 import { agentsSummaryForLoadedEvent, mcpServersForStatusEvent } from './agentEventContext';
 import { attachmentPathsFromCommandResult, normalizeAttachmentPaths } from './attachmentContext';
+import { codeMapFromCommandResult } from './codeMapContext';
 import { mcpConfigChangingSlashCommand, mcpServersFromCommandResult } from './mcpCommand';
 
 export type {
@@ -570,6 +571,13 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       this.state.context = {
         ...this.state.context,
         mcpServers,
+      };
+    }
+    const codeMap = codeMapFromCommandResult(result, this.state.context.codeMap);
+    if (codeMap) {
+      this.state.context = {
+        ...this.state.context,
+        codeMap,
       };
     }
     const attachmentPaths = attachmentPathsFromCommandResult(

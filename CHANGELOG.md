@@ -124,6 +124,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **Shared TODO marker indexing** now routes `/todos` through the persisted
   `.peridot/codemap.json` index for both TUI and VS Code daemon surfaces,
   refreshing stale or lower-cap indexes before rendering TODO/FIXME/HACK rows.
+- **VS Code code-map status context** now folds `/codemap`, `/codemap status`,
+  and `/todos` results into a sidebar pill, then marks it stale when the
+  workspace file watcher sees source changes.
 - **`/session prune` slash parity** lets both TUI and VS Code users prune
   persisted sessions with `--status`, `--older-than-days`, and `--dry-run`
   filters through the shared session command path.

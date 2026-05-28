@@ -106,13 +106,13 @@ provider" button in the session header to come back.
 ## Sidebar
 
 Once a provider is live, the sidebar shows workspace / provider /
-model / auth context, a session dropdown, a HUD for token usage and
-cost / turn budget, an inline plan panel that follows `plan_updated`,
-a compact context donut in the composer options row, a chat-style
-Markdown transcript with single-line tool activity and inline unified
-diffs, plus approve/deny controls with a diff preview for `file_write` /
-`file_patch`. The slash picker loads the same command catalog exposed by
-the TUI through the daemon `session.command_catalog` RPC, and supported
+model / auth context, AGENTS/MCP/code-map status, a session dropdown,
+a HUD for token usage and cost / turn budget, an inline plan panel that
+follows `plan_updated`, a compact context donut in the composer options
+row, a chat-style Markdown transcript with single-line tool activity and
+inline unified diffs, plus approve/deny controls with a diff preview for
+`file_write` / `file_patch`. The slash picker loads the same command catalog
+exposed by the TUI through the daemon `session.command_catalog` RPC, and supported
 session-control slashes run through `session.command` so mode, permission,
 model, provider, committee, note, compact, branch, MCP, TODO, codemap,
 info, cost, plan show, goal control, session save, session count,
