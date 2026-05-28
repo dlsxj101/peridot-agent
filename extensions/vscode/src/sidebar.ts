@@ -37,7 +37,7 @@ import {
   terminalStatusForEvent,
 } from './agentEventLifecycle';
 import { agentsSummaryForLoadedEvent, mcpServersForStatusEvent } from './agentEventContext';
-import { attachmentPathsFromCommandResult } from './attachmentContext';
+import { attachmentPathsFromCommandResult, normalizeAttachmentPaths } from './attachmentContext';
 import { mcpConfigChangingSlashCommand, mcpServersFromCommandResult } from './mcpCommand';
 
 export type {
@@ -137,6 +137,7 @@ interface StoredChatSession {
   pendingApproval?: TranscriptItem;
   runStartedAtMs?: number;
   lastRunElapsedMs?: number;
+  attachmentPaths?: string[];
   /**
    * True once the user has manually renamed this session (via the
    * session-menu rename action or `/session rename`). The async LLM
@@ -1758,6 +1759,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       pendingApproval: undefined,
       runStartedAtMs: undefined,
       lastRunElapsedMs: undefined,
+      attachmentPaths: [],
     };
     this.nextSessionOrdinal += 1;
     this.sessions.set(id, session);
@@ -1778,6 +1780,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
     session.pendingApproval = this.state.pendingApproval;
     session.runStartedAtMs = this.state.runStartedAtMs;
     session.lastRunElapsedMs = this.state.lastRunElapsedMs;
+    session.attachmentPaths = normalizeAttachmentPaths(this.state.context.attachmentPaths);
   }
 
   private restorePersistedState(): void {
@@ -1797,6 +1800,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         pendingApproval: raw.pendingApproval,
         runStartedAtMs: undefined,
         lastRunElapsedMs: raw.lastRunElapsedMs,
+        attachmentPaths: normalizeAttachmentPaths(raw.attachmentPaths),
       };
       this.sessions.set(session.id, session);
     }
@@ -1811,6 +1815,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         status: 'Idle',
         running: false,
         problem: undefined,
+        attachmentPaths: [],
       },
       queue: Array.isArray(snapshot.queue) ? snapshot.queue : [],
       runOptions: snapshot.runOptions ?? freshState().runOptions,
@@ -1839,6 +1844,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         ...this.state.context,
         status: this.state.running ? 'Idle' : this.state.status,
         running: false,
+        attachmentPaths: [],
       },
       view: this.state.view,
       landing: this.state.landing,
@@ -1872,6 +1878,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       model: session.runOptions.model ?? this.state.context.model,
       reasoningEffort: session.runOptions.reasoningEffort,
       serviceTier: session.runOptions.serviceTier,
+      attachmentPaths: normalizeAttachmentPaths(session.attachmentPaths),
     };
     this.state.view = 'session';
     if (publish) this.publish();
@@ -1899,6 +1906,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       permission: this.state.runOptions.permission,
       reasoningEffort: undefined,
       serviceTier: undefined,
+      attachmentPaths: [],
     };
     this.state.view = 'session';
   }
@@ -1924,7 +1932,12 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
     this.state.transcript = [];
     this.state.hud = {};
     this.state.pendingApproval = undefined;
-    this.state.context = { ...this.state.context, status: 'Idle', running: false };
+    this.state.context = {
+      ...this.state.context,
+      status: 'Idle',
+      running: false,
+      attachmentPaths: [],
+    };
     const session = this.activeStoredSession();
     if (session) {
       session.daemonSessionId = undefined;
@@ -1935,6 +1948,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       session.pendingApproval = undefined;
       session.runStartedAtMs = undefined;
       session.lastRunElapsedMs = undefined;
+      session.attachmentPaths = [];
     }
     this.publish();
   }

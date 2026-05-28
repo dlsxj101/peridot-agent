@@ -113,6 +113,9 @@
   behavior while keeping exact completed paths directly runnable.
 - `/detach <path>` now suggests currently attached session paths after
   `/attach`, `/attachments`, or `/detach` results update the sidebar context.
+- Attached-path suggestions are now stored per chat session, so switching or
+  reloading VS Code/Cursor sessions does not leak `/detach` completions from a
+  different conversation.
 - Image attachments now render bounded inline previews in the VS Code/Cursor
   attachment cards while keeping the daemon/model context as the existing
   placeholder metadata.

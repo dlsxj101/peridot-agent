@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { attachmentPathsFromCommandResult } from '../src/attachmentContext';
+import { attachmentPathsFromCommandResult, normalizeAttachmentPaths } from '../src/attachmentContext';
 
 test('attachmentPathsFromCommandResult adds attached file paths', () => {
   assert.deepEqual(
@@ -51,4 +51,12 @@ test('attachmentPathsFromCommandResult removes detached paths without remaining 
     ),
     ['src/lib.rs'],
   );
+});
+
+test('normalizeAttachmentPaths sanitizes persisted session values', () => {
+  assert.deepEqual(
+    normalizeAttachmentPaths([' src/main.rs ', 'SRC/main.rs', '', 42, 'docs/notes.md']),
+    ['docs/notes.md', 'src/main.rs'],
+  );
+  assert.deepEqual(normalizeAttachmentPaths(undefined), []);
 });

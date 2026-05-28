@@ -118,6 +118,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **Attached-file slash argument autocomplete** now suggests currently attached
   session paths for `/detach <path>` in both TUI and VS Code, based on
   `/attach`, `/attachments`, and `/detach` command results.
+- **VS Code attachment path state** is now saved per chat session, so `/detach`
+  autocomplete follows the active session instead of leaking paths after
+  session switches or reloads.
 - **`/session prune` slash parity** lets both TUI and VS Code users prune
   persisted sessions with `--status`, `--older-than-days`, and `--dry-run`
   filters through the shared session command path.

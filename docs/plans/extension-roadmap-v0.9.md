@@ -1735,6 +1735,17 @@ shared daemon, TUI, and VS Code extension surfaces.
   `/attachments`, and `/detach` results, and exact completed paths remain
   directly runnable.
 
+### E136. Session-Local Attachment Path Cache
+
+- **Status**: landed.
+- **Goal**: keep `/detach` autocomplete scoped to the active VS Code/Cursor
+  chat session after session switches and window reloads.
+- **Where**: VS Code persisted sidebar session state and attachment-path
+  normalization helpers.
+- **Result**: attached paths are saved on each stored chat session, restored
+  when that session becomes active, reset for draft/cleared sessions, and
+  sanitized while loading older persisted snapshots.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

@@ -22,6 +22,11 @@ export function attachmentPathsFromCommandResult(
   return undefined;
 }
 
+export function normalizeAttachmentPaths(values: readonly unknown[] | undefined): string[] {
+  if (!Array.isArray(values)) return [];
+  return dedupeSorted(values.filter((value): value is string => typeof value === 'string'));
+}
+
 function attachmentPathsFromResult(result: CommandResultView): string[] {
   return dedupeSorted([
     ...attachmentPathsFromAttachments(result.attachment ? [result.attachment] : undefined),
