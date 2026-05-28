@@ -124,6 +124,8 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **Read-only shell allowlist denials** now include a recovery hint that
   points the model toward dedicated read-only tools or the normal
   `shell_exec` approval flow when shell semantics are actually required.
+- **VS Code recovery debug output** now formats `recovery` daemon events as
+  readable Output channel lines while keeping them suppressed from chat.
 - **Provider argument autocomplete** now exposes the supported provider ids
   for `/provider <claude-api|openai-api|openrouter-api|openai-oauth>` through
   the shared slash catalog, TUI picker, daemon JSON catalog, and VS Code

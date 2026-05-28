@@ -1181,6 +1181,31 @@ shared daemon, TUI, and VS Code extension surfaces.
   accepts the `interaction.respond` call; stale or rejected responses keep
   the prompt visible and surface the existing error message.
 
+### E94. Recovery Debug-Only Transcript Policy
+
+- **Status**: landed.
+- **Goal**: keep internal recovery directives out of user chat transcripts
+  while preserving enough diagnostic signal for debugging.
+- **Where**: TUI runtime recovery handling, VS Code sidebar event handling,
+  read-only shell policy errors, and security/playbook docs.
+- **Result**: `recovery` daemon events no longer render as TUI or VS Code
+  transcript rows. VS Code keeps the raw daemon event in the Output channel,
+  TUI keeps recovery context in runtime activity, and `shell_readonly`
+  allowlist denials now tell the model to retry with an allowlisted
+  read-only command or use the normal `shell_exec` approval path when shell
+  semantics are required.
+
+### E95. Recovery Output Formatting
+
+- **Status**: landed.
+- **Goal**: make the remaining VS Code debug surface readable after recovery
+  events became transcript-suppressed.
+- **Where**: VS Code daemon event Output formatting and pure unit tests.
+- **Result**: daemon event Output formatting now routes through a testable
+  helper. `recovery` events render as `[session] recovery: <message>` in the
+  VS Code Output channel, while unknown additive events remain logged with
+  JSON payloads for debugging without leaking into chat.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

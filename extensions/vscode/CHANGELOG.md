@@ -90,6 +90,8 @@
   with `User response sent`.
 - Recovery daemon events now stay in the VS Code Output channel instead of
   rendering as sidebar transcript rows.
+- Recovery daemon events now format as readable Output channel lines while
+  unknown additive events stay logged with JSON payloads for debugging.
 - Provider argument autocomplete now fills supported provider ids for
   `/provider <claude-api|openai-api|openrouter-api|openai-oauth>` from the
   shared daemon slash catalog.

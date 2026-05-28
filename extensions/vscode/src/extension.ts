@@ -6,6 +6,7 @@
 import * as childProcess from 'child_process';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { formatAgentEventForOutput } from './agentEventOutput';
 import { EXPECTED_AGENT_RUN_EVENT_SCHEMA_VERSION, PeridotDaemon, RpcNotification } from './daemon';
 import { resetBinaryCache, resolvePeridotBinary } from './peridotBin';
 import { peridotChildEnv } from './processEnv';
@@ -2766,7 +2767,7 @@ async function handleDaemonNotification(
     : {};
   const sessionId = params.session_id ?? 'unknown-session';
   const event = params.event;
-  output.appendLine(formatEvent(sessionId, event));
+  output.appendLine(formatAgentEventForOutput(sessionId, event));
   const clientSessionId = runForDaemonSession(sessionId)?.clientSessionId;
   sidebar.appendNotificationFor(clientSessionId, params);
   const planDocumentPath = planDocumentPathFromEvent(event);
@@ -2840,33 +2841,6 @@ function disposeWorkspaceRun(run: WorkspaceRun): void {
   run.disposeExit();
 }
 
-function formatEvent(sessionId: string, event: unknown): string {
-  if (!isRecord(event)) {
-    return `[${sessionId}] event ${json(event)}`;
-  }
-
-  const kind = typeof event.kind === 'string' ? event.kind : 'unknown';
-  switch (kind) {
-    case 'started':
-    case 'run_started':
-      return `[${sessionId}] ${kind}: ${stringField(event, 'task')}`;
-    case 'assistant_delta':
-      return `[${sessionId}] assistant: ${stringField(event, 'delta')}`;
-    case 'tool_started':
-      return `[${sessionId}] tool started: ${stringField(event, 'name')}`;
-    case 'tool_finished':
-      return `[${sessionId}] tool finished: ${stringField(event, 'name')}`;
-    case 'finished':
-      return `[${sessionId}] finished: ${json(event)}`;
-    case 'error':
-      return `[${sessionId}] error: ${stringField(event, 'message')}`;
-    case 'interrupted':
-      return `[${sessionId}] interrupted: ${stringField(event, 'stage')}`;
-    default:
-      return `[${sessionId}] ${kind}: ${json(event)}`;
-  }
-}
-
 function planDocumentPathFromEvent(event: unknown): string | undefined {
   if (!isRecord(event) || event.kind !== 'tool_finished') return undefined;
   const name = typeof event.name === 'string' ? event.name : '';
@@ -2887,11 +2861,6 @@ function isPlanDocumentPath(path: string): boolean {
     normalized.includes('/plans/') ||
     normalized.includes('/planning/')
   );
-}
-
-function stringField(record: Record<string, unknown>, key: string): string {
-  const value = record[key];
-  return typeof value === 'string' ? value : json(value);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -9,6 +9,7 @@
   "include": [
     "src/agentEventContext.ts",
     "src/agentEventLifecycle.ts",
+    "src/agentEventOutput.ts",
     "src/agentEventTranscript.ts",
     "src/localSlashAction.ts",
     "src/sessionReconcile.ts",
