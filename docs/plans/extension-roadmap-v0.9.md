@@ -1674,6 +1674,18 @@ shared daemon, TUI, and VS Code extension surfaces.
   `@path/to/file `, and Enter still submits normally. Mentions stay as
   literal navigation hints; file contents are not inlined automatically.
 
+### E131. Fresh `@file` Mention Indexes
+
+- **Status**: landed.
+- **Goal**: keep `@file` autocomplete useful during long-running TUI and
+  VS Code/Cursor sessions after files are created or deleted.
+- **Where**: TUI host persistence tick and VS Code workspace file watcher.
+- **Result**: the TUI can force-refresh its cached picker index and rebuilds
+  it while the `@file` picker is open. The VS Code extension listens for
+  workspace create/delete events, debounces them, and updates only the
+  `workspaceFiles` sidebar context so the composer sees fresh paths without a
+  full status refresh.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

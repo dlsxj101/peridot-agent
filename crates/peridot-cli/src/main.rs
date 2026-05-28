@@ -1013,6 +1013,7 @@ async fn main() -> Result<()> {
                             > = std::collections::HashMap::new();
                             let mut last_skill_store_signature =
                                 skill_store_signature(&project_template);
+                            let mut last_at_picker_index_refresh_unix: u64 = 0;
                             move |state: &mut TuiState| {
                                 append_new_transcript_entries(
                                     state,
@@ -1033,6 +1034,12 @@ async fn main() -> Result<()> {
                                     state,
                                     &project_template,
                                     &mut last_skill_store_signature,
+                                );
+                                refresh_tui_at_picker_index_while_open(
+                                    state,
+                                    &project_template,
+                                    now,
+                                    &mut last_at_picker_index_refresh_unix,
                                 );
                                 persist_session_snapshot(state, &router, &project_template);
                             }
@@ -2000,6 +2007,19 @@ fn refresh_tui_skill_suggestions_if_changed(
     }
     *last_signature = current;
     state.set_skill_suggestions(load_auto_skill_suggestions(project_root));
+}
+
+fn refresh_tui_at_picker_index_while_open(
+    state: &mut TuiState,
+    project_root: &Path,
+    now_unix: u64,
+    last_refresh_unix: &mut u64,
+) {
+    if state.at_picker.is_none() || now_unix.saturating_sub(*last_refresh_unix) < 2 {
+        return;
+    }
+    *last_refresh_unix = now_unix;
+    state.refresh_at_picker_index(project_root);
 }
 
 fn skill_store_signature(project_root: &Path) -> SkillStoreSignature {

@@ -1792,8 +1792,16 @@ impl TuiState {
     /// don't pay the scan cost on startup for users who never invoke it.
     pub fn ensure_at_picker_index(&mut self, project_root: &std::path::Path) {
         if self.at_picker_index.is_empty() {
-            self.at_picker_index = crate::at_picker::build_file_index(project_root, 5_000);
+            self.refresh_at_picker_index(project_root);
         }
+    }
+
+    /// Rebuilds the cached file index that powers the `@file` picker.
+    /// This is intentionally separate from [`Self::ensure_at_picker_index`]
+    /// so hosts can keep a long-lived TUI session fresh after files are
+    /// created or deleted.
+    pub fn refresh_at_picker_index(&mut self, project_root: &std::path::Path) {
+        self.at_picker_index = crate::at_picker::build_file_index(project_root, 5_000);
     }
 
     /// Replaces the active `@token` with the picker's currently-highlighted

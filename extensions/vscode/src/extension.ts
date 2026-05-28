@@ -188,6 +188,7 @@ interface WorkspaceRun {
 let workspaceRun: WorkspaceRun | undefined;
 let statusCache: StatusCache<DaemonStatusResult> | undefined;
 let cachedFolder: string | undefined;
+let workspaceFileRefreshTimer: ReturnType<typeof setTimeout> | undefined;
 /**
  * Module-level reference to the active sidebar provider. Set during
  * `activate()`. Helpers that need to reach the sidebar from outside the
@@ -298,6 +299,13 @@ export function activate(context: vscode.ExtensionContext) {
       invalidateStatusCache();
       void refreshStatus(output, sidebar, { force: true });
     }),
+  );
+  const workspaceFileWatcher = vscode.workspace.createFileSystemWatcher('**/*');
+  const refreshWorkspaceFiles = () => scheduleWorkspaceMentionFilesRefresh(output, sidebar);
+  context.subscriptions.push(
+    workspaceFileWatcher,
+    workspaceFileWatcher.onDidCreate(refreshWorkspaceFiles),
+    workspaceFileWatcher.onDidDelete(refreshWorkspaceFiles),
   );
   const memoryWatcher = vscode.workspace.createFileSystemWatcher('**/.peridot/memory.db');
   const refreshFromMemory = () => {
@@ -757,6 +765,10 @@ export function activate(context: vscode.ExtensionContext) {
 }
 
 export async function deactivate() {
+  if (workspaceFileRefreshTimer) {
+    clearTimeout(workspaceFileRefreshTimer);
+    workspaceFileRefreshTimer = undefined;
+  }
   if (workspaceRun) {
     await finishWorkspaceRun();
   }
@@ -3771,6 +3783,35 @@ async function workspaceMentionFiles(
     output.appendLine(`[peridot] workspace file mention index failed: ${message}`);
     return [];
   }
+}
+
+function scheduleWorkspaceMentionFilesRefresh(
+  output: vscode.OutputChannel,
+  sidebar: PeridotSidebarProvider,
+): void {
+  if (workspaceFileRefreshTimer) {
+    clearTimeout(workspaceFileRefreshTimer);
+  }
+  workspaceFileRefreshTimer = setTimeout(() => {
+    workspaceFileRefreshTimer = undefined;
+    void refreshWorkspaceMentionFiles(output, sidebar);
+  }, 250);
+}
+
+async function refreshWorkspaceMentionFiles(
+  output: vscode.OutputChannel,
+  sidebar: PeridotSidebarProvider,
+): Promise<void> {
+  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!folder) {
+    sidebar.setContext({ workspaceFiles: [] });
+    return;
+  }
+  const workspaceFiles = await workspaceMentionFiles(folder, output);
+  sidebar.setContext({
+    workspace: sidebar.currentContext().workspace ?? folder,
+    workspaceFiles,
+  });
 }
 
 function normalizeStringList(values: unknown): string[] {

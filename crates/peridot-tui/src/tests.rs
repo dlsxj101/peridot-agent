@@ -147,6 +147,38 @@ fn recovery_event_stays_out_of_main_transcript() {
 }
 
 #[test]
+fn at_picker_index_can_be_refreshed_after_workspace_changes() {
+    let root = std::env::temp_dir().join(format!(
+        "peridot-tui-at-picker-refresh-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("src")).expect("create temp project");
+    std::fs::write(root.join("src/old.rs"), "").expect("write old file");
+
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    state.ensure_at_picker_index(&root);
+    assert!(state.at_picker_index.contains(&"src/old.rs".to_string()));
+    assert!(!state.at_picker_index.contains(&"src/new.rs".to_string()));
+
+    std::fs::write(root.join("src/new.rs"), "").expect("write new file");
+    state.ensure_at_picker_index(&root);
+    assert!(
+        !state.at_picker_index.contains(&"src/new.rs".to_string()),
+        "ensure should preserve the warmed cache"
+    );
+
+    state.refresh_at_picker_index(&root);
+    assert!(state.at_picker_index.contains(&"src/new.rs".to_string()));
+
+    std::fs::remove_dir_all(&root).expect("cleanup temp project");
+}
+
+#[test]
 fn tool_result_preview_reaches_main_transcript() {
     let mut state = TuiState::new(HeaderState::new(
         ExecutionMode::Execute,

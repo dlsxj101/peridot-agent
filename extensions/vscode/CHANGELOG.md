@@ -105,6 +105,9 @@
 - `@file` composer mentions now use a workspace-relative file index and the
   same fuzzy matching priorities as the TUI picker. Tab or click inserts the
   selected `@path/to/file` token without forcing file contents into context.
+- The `@file` mention index now refreshes after workspace file create/delete
+  events, so long-lived VS Code/Cursor sessions pick up new and removed files
+  without a manual status refresh.
 - `/session prune [--status <state>] [--older-than-days N] [--dry-run]`
   now runs through the daemon command path and returns a structured prune
   result so editor users can preview or remove stale persisted sessions.
