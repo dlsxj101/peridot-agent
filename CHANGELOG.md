@@ -133,6 +133,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **Daemon status code-map snapshot** now includes code-map freshness in
   `peridot.status`, letting VS Code/Cursor show the code-map pill immediately
   after a normal status refresh.
+- **Attachment status surfaces** now reuse the session-local attachment cache
+  in both the TUI side panel and VS Code context strip so attached files stay
+  visible after the original command result scrolls away.
 - **`/session prune` slash parity** lets both TUI and VS Code users prune
   persisted sessions with `--status`, `--older-than-days`, and `--dry-run`
   filters through the shared session command path.

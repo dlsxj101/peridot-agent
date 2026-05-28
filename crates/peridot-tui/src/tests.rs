@@ -1563,6 +1563,13 @@ fn cross_crate_events_update_side_panel_state() {
     assert!(snapshot.contains("MCP"));
     assert!(snapshot.contains("- fs [stdio]: 4 tools, connected"));
 
+    state.set_attachment_paths(vec!["docs/notes.md".to_string(), "src/main.rs".to_string()]);
+    let snapshot = render_text_snapshot(&state);
+    assert!(snapshot.contains("Attachments"));
+    assert!(snapshot.contains("2 files attached"));
+    assert!(snapshot.contains("- docs/notes.md"));
+    assert!(snapshot.contains("- src/main.rs"));
+
     state.side_panel.code_map = Some(CodeMapSummary {
         index_exists: true,
         stale: false,

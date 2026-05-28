@@ -37,6 +37,7 @@ import {
   type FileMentionContext,
 } from './fileMention';
 import { inlineImagePayload, isAttachableInlineImage } from './inlineImageAttachment';
+import { attachmentContextPill } from './attachmentContext';
 import { runMetricChips } from './runMetrics';
 import { riskChipView } from './riskChip';
 import { codeMapContextPill } from './codeMapContext';
@@ -1194,6 +1195,12 @@ function renderContextStrip(context: SidebarContext): HTMLElement {
   if (codeMapPill) {
     const element = pill(codeMapPill.label, codeMapPill.tone);
     element.title = codeMapPill.title;
+    pills.append(element);
+  }
+  const attachmentPill = attachmentContextPill(context.attachmentPaths);
+  if (attachmentPill) {
+    const element = pill(attachmentPill.label, attachmentPill.tone);
+    element.title = attachmentPill.title;
     pills.append(element);
   }
   if (context.serviceTier && context.serviceTier !== 'standard') {

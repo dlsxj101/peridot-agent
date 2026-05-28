@@ -106,7 +106,7 @@ provider" button in the session header to come back.
 ## Sidebar
 
 Once a provider is live, the sidebar shows workspace / provider /
-model / auth context, AGENTS/MCP/code-map status, a session dropdown,
+model / auth context, AGENTS/MCP/code-map/attachment status, a session dropdown,
 a HUD for token usage and cost / turn budget, an inline plan panel that
 follows `plan_updated`, a compact context donut in the composer options
 row, a chat-style Markdown transcript with single-line tool activity and

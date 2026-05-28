@@ -53,6 +53,12 @@ pub enum PhraseKey {
     CodeMapStale,
     /// TUI side-panel code-map missing marker.
     CodeMapMissing,
+    /// TUI side-panel attachment block title.
+    AttachmentPanelTitle,
+    /// TUI side-panel attachment count suffix.
+    AttachmentFilesAttached,
+    /// TUI side-panel attachment overflow suffix.
+    AttachmentMore,
 }
 
 /// Looks up the rendered phrase for `key` in `locale`.
@@ -100,6 +106,12 @@ pub fn tr(key: PhraseKey, locale: Locale) -> &'static str {
         (PhraseKey::CodeMapStale, Locale::Ko) => "오래됨",
         (PhraseKey::CodeMapMissing, Locale::En) => "missing",
         (PhraseKey::CodeMapMissing, Locale::Ko) => "없음",
+        (PhraseKey::AttachmentPanelTitle, Locale::En) => "Attachments",
+        (PhraseKey::AttachmentPanelTitle, Locale::Ko) => "첨부",
+        (PhraseKey::AttachmentFilesAttached, Locale::En) => "files attached",
+        (PhraseKey::AttachmentFilesAttached, Locale::Ko) => "개 파일 첨부됨",
+        (PhraseKey::AttachmentMore, Locale::En) => "more",
+        (PhraseKey::AttachmentMore, Locale::Ko) => "개 더 있음",
     }
 }
 

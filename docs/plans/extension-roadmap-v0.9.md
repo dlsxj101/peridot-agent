@@ -1794,6 +1794,19 @@ shared daemon, TUI, and VS Code extension surfaces.
   the sidebar context strip so the code-map pill can appear on startup or
   manual refresh before any codemap command is run.
 
+### E141. Attachment Context Status
+
+- **Status**: landed.
+- **Goal**: keep attached files visible after `/attach` or `/attachments`
+  output scrolls away, using the session-local attachment cache already shared
+  by `/detach` autocomplete.
+- **Where**: TUI side-panel rendering, localized attachment labels, VS Code
+  context strip helper, README, changelogs, and unit tests.
+- **Result**: TUI side panels now show an Attachments block with the current
+  session's attached paths. VS Code/Cursor shows an `Attachments N` context
+  pill with attached paths in the tooltip, and both surfaces stay in sync with
+  `/attach`, `/attachments`, `/detach`, and session switches.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.
