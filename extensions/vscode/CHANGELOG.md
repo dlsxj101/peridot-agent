@@ -63,6 +63,9 @@
   `Peridot: Clear Session Notes` now expose active-session notes from the
   command palette and sidebar title bar through the shared daemon slash
   paths.
+- `Peridot: Show Workspace TODOs` now exposes `/todos` from the command
+  palette and sidebar title bar, rendering marker hits with existing
+  file-open rows.
 - `/session prune [--status <state>] [--older-than-days N] [--dry-run]`
   now runs through the daemon command path and returns a structured prune
   result so editor users can preview or remove stale persisted sessions.

@@ -199,6 +199,7 @@ export function activate(context: vscode.ExtensionContext) {
     detachAttachment: async (path: string): Promise<void> =>
       detachAttachmentFromSession(path, output, sidebar),
     showAttachments: async (): Promise<void> => showSessionAttachments(output, sidebar),
+    showTodos: async (): Promise<void> => showWorkspaceTodos(output, sidebar),
     addSessionNote: async (): Promise<void> => addSessionNote(output, sidebar),
     showSessionNotes: async (): Promise<void> => showSessionNotes(output, sidebar),
     clearSessionNotes: async (): Promise<void> => clearSessionNotes(output, sidebar),
@@ -416,6 +417,12 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand('peridot.showAttachments', async () => {
       await showSessionAttachments(output, sidebar);
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('peridot.showTodos', async () => {
+      await showWorkspaceTodos(output, sidebar);
     }),
   );
 
@@ -1477,6 +1484,36 @@ async function detachAttachmentFromSession(
     output.appendLine(`[peridot] detach failed: ${message}`);
     sidebar.appendError(message);
     await vscode.window.showErrorMessage(`Peridot detach failed: ${message}`);
+  }
+}
+
+async function showWorkspaceTodos(
+  output: vscode.OutputChannel,
+  sidebar: PeridotSidebarProvider,
+): Promise<void> {
+  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!folder) {
+    const message = 'Open a workspace folder before scanning TODO markers.';
+    sidebar.setWorkspaceProblem(message);
+    await vscode.window.showWarningMessage(message);
+    return;
+  }
+  await vscode.commands.executeCommand('peridot.chatView.focus');
+  try {
+    const result = await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: 'Peridot: scanning TODO markers',
+        cancellable: false,
+      },
+      async () => runSlashCommand('/todos', output, sidebar, sidebar.currentRunOptions()),
+    );
+    sidebar.appendCommandResult(result);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    output.appendLine(`[peridot] todos failed: ${message}`);
+    sidebar.appendError(message);
+    await vscode.window.showErrorMessage(`Peridot TODO scan failed: ${message}`);
   }
 }
 

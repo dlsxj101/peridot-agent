@@ -1490,6 +1490,17 @@ shared daemon, TUI, and VS Code extension surfaces.
   confirmation before running `/notes clear`. All three render through the
   existing structured notes command-result block.
 
+### E117. VS Code Workspace TODO GUI
+
+- **Status**: landed.
+- **Goal**: expose the shared `/todos` scanner from the editor without
+  requiring manual slash commands.
+- **Where**: VS Code command contributions, sidebar title-bar actions,
+  README, and changelog docs.
+- **Result**: `Peridot: Show Workspace TODOs` runs `/todos` through the
+  daemon command path, renders TODO/FIXME/HACK/XXX/BUG hits in the existing
+  command-result rows, and preserves file-open affordances for each marker.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

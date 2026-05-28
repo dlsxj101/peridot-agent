@@ -66,6 +66,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **VS Code session notes GUI** now exposes add/list/clear note actions from
   the command palette and sidebar title bar through the shared
   `/note`, `/notes`, and `/notes clear` daemon paths.
+- **VS Code workspace TODO GUI** now exposes `/todos` from the command
+  palette and sidebar title bar, rendering marker hits with existing
+  file-open rows.
 - **`/session prune` slash parity** lets both TUI and VS Code users prune
   persisted sessions with `--status`, `--older-than-days`, and `--dry-run`
   filters through the shared session command path.
