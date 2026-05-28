@@ -72,6 +72,7 @@ export interface SidebarHandlers {
   attachFile: () => Promise<void>;
   detachAttachment: (path: string) => Promise<void>;
   showAttachments: () => Promise<void>;
+  showSessions: () => Promise<void>;
   pruneSessions: () => Promise<void>;
   replaySessionTimeline: () => Promise<void>;
   exportSessionArtifacts: () => Promise<void>;
@@ -1062,6 +1063,9 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       case 'detachAttachment':
         await this.handlers.detachAttachment(message.path);
         return;
+      case 'showSessions':
+        await this.handlers.showSessions();
+        return;
       case 'pruneSessions':
         await this.handlers.pruneSessions();
         return;
@@ -1376,8 +1380,10 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
 
   private applySessionMutationResult(result: CommandResultView): void {
     if (result.kind === 'session_list') {
+      const filtered =
+        typeof result.status_filter === 'string' || typeof result.statusFilter === 'string';
       this.reconcileDaemonSessions(Array.isArray(result.sessions) ? result.sessions : [], {
-        pruneMissing: true,
+        pruneMissing: !filtered,
       });
       return;
     }

@@ -12,6 +12,7 @@ import { resetBinaryCache, resolvePeridotBinary } from './peridotBin';
 import { peridotChildEnv } from './processEnv';
 import { sessionExportChoices, sessionExportDirectoryName } from './sessionExportCommand';
 import { sessionImportSlashCommand } from './sessionImportCommand';
+import { sessionListSlashCommand, sessionListStatusChoices } from './sessionListCommand';
 import {
   parseReplayLastInput,
   sessionReplayChoices,
@@ -178,6 +179,7 @@ export function activate(context: vscode.ExtensionContext) {
     detachAttachment: async (path: string): Promise<void> =>
       detachAttachmentFromSession(path, output, sidebar),
     showAttachments: async (): Promise<void> => showSessionAttachments(output, sidebar),
+    showSessions: async (): Promise<void> => showSessions(output, sidebar),
     pruneSessions: async (): Promise<void> => pruneSessions(output, sidebar),
     replaySessionTimeline: async (): Promise<void> => replaySessionTimeline(output, sidebar),
     exportSessionArtifacts: async (): Promise<void> => exportSessionArtifacts(output, sidebar),
@@ -379,6 +381,12 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand('peridot.showAttachments', async () => {
       await showSessionAttachments(output, sidebar);
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('peridot.showSessions', async () => {
+      await showSessions(output, sidebar);
     }),
   );
 
@@ -1356,6 +1364,61 @@ async function detachAttachmentFromSession(
     output.appendLine(`[peridot] detach failed: ${message}`);
     sidebar.appendError(message);
     await vscode.window.showErrorMessage(`Peridot detach failed: ${message}`);
+  }
+}
+
+async function showSessions(
+  output: vscode.OutputChannel,
+  sidebar: PeridotSidebarProvider,
+): Promise<void> {
+  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!folder) {
+    const message = 'Open a workspace folder before listing Peridot sessions.';
+    sidebar.setWorkspaceProblem(message);
+    await vscode.window.showWarningMessage(message);
+    return;
+  }
+  const status = await vscode.window.showQuickPick(
+    sessionListStatusChoices().map((choice) => ({
+      label: choice.label,
+      description: choice.description,
+      status: choice.status,
+    })),
+    {
+      title: 'Peridot: Show Sessions',
+      placeHolder: 'Choose which persisted sessions to show',
+      ignoreFocusOut: true,
+    },
+  );
+  if (!status) return;
+  let command: string;
+  try {
+    command = sessionListSlashCommand(status.status);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    await vscode.window.showErrorMessage(`Peridot session list failed: ${message}`);
+    return;
+  }
+  await vscode.commands.executeCommand('peridot.chatView.focus');
+  try {
+    output.appendLine(`[peridot] listing sessions: ${command}`);
+    const result = await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: 'Peridot: listing sessions',
+        cancellable: false,
+      },
+      async () => runSlashCommand(command, output, sidebar, sidebar.currentRunOptions()),
+    );
+    sidebar.reconcileDaemonSessions(Array.isArray(result.sessions) ? result.sessions : [], {
+      pruneMissing: !status.status,
+    });
+    sidebar.appendCommandResult(result);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    output.appendLine(`[peridot] session list failed: ${message}`);
+    sidebar.appendError(message);
+    await vscode.window.showErrorMessage(`Peridot session list failed: ${message}`);
   }
 }
 

@@ -38,6 +38,9 @@
 - `/session list --status <state>` now runs through the daemon command path
   and filters persisted sessions by lifecycle state, with autocomplete for
   the allowed status values.
+- `Peridot: Show Sessions` now exposes the same all/filtered persisted
+  session inventory from the command palette and sidebar title bar. Filtered
+  results no longer prune unrelated local session cards.
 - `/session prune [--status <state>] [--older-than-days N] [--dry-run]`
   now runs through the daemon command path and returns a structured prune
   result so editor users can preview or remove stale persisted sessions.

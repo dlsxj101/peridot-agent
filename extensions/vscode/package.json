@@ -233,6 +233,12 @@
         "icon": "$(references)"
       },
       {
+        "command": "peridot.showSessions",
+        "title": "Peridot: Show Sessions",
+        "category": "Peridot",
+        "icon": "$(list-unordered)"
+      },
+      {
         "command": "peridot.pruneSessions",
         "title": "Peridot: Prune Sessions",
         "category": "Peridot",
@@ -347,6 +353,11 @@
           "command": "peridot.attachFile",
           "when": "view == peridot.chatView",
           "group": "navigation@5"
+        },
+        {
+          "command": "peridot.showSessions",
+          "when": "view == peridot.chatView",
+          "group": "navigation@5.2"
         },
         {
           "command": "peridot.pruneSessions",

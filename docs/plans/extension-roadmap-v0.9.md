@@ -1398,6 +1398,20 @@ shared daemon, TUI, and VS Code extension surfaces.
   explicit confirmation when sessions match, then run the shared
   `/session prune` daemon path and refresh the session list.
 
+### E110. VS Code Session List GUI
+
+- **Status**: landed.
+- **Goal**: make persisted session inventory and lifecycle filtering
+  discoverable from the editor, not only the slash composer.
+- **Where**: VS Code command contributions, sidebar title-bar actions,
+  session list command construction, sidebar session reconciliation,
+  README, and changelog docs.
+- **Result**: `Peridot: Show Sessions` and the sidebar sessions button
+  prompt for all sessions or a lifecycle filter, run the shared
+  `/session list [--status <state>]` daemon path, render the result in the
+  transcript, refresh local session cards for full inventories, and avoid
+  pruning unrelated local cards for filtered inventories.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

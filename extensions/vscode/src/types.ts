@@ -149,6 +149,8 @@ export interface CommandResultView {
   workspace?: string;
   workspace_root?: string;
   status?: string;
+  status_filter?: string | null;
+  statusFilter?: string | null;
   summary?: string;
   updated_at_unix?: number;
   objective?: string | null;
@@ -453,6 +455,7 @@ export type OutboundMessage =
   | { type: 'restoreSkill'; name: string }
   | { type: 'attachFile' }
   | { type: 'detachAttachment'; path: string }
+  | { type: 'showSessions' }
   | { type: 'pruneSessions' }
   | { type: 'replaySessionTimeline' }
   | { type: 'exportSessionArtifacts' }
