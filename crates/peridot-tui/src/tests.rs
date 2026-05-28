@@ -3843,7 +3843,10 @@ fn swap_foreground_state_round_trips_transcripts_between_sessions() {
     ));
     state.current_session_id = "A".to_string();
     state.sessions.push(SessionDirectoryItem::new("A", "alpha"));
-    state.sessions.push(SessionDirectoryItem::new("B", "beta"));
+    let mut beta = SessionDirectoryItem::new("B", "beta");
+    beta.notes_count = 2;
+    beta.last_note = Some("beta checkpoint".to_string());
+    state.sessions.push(beta);
     state.push_transcript("hello from A");
 
     state.current_session_id = "B".to_string();
@@ -3851,6 +3854,11 @@ fn swap_foreground_state_round_trips_transcripts_between_sessions() {
     swap_foreground_state(&mut state, &mut other_states, "A");
 
     assert_eq!(state.current_session_id, "B");
+    assert_eq!(state.note_summary.count, 2);
+    assert_eq!(
+        state.note_summary.latest.as_deref(),
+        Some("beta checkpoint")
+    );
     assert!(
         state.transcript.is_empty(),
         "freshly-swapped foreground starts with a clean transcript"

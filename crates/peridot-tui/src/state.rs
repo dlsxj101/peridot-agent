@@ -1387,6 +1387,7 @@ impl TuiState {
         }
         self.note_summary.count = self.note_summary.count.saturating_add(1);
         self.note_summary.latest = Some(text.clone());
+        self.sync_current_session_note_summary();
         self.pending_notes.push(text);
     }
 
@@ -1399,11 +1400,42 @@ impl TuiState {
                 if value.is_empty() { None } else { Some(value) }
             }),
         };
+        self.sync_current_session_note_summary();
     }
 
     /// Clears the active-session note summary.
     pub fn clear_note_summary(&mut self) {
         self.note_summary = NoteSummary::default();
+        self.sync_current_session_note_summary();
+    }
+
+    /// Replaces the active note summary from the session directory, if known.
+    pub fn hydrate_note_summary_from_directory(&mut self) {
+        let Some(item) = self
+            .sessions
+            .iter()
+            .find(|item| item.id == self.current_session_id)
+        else {
+            return;
+        };
+        self.note_summary = NoteSummary {
+            count: item.notes_count,
+            latest: item.last_note.clone(),
+        };
+    }
+
+    fn sync_current_session_note_summary(&mut self) {
+        if self.current_session_id.is_empty() {
+            return;
+        }
+        if let Some(item) = self
+            .sessions
+            .iter_mut()
+            .find(|item| item.id == self.current_session_id)
+        {
+            item.notes_count = self.note_summary.count;
+            item.last_note = self.note_summary.latest.clone();
+        }
     }
 
     /// Removes and returns every queued note in FIFO order.

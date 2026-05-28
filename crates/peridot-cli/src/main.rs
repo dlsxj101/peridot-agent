@@ -11,12 +11,12 @@ use commands::{
     AgentsCommand, AuthProvider, ConfigCommand, EnvCommand, McpCommand, OutputFormat,
     SessionCommand, SessionExportArtifact, SkillCommand, export_session_artifacts,
     load_effective_config, maybe_print_update_notice, maybe_run_first_launch_wizard,
-    move_auto_skill_to_archive, print_scan, read_session_notes, read_stored_api_key,
-    read_stored_openai_oauth_credentials, restore_archived_skill, run_agents_command,
-    run_config_command, run_doctor_command, run_env_command, run_login_command, run_logout_command,
-    run_mcp_command, run_session_command, run_setting_command, run_setup_command, run_ship_command,
-    run_skill_command, run_update_command, run_verify_command, session_count_summary,
-    session_resume_summary,
+    move_auto_skill_to_archive, print_scan, read_notes_summary, read_session_notes,
+    read_stored_api_key, read_stored_openai_oauth_credentials, restore_archived_skill,
+    run_agents_command, run_config_command, run_doctor_command, run_env_command, run_login_command,
+    run_logout_command, run_mcp_command, run_session_command, run_setting_command,
+    run_setup_command, run_ship_command, run_skill_command, run_update_command, run_verify_command,
+    session_count_summary, session_resume_summary,
 };
 use peridot_common::{
     AskUserAnswer, AskUserRequest, ContextConfig, ExecutionMode, MemoryConfig, PeriError,
@@ -4093,6 +4093,9 @@ fn hydrate_persisted_sessions(
             item.tokens = record.total_tokens;
             item.cost_usd = record.total_cost_usd;
             item.last_event_at_unix = record.updated_at_unix;
+            let (notes_count, last_note) = read_notes_summary(project_root, &record.id);
+            item.notes_count = notes_count;
+            item.last_note = last_note;
             state.sessions.push(item);
         }
         if router.get(&record.id).is_none() {

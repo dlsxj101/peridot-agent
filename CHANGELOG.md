@@ -139,6 +139,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **Operator note status surfaces** now keep the active session's note count
   visible in both the TUI side panel and VS Code context strip after `/note`,
   `/notes`, and `/notes clear` command results.
+- **Session-list note summary hydration** now carries note counts and latest
+  note text through TUI persisted-session hydration, foreground swaps, daemon
+  `session.list`, and VS Code/Cursor session reconciliation.
 - **`/session prune` slash parity** lets both TUI and VS Code users prune
   persisted sessions with `--status`, `--older-than-days`, and `--dry-run`
   filters through the shared session command path.

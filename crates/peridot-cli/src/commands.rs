@@ -79,9 +79,10 @@ pub(crate) use session::{
     SessionPruneResult, SessionReplayResult, SessionReplayTimelineEntry,
     SessionReplayTranscriptEntry, SessionResumeResult, SessionSearchHit, SessionSearchResult,
     SessionShowResult, append_session_note, clear_session_notes, export_session_artifacts,
-    import_session_artifacts, prune_session_records, read_session_notes, rewind_context_entries,
-    run_session_command, search_session_transcript_hits, session_count_summary, session_locate,
-    session_replay_summary, session_resume_summary, session_resume_task_text, session_show_summary,
+    import_session_artifacts, prune_session_records, read_notes_summary, read_session_notes,
+    rewind_context_entries, run_session_command, search_session_transcript_hits,
+    session_count_summary, session_locate, session_replay_summary, session_resume_summary,
+    session_resume_task_text, session_show_summary,
 };
 pub(crate) use settings::run_setting_command;
 pub(crate) use setup::run_setup_command;

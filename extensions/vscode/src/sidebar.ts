@@ -41,7 +41,11 @@ import { agentsSummaryForLoadedEvent, mcpServersForStatusEvent } from './agentEv
 import { attachmentPathsFromCommandResult, normalizeAttachmentPaths } from './attachmentContext';
 import { codeMapFromCommandResult } from './codeMapContext';
 import { mcpConfigChangingSlashCommand, mcpServersFromCommandResult } from './mcpCommand';
-import { normalizeNoteSummary, noteSummaryFromCommandResult } from './noteContext';
+import {
+  normalizeNoteSummary,
+  noteSummaryFromCommandResult,
+  noteSummaryFromDaemonSession,
+} from './noteContext';
 
 export type {
   ApprovalResponse,
@@ -712,6 +716,10 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       }
       if (!session.running) {
         session.runStartedAtMs = undefined;
+      }
+      const noteSummary = noteSummaryFromDaemonSession(remote);
+      if (noteSummary) {
+        session.noteSummary = noteSummary;
       }
     }
 

@@ -660,6 +660,13 @@ fn restore_latest_tui_state_uses_most_recent_persisted_session() {
             &serde_json::to_vec(&state).unwrap(),
         )
         .unwrap();
+        fs::write(
+            sessions_root.join(id).join("notes.ndjson"),
+            format!(
+                "{{\"ts\":1,\"text\":\"first {id}\"}}\n{{\"ts\":2,\"text\":\"latest {id}\"}}\n"
+            ),
+        )
+        .unwrap();
         memory
             .save_session_record(&SessionRecord {
                 id: id.to_string(),
@@ -705,6 +712,13 @@ fn hydrate_persisted_sessions_registers_all_unclosed_sessions() {
             &serde_json::to_vec(&state).unwrap(),
         )
         .unwrap();
+        fs::write(
+            sessions_root.join(id).join("notes.ndjson"),
+            format!(
+                "{{\"ts\":1,\"text\":\"first {id}\"}}\n{{\"ts\":2,\"text\":\"latest {id}\"}}\n"
+            ),
+        )
+        .unwrap();
         memory
             .save_session_record(&SessionRecord {
                 id: id.to_string(),
@@ -731,6 +745,13 @@ fn hydrate_persisted_sessions_registers_all_unclosed_sessions() {
     hydrate_persisted_sessions(&mut state, &router, &root);
 
     assert_eq!(state.sessions.len(), 2);
+    assert!(state.sessions.iter().all(|item| item.notes_count == 2));
+    assert!(
+        state
+            .sessions
+            .iter()
+            .any(|item| item.id == "s1" && item.last_note.as_deref() == Some("latest s1"))
+    );
     assert_eq!(router.lock().unwrap().len(), 2);
     assert!(!state.current_session_id.is_empty());
     fs::remove_dir_all(&root).ok();

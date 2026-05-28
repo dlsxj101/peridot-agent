@@ -4151,6 +4151,10 @@ function normalizeDaemonSessions(value: unknown): DaemonSessionSummary[] {
       if (typeof entry.total_tokens === 'number') summary.total_tokens = entry.total_tokens;
       if (typeof entry.total_cost_usd === 'number') summary.total_cost_usd = entry.total_cost_usd;
       if (typeof entry.turns_used === 'number') summary.turns_used = entry.turns_used;
+      if (typeof entry.notes_count === 'number') summary.notes_count = entry.notes_count;
+      if (typeof entry.last_note === 'string' || entry.last_note === null) {
+        summary.last_note = entry.last_note;
+      }
       return summary;
     })
     .filter((entry): entry is DaemonSessionSummary => Boolean(entry));

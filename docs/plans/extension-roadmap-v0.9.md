@@ -1820,6 +1820,19 @@ shared daemon, TUI, and VS Code extension surfaces.
   `/notes`, and `/notes clear` results into a session-local `Notes N`
   context pill and persists that summary per chat session.
 
+### E143. Session Notes Summary Hydration
+
+- **Status**: landed.
+- **Goal**: keep note status accurate after session list refreshes, reloads,
+  and foreground swaps instead of requiring another `/notes` command.
+- **Where**: persisted-session hydration, TUI foreground swap state,
+  daemon `session.list`, VS Code session normalization/reconciliation, and
+  unit tests.
+- **Result**: session directory rows now carry additive `notes_count` /
+  `last_note` metadata. TUI foreground swaps hydrate the active note side-panel
+  summary from that directory metadata, and VS Code/Cursor folds daemon
+  `session.list` snapshots into the per-session `Notes N` context pill.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

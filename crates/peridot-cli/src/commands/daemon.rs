@@ -583,6 +583,8 @@ async fn session_list_result(state: &DaemonState) -> Value {
     let running_sessions = state.sessions.lock().await;
     let mut rows = BTreeMap::<String, Value>::new();
     for session in legacy {
+        let (notes_count, last_note) =
+            crate::commands::read_notes_summary(state.project_root.as_ref(), &session.id);
         rows.insert(
             session.id.clone(),
             serde_json::json!({
@@ -592,12 +594,16 @@ async fn session_list_result(state: &DaemonState) -> Value {
                 "status": "idle",
                 "running": false,
                 "updated_at_unix": 0,
+                "notes_count": notes_count,
+                "last_note": last_note,
             }),
         );
     }
     for record in records {
         let running =
             running_sessions.contains_key(&record.id) || record.status == SessionLifecycle::Running;
+        let (notes_count, last_note) =
+            crate::commands::read_notes_summary(state.project_root.as_ref(), &record.id);
         rows.insert(
             record.id.clone(),
             serde_json::json!({
@@ -611,11 +617,15 @@ async fn session_list_result(state: &DaemonState) -> Value {
                 "total_tokens": record.total_tokens,
                 "total_cost_usd": record.total_cost_usd,
                 "turns_used": record.turns_used,
+                "notes_count": notes_count,
+                "last_note": last_note,
             }),
         );
     }
     for (id, entry) in running_sessions.iter() {
         rows.entry(id.clone()).or_insert_with(|| {
+            let (notes_count, last_note) =
+                crate::commands::read_notes_summary(state.project_root.as_ref(), id);
             serde_json::json!({
                 "id": id,
                 "title": session_title_from_task(&entry.spec.task),
@@ -627,6 +637,8 @@ async fn session_list_result(state: &DaemonState) -> Value {
                 "total_tokens": 0,
                 "total_cost_usd": 0.0,
                 "turns_used": 0,
+                "notes_count": notes_count,
+                "last_note": last_note,
             })
         });
     }
@@ -6543,6 +6555,15 @@ url = "https://example.com/mcp"
         record.updated_at_unix = 20;
         record.last_task = Some("recorded task".into());
         store.save_session_record(&record).unwrap();
+        let note_dir = root.join(".peridot/sessions/session-recorded");
+        std::fs::create_dir_all(&note_dir).unwrap();
+        std::fs::write(
+            note_dir.join("notes.ndjson"),
+            r#"{"ts":1,"text":"first note"}
+{"ts":2,"text":"latest note"}
+"#,
+        )
+        .unwrap();
         let (tx, mut rx) = mpsc::unbounded_channel::<String>();
         let state = DaemonState::new(
             root.clone(),
@@ -6565,6 +6586,8 @@ url = "https://example.com/mcp"
         assert_eq!(sessions[0]["id"], "session-recorded");
         assert_eq!(sessions[0]["title"], "recorded task");
         assert_eq!(sessions[0]["status"], "suspended");
+        assert_eq!(sessions[0]["notes_count"], 2);
+        assert_eq!(sessions[0]["last_note"], "latest note");
         let _ = std::fs::remove_dir_all(root);
     }
 

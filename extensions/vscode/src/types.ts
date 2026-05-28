@@ -412,6 +412,8 @@ export interface DaemonSessionSummary {
   total_tokens?: number;
   total_cost_usd?: number;
   turns_used?: number;
+  notes_count?: number;
+  last_note?: string | null;
 }
 
 export type SidebarView = 'landing' | 'session';

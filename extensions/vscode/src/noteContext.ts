@@ -1,4 +1,4 @@
-import type { CommandResultItem, CommandResultView, NoteSummary } from './types';
+import type { CommandResultItem, CommandResultView, DaemonSessionSummary, NoteSummary } from './types';
 
 export function noteSummaryFromCommandResult(
   result: CommandResultView,
@@ -34,6 +34,16 @@ export function normalizeNoteSummary(value: unknown): NoteSummary | undefined {
     count: Math.max(0, Math.floor(count)),
     ...(latest ? { latest } : {}),
   };
+}
+
+export function noteSummaryFromDaemonSession(
+  session: DaemonSessionSummary,
+): NoteSummary | undefined {
+  if (typeof session.notes_count !== 'number') return undefined;
+  return normalizeNoteSummary({
+    count: session.notes_count,
+    latest: session.last_note,
+  });
 }
 
 function latestNoteText(result: CommandResultView): string | undefined {

@@ -43,6 +43,12 @@ pub struct SessionDirectoryItem {
     /// Whether an LLM-generated title has replaced the default placeholder.
     #[serde(default)]
     pub title_generated: bool,
+    /// Number of operator notes known for this session.
+    #[serde(default)]
+    pub notes_count: usize,
+    /// Most recent operator note text, when known.
+    #[serde(default)]
+    pub last_note: Option<String>,
 }
 
 impl SessionDirectoryItem {
@@ -59,6 +65,8 @@ impl SessionDirectoryItem {
             parent_id: None,
             kind: None,
             title_generated: false,
+            notes_count: 0,
+            last_note: None,
         }
     }
 

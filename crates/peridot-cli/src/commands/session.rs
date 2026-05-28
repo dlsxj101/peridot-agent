@@ -655,7 +655,7 @@ fn read_notes_tail(project_root: &Path, id: &str, n: usize) -> Vec<serde_json::V
 /// Returns the number of operator-written notes and the latest note's text
 /// for a session, by reading `<sessions>/<id>/notes.ndjson` once. Missing
 /// file is treated as zero notes.
-fn read_notes_summary(project_root: &Path, id: &str) -> (usize, Option<String>) {
+pub(crate) fn read_notes_summary(project_root: &Path, id: &str) -> (usize, Option<String>) {
     let path = project_root
         .join(".peridot")
         .join("sessions")
