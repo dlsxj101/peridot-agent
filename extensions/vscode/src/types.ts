@@ -460,6 +460,7 @@ export type OutboundMessage =
   | { type: 'showSessionCount' }
   | { type: 'showPersistedSessionDetails' }
   | { type: 'locatePersistedSessionDirectory' }
+  | { type: 'resumePersistedSession' }
   | { type: 'showSessions' }
   | { type: 'searchSessions' }
   | { type: 'pruneSessions' }

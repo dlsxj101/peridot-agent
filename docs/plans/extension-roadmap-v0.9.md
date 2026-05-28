@@ -1437,6 +1437,18 @@ shared daemon, TUI, and VS Code extension surfaces.
   paths. Targeted commands fetch persisted sessions, prompt for the target,
   and render the existing structured session result blocks.
 
+### E113. VS Code Session Resume GUI
+
+- **Status**: landed.
+- **Goal**: let editor users continue persisted session work without typing
+  `/session resume <id>` manually.
+- **Where**: VS Code command contributions, sidebar title-bar actions,
+  session resume command construction, README, and changelog docs.
+- **Result**: `Peridot: Resume Session` fetches persisted sessions, prompts
+  for the target, runs the shared `/session resume <id>` daemon path, shows
+  the resume summary, and starts the returned continuation task through the
+  normal session runner.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

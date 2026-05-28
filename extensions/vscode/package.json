@@ -251,6 +251,12 @@
         "icon": "$(location)"
       },
       {
+        "command": "peridot.resumePersistedSession",
+        "title": "Peridot: Resume Session",
+        "category": "Peridot",
+        "icon": "$(debug-continue)"
+      },
+      {
         "command": "peridot.showSessions",
         "title": "Peridot: Show Sessions",
         "category": "Peridot",
@@ -392,6 +398,11 @@
           "command": "peridot.locatePersistedSessionDirectory",
           "when": "view == peridot.chatView",
           "group": "navigation@5.15"
+        },
+        {
+          "command": "peridot.resumePersistedSession",
+          "when": "view == peridot.chatView",
+          "group": "navigation@5.18"
         },
         {
           "command": "peridot.showSessions",

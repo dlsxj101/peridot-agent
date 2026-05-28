@@ -48,6 +48,9 @@
   `Peridot: Locate Session Directory` now expose `/session count`,
   `/session show <id>`, and `/session locate <id>` from the command palette
   and sidebar title bar, with persisted-session picking for target commands.
+- `Peridot: Resume Session` now exposes `/session resume <id>` from the
+  command palette and sidebar title bar, then starts the returned
+  continuation task through the normal session runner.
 - `/session prune [--status <state>] [--older-than-days N] [--dry-run]`
   now runs through the daemon command path and returns a structured prune
   result so editor users can preview or remove stale persisted sessions.

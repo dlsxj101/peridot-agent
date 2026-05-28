@@ -40,6 +40,7 @@ native tool calling, and 2-Tier context management.
 | `Peridot: Show Session Count` | Runs `/session count` and renders the persisted lifecycle totals. |
 | `Peridot: Show Session Details` | Picks a persisted session and runs `/session show <id>` to render lifecycle, workspace, usage, and notes metadata. |
 | `Peridot: Locate Session Directory` | Picks a persisted session and runs `/session locate <id>` to render its `.peridot/sessions/<id>` directory. |
+| `Peridot: Resume Session` | Picks a persisted session, runs `/session resume <id>`, and starts the generated continuation task. |
 | `Peridot: Show Sessions` | Runs `/session list`, optionally filtered by lifecycle status, and refreshes local session cards only for full inventory results. |
 | `Peridot: Search Sessions` | Prompts for a query, runs `/session search <query>`, and renders persisted transcript hits. |
 | `Peridot: Prune Sessions` | Previews `/session prune` with status and age filters, then asks for confirmation before removing matching persisted sessions. |

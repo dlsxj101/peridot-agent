@@ -75,6 +75,7 @@ export interface SidebarHandlers {
   showSessionCount: () => Promise<void>;
   showPersistedSessionDetails: () => Promise<void>;
   locatePersistedSessionDirectory: () => Promise<void>;
+  resumePersistedSession: () => Promise<void>;
   showSessions: () => Promise<void>;
   searchSessions: () => Promise<void>;
   pruneSessions: () => Promise<void>;
@@ -1075,6 +1076,9 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         return;
       case 'locatePersistedSessionDirectory':
         await this.handlers.locatePersistedSessionDirectory();
+        return;
+      case 'resumePersistedSession':
+        await this.handlers.resumePersistedSession();
         return;
       case 'showSessions':
         await this.handlers.showSessions();

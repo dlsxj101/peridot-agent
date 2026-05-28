@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   sessionCountSlashCommand,
   sessionLocateSlashCommand,
+  sessionResumeSlashCommand,
   sessionShowSlashCommand,
   sessionTargetChoices,
 } from '../src/sessionInspectCommand';
@@ -29,9 +30,11 @@ test('sessionTargetChoices lists persisted sessions without duplicates', () => {
 test('session show and locate commands quote targets', () => {
   assert.equal(sessionShowSlashCommand("release prep's run"), "/session show 'release prep'\\''s run'");
   assert.equal(sessionLocateSlashCommand(' release prep '), "/session locate 'release prep'");
+  assert.equal(sessionResumeSlashCommand('release prep'), "/session resume 'release prep'");
 });
 
-test('session show and locate commands reject empty targets', () => {
+test('session target commands reject empty targets', () => {
   assert.throws(() => sessionShowSlashCommand('   '), /Session id/);
   assert.throws(() => sessionLocateSlashCommand('   '), /Session id/);
+  assert.throws(() => sessionResumeSlashCommand('   '), /Session id/);
 });

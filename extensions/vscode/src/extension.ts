@@ -15,6 +15,7 @@ import { sessionImportSlashCommand } from './sessionImportCommand';
 import {
   sessionCountSlashCommand,
   sessionLocateSlashCommand,
+  sessionResumeSlashCommand,
   sessionShowSlashCommand,
   sessionTargetChoices,
 } from './sessionInspectCommand';
@@ -191,6 +192,7 @@ export function activate(context: vscode.ExtensionContext) {
       showPersistedSessionDetails(output, sidebar),
     locatePersistedSessionDirectory: async (): Promise<void> =>
       locatePersistedSessionDirectory(output, sidebar),
+    resumePersistedSession: async (): Promise<void> => resumePersistedSession(output, sidebar),
     showSessions: async (): Promise<void> => showSessions(output, sidebar),
     searchSessions: async (): Promise<void> => searchSessions(output, sidebar),
     pruneSessions: async (): Promise<void> => pruneSessions(output, sidebar),
@@ -412,6 +414,12 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand('peridot.locatePersistedSessionDirectory', async () => {
       await locatePersistedSessionDirectory(output, sidebar);
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('peridot.resumePersistedSession', async () => {
+      await resumePersistedSession(output, sidebar);
     }),
   );
 
@@ -1519,6 +1527,21 @@ async function locatePersistedSessionDirectory(
   );
 }
 
+async function resumePersistedSession(
+  output: vscode.OutputChannel,
+  sidebar: PeridotSidebarProvider,
+): Promise<void> {
+  await inspectPersistedSession(
+    output,
+    sidebar,
+    'Peridot: Resume Session',
+    'Choose a persisted session to resume',
+    'resuming session',
+    sessionResumeSlashCommand,
+    true,
+  );
+}
+
 async function inspectPersistedSession(
   output: vscode.OutputChannel,
   sidebar: PeridotSidebarProvider,
@@ -1526,6 +1549,7 @@ async function inspectPersistedSession(
   placeHolder: string,
   progressLabel: string,
   buildCommand: (target: string) => string,
+  runReturnedTask = false,
 ): Promise<void> {
   const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   if (!folder) {
@@ -1583,6 +1607,12 @@ async function inspectPersistedSession(
       async () => runSlashCommand(command, output, sidebar, sidebar.currentRunOptions()),
     );
     sidebar.appendCommandResult(result);
+    if (runReturnedTask && result.kind === 'start_task') {
+      const task = result.task?.trim();
+      if (task) {
+        await runTask(task, output, sidebar, sidebar.currentRunOptions());
+      }
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     output.appendLine(`[peridot] ${progressLabel} failed: ${message}`);

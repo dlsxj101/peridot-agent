@@ -54,6 +54,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **VS Code session inspect GUI** now exposes `/session count`,
   `/session show <id>`, and `/session locate <id>` from the command palette
   and sidebar title bar, with persisted-session picking for target commands.
+- **VS Code session resume GUI** now exposes `/session resume <id>` from the
+  command palette and sidebar title bar, then starts the returned
+  continuation task through the normal session runner.
 - **`/session prune` slash parity** lets both TUI and VS Code users prune
   persisted sessions with `--status`, `--older-than-days`, and `--dry-run`
   filters through the shared session command path.

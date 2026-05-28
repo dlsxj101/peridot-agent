@@ -34,6 +34,10 @@ export function sessionLocateSlashCommand(target: string): string {
   return `/session locate ${quotedSessionTarget(target)}`;
 }
 
+export function sessionResumeSlashCommand(target: string): string {
+  return `/session resume ${quotedSessionTarget(target)}`;
+}
+
 function quotedSessionTarget(target: string): string {
   const id = target.trim();
   if (!id) {
