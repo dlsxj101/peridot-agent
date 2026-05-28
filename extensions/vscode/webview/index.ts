@@ -33,6 +33,7 @@ import {
 } from './slashAutocomplete';
 import { runMetricChips } from './runMetrics';
 import { riskChipView } from './riskChip';
+import { mcpContextPill } from './mcpContext';
 import { el, formatTokens, highlightLite, isRecord, json } from './util';
 
 declare function acquireVsCodeApi(): {
@@ -1175,6 +1176,12 @@ function renderContextStrip(context: SidebarContext): HTMLElement {
       agentsPill.title = context.agents.paths.join('\n');
     }
     pills.append(agentsPill);
+  }
+  const mcpPill = mcpContextPill(context.mcpServers);
+  if (mcpPill) {
+    const element = pill(mcpPill.label, mcpPill.tone);
+    element.title = mcpPill.title;
+    pills.append(element);
   }
   if (context.serviceTier && context.serviceTier !== 'standard') {
     pills.append(pill(context.serviceTier, 'mode'));

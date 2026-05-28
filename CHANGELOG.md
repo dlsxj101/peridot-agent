@@ -95,6 +95,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
   panel with transport, tool count, and connection state. VS Code also folds
   structured MCP command-result rows back into sidebar context so later MCP
   pickers show the latest metadata.
+- **VS Code MCP context pill** now shows configured/up server counts and total
+  tool count in the sidebar context strip, with a warning tone when a known
+  server is disconnected.
 - **`/session prune` slash parity** lets both TUI and VS Code users prune
   persisted sessions with `--status`, `--older-than-days`, and `--dry-run`
   filters through the shared session command path.

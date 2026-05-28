@@ -15,6 +15,7 @@
     "src/sessionReconcile.ts",
     "src/workspacePath.ts",
     "webview/composerHistory.ts",
+    "webview/mcpContext.ts",
     "webview/runMetrics.ts",
     "webview/settingsModel.ts",
     "webview/slashAutocomplete.ts",

@@ -1605,6 +1605,18 @@ shared daemon, TUI, and VS Code extension surfaces.
   `/mcp list`, `/mcp add`, `/mcp remove`, or `/mcp test`, later MCP pickers
   show the latest transport and connectivity metadata.
 
+### E126. VS Code MCP Context Pill
+
+- **Status**: landed.
+- **Goal**: make refreshed MCP inventory visible in the editor chrome, not
+  only in command results and slash argument pickers.
+- **Where**: VS Code webview context strip, MCP context summary helper, and
+  webview unit tests.
+- **Result**: the VS Code/Cursor sidebar context strip now shows an `MCP`
+  pill with configured/up counts and total tool count. Disconnected servers
+  switch the pill to a warning tone, and the tooltip lists server transport,
+  tool count, and connection state.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

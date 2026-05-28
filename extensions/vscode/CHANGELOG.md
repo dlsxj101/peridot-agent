@@ -89,6 +89,9 @@
 - MCP command-result inventories now update sidebar context directly, so
   later MCP pickers reflect the latest transport, tool count, and connection
   state after `/mcp list`, `/mcp add`, `/mcp remove`, or `/mcp test`.
+- The sidebar context strip now shows an `MCP` pill with configured/up server
+  counts and total tool count, with tooltip details for server transport and
+  connection state.
 - `/session prune [--status <state>] [--older-than-days N] [--dry-run]`
   now runs through the daemon command path and returns a structured prune
   result so editor users can preview or remove stale persisted sessions.
