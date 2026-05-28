@@ -2027,6 +2027,17 @@ shared daemon, TUI, and VS Code extension surfaces.
   more than one session has recorded usage, using live HUD values for the
   active session when they are newer than the persisted snapshot.
 
+### E159. VS Code Session Menu Usage Subtitles
+
+- **Status**: landed.
+- **Goal**: make the usage totals hydrated in E158 visible where users choose
+  between active and completed sessions.
+- **Where**: VS Code session-menu rendering, reusable subtitle helper,
+  changelogs, and unit tests.
+- **Result**: session switcher subtitles now append persisted cost, token, and
+  turn totals when available, while preserving the existing `In progress` and
+  status-only labels for sessions with no usage.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

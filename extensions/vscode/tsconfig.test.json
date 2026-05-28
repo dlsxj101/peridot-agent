@@ -18,6 +18,7 @@
     "webview/composerHistory.ts",
     "webview/mcpContext.ts",
     "webview/runMetrics.ts",
+    "webview/sessionMenu.ts",
     "webview/sessionExportSummary.ts",
     "webview/settingsModel.ts",
     "webview/slashAutocomplete.ts",

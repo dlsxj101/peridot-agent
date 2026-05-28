@@ -189,6 +189,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
   and turn totals from daemon session snapshots and shows an `All` metric chip
   when multiple sessions have usage, matching the TUI's aggregate status
   semantics more closely.
+- **VS Code session menu usage subtitles** now include persisted cost, token,
+  and turn totals per session, so users can compare active and completed
+  sessions directly from the session switcher.
 - **`/session prune` slash parity** lets both TUI and VS Code users prune
   persisted sessions with `--status`, `--older-than-days`, and `--dry-run`
   filters through the shared session command path.

@@ -39,6 +39,7 @@ import {
 import { inlineImagePayload, isAttachableInlineImage } from './inlineImageAttachment';
 import { attachmentContextPill } from './attachmentContext';
 import { runMetricChips } from './runMetrics';
+import { sessionMenuSubtitle } from './sessionMenu';
 import { riskChipView } from './riskChip';
 import { codeMapContextPill } from './codeMapContext';
 import { mcpContextPill } from './mcpContext';
@@ -949,7 +950,7 @@ function renderSessionMenu(s: SidebarState): HTMLElement {
     } else {
       text.append(el('span', 'session-menu-title', session.title));
     }
-    text.append(el('span', 'session-menu-subtitle', session.running ? 'In progress' : session.status));
+    text.append(el('span', 'session-menu-subtitle', sessionMenuSubtitle(session)));
     item.append(marker, text);
     item.addEventListener('click', () => {
       if (isEditing) return;

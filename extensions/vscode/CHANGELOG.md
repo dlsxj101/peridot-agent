@@ -167,6 +167,8 @@
   slash results aligned for clients that inspect `items`.
 - The run metrics dock now preserves daemon session token/cost/turn totals and
   adds an `All` usage chip when multiple sessions have recorded usage.
+- The session switcher now shows each session's persisted cost, token, and
+  turn totals in the subtitle when those totals are available.
 - Image attachments now render bounded inline previews in the VS Code/Cursor
   attachment cards while keeping the daemon/model context as the existing
   placeholder metadata.
