@@ -50,6 +50,7 @@ import {
   noteSummaryFromCommandResult,
   noteSummaryFromDaemonSession,
 } from './noteContext';
+import { commandResultCanHydrateSessionContext } from './sessionContextHydration';
 
 export type {
   ApprovalResponse,
@@ -591,22 +592,26 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         codeMap,
       };
     }
-    const attachmentPaths = attachmentPathsFromCommandResult(
-      result,
-      this.state.context.attachmentPaths,
-    );
-    if (attachmentPaths) {
-      this.state.context = {
-        ...this.state.context,
-        attachmentPaths,
-      };
-    }
-    const noteSummary = noteSummaryFromCommandResult(result, this.state.context.noteSummary);
-    if (noteSummary) {
-      this.state.context = {
-        ...this.state.context,
-        noteSummary,
-      };
+    if (
+      commandResultCanHydrateSessionContext(result, this.state.activeChatId, this.state.sessionId)
+    ) {
+      const attachmentPaths = attachmentPathsFromCommandResult(
+        result,
+        this.state.context.attachmentPaths,
+      );
+      if (attachmentPaths) {
+        this.state.context = {
+          ...this.state.context,
+          attachmentPaths,
+        };
+      }
+      const noteSummary = noteSummaryFromCommandResult(result, this.state.context.noteSummary);
+      if (noteSummary) {
+        this.state.context = {
+          ...this.state.context,
+          noteSummary,
+        };
+      }
     }
     this.append({
       role: result.severity === 'error' ? 'error' : 'command',

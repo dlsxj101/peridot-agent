@@ -146,6 +146,8 @@
 - `Peridot: Show Session Details` now hydrates the active session's Notes and
   Attachments context pills from the detail response, including the latest note
   as a command-result row.
+- Inspecting another persisted session no longer overwrites the active
+  session's Notes or Attachments context pills in the sidebar.
 - Image attachments now render bounded inline previews in the VS Code/Cursor
   attachment cards while keeping the daemon/model context as the existing
   placeholder metadata.

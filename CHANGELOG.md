@@ -160,6 +160,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **TUI session show context hydration** now refreshes the active side-panel
   Notes and Attachments blocks when `/session show <current>` inspects the
   foreground session.
+- **Editor session show context guard** now keeps VS Code/Cursor Notes and
+  Attachments context pills scoped to the active session when inspecting a
+  different persisted session.
 - **`/session prune` slash parity** lets both TUI and VS Code users prune
   persisted sessions with `--status`, `--older-than-days`, and `--dry-run`
   filters through the shared session command path.

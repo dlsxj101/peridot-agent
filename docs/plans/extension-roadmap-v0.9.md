@@ -1911,6 +1911,19 @@ shared daemon, TUI, and VS Code extension surfaces.
   another session remains read-only and does not overwrite the foreground
   context.
 
+### E150. Editor Session Show Context Guard
+
+- **Status**: landed.
+- **Goal**: keep VS Code/Cursor session-local context scoped to the active
+  chat when inspecting a different persisted session.
+- **Where**: VS Code command-result context hydration guard, sidebar wiring,
+  changelogs, and unit tests.
+- **Result**: `session_show` results hydrate Notes and Attachments pills only
+  when their `session_id` matches the active client session id or active
+  daemon session id. Non-session-show commands keep their existing context
+  update behavior, and inspecting another session remains a read-only detail
+  view.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.
