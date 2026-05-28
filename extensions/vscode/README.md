@@ -24,6 +24,12 @@ native tool calling, and 2-Tier context management.
 | `Peridot: Cancel Current Task` | Sends `session.cancel` for the active daemon session. |
 | `Peridot: Login with ChatGPT` | Runs `peridot login openai-oauth` from the active workspace. |
 | `Peridot: Refresh Status` | Refreshes daemon workspace/provider/model/auth status. |
+| `Peridot: Set Execution Mode` | Picks Execute, Plan, or Goal and runs the matching shared slash command. |
+| `Peridot: Set Permission Mode` | Picks Auto, Safe, or Yolo and runs the matching shared slash command. |
+| `Peridot: Set Reasoning Effort` | Picks a reasoning tier and runs `/reasoning <tier>`. |
+| `Peridot: Switch Runtime Provider` | Picks a provider id and runs `/provider <id>` for this session. |
+| `Peridot: Set Runtime Model` | Prompts for a model override and runs `/model <name>`. |
+| `Peridot: Set Committee Mode` | Picks Off, Planner, or Full and runs `/committee <mode>`. |
 | `Peridot: Show Workspace Code Map` | Runs the shared `/codemap` scan and appends public symbols plus TODO markers to the sidebar transcript, refreshing stale indexes first. |
 | `Peridot: Show Workspace Code Map Status` | Runs `/codemap status` to show whether the persisted code map index is missing, fresh, or stale. |
 | `Peridot: Refresh Workspace Code Map Index` | Rebuilds `.peridot/codemap.json` through `/codemap refresh`. |

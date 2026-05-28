@@ -98,6 +98,10 @@
 - Session utility commands are now available from the command palette and
   sidebar title bar: compact context, rewind the last exchange, and undo the
   latest Peridot file checkpoint.
+- Runtime control commands are now available from the command palette:
+  execution mode, permission mode, reasoning effort, provider, model, and
+  committee mode all route through the same daemon slash path as the
+  composer.
 - `/session prune [--status <state>] [--older-than-days N] [--dry-run]`
   now runs through the daemon command path and returns a structured prune
   result so editor users can preview or remove stale persisted sessions.

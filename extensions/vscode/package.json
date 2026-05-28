@@ -155,6 +155,42 @@
         "category": "Peridot"
       },
       {
+        "command": "peridot.setExecutionMode",
+        "title": "Peridot: Set Execution Mode",
+        "category": "Peridot",
+        "icon": "$(play)"
+      },
+      {
+        "command": "peridot.setPermissionMode",
+        "title": "Peridot: Set Permission Mode",
+        "category": "Peridot",
+        "icon": "$(shield)"
+      },
+      {
+        "command": "peridot.setReasoningEffort",
+        "title": "Peridot: Set Reasoning Effort",
+        "category": "Peridot",
+        "icon": "$(symbol-operator)"
+      },
+      {
+        "command": "peridot.switchRuntimeProvider",
+        "title": "Peridot: Switch Runtime Provider",
+        "category": "Peridot",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "peridot.setRuntimeModel",
+        "title": "Peridot: Set Runtime Model",
+        "category": "Peridot",
+        "icon": "$(symbol-key)"
+      },
+      {
+        "command": "peridot.setCommitteeMode",
+        "title": "Peridot: Set Committee Mode",
+        "category": "Peridot",
+        "icon": "$(organization)"
+      },
+      {
         "command": "peridot.showCodeMap",
         "title": "Peridot: Show Workspace Code Map",
         "category": "Peridot",

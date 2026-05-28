@@ -1643,6 +1643,22 @@ shared daemon, TUI, and VS Code extension surfaces.
   the extension's transcript removal and prompt-restore reconciliation, and
   undo asks for confirmation before restoring the latest file checkpoint.
 
+### E129. VS Code Runtime Control GUI
+
+- **Status**: landed.
+- **Goal**: make session runtime controls available from the editor command
+  palette instead of requiring users to remember slash commands or focus the
+  composer controls.
+- **Where**: VS Code command contributions, runtime slash command builders,
+  shared slash execution in the sidebar provider, README, and changelog docs.
+- **Result**: `Peridot: Set Execution Mode`, `Peridot: Set Permission Mode`,
+  `Peridot: Set Reasoning Effort`, `Peridot: Switch Runtime Provider`,
+  `Peridot: Set Runtime Model`, and `Peridot: Set Committee Mode` prompt for
+  the desired value and run `/execute|/plan|/goal`, `/auto|/safe|/yolo`,
+  `/reasoning`, `/provider`, `/model`, and `/committee` through the same
+  daemon slash path as the composer. The resulting state delta updates the
+  sidebar context and future run options exactly like manual slash input.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

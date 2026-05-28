@@ -22,6 +22,19 @@ import {
 import { EXPECTED_AGENT_RUN_EVENT_SCHEMA_VERSION, PeridotDaemon, RpcNotification } from './daemon';
 import { resetBinaryCache, resolvePeridotBinary } from './peridotBin';
 import { peridotChildEnv } from './processEnv';
+import {
+  COMMITTEE_CHOICES,
+  EXECUTION_MODE_CHOICES,
+  PERMISSION_CHOICES,
+  PROVIDER_CHOICES,
+  REASONING_CHOICES,
+  committeeSlashCommand,
+  executionModeSlashCommand,
+  modelSlashCommand,
+  permissionSlashCommand,
+  providerSlashCommand,
+  reasoningSlashCommand,
+} from './runtimeCommand';
 import { sessionExportChoices, sessionExportDirectoryName } from './sessionExportCommand';
 import { sessionImportSlashCommand } from './sessionImportCommand';
 import {
@@ -369,6 +382,42 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand('peridot.refreshStatus', async () => {
       await refreshStatus(output, sidebar, { force: true });
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('peridot.setExecutionMode', async () => {
+      await setExecutionMode(sidebar);
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('peridot.setPermissionMode', async () => {
+      await setPermissionMode(sidebar);
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('peridot.setReasoningEffort', async () => {
+      await setReasoningEffort(sidebar);
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('peridot.switchRuntimeProvider', async () => {
+      await switchRuntimeProvider(sidebar);
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('peridot.setRuntimeModel', async () => {
+      await setRuntimeModel(sidebar);
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('peridot.setCommitteeMode', async () => {
+      await setCommitteeMode(sidebar);
     }),
   );
 
@@ -1691,6 +1740,108 @@ async function showWorkingTreeDiff(
     sidebar.appendError(message);
     await vscode.window.showErrorMessage(`Peridot diff failed: ${message}`);
   }
+}
+
+async function setExecutionMode(sidebar: PeridotSidebarProvider): Promise<void> {
+  const current = sidebar.currentRunOptions().mode;
+  const picked = await vscode.window.showQuickPick(
+    EXECUTION_MODE_CHOICES.map((choice) => ({
+      ...choice,
+      picked: choice.mode === current,
+    })),
+    {
+      title: 'Peridot: Set Execution Mode',
+      placeHolder: 'Choose how the next Peridot task should run',
+      ignoreFocusOut: true,
+    },
+  );
+  if (!picked) return;
+  await runSharedSlashCommand(executionModeSlashCommand(picked.mode), sidebar);
+}
+
+async function setPermissionMode(sidebar: PeridotSidebarProvider): Promise<void> {
+  const current = sidebar.currentRunOptions().permission;
+  const picked = await vscode.window.showQuickPick(
+    PERMISSION_CHOICES.map((choice) => ({
+      ...choice,
+      picked: choice.permission === current,
+    })),
+    {
+      title: 'Peridot: Set Permission Mode',
+      placeHolder: 'Choose the approval policy for future tool calls',
+      ignoreFocusOut: true,
+    },
+  );
+  if (!picked) return;
+  await runSharedSlashCommand(permissionSlashCommand(picked.permission), sidebar);
+}
+
+async function setReasoningEffort(sidebar: PeridotSidebarProvider): Promise<void> {
+  const current = sidebar.currentRunOptions().reasoningEffort ?? sidebar.currentContext().reasoningEffort;
+  const picked = await vscode.window.showQuickPick(
+    REASONING_CHOICES.map((choice) => ({
+      ...choice,
+      picked: choice.effort === current,
+    })),
+    {
+      title: 'Peridot: Set Reasoning Effort',
+      placeHolder: 'Choose reasoning effort for future model calls',
+      ignoreFocusOut: true,
+    },
+  );
+  if (!picked) return;
+  await runSharedSlashCommand(reasoningSlashCommand(picked.effort), sidebar);
+}
+
+async function switchRuntimeProvider(sidebar: PeridotSidebarProvider): Promise<void> {
+  const current = sidebar.currentContext().provider;
+  const picked = await vscode.window.showQuickPick(
+    PROVIDER_CHOICES.map((choice) => ({
+      ...choice,
+      picked: choice.provider === current,
+    })),
+    {
+      title: 'Peridot: Switch Runtime Provider',
+      placeHolder: 'Choose the provider for this session',
+      ignoreFocusOut: true,
+    },
+  );
+  if (!picked) return;
+  await runSharedSlashCommand(providerSlashCommand(picked.provider), sidebar);
+}
+
+async function setRuntimeModel(sidebar: PeridotSidebarProvider): Promise<void> {
+  const context = sidebar.currentContext();
+  const current = sidebar.currentRunOptions().model ?? context.model ?? '';
+  const suggestions = context.modelSuggestions?.filter((model) => model.trim().length > 0) ?? [];
+  const model = await vscode.window.showInputBox({
+    title: 'Peridot: Set Runtime Model',
+    prompt: 'Model override for this Peridot session.',
+    value: current,
+    placeHolder: suggestions.length > 0 ? suggestions.join(', ') : 'model name',
+    ignoreFocusOut: true,
+    validateInput: (value) =>
+      value.trim().length === 0 ? 'Enter a model name for /model.' : undefined,
+  });
+  if (model === undefined) return;
+  await runSharedSlashCommand(modelSlashCommand(model), sidebar);
+}
+
+async function setCommitteeMode(sidebar: PeridotSidebarProvider): Promise<void> {
+  const current = sidebar.currentContext().committeeMode ?? 'off';
+  const picked = await vscode.window.showQuickPick(
+    COMMITTEE_CHOICES.map((choice) => ({
+      ...choice,
+      picked: choice.mode === current,
+    })),
+    {
+      title: 'Peridot: Set Committee Mode',
+      placeHolder: 'Choose whether planner/reviewer roles wrap the executor',
+      ignoreFocusOut: true,
+    },
+  );
+  if (!picked) return;
+  await runSharedSlashCommand(committeeSlashCommand(picked.mode), sidebar);
 }
 
 async function compactContext(sidebar: PeridotSidebarProvider): Promise<void> {

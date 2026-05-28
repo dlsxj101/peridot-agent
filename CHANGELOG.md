@@ -104,6 +104,10 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **VS Code session utility GUI** now exposes `/compact`, `/rewind`, and
   `/undo` from the command palette and sidebar title bar, reusing the same
   daemon command path and transcript reconciliation as composer slashes.
+- **VS Code runtime control GUI** now exposes execution mode, permission
+  mode, reasoning effort, provider, model, and committee mode from the
+  command palette, routing each choice through the shared slash command
+  path instead of maintaining editor-only state.
 - **`/session prune` slash parity** lets both TUI and VS Code users prune
   persisted sessions with `--status`, `--older-than-days`, and `--dry-run`
   filters through the shared session command path.

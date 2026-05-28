@@ -509,6 +509,10 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
     return this.state.sessionId;
   }
 
+  public currentContext(): SidebarContext {
+    return { ...this.state.context };
+  }
+
   public currentMcpServers(): NonNullable<SidebarContext['mcpServers']> {
     return [...(this.state.context.mcpServers ?? [])];
   }
