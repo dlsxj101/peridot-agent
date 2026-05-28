@@ -64,6 +64,10 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
   `auto_fix_attempt` daemon events in the VS Code transcript with the
   checked tool, pass/fail status, and attempt count, matching the TUI's
   auto-fix progress rows.
+- **Live MCP status event parity** now consumes `mcp_status_changed`
+  daemon events in VS Code as sidebar context updates, matching the TUI
+  side-panel behavior and keeping `/mcp remove|test` autocomplete current
+  without adding opaque transcript rows.
 - **Provider argument autocomplete** now exposes the supported provider ids
   for `/provider <claude-api|openai-api|openrouter-api|openai-oauth>` through
   the shared slash catalog, TUI picker, daemon JSON catalog, and VS Code

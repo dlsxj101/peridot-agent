@@ -42,6 +42,9 @@
 - Auto-fix attempt daemon events now render in the VS Code transcript with
   the checked tool, pass/fail status, and attempt count, matching the TUI
   transcript wording.
+- Live MCP status daemon events now update VS Code's MCP server snapshot
+  for `/mcp remove|test` autocomplete and no longer appear as opaque
+  transcript event-kind rows.
 - Provider argument autocomplete now fills supported provider ids for
   `/provider <claude-api|openai-api|openrouter-api|openai-oauth>` from the
   shared daemon slash catalog.

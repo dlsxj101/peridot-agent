@@ -285,6 +285,8 @@ export interface SidebarContext {
 export interface McpServerSummary {
   name: string;
   transport?: string;
+  toolCount?: number;
+  connected?: boolean;
 }
 
 export interface UsageSlice {

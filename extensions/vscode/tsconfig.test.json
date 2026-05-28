@@ -7,6 +7,8 @@
     "types": ["node"]
   },
   "include": [
+    "src/agentEventContext.ts",
+    "src/agentEventTranscript.ts",
     "src/localSlashAction.ts",
     "src/sessionReconcile.ts",
     "webview/composerHistory.ts",

@@ -989,6 +989,20 @@ shared daemon, TUI, and VS Code extension surfaces.
   transcript instead of falling back to the opaque event-kind label.
   Existing TUI rendering stays unchanged.
 
+### E80. Live MCP Status Event Parity
+
+- **Status**: landed.
+- **Goal**: make VS Code consume live MCP status events the same way the
+  TUI side panel does, instead of showing an opaque event-kind transcript
+  row.
+- **Where**: shared daemon `AgentRunEvent::McpStatusChanged`, TUI runtime
+  side-panel state, VS Code sidebar context state, and VS Code unit tests.
+- **Result**: `mcp_status_changed` now refreshes `context.mcpServers` in
+  the VS Code sidebar and is suppressed from the transcript. The webview's
+  `/mcp remove|test` argument autocomplete therefore sees live server
+  names from the daemon event stream without waiting for a later status
+  refresh.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

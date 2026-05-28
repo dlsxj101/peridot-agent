@@ -27,6 +27,7 @@ import {
 import { localSlashAction } from './localSlashAction';
 import { staleDaemonBackedSessionIds } from './sessionReconcile';
 import { agentTranscriptItemForEvent } from './agentEventTranscript';
+import { mcpServersForStatusEvent } from './agentEventContext';
 
 export type {
   ApprovalResponse,
@@ -877,6 +878,17 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         if (typeof overheadTokens === 'number') next.overheadTokens = overheadTokens;
         this.state.hud.context = next;
         this.publish();
+        return;
+      }
+      case 'mcp_status_changed': {
+        const mcpServers = mcpServersForStatusEvent(event);
+        if (mcpServers) {
+          this.state.context = {
+            ...this.state.context,
+            mcpServers,
+          };
+          this.publish();
+        }
         return;
       }
       case 'plan_updated': {
@@ -1975,6 +1987,7 @@ function transcriptItemForEvent(
     case 'context_utilization_changed':
     case 'usage_updated':
     case 'budget_updated':
+    case 'mcp_status_changed':
     case 'committee_role_usage':
       return undefined;
     case 'assistant_delta':
