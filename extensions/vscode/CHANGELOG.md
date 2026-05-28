@@ -108,6 +108,9 @@
 - The `@file` mention index now refreshes after workspace file create/delete
   events, so long-lived VS Code/Cursor sessions pick up new and removed files
   without a manual status refresh.
+- Image attachments now render bounded inline previews in the VS Code/Cursor
+  attachment cards while keeping the daemon/model context as the existing
+  placeholder metadata.
 - `/session prune [--status <state>] [--older-than-days N] [--dry-run]`
   now runs through the daemon command path and returns a structured prune
   result so editor users can preview or remove stale persisted sessions.

@@ -187,6 +187,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       localResourceRoots: [
         vscode.Uri.joinPath(this.extensionUri, 'dist'),
         vscode.Uri.joinPath(this.extensionUri, 'resources'),
+        ...(vscode.workspace.workspaceFolders?.map((folder) => folder.uri) ?? []),
       ],
     };
     webviewView.webview.html = this.html(webviewView.webview);
@@ -511,6 +512,10 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
 
   public currentContext(): SidebarContext {
     return { ...this.state.context };
+  }
+
+  public webviewUriForWorkspaceFile(absolutePath: string): string | undefined {
+    return this.view?.webview.asWebviewUri(vscode.Uri.file(absolutePath)).toString();
   }
 
   public currentMcpServers(): NonNullable<SidebarContext['mcpServers']> {

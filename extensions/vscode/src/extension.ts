@@ -6,6 +6,7 @@
 import * as childProcess from 'child_process';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { addAttachmentPreviewUris } from './attachmentPreview';
 import { formatAgentEventForOutput } from './agentEventOutput';
 import {
   branchListSlashCommand,
@@ -1016,17 +1017,29 @@ async function runSlashCommand(
   };
   if (liveRun?.daemon) {
     output.appendLine(`[peridot] session.command ${command}`);
-    return asCommandResult(await liveRun.daemon.send('session.command', params));
+    return attachPreviewUris(
+      asCommandResult(await liveRun.daemon.send('session.command', params)),
+      folder,
+      sidebar,
+    );
   }
   if (workspaceRun?.daemon) {
     output.appendLine(`[peridot] session.command (workspace) ${command}`);
-    return asCommandResult(await workspaceRun.daemon.send('session.command', params));
+    return attachPreviewUris(
+      asCommandResult(await workspaceRun.daemon.send('session.command', params)),
+      folder,
+      sidebar,
+    );
   }
 
   output.appendLine(`[peridot] session.command (spawn) ${command}`);
   const daemon = await PeridotDaemon.spawn(folder);
   try {
-    return asCommandResult(await daemon.send('session.command', params));
+    return attachPreviewUris(
+      asCommandResult(await daemon.send('session.command', params)),
+      folder,
+      sidebar,
+    );
   } finally {
     await daemon.shutdown();
   }
@@ -3669,6 +3682,16 @@ function asCommandResult(value: unknown): CommandResultView {
     message: String(value),
     severity: 'info',
   };
+}
+
+function attachPreviewUris(
+  result: CommandResultView,
+  workspaceRoot: string,
+  sidebar: PeridotSidebarProvider,
+): CommandResultView {
+  return addAttachmentPreviewUris(result, workspaceRoot, (absolutePath) =>
+    sidebar.webviewUriForWorkspaceFile(absolutePath),
+  );
 }
 
 interface RefreshOptions {

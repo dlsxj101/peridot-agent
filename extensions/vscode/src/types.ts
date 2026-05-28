@@ -74,6 +74,8 @@ export interface CommandResultItem {
   connected?: boolean;
   media_type?: string;
   mediaType?: string;
+  preview_uri?: string;
+  previewUri?: string;
   inlined?: boolean;
   pinned?: boolean;
   archived?: boolean;
@@ -88,6 +90,8 @@ export interface AttachmentView {
   bytes?: number;
   media_type?: string;
   mediaType?: string;
+  preview_uri?: string;
+  previewUri?: string;
   inlined?: boolean;
   content?: string | null;
 }

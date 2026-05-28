@@ -2149,6 +2149,17 @@ textarea {
   white-space: pre;
 }
 
+.attachment-image-preview {
+  display: block;
+  width: min(100%, 520px);
+  max-height: 260px;
+  object-fit: contain;
+  object-position: left center;
+  border: 1px solid var(--peri-border-subtle);
+  border-radius: var(--peri-radius-tight);
+  background: var(--vscode-editor-background, var(--peri-bg-elev-soft));
+}
+
 .attachment-placeholder {
   color: var(--peri-fg-muted);
   font-size: 12px;

@@ -2728,6 +2728,7 @@ function renderAttachmentBlock(item: TranscriptItem): HTMLElement {
   const mediaType = attachment.media_type ?? attachment.mediaType ?? 'text/plain';
   const inlined = attachment.inlined === true;
   const content = typeof attachment.content === 'string' ? attachment.content : undefined;
+  const previewUri = attachment.preview_uri ?? attachment.previewUri;
   const wrap = el('section', 'command-block attachment-block');
   const header = el('div', 'attachment-header');
   const title = el('div', 'attachment-title');
@@ -2764,7 +2765,9 @@ function renderAttachmentBlock(item: TranscriptItem): HTMLElement {
   pathRow.append(renderFilePathButton(path, 'command-path'));
   wrap.append(pathRow);
 
-  if (content !== undefined) {
+  if (isPreviewableImageAttachment(mediaType, previewUri)) {
+    wrap.append(renderAttachmentImagePreview(path, previewUri));
+  } else if (content !== undefined) {
     const preview = el('pre', 'attachment-preview');
     preview.textContent = previewAttachmentContent(content);
     wrap.append(preview);
@@ -2856,6 +2859,7 @@ function renderAttachmentInventoryRow(attachment: AttachmentView): HTMLElement {
   const mediaType = attachment.media_type ?? attachment.mediaType ?? 'text/plain';
   const mode = attachment.inlined ? 'inlined' : 'placeholder';
   const content = typeof attachment.content === 'string' ? attachment.content : undefined;
+  const previewUri = attachment.preview_uri ?? attachment.previewUri;
   const row = el('div', 'attachment-inventory-row');
   const main = el('div', 'attachment-row-main');
   const top = el('div', 'attachment-path-row');
@@ -2882,6 +2886,9 @@ function renderAttachmentInventoryRow(attachment: AttachmentView): HTMLElement {
     vscode.postMessage({ type: 'detachAttachment', path });
   }));
   row.append(actions);
+  if (isPreviewableImageAttachment(mediaType, previewUri)) {
+    main.append(renderAttachmentImagePreview(path, previewUri));
+  }
   return row;
 }
 
@@ -3208,6 +3215,7 @@ function attachmentFromResult(result: TranscriptItem['commandResult']): Attachme
     path: row?.path ?? row?.label,
     bytes: row?.bytes,
     media_type: row?.media_type ?? row?.mediaType,
+    preview_uri: row?.preview_uri ?? row?.previewUri,
     inlined: row?.inlined,
   };
 }
@@ -3221,8 +3229,22 @@ function attachmentsFromResult(result: TranscriptItem['commandResult']): Attachm
       path: item.path ?? item.label,
       bytes: item.bytes,
       media_type: item.media_type ?? item.mediaType,
+      preview_uri: item.preview_uri ?? item.previewUri,
       inlined: item.inlined,
     }));
+}
+
+function isPreviewableImageAttachment(mediaType: string, previewUri: string | undefined): previewUri is string {
+  return Boolean(previewUri) && mediaType.startsWith('image/') && mediaType !== 'image/svg+xml';
+}
+
+function renderAttachmentImagePreview(path: string, previewUri: string): HTMLElement {
+  const img = document.createElement('img');
+  img.className = 'attachment-image-preview';
+  img.src = previewUri;
+  img.alt = path;
+  img.loading = 'lazy';
+  return img;
 }
 
 function previewAttachmentContent(content: string): string {

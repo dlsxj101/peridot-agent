@@ -1686,6 +1686,19 @@ shared daemon, TUI, and VS Code extension surfaces.
   `workspaceFiles` sidebar context so the composer sees fresh paths without a
   full status refresh.
 
+### E132. VS Code Image Attachment Previews
+
+- **Status**: landed.
+- **Goal**: make image attachments visually inspectable in the editor
+  surface without changing the model-context contract.
+- **Where**: VS Code command-result decoration, sidebar webview resource
+  roots, attachment card renderer, and attachment-preview unit tests.
+- **Result**: workspace-local image attachments receive a bounded webview
+  preview URI when the host handles `/attach`, `/attachments`, or `/detach`
+  results. The webview renders non-SVG image previews in attachment cards and
+  inventory rows, while the daemon still stores image attachments as
+  placeholder metadata rather than inlining binary contents into context.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.
