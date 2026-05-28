@@ -38,6 +38,23 @@ test('noteSummaryFromCommandResult clears notes state', () => {
   );
 });
 
+test('noteSummaryFromCommandResult hydrates session show note snapshots', () => {
+  assert.deepEqual(
+    noteSummaryFromCommandResult(
+      {
+        kind: 'session_show',
+        notes_count: 2,
+        last_note: 'latest checkpoint',
+      },
+      { count: 1, latest: 'stale' },
+    ),
+    { count: 2, latest: 'latest checkpoint' },
+  );
+  assert.deepEqual(noteSummaryFromCommandResult({ kind: 'session_show', notes_count: 0 }), {
+    count: 0,
+  });
+});
+
 test('noteSummaryFromDaemonSession hydrates session list note snapshots', () => {
   assert.deepEqual(
     noteSummaryFromDaemonSession({

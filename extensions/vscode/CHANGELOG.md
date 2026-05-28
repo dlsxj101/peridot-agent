@@ -143,6 +143,9 @@
 - Session detail attachment rows now include per-file paths in the command
   result table, giving attached files the same clickable path treatment as
   other file-oriented command results.
+- `Peridot: Show Session Details` now hydrates the active session's Notes and
+  Attachments context pills from the detail response, including the latest note
+  as a command-result row.
 - Image attachments now render bounded inline previews in the VS Code/Cursor
   attachment cards while keeping the daemon/model context as the existing
   placeholder metadata.

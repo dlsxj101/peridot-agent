@@ -22,6 +22,13 @@ export function noteSummaryFromCommandResult(
     return { count: 0 };
   }
 
+  if (result.kind === 'session_show' && typeof result.notes_count === 'number') {
+    return normalizeNoteSummary({
+      count: result.notes_count,
+      latest: result.last_note ?? latestNoteText(result),
+    });
+  }
+
   return undefined;
 }
 

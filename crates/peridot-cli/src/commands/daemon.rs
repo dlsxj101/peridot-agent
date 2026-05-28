@@ -2451,6 +2451,14 @@ async fn handle_command_session_show(
         serde_json::json!({ "label": "notes", "detail": summary.notes_count.to_string() }),
         serde_json::json!({ "label": "attachments", "detail": attachment_count.to_string() }),
     ];
+    if let Some(note) = summary.last_note.as_deref() {
+        items.push(serde_json::json!({
+            "label": "latest note",
+            "detail": note,
+            "text": note,
+            "source": "note",
+        }));
+    }
     for path in &attachment_paths {
         items.push(serde_json::json!({
             "label": path,
@@ -7085,6 +7093,13 @@ url = "https://example.com/mcp"
                 .unwrap()
                 .iter()
                 .any(|item| { item["label"] == "attachments" && item["detail"] == "1" })
+        );
+        assert!(
+            result["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|item| { item["source"] == "note" && item["detail"] == "first note" })
         );
         assert!(
             result["items"].as_array().unwrap().iter().any(|item| {

@@ -1885,6 +1885,19 @@ shared daemon, TUI, and VS Code extension surfaces.
   without changing the backwards-compatible top-level
   `attachment_count` / `attachment_paths` payload.
 
+### E148. Session Show Context Hydration
+
+- **Status**: landed.
+- **Goal**: make targeted session inspection refresh the editor's active
+  context strip instead of only rendering a one-off detail block.
+- **Where**: daemon `/session show` command-result rows, VS Code note and
+  attachment context reducers, command-result typing, changelogs, and tests.
+- **Result**: `/session show <id|title>` now includes the latest note as a
+  `source: "note"` result row when present. VS Code/Cursor consume
+  `session_show` results to replace the active `Notes N` and `Attachments N`
+  context pills from the persisted session snapshot, clearing stale context
+  when a shown session has no notes or attachments.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

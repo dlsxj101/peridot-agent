@@ -24,6 +24,9 @@ export function attachmentPathsFromCommandResult(
       existing.filter((path) => !removed.some((candidate) => candidate.toLowerCase() === path.toLowerCase())),
     );
   }
+  if (result.kind === 'session_show') {
+    return dedupeSorted(attachmentPathsFromResult(result));
+  }
   return undefined;
 }
 
@@ -41,6 +44,7 @@ export function attachmentPathsFromDaemonSession(
 
 function attachmentPathsFromResult(result: CommandResultView): string[] {
   return dedupeSorted([
+    ...normalizeAttachmentPaths(result.attachment_paths),
     ...attachmentPathsFromAttachments(result.attachment ? [result.attachment] : undefined),
     ...attachmentPathsFromAttachments(result.attachments),
     ...attachmentPathsFromItems(result.items),

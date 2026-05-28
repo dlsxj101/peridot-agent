@@ -57,6 +57,20 @@ test('attachmentPathsFromCommandResult removes detached paths without remaining 
   );
 });
 
+test('attachmentPathsFromCommandResult hydrates session show attachment paths', () => {
+  assert.deepEqual(
+    attachmentPathsFromCommandResult(
+      {
+        kind: 'session_show',
+        attachment_paths: ['docs/notes.md'],
+        items: [{ source: 'attachment', path: 'src/lib.rs' }],
+      },
+      ['stale.md'],
+    ),
+    ['docs/notes.md', 'src/lib.rs'],
+  );
+});
+
 test('normalizeAttachmentPaths sanitizes persisted session values', () => {
   assert.deepEqual(
     normalizeAttachmentPaths([' src/main.rs ', 'SRC/main.rs', '', 42, 'docs/notes.md']),
