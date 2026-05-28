@@ -47,6 +47,8 @@
 - `/session export <id|title> [attachments|notes|timeline|full]` now runs
   through the daemon command path, so editor users can export artifacts
   from any persisted session instead of only the active session.
+- `Peridot: Export Session Artifacts` now lets editor users choose an
+  active or persisted session before picking the destination folder.
 - `/session import <dir> [--id <id>] [--force]` now runs through the
   daemon command path, so editor users can restore portable persisted
   session directories without switching to the terminal.

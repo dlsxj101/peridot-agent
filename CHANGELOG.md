@@ -55,6 +55,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **`/session export <id|title> [attachments|notes|timeline|full]` slash
   parity** lets both TUI and VS Code users export artifacts from any
   persisted session, not only the active one.
+- **VS Code session export target picker** now lets command-palette and
+  sidebar exports choose an active or persisted session before writing
+  portable artifacts.
 - **`/session import <dir> [--id <id>] [--force]` slash parity** lets both
   TUI and VS Code users restore portable persisted session directories
   through the shared session command path.

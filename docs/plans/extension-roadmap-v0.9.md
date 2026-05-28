@@ -1358,6 +1358,20 @@ shared daemon, TUI, and VS Code extension surfaces.
   a session import card with source, destination, copied files, and
   destination open/copy actions.
 
+### E107. VS Code Session Export Target Picker
+
+- **Status**: landed.
+- **Goal**: make the GUI export affordance match `/session export` parity
+  by supporting persisted sessions, not only the currently active sidebar
+  session.
+- **Where**: VS Code export command construction, session-list fetch,
+  command palette/sidebar export flow, README, and changelog docs.
+- **Result**: `Peridot: Export Session Artifacts` now fetches the daemon
+  session list, combines it with the current live session, prompts for a
+  target when more than one session is available, writes the selected
+  session's portable artifacts to the chosen destination, and records the
+  selected session id in the result card.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

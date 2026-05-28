@@ -10,6 +10,7 @@ import { formatAgentEventForOutput } from './agentEventOutput';
 import { EXPECTED_AGENT_RUN_EVENT_SCHEMA_VERSION, PeridotDaemon, RpcNotification } from './daemon';
 import { resetBinaryCache, resolvePeridotBinary } from './peridotBin';
 import { peridotChildEnv } from './processEnv';
+import { sessionExportChoices, sessionExportDirectoryName } from './sessionExportCommand';
 import { sessionImportSlashCommand } from './sessionImportCommand';
 import { SettingsPanelManager } from './settingsPanel';
 import { StatusCache } from './statusCache';
@@ -1345,11 +1346,36 @@ async function exportSessionArtifacts(
     await vscode.window.showWarningMessage(message);
     return;
   }
-  const sessionId = sidebar.currentDaemonSessionId();
-  if (!sessionId) {
-    await vscode.window.showWarningMessage('Start or select a Peridot session before exporting artifacts.');
+  let sessions: DaemonSessionSummary[] = [];
+  try {
+    sessions = normalizeDaemonSessions(await fetchSessionList(folder, output));
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    output.appendLine(`[peridot] session list fetch before export failed: ${message}`);
+  }
+  const choices = sessionExportChoices(sessions, sidebar.currentDaemonSessionId());
+  if (choices.length === 0) {
+    await vscode.window.showWarningMessage('Start, save, or import a Peridot session before exporting artifacts.');
     return;
   }
+  const target =
+    choices.length === 1
+      ? choices[0]
+      : await vscode.window.showQuickPick(
+          choices.map((choice) => ({
+            label: choice.label,
+            description: choice.description,
+            detail: choice.id,
+            id: choice.id,
+          })),
+          {
+            title: 'Peridot: Export Session Artifacts',
+            placeHolder: 'Choose a session to export',
+            ignoreFocusOut: true,
+          },
+        );
+  if (!target) return;
+  const sessionId = target.id;
   const picked = await vscode.window.showOpenDialog({
     title: 'Peridot: Export Session Artifacts',
     canSelectFiles: false,
@@ -1360,7 +1386,7 @@ async function exportSessionArtifacts(
   });
   const base = picked?.[0];
   if (!base) return;
-  const destination = path.join(base.fsPath, `peridot-session-${sanitizePathSegment(sessionId)}`);
+  const destination = path.join(base.fsPath, sessionExportDirectoryName(sessionId));
   let force = false;
   if (await pathExists(destination)) {
     const confirmed = await vscode.window.showWarningMessage(
@@ -1404,8 +1430,9 @@ async function exportSessionArtifacts(
       kind: 'session_export',
       title: 'Session Artifact Export',
       command: 'peridot session export',
-      message: `Exported ${artifacts.length} artifact files to ${destination}`,
+      message: `Exported ${artifacts.length} artifact files from ${sessionId} to ${destination}`,
       items: [
+        { label: 'Session', detail: sessionId, source: 'session' },
         { label: 'Destination', detail: destination, source: 'directory' },
         ...artifacts.map((artifact) => ({
           label: artifact.path,

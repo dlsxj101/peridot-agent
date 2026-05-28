@@ -37,7 +37,7 @@ native tool calling, and 2-Tier context management.
 | `Peridot: Search Archived Skills` | Prompts for a query and runs `/skills archived <query>` against archived stored skills. |
 | `Peridot: Attach File to Session` | Picks a workspace file, runs `/attach <path>`, and renders a compact attachment block with open/copy actions. |
 | `Peridot: Show Session Attachments` | Runs `/attachments` and renders files already loaded into the current session context, with open/copy/detach actions. |
-| `Peridot: Export Session Artifacts` | Exports the active session's attachments, notes, and replay timeline to a portable directory, then opens it. |
+| `Peridot: Export Session Artifacts` | Picks an active or persisted session, exports its attachments, notes, and replay timeline to a portable directory, then opens it. |
 | `Peridot: Import Session Artifacts` | Picks a portable session directory and runs `/session import <dir>` with optional id and overwrite controls. |
 | `Peridot: Show GitHub PR Status` | Runs `gh pr status` from the workspace and appends the result to the sidebar transcript. |
 | `Peridot: Ship Changes to PR` | Previews `peridot ship --dry-run`, asks for confirmation, then commits, pushes, and optionally opens a PR. |
