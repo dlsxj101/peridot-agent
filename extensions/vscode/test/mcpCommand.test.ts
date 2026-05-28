@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { mcpServerChoices, mcpTestSlashCommand } from '../src/mcpCommand';
+import { mcpRemoveSlashCommand, mcpServerChoices, mcpTestSlashCommand } from '../src/mcpCommand';
 
 test('mcpServerChoices lists configured servers without duplicates', () => {
   assert.deepEqual(
@@ -22,4 +22,10 @@ test('mcpTestSlashCommand builds parser-compatible test commands', () => {
   assert.equal(mcpTestSlashCommand(' github '), '/mcp test github');
   assert.throws(() => mcpTestSlashCommand('   '), /MCP server name/);
   assert.throws(() => mcpTestSlashCommand('bad name'), /whitespace/);
+});
+
+test('mcpRemoveSlashCommand builds parser-compatible remove commands', () => {
+  assert.equal(mcpRemoveSlashCommand(' filesystem '), '/mcp remove filesystem');
+  assert.throws(() => mcpRemoveSlashCommand('   '), /MCP server name/);
+  assert.throws(() => mcpRemoveSlashCommand('bad name'), /whitespace/);
 });

@@ -77,6 +77,7 @@ export interface SidebarHandlers {
   showWorkingTreeDiff: () => Promise<void>;
   showMcpServers: () => Promise<void>;
   testMcpServer: () => Promise<void>;
+  removeMcpServer: () => Promise<void>;
   addSessionNote: () => Promise<void>;
   showSessionNotes: () => Promise<void>;
   clearSessionNotes: () => Promise<void>;
@@ -1099,6 +1100,9 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         return;
       case 'testMcpServer':
         await this.handlers.testMcpServer();
+        return;
+      case 'removeMcpServer':
+        await this.handlers.removeMcpServer();
         return;
       case 'addSessionNote':
         await this.handlers.addSessionNote();

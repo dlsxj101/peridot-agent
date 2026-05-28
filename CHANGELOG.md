@@ -77,6 +77,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
   existing structured command-result renderer.
 - **VS Code MCP server test GUI** now exposes `/mcp test <name>` from the
   command palette and sidebar title bar with a configured-server picker.
+- **VS Code MCP server remove GUI** now exposes `/mcp remove <name>` with a
+  configured-server picker, confirmation prompt, and post-removal status
+  refresh.
 - **`/session prune` slash parity** lets both TUI and VS Code users prune
   persisted sessions with `--status`, `--older-than-days`, and `--dry-run`
   filters through the shared session command path.

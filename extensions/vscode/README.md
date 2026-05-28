@@ -42,6 +42,7 @@ native tool calling, and 2-Tier context management.
 | `Peridot: Show Working Tree Diff` | Runs `/diff` and renders the current working tree diff in the sidebar transcript. |
 | `Peridot: Show MCP Servers` | Runs `/mcp list` and renders configured MCP server names, transports, and details. |
 | `Peridot: Test MCP Server` | Picks a configured MCP server, runs `/mcp test <name>`, and renders the connectivity result. |
+| `Peridot: Remove MCP Server` | Picks a configured MCP server, asks for confirmation, and runs `/mcp remove <name>`. |
 | `Peridot: Add Session Note` | Prompts for an operator note and runs `/note <text>` against the active session. |
 | `Peridot: Show Session Notes` | Runs `/notes`, optionally limited to recent entries, and renders the active session's note list. |
 | `Peridot: Clear Session Notes` | Asks for confirmation and runs `/notes clear` for the active session. |

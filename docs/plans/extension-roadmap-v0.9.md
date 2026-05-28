@@ -1536,6 +1536,19 @@ shared daemon, TUI, and VS Code extension surfaces.
   command path, and renders the reachable/tool-count result in the existing
   structured command-result block.
 
+### E121. VS Code MCP Server Remove GUI
+
+- **Status**: landed.
+- **Goal**: expose MCP server removal from the editor without requiring manual
+  `/mcp remove <name>`.
+- **Where**: VS Code command contributions, sidebar title-bar action,
+  configured-server picker, confirmation prompt, README, and changelog docs.
+- **Result**: `Peridot: Remove MCP Server` uses the workspace MCP server
+  inventory to prompt for a target, asks for explicit confirmation, runs
+  `/mcp remove <name>` through the daemon command path, renders the daemon's
+  restart-required note, and refreshes status so server-name autocomplete
+  matches the updated config.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

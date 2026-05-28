@@ -74,6 +74,9 @@
   transports, and details through the existing command-result block.
 - `Peridot: Test MCP Server` now exposes `/mcp test <name>` from the
   command palette and sidebar title bar with a configured-server picker.
+- `Peridot: Remove MCP Server` now exposes `/mcp remove <name>` with a
+  configured-server picker, confirmation prompt, and post-removal status
+  refresh.
 - `/session prune [--status <state>] [--older-than-days N] [--dry-run]`
   now runs through the daemon command path and returns a structured prune
   result so editor users can preview or remove stale persisted sessions.

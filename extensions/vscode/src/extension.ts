@@ -43,7 +43,7 @@ import {
   sessionPruneSlashCommand,
   sessionPruneStatusChoices,
 } from './sessionPruneCommand';
-import { mcpServerChoices, mcpTestSlashCommand } from './mcpCommand';
+import { mcpRemoveSlashCommand, mcpServerChoices, mcpTestSlashCommand } from './mcpCommand';
 import { SettingsPanelManager } from './settingsPanel';
 import { StatusCache } from './statusCache';
 import { isTerminalAgentEvent } from './agentEventLifecycle';
@@ -210,6 +210,7 @@ export function activate(context: vscode.ExtensionContext) {
     showWorkingTreeDiff: async (): Promise<void> => showWorkingTreeDiff(output, sidebar),
     showMcpServers: async (): Promise<void> => showMcpServers(output, sidebar),
     testMcpServer: async (): Promise<void> => testMcpServer(output, sidebar),
+    removeMcpServer: async (): Promise<void> => removeMcpServer(output, sidebar),
     addSessionNote: async (): Promise<void> => addSessionNote(output, sidebar),
     showSessionNotes: async (): Promise<void> => showSessionNotes(output, sidebar),
     clearSessionNotes: async (): Promise<void> => clearSessionNotes(output, sidebar),
@@ -457,6 +458,12 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand('peridot.testMcpServer', async () => {
       await testMcpServer(output, sidebar);
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('peridot.removeMcpServer', async () => {
+      await removeMcpServer(output, sidebar);
     }),
   );
 
@@ -1657,6 +1664,49 @@ async function testMcpServer(
     output.appendLine(`[peridot] mcp test failed: ${message}`);
     sidebar.appendError(message);
     await vscode.window.showErrorMessage(`Peridot MCP server test failed: ${message}`);
+  }
+}
+
+async function removeMcpServer(
+  output: vscode.OutputChannel,
+  sidebar: PeridotSidebarProvider,
+): Promise<void> {
+  const server = await pickMcpServer(output, sidebar, {
+    title: 'Peridot: Remove MCP Server',
+    placeHolder: 'Choose a configured MCP server to remove',
+  });
+  if (!server) return;
+  const confirmation = await vscode.window.showWarningMessage(
+    `Remove MCP server "${server.name}" from this workspace config?`,
+    { modal: true },
+    'Remove',
+  );
+  if (confirmation !== 'Remove') return;
+  let command: string;
+  try {
+    command = mcpRemoveSlashCommand(server.name);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    await vscode.window.showErrorMessage(`Peridot MCP server removal failed: ${message}`);
+    return;
+  }
+  await vscode.commands.executeCommand('peridot.chatView.focus');
+  try {
+    const result = await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: `Peridot: removing MCP server ${server.name}`,
+        cancellable: false,
+      },
+      async () => runSlashCommand(command, output, sidebar, sidebar.currentRunOptions()),
+    );
+    sidebar.appendCommandResult(result);
+    await refreshStatus(output, sidebar, { force: true });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    output.appendLine(`[peridot] mcp remove failed: ${message}`);
+    sidebar.appendError(message);
+    await vscode.window.showErrorMessage(`Peridot MCP server removal failed: ${message}`);
   }
 }
 

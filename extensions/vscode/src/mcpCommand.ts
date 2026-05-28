@@ -24,6 +24,14 @@ export function mcpServerChoices(servers: McpServerSummary[]): McpServerChoice[]
 }
 
 export function mcpTestSlashCommand(name: string): string {
+  return `/mcp test ${mcpServerNameArg(name)}`;
+}
+
+export function mcpRemoveSlashCommand(name: string): string {
+  return `/mcp remove ${mcpServerNameArg(name)}`;
+}
+
+function mcpServerNameArg(name: string): string {
   const target = name.trim();
   if (!target) {
     throw new Error('MCP server name is required.');
@@ -31,7 +39,7 @@ export function mcpTestSlashCommand(name: string): string {
   if (/\s/.test(target)) {
     throw new Error('MCP server name cannot contain whitespace.');
   }
-  return `/mcp test ${target}`;
+  return target;
 }
 
 function mcpServerDescription(server: McpServerSummary): string | undefined {
