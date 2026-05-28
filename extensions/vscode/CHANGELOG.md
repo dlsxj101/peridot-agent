@@ -36,6 +36,8 @@
 - `/session show <id|title>` now runs through the daemon command path and
   renders structured persisted session details without requiring a separate
   terminal invocation.
+- `/session locate <id|title>` now runs through the daemon command path and
+  returns the persisted session directory as a structured path row.
 - Accepting free-form slash commands now leaves an editable argument slot
   instead of copying placeholder text such as `<task>` or `<objective>`
   into the composer.

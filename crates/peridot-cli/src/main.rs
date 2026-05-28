@@ -1497,6 +1497,12 @@ fn apply_session_command(
                 Err(err) => state.push_error(format!("session show: {err}")),
             }
         }
+        SessionCommandEvent::SessionLocate(target) => {
+            let id = resolve_session_id(state, &target).unwrap_or(target);
+            let result = commands::session_locate(project_template, &id);
+            let suffix = if result.exists { "" } else { " (not present)" };
+            state.push_transcript(format!("session locate: {}{}", result.path, suffix));
+        }
         SessionCommandEvent::Fork(task) => {
             let new_id = format!("fork-{}-{}", std::process::id(), unix_timestamp());
             let title = task.clone();

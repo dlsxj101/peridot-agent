@@ -94,6 +94,7 @@ impl AgentState {
             | SlashCommand::SessionCount
             | SlashCommand::SessionSearch(_)
             | SlashCommand::SessionShow(_)
+            | SlashCommand::SessionLocate(_)
             | SlashCommand::SubagentModel(_)
             | SlashCommand::Reasoning(_)
             | SlashCommand::Fast(_)

@@ -55,6 +55,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **`/session show <id|title>` slash parity** now exposes persisted session
   details in both TUI and VS Code, including lifecycle, workspace, usage,
   worktree branch, last task, and notes summary data.
+- **`/session locate <id|title>` slash parity** now resolves persisted session
+  directories from the same TUI and VS Code command surfaces, returning a
+  structured path row for editor file-open affordances.
 - **Free-form slash command acceptance** now leaves editable argument
   slots instead of inserting placeholder text such as `<task>` or
   `<objective>` into the composer when accepting commands like `/fork`,

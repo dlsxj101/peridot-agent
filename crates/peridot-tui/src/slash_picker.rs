@@ -430,6 +430,12 @@ pub fn slash_command_catalog() -> &'static [SlashCommandSpec] {
             category: "session",
         },
         SlashCommandSpec {
+            name: "/session locate",
+            description: "show the persisted session directory path",
+            arg_hint: Some("<id|title>"),
+            category: "session",
+        },
+        SlashCommandSpec {
             name: "/autofix",
             description: "toggle or configure the auto-fix loop (on|off|<max>)",
             arg_hint: Some("[on|off|<N>]"),
@@ -887,6 +893,7 @@ fn session_target_argument_context(
         "/session delete",
         "/session rename",
         "/session show",
+        "/session locate",
     ]
     .into_iter()
     .filter(|command| query == *command || query.starts_with(&format!("{command} ")))
@@ -927,7 +934,7 @@ fn session_target_argument_context(
 
 fn session_subcommand_argument_context(query: &str) -> Option<SlashArgumentContext> {
     const CONTINUATION_OPTIONS: &[&str] = &[
-        "new", "switch", "close", "delete", "rename", "search", "show",
+        "new", "switch", "close", "delete", "rename", "search", "show", "locate",
     ];
     const TERMINAL_OPTIONS: &[&str] = &["save", "list", "count"];
     let command_name = "/session";
@@ -1602,6 +1609,19 @@ mod tests {
         assert_eq!(context.options, vec!["s-1"]);
         assert!(!context.append_space);
 
+        let context = slash_argument_context_with_dynamic(
+            "/session locate parser",
+            &[],
+            &sessions,
+            &[],
+            &[],
+            &[],
+        )
+        .expect("locate target");
+        assert_eq!(context.command_name, "/session locate");
+        assert_eq!(context.options, vec!["s-1"]);
+        assert!(!context.append_space);
+
         assert!(
             slash_argument_context_with_dynamic(
                 "/session switch s-2",
@@ -1650,6 +1670,11 @@ mod tests {
         assert_eq!(context.options, vec!["show"]);
         assert!(context.append_space);
 
+        let context = slash_argument_context_with_dynamic("/session lo", &[], &[], &[], &[], &[])
+            .expect("session locate option");
+        assert_eq!(context.options, vec!["locate"]);
+        assert!(context.append_space);
+
         assert!(
             slash_argument_context_with_dynamic("/session rename ", &[], &[], &[], &[], &[])
                 .is_none()
@@ -1660,6 +1685,10 @@ mod tests {
         );
         assert!(
             slash_argument_context_with_dynamic("/session show ", &[], &[], &[], &[], &[])
+                .is_none()
+        );
+        assert!(
+            slash_argument_context_with_dynamic("/session locate ", &[], &[], &[], &[], &[])
                 .is_none()
         );
         assert!(

@@ -37,7 +37,7 @@ use crate::checkpoints::restore_latest_checkpoint;
 use crate::commands::{
     AuthProvider, append_session_note, move_auto_skill_to_archive, read_managed_env_var,
     read_session_notes, read_stored_api_key, read_stored_openai_oauth_credentials,
-    restore_archived_skill, search_session_transcript_hits, session_count_summary,
+    restore_archived_skill, search_session_transcript_hits, session_count_summary, session_locate,
     session_show_summary,
 };
 use crate::run_loop::{AgentTaskOptions, MessageBusHookup, run_task_with_events};
@@ -1845,6 +1845,9 @@ async fn execute_session_command(
         SlashCommand::SessionShow(target) => {
             handle_command_session_show(state, raw_command, &target).await
         }
+        SlashCommand::SessionLocate(target) => {
+            handle_command_session_locate(state, raw_command, &target).await
+        }
         SlashCommand::SessionDelete(target) => {
             handle_command_session_delete(state, raw_command, &target).await
         }
@@ -2282,6 +2285,36 @@ async fn handle_command_session_show(
             { "label": "cost", "detail": format!("${:.4}", total_cost_usd) },
             { "label": "turns", "detail": turns_used.to_string() },
             { "label": "notes", "detail": summary.notes_count.to_string() },
+        ],
+    }))
+}
+
+async fn handle_command_session_locate(
+    state: &DaemonState,
+    raw_command: &str,
+    target: &str,
+) -> Result<Value, String> {
+    let session_id = resolve_session_target_id(state, target)
+        .await?
+        .unwrap_or_else(|| target.to_string());
+    let located = session_locate(&state.project_root, &session_id);
+    Ok(serde_json::json!({
+        "kind": "session_locate",
+        "title": "Session Locate",
+        "message": if located.exists {
+            format!("session locate: {}", located.path)
+        } else {
+            format!("session locate: {} (not present)", located.path)
+        },
+        "severity": if located.exists { "info" } else { "error" },
+        "command": raw_command,
+        "target": target,
+        "session_id": located.id,
+        "path": located.path,
+        "exists": located.exists,
+        "items": [
+            { "label": "session", "detail": located.id },
+            { "label": "directory", "path": located.path, "detail": if located.exists { "present" } else { "not present" } },
         ],
     }))
 }
@@ -6289,6 +6322,47 @@ mod tests {
         assert_eq!(result["last_note"], "first note");
         assert_eq!(result["worktree_branch"], "peridot/show-session");
         assert_eq!(result["items"][0]["detail"], "show-session");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn session_command_locate_resolves_persisted_title() {
+        let root = test_project("session-command-locate");
+        let store = MemoryStore::new(root.join(".peridot/memory.db"));
+        let mut record = SessionRecord::new("locate-session", &root);
+        record.summary = "locate target".into();
+        record.last_task = Some("locate target".into());
+        store.save_session_record(&record).unwrap();
+        let session_dir = root
+            .join(".peridot")
+            .join("sessions")
+            .join("locate-session");
+        std::fs::create_dir_all(&session_dir).unwrap();
+        let (tx, _rx) = mpsc::unbounded_channel::<String>();
+        let state = DaemonState::new(
+            root.clone(),
+            PeridotConfig::default(),
+            test_options(None),
+            tx,
+        );
+
+        let result = execute_session_command(
+            &state,
+            None,
+            "/session locate locate",
+            SlashCommand::SessionLocate("locate".into()),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result["kind"], "session_locate");
+        assert_eq!(result["session_id"], "locate-session");
+        assert_eq!(result["exists"], true);
+        assert_eq!(result["path"], session_dir.display().to_string());
+        assert_eq!(
+            result["items"][1]["path"],
+            session_dir.display().to_string()
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 

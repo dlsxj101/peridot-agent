@@ -25,6 +25,13 @@ pub(crate) struct SessionShowResult {
     pub(crate) last_note: Option<String>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+pub(crate) struct SessionLocateResult {
+    pub(crate) id: String,
+    pub(crate) path: String,
+    pub(crate) exists: bool,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct RewindContextResult {
     pub(crate) restored_prompt: String,
@@ -370,24 +377,16 @@ pub(crate) fn run_session_command(
             handle_session_note(project_root, id, action, output)?;
         }
         SessionCommand::Locate { id } => {
-            let path = project_root.join(".peridot").join("sessions").join(id);
-            let exists = path.is_dir();
+            let result = session_locate(project_root, id);
             match output {
                 OutputFormat::Json => {
-                    println!(
-                        "{}",
-                        serde_json::to_string_pretty(&serde_json::json!({
-                            "id": id,
-                            "path": path.display().to_string(),
-                            "exists": exists,
-                        }))?
-                    );
+                    println!("{}", serde_json::to_string_pretty(&result)?);
                 }
                 OutputFormat::Text => {
-                    if exists {
-                        println!("{}", path.display());
+                    if result.exists {
+                        println!("{}", result.path);
                     } else {
-                        println!("{} (not present)", path.display());
+                        println!("{} (not present)", result.path);
                     }
                 }
             }
@@ -1735,6 +1734,15 @@ pub(crate) fn session_show_summary(project_root: &Path, id: &str) -> Result<Sess
         notes_count,
         last_note,
     })
+}
+
+pub(crate) fn session_locate(project_root: &Path, id: &str) -> SessionLocateResult {
+    let path = project_root.join(".peridot").join("sessions").join(id);
+    SessionLocateResult {
+        id: id.to_string(),
+        path: path.display().to_string(),
+        exists: path.is_dir(),
+    }
 }
 
 fn tail_session_transcript(

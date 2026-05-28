@@ -1231,6 +1231,18 @@ shared daemon, TUI, and VS Code extension surfaces.
   command result, so the generic command result block can render the details
   without duplicating CLI formatting.
 
+### E98. Session Locate Slash Parity
+
+- **Status**: landed.
+- **Goal**: let editor and TUI users jump from a known session id/title to
+  the persisted session directory without switching to a terminal.
+- **Where**: shared slash parser/catalog, TUI session command queue, daemon
+  `session.command`, and the existing CLI locate path helper.
+- **Result**: `/session locate <id|title>` now resolves visible or persisted
+  session targets and returns the `.peridot/sessions/<id>` directory in both
+  clients. VS Code receives a structured `session_locate` command result with
+  a path row, so the existing command renderer can expose the directory path.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

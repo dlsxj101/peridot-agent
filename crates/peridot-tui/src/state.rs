@@ -886,6 +886,8 @@ pub enum SessionCommandEvent {
     SessionSearch(String),
     /// `/session show <id|title>` — show persisted session details.
     SessionShow(String),
+    /// `/session locate <id|title>` — show the session directory path.
+    SessionLocate(String),
     /// `/fork <task>` — spawn a single-turn Fork subagent inline.
     Fork(String),
     /// `/teammate <task>` — spawn a worktree-isolated Teammate subagent.

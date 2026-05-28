@@ -172,6 +172,7 @@ Remaining scoped polish: none currently tracked in this runbook.
 ### M22 — `peridot session locate <id>` utility (landed)
 - Prints the absolute path of `<project_root>/.peridot/sessions/<id>` along with whether it currently exists on disk. JSON output exposes the same shape (`{ id, path, exists }`).
 - Useful for shell pipelines (`(peridot session locate id)/transcript.ndjson`) and for confirming where M16's export will source its files from before running.
+- `/session locate <id|title>` exposes the same path lookup to interactive clients. TUI prints the resolved directory path, while VS Code receives a structured `session_locate` command result with a path row.
 
 ### M21 — `/note` slash inside the TUI (landed)
 - New `SlashCommand::Note(String)` and `/note <text>` slash entry. Inside the TUI, the slash queues the body onto `TuiState.pending_notes` and prints a transcript line so the user can see the note landed.
