@@ -1,4 +1,5 @@
 import type { SlashCommandSpec } from '../src/types';
+import { filterFileMentionPaths } from './fileMention';
 
 export interface SlashArgumentContext {
   command: SlashCommandSpec;
@@ -40,8 +41,17 @@ export function slashPickerItemCount(
   mcpServers: SlashMcpServerTarget[] = [],
   models: string[] = [],
   branches: string[] = [],
+  workspaceFiles: string[] = [],
 ): number {
-  const argumentContext = slashArgumentContext(input, slashCommands, sessionTargets, mcpServers, models, branches);
+  const argumentContext = slashArgumentContext(
+    input,
+    slashCommands,
+    sessionTargets,
+    mcpServers,
+    models,
+    branches,
+    workspaceFiles,
+  );
   if (argumentContext) return argumentContext.options.length;
   return filteredSlashCommands(input, slashCommands).length;
 }
@@ -54,8 +64,9 @@ export function slashExactSelectionIsRunnable(
   mcpServers: SlashMcpServerTarget[] = [],
   models: string[] = [],
   branches: string[] = [],
+  workspaceFiles: string[] = [],
 ): boolean {
-  if (slashArgumentContext(input, slashCommands, sessionTargets, mcpServers, models, branches)) return false;
+  if (slashArgumentContext(input, slashCommands, sessionTargets, mcpServers, models, branches, workspaceFiles)) return false;
   const matches = filteredSlashCommands(input, slashCommands);
   const command = matches[selected];
   if (!command) return false;
@@ -76,6 +87,7 @@ export function slashArgumentContext(
   mcpServers: SlashMcpServerTarget[] = [],
   models: string[] = [],
   branches: string[] = [],
+  workspaceFiles: string[] = [],
 ): SlashArgumentContext | undefined {
   const query = input;
   if (!query.startsWith('/') || query.includes('\n')) return undefined;
@@ -111,6 +123,8 @@ export function slashArgumentContext(
   if (branchContext) return branchContext;
   const codemapContinuationContext = codemapContinuationArgumentContext(query);
   if (codemapContinuationContext) return codemapContinuationContext;
+  const workspaceFileContext = workspaceFileArgumentContext(query, workspaceFiles);
+  if (workspaceFileContext) return workspaceFileContext;
   const goalContext = goalControlArgumentContext(query);
   if (goalContext) return goalContext;
   const notesContext = notesArgumentContext(query);
@@ -140,6 +154,26 @@ export function slashArgumentContext(
     : options;
   if (filtered.length === 0) return undefined;
   return { command, options: filtered };
+}
+
+function workspaceFileArgumentContext(query: string, workspaceFiles: string[]): SlashArgumentContext | undefined {
+  const commandName = ['/codemap outline', '/attach']
+    .filter((candidate) => query.startsWith(`${candidate} `))
+    .sort((a, b) => b.length - a.length)[0];
+  if (!commandName) return undefined;
+  const rest = query.slice(commandName.length).trim();
+  if (/\s/.test(rest)) return undefined;
+  if (rest.length > 0 && workspaceFiles.some((file) => file === rest)) return undefined;
+  const options = filterFileMentionPaths(workspaceFiles, rest);
+  if (options.length === 0) return undefined;
+  return {
+    command: {
+      name: commandName,
+      description: 'workspace file',
+      category: 'workspace',
+    },
+    options,
+  };
 }
 
 function goalControlArgumentContext(query: string): SlashArgumentContext | undefined {

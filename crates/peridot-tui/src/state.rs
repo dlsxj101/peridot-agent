@@ -1672,13 +1672,14 @@ impl TuiState {
             self.slash_picker = None;
             return;
         }
-        let len = crate::slash_picker::picker_len_with_dynamic(
+        let len = crate::slash_picker::picker_len_with_dynamic_and_files(
             &query,
             &self.skill_suggestions,
             &self.sessions,
             &self.side_panel.mcp_status,
             &self.model_suggestions,
             &self.branch_suggestions,
+            &self.at_picker_index,
         );
         if len == 0 {
             self.slash_picker = None;
@@ -1700,13 +1701,14 @@ impl TuiState {
         let Some(picker) = self.slash_picker.as_mut() else {
             return;
         };
-        let len = crate::slash_picker::picker_len_with_dynamic(
+        let len = crate::slash_picker::picker_len_with_dynamic_and_files(
             &picker.query,
             &self.skill_suggestions,
             &self.sessions,
             &self.side_panel.mcp_status,
             &self.model_suggestions,
             &self.branch_suggestions,
+            &self.at_picker_index,
         );
         if len == 0 {
             picker.selected = 0;
@@ -1723,13 +1725,14 @@ impl TuiState {
         };
         let query = picker.query.clone();
         let selected = picker.selected;
-        if let Some(context) = crate::slash_picker::slash_argument_context_with_dynamic(
+        if let Some(context) = crate::slash_picker::slash_argument_context_with_dynamic_and_files(
             &query,
             &self.skill_suggestions,
             &self.sessions,
             &self.side_panel.mcp_status,
             &self.model_suggestions,
             &self.branch_suggestions,
+            &self.at_picker_index,
         ) {
             let Some(option) = context
                 .options
@@ -1762,13 +1765,14 @@ impl TuiState {
         let Some(picker) = self.slash_picker.as_ref() else {
             return false;
         };
-        if crate::slash_picker::slash_argument_context_with_dynamic(
+        if crate::slash_picker::slash_argument_context_with_dynamic_and_files(
             &picker.query,
             &self.skill_suggestions,
             &self.sessions,
             &self.side_panel.mcp_status,
             &self.model_suggestions,
             &self.branch_suggestions,
+            &self.at_picker_index,
         )
         .is_some()
         {

@@ -2451,6 +2451,44 @@ fn slash_picker_selects_finite_argument_options() {
 }
 
 #[test]
+fn slash_picker_selects_workspace_file_path_arguments() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    state.at_picker_index = vec![
+        "docs/notes.md".to_string(),
+        "src/lib.rs".to_string(),
+        "src/main.rs".to_string(),
+        "tests/main.rs".to_string(),
+    ];
+
+    for character in "/attach main".chars() {
+        handle_key_event(
+            &mut state,
+            KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE),
+        );
+    }
+    handle_key_event(&mut state, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    assert_eq!(state.input, "/attach src/main.rs");
+    assert!(state.slash_picker.is_none());
+
+    state.clear_input();
+    for character in "/codemap outline lib".chars() {
+        handle_key_event(
+            &mut state,
+            KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE),
+        );
+    }
+    handle_key_event(&mut state, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    assert_eq!(state.input, "/codemap outline src/lib.rs");
+    assert!(state.slash_picker.is_none());
+}
+
+#[test]
 fn optional_finite_slash_can_submit_or_open_options() {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 

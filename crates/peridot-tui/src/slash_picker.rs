@@ -632,6 +632,7 @@ fn slash_argument_context_with_skills(
 }
 
 /// Returns the active argument picker, including dynamic skill/session/MCP/model/branch options.
+#[cfg(test)]
 pub(crate) fn slash_argument_context_with_dynamic(
     query: &str,
     skills: &[SkillSlashSuggestion],
@@ -639,6 +640,27 @@ pub(crate) fn slash_argument_context_with_dynamic(
     mcp_servers: &[crate::state::McpServerSummary],
     models: &[String],
     branches: &[String],
+) -> Option<SlashArgumentContext> {
+    slash_argument_context_with_dynamic_and_files(
+        query,
+        skills,
+        sessions,
+        mcp_servers,
+        models,
+        branches,
+        &[],
+    )
+}
+
+/// Returns the active argument picker, including workspace-file path options.
+pub(crate) fn slash_argument_context_with_dynamic_and_files(
+    query: &str,
+    skills: &[SkillSlashSuggestion],
+    sessions: &[crate::session_directory::SessionDirectoryItem],
+    mcp_servers: &[crate::state::McpServerSummary],
+    models: &[String],
+    branches: &[String],
+    files: &[String],
 ) -> Option<SlashArgumentContext> {
     if !query.starts_with('/') || query.contains('\n') {
         return None;
@@ -691,6 +713,9 @@ pub(crate) fn slash_argument_context_with_dynamic(
     if let Some(context) = codemap_continuation_argument_context(query) {
         return Some(context);
     }
+    if let Some(context) = workspace_file_argument_context(query, files) {
+        return Some(context);
+    }
     if let Some(context) = goal_control_argument_context(query) {
         return Some(context);
     }
@@ -740,6 +765,32 @@ pub(crate) fn slash_argument_context_with_dynamic(
     Some(SlashArgumentContext {
         command_name: spec.name.to_string(),
         options: options.into_iter().map(str::to_string).collect(),
+        append_space: false,
+    })
+}
+
+fn workspace_file_argument_context(query: &str, files: &[String]) -> Option<SlashArgumentContext> {
+    let command_name = ["/codemap outline", "/attach"]
+        .into_iter()
+        .filter(|command| query.starts_with(&format!("{command} ")))
+        .max_by_key(|command| command.len())?;
+    let rest = query[command_name.len()..].trim();
+    if rest.contains(char::is_whitespace) {
+        return None;
+    }
+    if !rest.is_empty() && files.iter().any(|file| file == rest) {
+        return None;
+    }
+    let options: Vec<String> = crate::at_picker::filter_paths(files, rest)
+        .into_iter()
+        .cloned()
+        .collect();
+    if options.is_empty() {
+        return None;
+    }
+    Some(SlashArgumentContext {
+        command_name: command_name.to_string(),
+        options,
         append_space: false,
     })
 }
@@ -1527,18 +1578,27 @@ fn static_subcommand_argument_context(
     })
 }
 
-/// Number of rows the slash picker would render with all dynamic option sets.
-pub(crate) fn picker_len_with_dynamic(
+/// Number of rows the slash picker would render with workspace-file options.
+pub(crate) fn picker_len_with_dynamic_and_files(
     query: &str,
     skills: &[SkillSlashSuggestion],
     sessions: &[crate::session_directory::SessionDirectoryItem],
     mcp_servers: &[crate::state::McpServerSummary],
     models: &[String],
     branches: &[String],
+    files: &[String],
 ) -> usize {
-    slash_argument_context_with_dynamic(query, skills, sessions, mcp_servers, models, branches)
-        .map(|context| context.options.len())
-        .unwrap_or_else(|| filtered_suggestions(query, skills).len())
+    slash_argument_context_with_dynamic_and_files(
+        query,
+        skills,
+        sessions,
+        mcp_servers,
+        models,
+        branches,
+        files,
+    )
+    .map(|context| context.options.len())
+    .unwrap_or_else(|| filtered_suggestions(query, skills).len())
 }
 
 /// Returns the first match for `query`, if any.
@@ -1819,6 +1879,57 @@ mod tests {
         assert_eq!(context.options, vec!["http"]);
         assert!(slash_argument_context("/mcp add local http").is_none());
         assert!(slash_argument_context("/mcp add local http http://localhost").is_none());
+    }
+
+    #[test]
+    fn slash_argument_context_filters_workspace_file_paths() {
+        let files = vec![
+            "docs/notes.md".to_string(),
+            "src/lib.rs".to_string(),
+            "src/main.rs".to_string(),
+            "tests/main.rs".to_string(),
+        ];
+
+        let context = slash_argument_context_with_dynamic_and_files(
+            "/attach main",
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &files,
+        )
+        .expect("attach file options");
+        assert_eq!(context.command_name, "/attach");
+        assert_eq!(context.options, vec!["src/main.rs", "tests/main.rs"]);
+        assert!(!context.append_space);
+
+        let context = slash_argument_context_with_dynamic_and_files(
+            "/codemap outline lib",
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &files,
+        )
+        .expect("codemap outline file options");
+        assert_eq!(context.command_name, "/codemap outline");
+        assert_eq!(context.options, vec!["src/lib.rs"]);
+        assert!(!context.append_space);
+
+        assert!(
+            slash_argument_context_with_dynamic_and_files(
+                "/attach src/main.rs",
+                &[],
+                &[],
+                &[],
+                &[],
+                &[],
+                &files,
+            )
+            .is_none()
+        );
     }
 
     #[test]

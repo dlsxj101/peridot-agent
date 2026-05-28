@@ -3764,6 +3764,7 @@ function slashPickerItemCount(input: string): number {
     state?.context.mcpServers ?? [],
     state?.context.modelSuggestions ?? [],
     state?.context.branchSnapshots ?? [],
+    state?.context.workspaceFiles ?? [],
   );
 }
 
@@ -3952,6 +3953,7 @@ function slashExactSelectionIsRunnable(input: string): boolean {
     state?.context.mcpServers ?? [],
     state?.context.modelSuggestions ?? [],
     state?.context.branchSnapshots ?? [],
+    state?.context.workspaceFiles ?? [],
   );
 }
 
@@ -3963,6 +3965,7 @@ function slashArgumentContext(input: string): SlashArgumentContext | undefined {
     state?.context.mcpServers ?? [],
     state?.context.modelSuggestions ?? [],
     state?.context.branchSnapshots ?? [],
+    state?.context.workspaceFiles ?? [],
   );
 }
 

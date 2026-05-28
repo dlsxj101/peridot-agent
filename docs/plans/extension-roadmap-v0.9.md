@@ -1712,6 +1712,17 @@ shared daemon, TUI, and VS Code extension surfaces.
   existing `/attach` daemon command. The same size and media guardrails are
   enforced on both sides of the webview boundary.
 
+### E134. Workspace File Slash Argument Autocomplete
+
+- **Status**: landed.
+- **Goal**: let users complete file-path arguments inside the slash composer
+  instead of manually typing fragile relative paths.
+- **Where**: TUI slash picker, VS Code webview slash autocomplete, shared
+  workspace file indexes, and unit tests.
+- **Result**: `/attach <path>` and `/codemap outline <path>` now reuse the
+  same fuzzy workspace-relative file index as `@file` mentions. Exact completed
+  paths close the argument picker so the command remains directly runnable.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

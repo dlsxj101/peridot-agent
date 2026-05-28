@@ -108,6 +108,9 @@
 - The `@file` mention index now refreshes after workspace file create/delete
   events, so long-lived VS Code/Cursor sessions pick up new and removed files
   without a manual status refresh.
+- `/attach <path>` and `/codemap outline <path>` now reuse the workspace file
+  index for slash argument autocomplete, matching the TUI path-completion
+  behavior while keeping exact completed paths directly runnable.
 - Image attachments now render bounded inline previews in the VS Code/Cursor
   attachment cards while keeping the daemon/model context as the existing
   placeholder metadata.
