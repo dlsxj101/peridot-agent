@@ -1562,6 +1562,22 @@ shared daemon, TUI, and VS Code extension surfaces.
   daemon's restart-required note, and refreshes status so server-name
   autocomplete sees the new config entry.
 
+### E123. MCP Inventory Refresh After Config Mutation
+
+- **Status**: landed.
+- **Goal**: keep MCP server inventory surfaces current immediately after
+  `/mcp add` or `/mcp remove`, instead of relying on a later status poll or
+  manual `/mcp list`.
+- **Where**: TUI MCP slash handlers, daemon `session.command` MCP results,
+  VS Code slash-status refresh trigger, and command-result tests.
+- **Result**: TUI `/mcp list`, `/mcp add`, and `/mcp remove` refresh the
+  side-panel MCP inventory from `.peridot/config.toml`. Daemon-backed
+  `/mcp add` and `/mcp remove` return refreshed `items` rows alongside the
+  restart-required message, so VS Code renders the current configured
+  inventory in the command result. VS Code composer slashes that mutate MCP
+  config now also force a status refresh, keeping `/mcp test|remove`
+  autocomplete aligned with the latest config.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

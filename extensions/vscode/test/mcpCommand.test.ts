@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   mcpAddSlashCommand,
+  mcpConfigChangingSlashCommand,
   mcpRemoveSlashCommand,
   mcpServerChoices,
   mcpTestSlashCommand,
@@ -47,4 +48,12 @@ test('mcpAddSlashCommand builds parser-compatible add commands', () => {
   assert.throws(() => mcpAddSlashCommand('bad name', 'stdio', 'node server.js'), /whitespace/);
   assert.throws(() => mcpAddSlashCommand('local', 'stdio', '   '), /target/);
   assert.throws(() => mcpAddSlashCommand('local', 'stdio', 'node\nserver.js'), /single line/);
+});
+
+test('mcpConfigChangingSlashCommand detects add and remove only', () => {
+  assert.equal(mcpConfigChangingSlashCommand('/mcp add local stdio node server.js'), true);
+  assert.equal(mcpConfigChangingSlashCommand('  /mcp remove github  '), true);
+  assert.equal(mcpConfigChangingSlashCommand('/mcp test github'), false);
+  assert.equal(mcpConfigChangingSlashCommand('/mcp list'), false);
+  assert.equal(mcpConfigChangingSlashCommand('/session list'), false);
 });

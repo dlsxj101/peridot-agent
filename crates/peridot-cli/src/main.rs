@@ -3460,6 +3460,7 @@ fn handle_mcp_list(state: &mut TuiState, project_root: &Path) {
             return;
         }
     };
+    state.side_panel.mcp_status = mcp_tui_summaries(&config);
     if config.mcp.is_empty() {
         state.push_transcript("mcp: <none configured>");
         return;
@@ -3562,6 +3563,7 @@ fn handle_mcp_add(
         "mcp: added '{name}' to {}. Restart this session for it to take effect.",
         path.display()
     ));
+    refresh_tui_mcp_status(state, &path);
 }
 
 /// Removes the named MCP server from `config.toml` by scanning for the
@@ -3589,6 +3591,30 @@ fn handle_mcp_remove(state: &mut TuiState, project_root: &Path, name: &str) {
         "mcp: removed '{name}' from {}. Restart this session to drop its tools from the registry.",
         path.display()
     ));
+    refresh_tui_mcp_status(state, &path);
+}
+
+fn refresh_tui_mcp_status(state: &mut TuiState, config_path: &Path) {
+    match read_project_config(config_path) {
+        Ok(config) => {
+            state.side_panel.mcp_status = mcp_tui_summaries(&config);
+        }
+        Err(err) => {
+            state.push_error(format!("mcp status: {err}"));
+        }
+    }
+}
+
+fn mcp_tui_summaries(config: &PeridotConfig) -> Vec<peridot_tui::McpServerSummary> {
+    config
+        .mcp
+        .iter()
+        .map(|entry| peridot_tui::McpServerSummary {
+            name: entry.name.clone(),
+            tool_count: 0,
+            connected: false,
+        })
+        .collect()
 }
 
 /// Walks the toml text line by line and drops the `[[mcp]]` block whose

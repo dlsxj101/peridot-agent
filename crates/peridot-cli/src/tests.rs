@@ -117,6 +117,62 @@ fn tui_skill_suggestions_refresh_when_memory_store_changes() {
 }
 
 #[test]
+fn tui_mcp_slashes_refresh_side_panel_inventory() {
+    let root = std::env::temp_dir().join(format!("peridot-cli-mcp-status-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(root.join(".peridot")).unwrap();
+    fs::write(
+        root.join(".peridot/config.toml"),
+        r#"
+[[mcp]]
+name = "github"
+transport = "http"
+url = "https://example.com/mcp"
+"#,
+    )
+    .unwrap();
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+
+    super::handle_mcp_list(&mut state, &root);
+    assert_eq!(
+        state
+            .side_panel
+            .mcp_status
+            .iter()
+            .map(|server| server.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["github"]
+    );
+
+    super::handle_mcp_add(&mut state, &root, "local", "stdio", "node server.js");
+    assert_eq!(
+        state
+            .side_panel
+            .mcp_status
+            .iter()
+            .map(|server| server.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["github", "local"]
+    );
+
+    super::handle_mcp_remove(&mut state, &root, "github");
+    assert_eq!(
+        state
+            .side_panel
+            .mcp_status
+            .iter()
+            .map(|server| server.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["local"]
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn reviewer_guard_blocks_consecutive_rejections_through_block_path() {
     use peridot_core::ReviewerVerdict;
     let mut consecutive = 0;

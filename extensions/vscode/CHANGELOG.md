@@ -79,6 +79,10 @@
 - `Peridot: Remove MCP Server` now exposes `/mcp remove <name>` with a
   configured-server picker, confirmation prompt, and post-removal status
   refresh.
+- MCP config mutation commands now refresh editor state more directly:
+  daemon-backed `/mcp add` and `/mcp remove` return the refreshed server
+  inventory rows, and VS Code composer slashes force a status refresh so
+  `/mcp test|remove` autocomplete follows the latest `.peridot/config.toml`.
 - `/session prune [--status <state>] [--older-than-days N] [--dry-run]`
   now runs through the daemon command path and returns a structured prune
   result so editor users can preview or remove stale persisted sessions.

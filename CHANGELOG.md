@@ -82,6 +82,11 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **VS Code MCP server remove GUI** now exposes `/mcp remove <name>` with a
   configured-server picker, confirmation prompt, and post-removal status
   refresh.
+- **MCP inventory refresh after config mutation** now updates the TUI side
+  panel when `/mcp list`, `/mcp add`, or `/mcp remove` reads or changes
+  `.peridot/config.toml`. Daemon-backed `/mcp add` and `/mcp remove` also
+  return refreshed inventory rows, and VS Code composer slashes force a status
+  refresh so MCP autocomplete stays current.
 - **`/session prune` slash parity** lets both TUI and VS Code users prune
   persisted sessions with `--status`, `--older-than-days`, and `--dry-run`
   filters through the shared session command path.

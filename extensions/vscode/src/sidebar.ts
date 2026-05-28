@@ -36,6 +36,7 @@ import {
   terminalStatusForEvent,
 } from './agentEventLifecycle';
 import { agentsSummaryForLoadedEvent, mcpServersForStatusEvent } from './agentEventContext';
+import { mcpConfigChangingSlashCommand } from './mcpCommand';
 
 export type {
   ApprovalResponse,
@@ -1400,6 +1401,9 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         await this.handlers.refreshSlashCatalog();
       }
       if (slashCommandChangesBranchSnapshots(input)) {
+        await this.handlers.refreshStatus();
+      }
+      if (mcpConfigChangingSlashCommand(input)) {
         await this.handlers.refreshStatus();
       }
       const task = taskStartedByCommandResult(result);

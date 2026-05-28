@@ -44,6 +44,14 @@ export function mcpAddSlashCommand(name: string, transport: McpTransport, target
   return `/mcp add ${mcpServerNameArg(name)} ${transport} ${targetArg}`;
 }
 
+export function mcpConfigChangingSlashCommand(input: string): boolean {
+  const parts = input
+    .trim()
+    .split(/\s+/)
+    .map((part) => part.toLowerCase());
+  return parts[0] === '/mcp' && (parts[1] === 'add' || parts[1] === 'remove');
+}
+
 function mcpServerNameArg(name: string): string {
   const target = name.trim();
   if (!target) {

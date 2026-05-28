@@ -5147,28 +5147,7 @@ fn config_path(state: &DaemonState) -> PathBuf {
 fn handle_command_mcp_list(state: &DaemonState, raw_command: &str) -> Result<Value, String> {
     let path = config_path(state);
     let config = read_project_config(&path)?;
-    let items: Vec<Value> = config
-        .mcp
-        .iter()
-        .map(|entry| {
-            let detail = match entry.transport {
-                McpTransport::Stdio => {
-                    let args = if entry.args.is_empty() {
-                        String::new()
-                    } else {
-                        format!(" {}", entry.args.join(" "))
-                    };
-                    format!("{}{}", entry.command.clone().unwrap_or_default(), args)
-                }
-                McpTransport::Http => entry.url.clone().unwrap_or_default(),
-            };
-            serde_json::json!({
-                "label": entry.name,
-                "detail": detail,
-                "transport": entry.transport.to_string(),
-            })
-        })
-        .collect();
+    let items = mcp_command_items(&config);
     Ok(serde_json::json!({
         "kind": "mcp",
         "title": "MCP Servers",
@@ -5241,12 +5220,15 @@ fn handle_command_mcp_add(
         format!("{existing_content}\n{block}")
     };
     atomic_write(&path, &new_content)?;
+    let updated = read_project_config(&path)?;
+    let items = mcp_command_items(&updated);
     Ok(serde_json::json!({
         "kind": "mcp",
         "title": "MCP",
         "message": format!("mcp: added '{name}' to {}. Restart this session for it to take effect.", path.display()),
         "severity": "info",
         "command": raw_command,
+        "items": items,
     }))
 }
 
@@ -5262,12 +5244,15 @@ fn handle_command_mcp_remove(
         return Err(format!("mcp remove: no server named '{name}'"));
     };
     atomic_write(&path, &new_content)?;
+    let updated = read_project_config(&path)?;
+    let items = mcp_command_items(&updated);
     Ok(serde_json::json!({
         "kind": "mcp",
         "title": "MCP",
         "message": format!("mcp: removed '{name}' from {}. Restart this session to drop its tools from the registry.", path.display()),
         "severity": "info",
         "command": raw_command,
+        "items": items,
     }))
 }
 
@@ -5294,6 +5279,31 @@ async fn handle_command_mcp_test(
         "severity": "info",
         "command": raw_command,
     }))
+}
+
+fn mcp_command_items(config: &PeridotConfig) -> Vec<Value> {
+    config
+        .mcp
+        .iter()
+        .map(|entry| {
+            let detail = match entry.transport {
+                McpTransport::Stdio => {
+                    let args = if entry.args.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" {}", entry.args.join(" "))
+                    };
+                    format!("{}{}", entry.command.clone().unwrap_or_default(), args)
+                }
+                McpTransport::Http => entry.url.clone().unwrap_or_default(),
+            };
+            serde_json::json!({
+                "label": entry.name,
+                "detail": detail,
+                "transport": entry.transport.to_string(),
+            })
+        })
+        .collect()
 }
 
 fn validate_branch_name(name: &str) -> Result<(), String> {
@@ -5859,6 +5869,49 @@ mod tests {
         assert_eq!(out[0]["result"]["auth"]["method"], "api_key");
         assert!(out[0]["result"]["mcp"].as_array().is_some());
         assert!(out[0]["result"]["worktree_cleanup"].is_object());
+    }
+
+    #[tokio::test]
+    async fn mcp_add_and_remove_results_include_refreshed_inventory_rows() {
+        let root = test_project("mcp-inventory-result");
+        std::fs::create_dir_all(root.join(".peridot")).unwrap();
+        std::fs::write(
+            root.join(".peridot/config.toml"),
+            r#"
+[[mcp]]
+name = "github"
+transport = "http"
+url = "https://example.com/mcp"
+"#,
+        )
+        .unwrap();
+        let (tx, _rx) = mpsc::unbounded_channel::<String>();
+        let state = DaemonState::new(
+            root.clone(),
+            PeridotConfig::default(),
+            test_options(None),
+            tx,
+        );
+
+        let added = handle_command_mcp_add(
+            &state,
+            "/mcp add local stdio node server.js",
+            "local",
+            "stdio",
+            "node server.js",
+        )
+        .unwrap();
+        let added_items = added["items"].as_array().unwrap();
+        assert_eq!(added_items.len(), 2);
+        assert!(added_items.iter().any(|item| item["label"] == "github"));
+        assert!(added_items.iter().any(|item| item["label"] == "local"));
+
+        let removed = handle_command_mcp_remove(&state, "/mcp remove github", "github").unwrap();
+        let removed_items = removed["items"].as_array().unwrap();
+        assert_eq!(removed_items.len(), 1);
+        assert_eq!(removed_items[0]["label"], "local");
+        shutdown_sessions(&state).await;
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[tokio::test]
