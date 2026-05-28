@@ -43,6 +43,7 @@ import { riskChipView } from './riskChip';
 import { codeMapContextPill } from './codeMapContext';
 import { mcpContextPill } from './mcpContext';
 import { noteContextPill } from './noteContext';
+import { sessionContextSummary, sessionContextSummaryChips } from './sessionContextSummary';
 import { el, formatTokens, highlightLite, isRecord, json } from './util';
 
 declare function acquireVsCodeApi(): {
@@ -2696,6 +2697,7 @@ function renderCommandBlock(item: TranscriptItem): HTMLElement {
   } else if (item.text) {
     wrap.append(el('div', 'command-message', item.text));
   }
+  if (result?.kind === 'session_save') appendSessionContextDetails(wrap, result);
   if (result?.source_totals) {
     const totals = el('div', 'command-totals');
     Object.entries(result.source_totals).forEach(([source, tokens]) => {
@@ -2975,6 +2977,9 @@ function renderSessionImportBlock(item: TranscriptItem): HTMLElement {
   const chips = el('div', 'attachment-chips');
   chips.append(el('span', 'command-chip', `${files.length || result?.total || 0} files`));
   if (sessionId) chips.append(el('span', 'command-chip', sessionId));
+  sessionContextSummaryChips(sessionContextSummary(result)).forEach((chip) => {
+    chips.append(el('span', 'command-chip', chip));
+  });
   title.append(chips);
   header.append(title);
   if (destination) {
@@ -2991,6 +2996,7 @@ function renderSessionImportBlock(item: TranscriptItem): HTMLElement {
   if (result?.message) wrap.append(el('div', 'command-message', result.message));
   if (source) wrap.append(el('div', 'attachment-path-row', `from ${source}`));
   if (destination) wrap.append(el('div', 'attachment-path-row', `to ${destination}`));
+  appendSessionContextDetails(wrap, result);
   if (files.length > 0) {
     const list = el('div', 'attachment-list');
     files.forEach((file) => {
@@ -3005,6 +3011,54 @@ function renderSessionImportBlock(item: TranscriptItem): HTMLElement {
     wrap.append(list);
   }
   return wrap;
+}
+
+function appendSessionContextDetails(
+  wrap: HTMLElement,
+  result: TranscriptItem['commandResult'],
+): void {
+  const context = sessionContextSummary(result);
+  if (!context.latestNote && context.attachmentPaths.length === 0) return;
+  const list = el('div', 'attachment-list');
+  if (context.latestNote) {
+    const row = el('div', 'attachment-inventory-row');
+    const main = el('div', 'attachment-row-main');
+    const top = el('div', 'attachment-path-row');
+    top.append(el('span', 'command-row-label', 'latest note'));
+    main.append(top);
+    main.append(el('div', 'command-row-detail', context.latestNote));
+    row.append(main);
+    const actions = el('div', 'attachment-actions');
+    const copy = iconButton('copy', 'Copy latest note', () => {
+      void markCopied(copy, context.latestNote ?? '');
+    });
+    actions.append(copy);
+    row.append(actions);
+    list.append(row);
+  }
+  context.attachmentPaths.forEach((path) => {
+    list.append(renderSessionContextAttachmentRow(path));
+  });
+  wrap.append(list);
+}
+
+function renderSessionContextAttachmentRow(path: string): HTMLElement {
+  const row = el('div', 'attachment-inventory-row');
+  const main = el('div', 'attachment-row-main');
+  const top = el('div', 'attachment-path-row');
+  top.append(renderFilePathButton(path, 'attachment-path'));
+  main.append(top);
+  row.append(main);
+  const actions = el('div', 'attachment-actions');
+  actions.append(iconButton('open', `Open ${path}`, () => {
+    vscode.postMessage({ type: 'openFile', path });
+  }));
+  const copy = iconButton('copy', `Copy ${path}`, () => {
+    void markCopied(copy, path);
+  });
+  actions.append(copy);
+  row.append(actions);
+  return row;
 }
 
 function renderSessionLocateBlock(item: TranscriptItem): HTMLElement {

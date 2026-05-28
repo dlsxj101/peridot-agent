@@ -1937,6 +1937,19 @@ shared daemon, TUI, and VS Code extension surfaces.
   reconciliation, preserving explicit empty snapshots so cleared notes or
   attachments do not leave stale pills behind.
 
+### E152. Session Save/Import Context Cards
+
+- **Status**: landed.
+- **Goal**: make the context metadata added to save/import results visible
+  in the editor transcript, not only in stored sidebar state.
+- **Where**: VS Code/Cursor command-card rendering, session-context summary
+  helper, changelogs, and unit tests.
+- **Result**: session import cards now include Notes and Attachments chips,
+  and both save/import command-result cards render the latest note plus
+  attachment path rows with copy/open actions when context metadata is
+  present. Explicit empty context snapshots still render as `0 notes` /
+  `0 attachments` chips.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

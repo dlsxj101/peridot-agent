@@ -167,6 +167,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
   summaries from daemon `/session save` and `/session import` results so VS
   Code/Cursor can reconcile sidebar session context without waiting for a
   separate session-list refresh.
+- **VS Code session save/import context cards** now show imported or saved
+  Notes and Attachments metadata directly in command-result cards, including
+  latest-note copy and attachment open/copy actions when paths are present.
 - **`/session prune` slash parity** lets both TUI and VS Code users prune
   persisted sessions with `--status`, `--older-than-days`, and `--dry-run`
   filters through the shared session command path.

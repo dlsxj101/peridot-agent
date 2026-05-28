@@ -151,6 +151,9 @@
 - `/session save` and `/session import` results now carry Notes and
   Attachments summaries so session context in the sidebar reconciles
   immediately.
+- Session save/import cards now show note and attachment summary chips plus
+  latest-note copy and attachment open/copy actions when context metadata is
+  present.
 - Image attachments now render bounded inline previews in the VS Code/Cursor
   attachment cards while keeping the daemon/model context as the existing
   placeholder metadata.
