@@ -131,6 +131,9 @@
 - Daemon session-list refreshes now hydrate that note pill from persisted
   `notes.ndjson` summaries, so switching or reloading sessions preserves note
   context without rerunning `/notes`.
+- Daemon session-list refreshes now also hydrate the attachment pill from
+  persisted context snapshots, so switching or reloading sessions preserves
+  attached path context without rerunning `/attachments`.
 - Image attachments now render bounded inline previews in the VS Code/Cursor
   attachment cards while keeping the daemon/model context as the existing
   placeholder metadata.

@@ -1424,6 +1424,19 @@ impl TuiState {
         };
     }
 
+    /// Replaces the active attachment list from the session directory, if known.
+    pub fn hydrate_attachment_paths_from_directory(&mut self) {
+        let Some(item) = self
+            .sessions
+            .iter()
+            .find(|item| item.id == self.current_session_id)
+        else {
+            return;
+        };
+        self.attachment_paths = dedupe_sorted_nonempty(item.attachment_paths.clone());
+        self.refresh_slash_picker();
+    }
+
     fn sync_current_session_note_summary(&mut self) {
         if self.current_session_id.is_empty() {
             return;
@@ -1435,6 +1448,19 @@ impl TuiState {
         {
             item.notes_count = self.note_summary.count;
             item.last_note = self.note_summary.latest.clone();
+        }
+    }
+
+    fn sync_current_session_attachment_paths(&mut self) {
+        if self.current_session_id.is_empty() {
+            return;
+        }
+        if let Some(item) = self
+            .sessions
+            .iter_mut()
+            .find(|item| item.id == self.current_session_id)
+        {
+            item.attachment_paths = self.attachment_paths.clone();
         }
     }
 
@@ -1925,6 +1951,7 @@ impl TuiState {
     /// Replaces the cached attachment path list used by `/detach` autocomplete.
     pub fn set_attachment_paths(&mut self, paths: Vec<String>) {
         self.attachment_paths = dedupe_sorted_nonempty(paths);
+        self.sync_current_session_attachment_paths();
         self.refresh_slash_picker();
     }
 
@@ -1945,6 +1972,7 @@ impl TuiState {
                 .iter()
                 .any(|removed| candidate.eq_ignore_ascii_case(removed))
         });
+        self.sync_current_session_attachment_paths();
         self.refresh_slash_picker();
     }
 

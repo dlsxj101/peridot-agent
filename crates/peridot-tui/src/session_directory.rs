@@ -49,6 +49,9 @@ pub struct SessionDirectoryItem {
     /// Most recent operator note text, when known.
     #[serde(default)]
     pub last_note: Option<String>,
+    /// Attached file/image paths known for this session.
+    #[serde(default)]
+    pub attachment_paths: Vec<String>,
 }
 
 impl SessionDirectoryItem {
@@ -67,6 +70,7 @@ impl SessionDirectoryItem {
             title_generated: false,
             notes_count: 0,
             last_note: None,
+            attachment_paths: Vec::new(),
         }
     }
 

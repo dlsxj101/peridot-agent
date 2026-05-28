@@ -4096,6 +4096,7 @@ fn hydrate_persisted_sessions(
             let (notes_count, last_note) = read_notes_summary(project_root, &record.id);
             item.notes_count = notes_count;
             item.last_note = last_note;
+            item.attachment_paths = session_attachment_paths(project_root, &record.id);
             state.sessions.push(item);
         }
         if router.get(&record.id).is_none() {
@@ -4120,6 +4121,21 @@ fn hydrate_persisted_sessions(
     if !state.current_session_id.is_empty() {
         let _ = router.switch_to(&state.current_session_id);
     }
+}
+
+fn session_attachment_paths(project_root: &Path, session_id: &str) -> Vec<String> {
+    read_context_snapshot(project_root, session_id)
+        .map(|entries| {
+            let mut paths = commands::attachments_from_context(&entries)
+                .into_iter()
+                .map(|attachment| attachment.path)
+                .filter(|path| !path.trim().is_empty())
+                .collect::<Vec<_>>();
+            paths.sort_by_key(|path| path.to_ascii_lowercase());
+            paths.dedup_by(|left, right| left.eq_ignore_ascii_case(right));
+            paths
+        })
+        .unwrap_or_default()
 }
 
 fn delete_persisted_session(project_root: &Path, id: &str) {

@@ -1833,6 +1833,21 @@ shared daemon, TUI, and VS Code extension surfaces.
   summary from that directory metadata, and VS Code/Cursor folds daemon
   `session.list` snapshots into the per-session `Notes N` context pill.
 
+### E144. Session Attachment Summary Hydration
+
+- **Status**: landed.
+- **Goal**: keep attachment status accurate after session list refreshes,
+  reloads, and foreground swaps instead of requiring another `/attachments`
+  command.
+- **Where**: persisted-session hydration, TUI foreground swap state,
+  daemon `session.list`, VS Code session normalization/reconciliation, and
+  unit tests.
+- **Result**: session directory rows now carry additive `attachment_count` /
+  `attachment_paths` metadata reconstructed from persisted context snapshots.
+  TUI foreground swaps hydrate the active attachment side-panel and `/detach`
+  autocomplete from that directory metadata, and VS Code/Cursor folds daemon
+  `session.list` snapshots into the per-session `Attachments N` context pill.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

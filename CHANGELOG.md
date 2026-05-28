@@ -142,6 +142,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **Session-list note summary hydration** now carries note counts and latest
   note text through TUI persisted-session hydration, foreground swaps, daemon
   `session.list`, and VS Code/Cursor session reconciliation.
+- **Session-list attachment hydration** now carries attached path summaries
+  through TUI persisted-session hydration, foreground swaps, daemon
+  `session.list`, and VS Code/Cursor session reconciliation.
 - **`/session prune` slash parity** lets both TUI and VS Code users prune
   persisted sessions with `--status`, `--older-than-days`, and `--dry-run`
   filters through the shared session command path.

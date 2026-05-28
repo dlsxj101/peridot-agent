@@ -4,6 +4,7 @@ use std::process::Command;
 
 use anyhow::Result;
 use peridot_common::{ExecutionMode, MemoryConfig, PeridotConfig, PermissionMode};
+use peridot_context::{ContextEntry, ContextSource};
 use peridot_core::{AgentRunSummary, StopReason};
 use peridot_llm::Usage;
 use peridot_memory::{MemoryStore, SessionLifecycle, SessionRecord, StoredSkill};
@@ -719,6 +720,15 @@ fn hydrate_persisted_sessions_registers_all_unclosed_sessions() {
             ),
         )
         .unwrap();
+        let context = vec![ContextEntry::trusted(
+            ContextSource::PlanReminder,
+            format!("[attachment]\npath: docs/{id}.md\nbytes: 7\n\n```text\nattached\n```"),
+        )];
+        fs::write(
+            sessions_root.join(id).join("context.bin"),
+            serde_json::to_vec(&context).unwrap(),
+        )
+        .unwrap();
         memory
             .save_session_record(&SessionRecord {
                 id: id.to_string(),
@@ -752,6 +762,9 @@ fn hydrate_persisted_sessions_registers_all_unclosed_sessions() {
             .iter()
             .any(|item| item.id == "s1" && item.last_note.as_deref() == Some("latest s1"))
     );
+    assert!(state.sessions.iter().any(|item| {
+        item.id == "s1" && item.attachment_paths == vec!["docs/s1.md".to_string()]
+    }));
     assert_eq!(router.lock().unwrap().len(), 2);
     assert!(!state.current_session_id.is_empty());
     fs::remove_dir_all(&root).ok();

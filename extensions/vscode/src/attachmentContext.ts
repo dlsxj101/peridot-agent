@@ -1,4 +1,9 @@
-import type { AttachmentView, CommandResultItem, CommandResultView } from './types';
+import type {
+  AttachmentView,
+  CommandResultItem,
+  CommandResultView,
+  DaemonSessionSummary,
+} from './types';
 
 export function attachmentPathsFromCommandResult(
   result: CommandResultView,
@@ -25,6 +30,13 @@ export function attachmentPathsFromCommandResult(
 export function normalizeAttachmentPaths(values: readonly unknown[] | undefined): string[] {
   if (!Array.isArray(values)) return [];
   return dedupeSorted(values.filter((value): value is string => typeof value === 'string'));
+}
+
+export function attachmentPathsFromDaemonSession(
+  session: DaemonSessionSummary,
+): string[] | undefined {
+  if (!Array.isArray(session.attachment_paths)) return undefined;
+  return normalizeAttachmentPaths(session.attachment_paths);
 }
 
 function attachmentPathsFromResult(result: CommandResultView): string[] {

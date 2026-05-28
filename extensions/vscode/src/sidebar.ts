@@ -38,7 +38,11 @@ import {
   terminalStatusForEvent,
 } from './agentEventLifecycle';
 import { agentsSummaryForLoadedEvent, mcpServersForStatusEvent } from './agentEventContext';
-import { attachmentPathsFromCommandResult, normalizeAttachmentPaths } from './attachmentContext';
+import {
+  attachmentPathsFromCommandResult,
+  attachmentPathsFromDaemonSession,
+  normalizeAttachmentPaths,
+} from './attachmentContext';
 import { codeMapFromCommandResult } from './codeMapContext';
 import { mcpConfigChangingSlashCommand, mcpServersFromCommandResult } from './mcpCommand';
 import {
@@ -720,6 +724,10 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       const noteSummary = noteSummaryFromDaemonSession(remote);
       if (noteSummary) {
         session.noteSummary = noteSummary;
+      }
+      const attachmentPaths = attachmentPathsFromDaemonSession(remote);
+      if (attachmentPaths) {
+        session.attachmentPaths = attachmentPaths;
       }
     }
 

@@ -414,6 +414,8 @@ export interface DaemonSessionSummary {
   turns_used?: number;
   notes_count?: number;
   last_note?: string | null;
+  attachment_count?: number;
+  attachment_paths?: string[];
 }
 
 export type SidebarView = 'landing' | 'session';

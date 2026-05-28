@@ -1,7 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { attachmentPathsFromCommandResult, normalizeAttachmentPaths } from '../src/attachmentContext';
+import {
+  attachmentPathsFromCommandResult,
+  attachmentPathsFromDaemonSession,
+  normalizeAttachmentPaths,
+} from '../src/attachmentContext';
 
 test('attachmentPathsFromCommandResult adds attached file paths', () => {
   assert.deepEqual(
@@ -59,4 +63,22 @@ test('normalizeAttachmentPaths sanitizes persisted session values', () => {
     ['docs/notes.md', 'src/main.rs'],
   );
   assert.deepEqual(normalizeAttachmentPaths(undefined), []);
+});
+
+test('attachmentPathsFromDaemonSession hydrates session list attachment values', () => {
+  assert.deepEqual(
+    attachmentPathsFromDaemonSession({
+      id: 'session-1',
+      attachment_paths: [' src/main.rs ', 'SRC/main.rs', 'docs/notes.md'],
+    }),
+    ['docs/notes.md', 'src/main.rs'],
+  );
+  assert.deepEqual(
+    attachmentPathsFromDaemonSession({
+      id: 'session-2',
+      attachment_paths: [],
+    }),
+    [],
+  );
+  assert.equal(attachmentPathsFromDaemonSession({ id: 'legacy-session' }), undefined);
 });

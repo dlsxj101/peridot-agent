@@ -4155,6 +4155,14 @@ function normalizeDaemonSessions(value: unknown): DaemonSessionSummary[] {
       if (typeof entry.last_note === 'string' || entry.last_note === null) {
         summary.last_note = entry.last_note;
       }
+      if (typeof entry.attachment_count === 'number') {
+        summary.attachment_count = entry.attachment_count;
+      }
+      if (Array.isArray(entry.attachment_paths)) {
+        summary.attachment_paths = entry.attachment_paths.filter(
+          (path): path is string => typeof path === 'string',
+        );
+      }
       return summary;
     })
     .filter((entry): entry is DaemonSessionSummary => Boolean(entry));

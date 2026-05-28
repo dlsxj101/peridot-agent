@@ -222,6 +222,7 @@ pub(super) fn swap_foreground_state(
     new_state.sessions = state.sessions.clone();
     new_state.current_session_id = target_id.clone();
     new_state.hydrate_note_summary_from_directory();
+    new_state.hydrate_attachment_paths_from_directory();
     new_state.layout = state.layout.clone();
     let mut saved = std::mem::replace(state, new_state);
     saved.current_session_id = previous_id.to_string();

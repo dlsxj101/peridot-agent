@@ -3846,6 +3846,7 @@ fn swap_foreground_state_round_trips_transcripts_between_sessions() {
     let mut beta = SessionDirectoryItem::new("B", "beta");
     beta.notes_count = 2;
     beta.last_note = Some("beta checkpoint".to_string());
+    beta.attachment_paths = vec!["docs/spec.md".to_string()];
     state.sessions.push(beta);
     state.push_transcript("hello from A");
 
@@ -3859,6 +3860,7 @@ fn swap_foreground_state_round_trips_transcripts_between_sessions() {
         state.note_summary.latest.as_deref(),
         Some("beta checkpoint")
     );
+    assert_eq!(state.attachment_paths, vec!["docs/spec.md".to_string()]);
     assert!(
         state.transcript.is_empty(),
         "freshly-swapped foreground starts with a clean transcript"

@@ -585,6 +585,8 @@ async fn session_list_result(state: &DaemonState) -> Value {
     for session in legacy {
         let (notes_count, last_note) =
             crate::commands::read_notes_summary(state.project_root.as_ref(), &session.id);
+        let attachment_paths = session_attachment_paths(state, &session.id);
+        let attachment_count = attachment_paths.len();
         rows.insert(
             session.id.clone(),
             serde_json::json!({
@@ -596,6 +598,8 @@ async fn session_list_result(state: &DaemonState) -> Value {
                 "updated_at_unix": 0,
                 "notes_count": notes_count,
                 "last_note": last_note,
+                "attachment_count": attachment_count,
+                "attachment_paths": attachment_paths,
             }),
         );
     }
@@ -604,6 +608,8 @@ async fn session_list_result(state: &DaemonState) -> Value {
             running_sessions.contains_key(&record.id) || record.status == SessionLifecycle::Running;
         let (notes_count, last_note) =
             crate::commands::read_notes_summary(state.project_root.as_ref(), &record.id);
+        let attachment_paths = session_attachment_paths(state, &record.id);
+        let attachment_count = attachment_paths.len();
         rows.insert(
             record.id.clone(),
             serde_json::json!({
@@ -619,6 +625,8 @@ async fn session_list_result(state: &DaemonState) -> Value {
                 "turns_used": record.turns_used,
                 "notes_count": notes_count,
                 "last_note": last_note,
+                "attachment_count": attachment_count,
+                "attachment_paths": attachment_paths,
             }),
         );
     }
@@ -626,6 +634,8 @@ async fn session_list_result(state: &DaemonState) -> Value {
         rows.entry(id.clone()).or_insert_with(|| {
             let (notes_count, last_note) =
                 crate::commands::read_notes_summary(state.project_root.as_ref(), id);
+            let attachment_paths = session_attachment_paths(state, id);
+            let attachment_count = attachment_paths.len();
             serde_json::json!({
                 "id": id,
                 "title": session_title_from_task(&entry.spec.task),
@@ -639,12 +649,29 @@ async fn session_list_result(state: &DaemonState) -> Value {
                 "turns_used": 0,
                 "notes_count": notes_count,
                 "last_note": last_note,
+                "attachment_count": attachment_count,
+                "attachment_paths": attachment_paths,
             })
         });
     }
     serde_json::json!({
         "sessions": rows.into_values().collect::<Vec<_>>(),
     })
+}
+
+fn session_attachment_paths(state: &DaemonState, session_id: &str) -> Vec<String> {
+    read_context_snapshot(state, session_id)
+        .map(|entries| {
+            let mut paths = crate::commands::attachments_from_context(&entries)
+                .into_iter()
+                .map(|attachment| attachment.path)
+                .filter(|path| !path.trim().is_empty())
+                .collect::<Vec<_>>();
+            paths.sort_by_key(|path| path.to_ascii_lowercase());
+            paths.dedup_by(|left, right| left.eq_ignore_ascii_case(right));
+            paths
+        })
+        .unwrap_or_default()
 }
 
 fn record_title(record: &SessionRecord) -> String {
@@ -6133,7 +6160,6 @@ url = "https://example.com/mcp"
             test_options(None),
             tx,
         );
-
         let _ = dispatch_line(
             &state,
             r#"{"jsonrpc":"2.0","id":42,"method":"skills.list"}"#,
@@ -6571,6 +6597,15 @@ url = "https://example.com/mcp"
             test_options(None),
             tx,
         );
+        write_context_snapshot(
+            &state,
+            "session-recorded",
+            &[ContextEntry::trusted(
+                ContextSource::PlanReminder,
+                "[attachment]\npath: docs/spec.md\nbytes: 7\n\n```text\nattached\n```",
+            )],
+        )
+        .unwrap();
 
         let _ = dispatch_line(
             &state,
@@ -6588,6 +6623,8 @@ url = "https://example.com/mcp"
         assert_eq!(sessions[0]["status"], "suspended");
         assert_eq!(sessions[0]["notes_count"], 2);
         assert_eq!(sessions[0]["last_note"], "latest note");
+        assert_eq!(sessions[0]["attachment_count"], 1);
+        assert_eq!(sessions[0]["attachment_paths"][0], "docs/spec.md");
         let _ = std::fs::remove_dir_all(root);
     }
 
