@@ -1,6 +1,6 @@
 import type { TranscriptItem, TranscriptRole } from './types';
 
-export function committeeTranscriptItemForEvent(
+export function agentTranscriptItemForEvent(
   kind: string,
   event: Record<string, unknown>,
 ): TranscriptItem | undefined {
@@ -20,6 +20,16 @@ export function committeeTranscriptItemForEvent(
       return {
         role: verdict.role,
         text: verdict.detail.length > 0 ? `${base} - ${verdict.detail}` : base,
+      };
+    }
+    case 'auto_fix_attempt': {
+      const attempt = numberLabel(event, 'attempt');
+      const max = numberLabel(event, 'max');
+      const toolName = textField(event, 'tool_name')?.trim() || 'verify';
+      const status = event.passed === true ? 'passed' : 'FAILED';
+      return {
+        role: 'status',
+        text: `autofix: ${toolName} ${status} (attempt ${attempt}/${max})`,
       };
     }
     default:
@@ -63,6 +73,11 @@ function textField(record: Record<string, unknown>, key: string): string | undef
 function numberField(record: Record<string, unknown>, key: string): number | undefined {
   const value = record[key];
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function numberLabel(record: Record<string, unknown>, key: string): string {
+  const value = numberField(record, key);
+  return typeof value === 'number' ? String(value) : '?';
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

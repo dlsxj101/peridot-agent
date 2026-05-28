@@ -26,7 +26,7 @@ import {
 } from './types';
 import { localSlashAction } from './localSlashAction';
 import { staleDaemonBackedSessionIds } from './sessionReconcile';
-import { committeeTranscriptItemForEvent } from './agentEventTranscript';
+import { agentTranscriptItemForEvent } from './agentEventTranscript';
 
 export type {
   ApprovalResponse,
@@ -1959,8 +1959,8 @@ function transcriptItemForEvent(
   kind: string,
   event: Record<string, unknown>,
 ): TranscriptItem | undefined {
-  const committeeItem = committeeTranscriptItemForEvent(kind, event);
-  if (committeeItem) return committeeItem;
+  const agentEventItem = agentTranscriptItemForEvent(kind, event);
+  if (agentEventItem) return agentEventItem;
 
   switch (kind) {
     case 'started':

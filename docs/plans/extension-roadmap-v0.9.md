@@ -976,6 +976,19 @@ shared daemon, TUI, and VS Code extension surfaces.
   so duplicate-diff and hard-stop review guards are visible instead of
   collapsing to an opaque event-kind label.
 
+### E79. Auto-Fix Attempt Transcript Parity
+
+- **Status**: landed.
+- **Goal**: make VS Code render auto-fix verification progress the same
+  way the TUI transcript already does.
+- **Where**: shared daemon `AgentRunEvent::AutoFixAttempt`, TUI runtime
+  event rendering, VS Code sidebar transcript conversion, and VS Code unit
+  tests.
+- **Result**: `auto_fix_attempt` now renders as
+  `autofix: <tool> passed|FAILED (attempt n/max)` in the VS Code
+  transcript instead of falling back to the opaque event-kind label.
+  Existing TUI rendering stays unchanged.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

@@ -39,6 +39,9 @@
   transcript: planner plans appear as committee progress rows, reviewer
   verdicts include the executor turn and comments, and reviewer blocks use
   error styling.
+- Auto-fix attempt daemon events now render in the VS Code transcript with
+  the checked tool, pass/fail status, and attempt count, matching the TUI
+  transcript wording.
 - Provider argument autocomplete now fills supported provider ids for
   `/provider <claude-api|openai-api|openrouter-api|openai-oauth>` from the
   shared daemon slash catalog.

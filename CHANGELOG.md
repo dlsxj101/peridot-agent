@@ -60,6 +60,10 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
   reviewer verdict daemon events in the VS Code transcript, matching the
   TUI's committee progress visibility and surfacing reviewer blocks as
   error rows.
+- **Auto-fix attempt transcript parity** now renders
+  `auto_fix_attempt` daemon events in the VS Code transcript with the
+  checked tool, pass/fail status, and attempt count, matching the TUI's
+  auto-fix progress rows.
 - **Provider argument autocomplete** now exposes the supported provider ids
   for `/provider <claude-api|openai-api|openrouter-api|openai-oauth>` through
   the shared slash catalog, TUI picker, daemon JSON catalog, and VS Code

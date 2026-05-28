@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { committeeTranscriptItemForEvent } from '../src/agentEventTranscript';
+import { agentTranscriptItemForEvent } from '../src/agentEventTranscript';
 
-test('committeeTranscriptItemForEvent renders planner plan text', () => {
+test('agentTranscriptItemForEvent renders planner plan text', () => {
   assert.deepEqual(
-    committeeTranscriptItemForEvent('planner_plan_ready', {
+    agentTranscriptItemForEvent('planner_plan_ready', {
       plan_text: '1. Inspect\n2. Patch',
     }),
     {
@@ -15,9 +15,9 @@ test('committeeTranscriptItemForEvent renders planner plan text', () => {
   );
 });
 
-test('committeeTranscriptItemForEvent renders nested reviewer request changes', () => {
+test('agentTranscriptItemForEvent renders nested reviewer request changes', () => {
   assert.deepEqual(
-    committeeTranscriptItemForEvent('reviewer_verdict', {
+    agentTranscriptItemForEvent('reviewer_verdict', {
       turn_index: 2,
       verdict: { kind: 'request_changes', comments: 'tighten the parser guard' },
     }),
@@ -28,9 +28,9 @@ test('committeeTranscriptItemForEvent renders nested reviewer request changes', 
   );
 });
 
-test('committeeTranscriptItemForEvent renders reviewer blocks as errors', () => {
+test('agentTranscriptItemForEvent renders reviewer blocks as errors', () => {
   assert.deepEqual(
-    committeeTranscriptItemForEvent('reviewer_verdict', {
+    agentTranscriptItemForEvent('reviewer_verdict', {
       turn_index: 3,
       verdict: { kind: 'block', reason: 'same diff reached max review passes' },
     }),
@@ -41,9 +41,9 @@ test('committeeTranscriptItemForEvent renders reviewer blocks as errors', () => 
   );
 });
 
-test('committeeTranscriptItemForEvent accepts legacy flat replay-shaped verdicts', () => {
+test('agentTranscriptItemForEvent accepts legacy flat replay-shaped verdicts', () => {
   assert.deepEqual(
-    committeeTranscriptItemForEvent('reviewer_verdict', {
+    agentTranscriptItemForEvent('reviewer_verdict', {
       turn_index: 1,
       verdict: 'approve',
       comments: '',
@@ -55,6 +55,36 @@ test('committeeTranscriptItemForEvent accepts legacy flat replay-shaped verdicts
   );
 });
 
-test('committeeTranscriptItemForEvent ignores unrelated events', () => {
-  assert.equal(committeeTranscriptItemForEvent('assistant_delta', { delta: 'hello' }), undefined);
+test('agentTranscriptItemForEvent renders autofix attempts', () => {
+  assert.deepEqual(
+    agentTranscriptItemForEvent('auto_fix_attempt', {
+      attempt: 1,
+      max: 3,
+      tool_name: 'verify_test',
+      passed: false,
+    }),
+    {
+      role: 'status',
+      text: 'autofix: verify_test FAILED (attempt 1/3)',
+    },
+  );
+});
+
+test('agentTranscriptItemForEvent renders successful autofix attempts', () => {
+  assert.deepEqual(
+    agentTranscriptItemForEvent('auto_fix_attempt', {
+      attempt: 2,
+      max: 3,
+      tool_name: 'verify_test',
+      passed: true,
+    }),
+    {
+      role: 'status',
+      text: 'autofix: verify_test passed (attempt 2/3)',
+    },
+  );
+});
+
+test('agentTranscriptItemForEvent ignores unrelated events', () => {
+  assert.equal(agentTranscriptItemForEvent('assistant_delta', { delta: 'hello' }), undefined);
 });
