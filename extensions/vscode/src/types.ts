@@ -456,6 +456,7 @@ export type OutboundMessage =
   | { type: 'attachFile' }
   | { type: 'detachAttachment'; path: string }
   | { type: 'showSessions' }
+  | { type: 'searchSessions' }
   | { type: 'pruneSessions' }
   | { type: 'replaySessionTimeline' }
   | { type: 'exportSessionArtifacts' }

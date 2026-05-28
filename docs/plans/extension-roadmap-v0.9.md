@@ -1412,6 +1412,18 @@ shared daemon, TUI, and VS Code extension surfaces.
   transcript, refresh local session cards for full inventories, and avoid
   pruning unrelated local cards for filtered inventories.
 
+### E111. VS Code Session Search GUI
+
+- **Status**: landed.
+- **Goal**: make persisted transcript search discoverable from the editor,
+  not only from slash autocomplete.
+- **Where**: VS Code command contributions, sidebar title-bar actions,
+  session search command construction, README, and changelog docs.
+- **Result**: `Peridot: Search Sessions` and the sidebar search button
+  prompt for a query, run the shared `/session search <query>` daemon path,
+  and render persisted transcript matches in the existing command-result
+  transcript block.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

@@ -41,6 +41,9 @@
 - `Peridot: Show Sessions` now exposes the same all/filtered persisted
   session inventory from the command palette and sidebar title bar. Filtered
   results no longer prune unrelated local session cards.
+- `Peridot: Search Sessions` now exposes persisted transcript search from
+  the command palette and sidebar title bar, using the shared
+  `/session search <query>` daemon command.
 - `/session prune [--status <state>] [--older-than-days N] [--dry-run]`
   now runs through the daemon command path and returns a structured prune
   result so editor users can preview or remove stale persisted sessions.

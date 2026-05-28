@@ -48,6 +48,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **VS Code session list GUI** now exposes that filtered inventory path from
   the command palette and sidebar title bar, and filtered results no longer
   prune unrelated local session cards.
+- **VS Code session search GUI** now exposes persisted transcript search from
+  the command palette and sidebar title bar through the shared
+  `/session search <query>` daemon path.
 - **`/session prune` slash parity** lets both TUI and VS Code users prune
   persisted sessions with `--status`, `--older-than-days`, and `--dry-run`
   filters through the shared session command path.

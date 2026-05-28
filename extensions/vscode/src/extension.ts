@@ -13,6 +13,7 @@ import { peridotChildEnv } from './processEnv';
 import { sessionExportChoices, sessionExportDirectoryName } from './sessionExportCommand';
 import { sessionImportSlashCommand } from './sessionImportCommand';
 import { sessionListSlashCommand, sessionListStatusChoices } from './sessionListCommand';
+import { sessionSearchSlashCommand } from './sessionSearchCommand';
 import {
   parseReplayLastInput,
   sessionReplayChoices,
@@ -180,6 +181,7 @@ export function activate(context: vscode.ExtensionContext) {
       detachAttachmentFromSession(path, output, sidebar),
     showAttachments: async (): Promise<void> => showSessionAttachments(output, sidebar),
     showSessions: async (): Promise<void> => showSessions(output, sidebar),
+    searchSessions: async (): Promise<void> => searchSessions(output, sidebar),
     pruneSessions: async (): Promise<void> => pruneSessions(output, sidebar),
     replaySessionTimeline: async (): Promise<void> => replaySessionTimeline(output, sidebar),
     exportSessionArtifacts: async (): Promise<void> => exportSessionArtifacts(output, sidebar),
@@ -387,6 +389,12 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand('peridot.showSessions', async () => {
       await showSessions(output, sidebar);
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('peridot.searchSessions', async () => {
+      await searchSessions(output, sidebar);
     }),
   );
 
@@ -1419,6 +1427,53 @@ async function showSessions(
     output.appendLine(`[peridot] session list failed: ${message}`);
     sidebar.appendError(message);
     await vscode.window.showErrorMessage(`Peridot session list failed: ${message}`);
+  }
+}
+
+async function searchSessions(
+  output: vscode.OutputChannel,
+  sidebar: PeridotSidebarProvider,
+): Promise<void> {
+  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!folder) {
+    const message = 'Open a workspace folder before searching Peridot sessions.';
+    sidebar.setWorkspaceProblem(message);
+    await vscode.window.showWarningMessage(message);
+    return;
+  }
+  const query = await vscode.window.showInputBox({
+    title: 'Peridot: Search Sessions',
+    prompt: 'Search persisted session transcripts.',
+    placeHolder: 'parser failure',
+    ignoreFocusOut: true,
+    validateInput: (value) => (value.trim().length === 0 ? 'Search query is required.' : undefined),
+  });
+  if (query === undefined) return;
+  let command: string;
+  try {
+    command = sessionSearchSlashCommand(query);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    await vscode.window.showErrorMessage(`Peridot session search failed: ${message}`);
+    return;
+  }
+  await vscode.commands.executeCommand('peridot.chatView.focus');
+  try {
+    output.appendLine(`[peridot] searching sessions: ${command}`);
+    const result = await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: 'Peridot: searching sessions',
+        cancellable: false,
+      },
+      async () => runSlashCommand(command, output, sidebar, sidebar.currentRunOptions()),
+    );
+    sidebar.appendCommandResult(result);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    output.appendLine(`[peridot] session search failed: ${message}`);
+    sidebar.appendError(message);
+    await vscode.window.showErrorMessage(`Peridot session search failed: ${message}`);
   }
 }
 
