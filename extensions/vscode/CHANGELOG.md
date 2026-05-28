@@ -41,6 +41,9 @@
 - `/session prune [--status <state>] [--older-than-days N] [--dry-run]`
   now runs through the daemon command path and returns a structured prune
   result so editor users can preview or remove stale persisted sessions.
+- `/session replay <id|title> [--last N]` now runs through the daemon
+  command path and renders persisted replay timeline rows, including
+  committee-weaved events, in the existing command result block.
 - `/notes clear` now runs through the daemon command path and clears
   operator notes for the active session, with autocomplete alongside
   `/notes last`.

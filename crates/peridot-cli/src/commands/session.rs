@@ -48,6 +48,35 @@ pub(crate) struct SessionResumeResult {
     pub(crate) resume_task: String,
 }
 
+#[derive(Clone, Debug, serde::Serialize)]
+pub(crate) struct SessionReplayResult {
+    pub(crate) id: String,
+    pub(crate) entries: Vec<SessionReplayTranscriptEntry>,
+    pub(crate) timeline: Vec<SessionReplayTimelineEntry>,
+    pub(crate) total: usize,
+    pub(crate) timeline_total: usize,
+    pub(crate) committee_total: usize,
+    pub(crate) truncated: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+pub(crate) struct SessionReplayTranscriptEntry {
+    pub(crate) kind: String,
+    pub(crate) text: String,
+    pub(crate) ts: u64,
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+pub(crate) struct SessionReplayTimelineEntry {
+    pub(crate) source: String,
+    pub(crate) kind: String,
+    pub(crate) marker: String,
+    pub(crate) text: String,
+    pub(crate) ts: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) event: Option<serde_json::Value>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct RewindContextResult {
     pub(crate) restored_prompt: String,
@@ -1992,6 +2021,58 @@ impl ReplayTimelineEntry {
             }),
         }
     }
+}
+
+pub(crate) fn session_replay_summary(
+    project_root: &Path,
+    id: &str,
+    last: Option<usize>,
+) -> Result<SessionReplayResult> {
+    let entries_owned = load_session_transcript(project_root, id)?;
+    let committee_events = load_committee_replay_events(project_root, id);
+    let timeline_owned = build_replay_timeline(&entries_owned, &committee_events);
+    let total_timeline_entries = timeline_owned.len();
+    let start = last
+        .map(|limit| total_timeline_entries.saturating_sub(limit))
+        .unwrap_or(0);
+    let entries = entries_owned
+        .iter()
+        .map(|entry| SessionReplayTranscriptEntry {
+            kind: format!("{:?}", entry.kind).to_ascii_lowercase(),
+            text: entry.text.clone(),
+            ts: entry.ts,
+        })
+        .collect();
+    let timeline = timeline_owned[start..]
+        .iter()
+        .map(|entry| match entry {
+            ReplayTimelineEntry::Transcript { entry, .. } => SessionReplayTimelineEntry {
+                source: "transcript".to_string(),
+                kind: format!("{:?}", entry.kind).to_ascii_lowercase(),
+                marker: transcript_marker(entry.kind).to_string(),
+                text: entry.text.clone(),
+                ts: entry.ts,
+                event: None,
+            },
+            ReplayTimelineEntry::Committee { event } => SessionReplayTimelineEntry {
+                source: "committee".to_string(),
+                kind: event.kind.clone(),
+                marker: committee_marker(event).to_string(),
+                text: committee_text(event),
+                ts: event.ts,
+                event: Some(event.raw.clone()),
+            },
+        })
+        .collect();
+    Ok(SessionReplayResult {
+        id: id.to_string(),
+        total: entries_owned.len(),
+        timeline_total: total_timeline_entries,
+        committee_total: committee_events.len(),
+        truncated: start > 0,
+        entries,
+        timeline,
+    })
 }
 
 fn replay_session_transcript(

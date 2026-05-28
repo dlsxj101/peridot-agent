@@ -901,6 +901,13 @@ pub enum SessionCommandEvent {
     SessionLocate(String),
     /// `/session resume <id|title>` — start a task from a saved session summary.
     SessionResume(String),
+    /// `/session replay <id|title> [--last N]` — replay a persisted session timeline.
+    SessionReplay {
+        /// Session id, title, or index to replay.
+        target: String,
+        /// Optional cap for the most recent timeline entries.
+        last: Option<usize>,
+    },
     /// `/fork <task>` — spawn a single-turn Fork subagent inline.
     Fork(String),
     /// `/teammate <task>` — spawn a worktree-isolated Teammate subagent.

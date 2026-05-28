@@ -1296,6 +1296,22 @@ shared daemon, TUI, and VS Code extension surfaces.
   `older_than_days`, and `dry_run`, and both composers complete prune flags
   plus lifecycle status values.
 
+### E103. Session Replay Slash Parity
+
+- **Status**: landed.
+- **Goal**: expose the committee-weaved persisted replay timeline from the
+  interactive clients, so operators can inspect a past session without
+  switching to `peridot session replay`.
+- **Where**: shared slash parser/catalog, reusable session replay summary
+  helper, TUI session command queue, daemon `session.command`, and VS Code
+  slash autocomplete.
+- **Result**: `/session replay <id|title> [--last N]` resolves visible or
+  persisted session targets, loads the unified transcript + committee
+  timeline, and returns the same transcript-compatible `entries` plus
+  structured `timeline` rows. TUI prints replay rows into the transcript,
+  VS Code renders them through the generic command result list, and both
+  composers complete replay targets plus the optional `--last` flag.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

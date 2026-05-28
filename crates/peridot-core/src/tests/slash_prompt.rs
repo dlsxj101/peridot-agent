@@ -67,6 +67,13 @@ fn parses_goal_slash_commands() {
         Some(SlashCommand::SessionResume("s1".to_string()))
     );
     assert_eq!(
+        parse_slash_command("/session replay s1 --last 3"),
+        Some(SlashCommand::SessionReplay {
+            target: "s1".to_string(),
+            last: Some(3),
+        })
+    );
+    assert_eq!(
         parse_slash_command("/fast on"),
         Some(SlashCommand::Fast(Some(true)))
     );

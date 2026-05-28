@@ -72,6 +72,11 @@ const commands: SlashCommandSpec[] = [
     argHint: '<id|title>',
   },
   {
+    name: '/session replay',
+    description: 'replay session',
+    argHint: '<id|title> [--last N]',
+  },
+  {
     name: '/session save',
     description: 'save session',
   },
@@ -350,6 +355,11 @@ test('slashArgumentContext filters session target arguments', () => {
   assert.equal(resume?.command.name, '/session resume');
   assert.deepEqual(resume?.options, ['s-1']);
   assert.equal(resume?.appendSpace, false);
+
+  const replay = slashArgumentContext('/session replay parser', commands, sessions);
+  assert.equal(replay?.command.name, '/session replay');
+  assert.deepEqual(replay?.options, ['s-1']);
+  assert.equal(replay?.appendSpace, false);
 });
 
 test('slashArgumentContext leaves argument room after session subcommands', () => {
@@ -369,8 +379,14 @@ test('slashArgumentContext leaves argument room after session subcommands', () =
   assert.deepEqual(resume?.options, ['resume']);
   assert.equal(resume?.appendSpace, true);
 
+  const replay = slashArgumentContext('/session rep', commands);
+  assert.equal(replay?.command.name, '/session');
+  assert.deepEqual(replay?.options, ['replay']);
+  assert.equal(replay?.appendSpace, true);
+
   assert.equal(slashArgumentContext('/session rename ', commands), undefined);
   assert.equal(slashArgumentContext('/session resume ', commands), undefined);
+  assert.equal(slashArgumentContext('/session replay ', commands), undefined);
   assert.equal(slashArgumentContext('/session s', commands), undefined);
   assert.deepEqual(
     filteredSlashCommands('/session s', commands).map((command) => command.name),
@@ -413,6 +429,20 @@ test('slashArgumentContext filters session prune arguments', () => {
 
   assert.equal(slashArgumentContext('/session prune --older-than-days ', commands), undefined);
   assert.equal(slashArgumentContext('/session prune --status done', commands), undefined);
+});
+
+test('slashArgumentContext filters session replay arguments', () => {
+  const flag = slashArgumentContext('/session replay s-1 ', commands);
+  assert.equal(flag?.command.name, '/session replay');
+  assert.deepEqual(flag?.options, ['--last', 'last']);
+  assert.equal(flag?.appendSpace, true);
+
+  const prefix = slashArgumentContext('/session replay s-1 --', commands);
+  assert.equal(prefix?.command.name, '/session replay');
+  assert.deepEqual(prefix?.options, ['--last']);
+  assert.equal(prefix?.appendSpace, true);
+
+  assert.equal(slashArgumentContext('/session replay s-1 --last ', commands), undefined);
 });
 
 test('slashArgumentContext filters mcp server arguments', () => {

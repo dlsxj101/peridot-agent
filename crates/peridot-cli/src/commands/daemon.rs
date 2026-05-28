@@ -1869,6 +1869,9 @@ async fn execute_session_command(
         SlashCommand::SessionResume(target) => {
             handle_command_session_resume(state, raw_command, &target).await
         }
+        SlashCommand::SessionReplay { target, last } => {
+            handle_command_session_replay(state, raw_command, &target, last).await
+        }
         SlashCommand::SessionDelete(target) => {
             handle_command_session_delete(state, raw_command, &target).await
         }
@@ -2454,6 +2457,71 @@ async fn handle_command_session_resume(
             { "label": "session", "detail": resume.id },
             { "label": "summary", "detail": resume.summary },
         ],
+    }))
+}
+
+async fn handle_command_session_replay(
+    state: &DaemonState,
+    raw_command: &str,
+    target: &str,
+    last: Option<usize>,
+) -> Result<Value, String> {
+    let session_id = resolve_session_target_id(state, target)
+        .await?
+        .unwrap_or_else(|| target.to_string());
+    let replay =
+        match crate::commands::session_replay_summary(&state.project_root, &session_id, last) {
+            Ok(replay) => replay,
+            Err(err) => {
+                return Ok(serde_json::json!({
+                    "kind": "session_replay",
+                    "title": "Session Replay",
+                    "message": format!("session replay: {target} not found ({err})"),
+                    "severity": "error",
+                    "command": raw_command,
+                    "target": target,
+                    "session_id": session_id,
+                    "found": false,
+                }));
+            }
+        };
+    let items: Vec<Value> = replay
+        .timeline
+        .iter()
+        .map(|entry| {
+            serde_json::json!({
+                "label": entry.marker,
+                "source": entry.source,
+                "detail": entry.text,
+                "ts": entry.ts,
+            })
+        })
+        .collect();
+    let suffix = if replay.truncated {
+        format!(
+            " (showing {} of {} timeline entries)",
+            replay.timeline.len(),
+            replay.timeline_total
+        )
+    } else {
+        String::new()
+    };
+    Ok(serde_json::json!({
+        "kind": "session_replay",
+        "title": "Session Replay",
+        "message": format!("session replay: {} timeline entr{}{}", replay.timeline.len(), if replay.timeline.len() == 1 { "y" } else { "ies" }, suffix),
+        "severity": "info",
+        "command": raw_command,
+        "target": target,
+        "session_id": replay.id,
+        "entries": replay.entries,
+        "timeline": replay.timeline,
+        "items": items,
+        "total": replay.total,
+        "timeline_total": replay.timeline_total,
+        "committee_total": replay.committee_total,
+        "truncated": replay.truncated,
+        "found": true,
     }))
 }
 
@@ -6557,6 +6625,64 @@ mod tests {
         assert_eq!(result["items"][0]["label"], "search-session[0] user");
         assert_eq!(result["items"][0]["detail"], "parser panic");
         assert_eq!(result["hits"][1]["index"], 1);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn session_command_replay_returns_structured_timeline() {
+        let root = test_project("session-command-replay");
+        let store = MemoryStore::new(root.join(".peridot/memory.db"));
+        store
+            .save_session(&SessionSummary {
+                id: "replay-session".into(),
+                summary: "replay target".into(),
+            })
+            .unwrap();
+        let sessions_root = root.join(".peridot").join("sessions");
+        let mut tui = peridot_tui::TuiState::new(peridot_tui::HeaderState::new(
+            ExecutionMode::Execute,
+            PermissionMode::Auto,
+            "mock",
+        ));
+        tui.push_transcript_entry(peridot_tui::TranscriptKind::User, "first prompt");
+        tui.push_transcript_entry(peridot_tui::TranscriptKind::Assistant, "first answer");
+        tui.push_transcript_entry(peridot_tui::TranscriptKind::User, "second prompt");
+        peridot_memory::save_session_blob(
+            &sessions_root,
+            "replay-session",
+            "tui_state.json",
+            &serde_json::to_vec(&tui).unwrap(),
+        )
+        .unwrap();
+        let (tx, _rx) = mpsc::unbounded_channel::<String>();
+        let state = DaemonState::new(
+            root.clone(),
+            PeridotConfig::default(),
+            test_options(None),
+            tx,
+        );
+
+        let result = execute_session_command(
+            &state,
+            None,
+            "/session replay replay --last 2",
+            SlashCommand::SessionReplay {
+                target: "replay".into(),
+                last: Some(2),
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result["kind"], "session_replay");
+        assert_eq!(result["found"], true);
+        assert_eq!(result["session_id"], "replay-session");
+        assert_eq!(result["total"], 3);
+        assert_eq!(result["timeline_total"], 3);
+        assert_eq!(result["truncated"], true);
+        assert_eq!(result["timeline"].as_array().unwrap().len(), 2);
+        assert_eq!(result["items"][0]["detail"], "first answer");
+        assert_eq!(result["items"][1]["detail"], "second prompt");
         let _ = std::fs::remove_dir_all(root);
     }
 

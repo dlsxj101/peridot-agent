@@ -147,6 +147,13 @@ pub enum SlashCommand {
     SessionLocate(String),
     /// Continue work from one persisted session summary.
     SessionResume(String),
+    /// Replay one persisted session timeline.
+    SessionReplay {
+        /// Session id, title, or index to replay.
+        target: String,
+        /// Optional cap for the most recent timeline entries.
+        last: Option<usize>,
+    },
     /// Override the default model used when spawning sub-agents. `reset`
     /// clears the override so future spawns inherit the caller's main model.
     SubagentModel(SubagentModelChange),
@@ -542,6 +549,9 @@ pub fn parse_slash_command(input: &str) -> Option<SlashCommand> {
                 Some(SlashCommand::SessionResume(target.to_string()))
             }
         }
+        "session" if rest == "replay" || rest.starts_with("replay ") => {
+            parse_session_replay(rest.strip_prefix("replay").unwrap_or("").trim())
+        }
         "session" if rest.starts_with("new") => {
             let task = rest.strip_prefix("new").unwrap_or("").trim();
             Some(SlashCommand::SessionNew(if task.is_empty() {
@@ -819,6 +829,45 @@ fn parse_session_prune(rest: &str) -> Option<SlashCommand> {
         older_than_days,
         dry_run,
     })
+}
+
+fn parse_session_replay(rest: &str) -> Option<SlashCommand> {
+    if rest.is_empty() {
+        return None;
+    }
+    let mut target_parts = Vec::new();
+    let mut last = None;
+    let mut parts = rest.split_whitespace().peekable();
+    while let Some(part) = parts.next() {
+        match part {
+            "--last" | "last" => {
+                let value = parts.next()?;
+                last = Some(value.parse::<usize>().ok()?);
+                if parts.peek().is_some() {
+                    return None;
+                }
+            }
+            value if value.starts_with("--last=") => {
+                let value = value.strip_prefix("--last=").unwrap_or("");
+                last = Some(value.parse::<usize>().ok()?);
+                if parts.peek().is_some() {
+                    return None;
+                }
+            }
+            value if value.starts_with('-') => return None,
+            value => {
+                if last.is_some() {
+                    return None;
+                }
+                target_parts.push(value);
+            }
+        }
+    }
+    let target = target_parts.join(" ").trim().to_string();
+    if target.is_empty() {
+        return None;
+    }
+    Some(SlashCommand::SessionReplay { target, last })
 }
 
 fn parse_skill_use(request: &str) -> Option<SlashCommand> {
@@ -1173,6 +1222,22 @@ mod tests {
             Some(SlashCommand::SessionResume("s1".to_string()))
         );
         assert_eq!(parse_slash_command("/session resume"), None);
+        assert_eq!(
+            parse_slash_command("/session replay s1 --last 5"),
+            Some(SlashCommand::SessionReplay {
+                target: "s1".to_string(),
+                last: Some(5),
+            })
+        );
+        assert_eq!(
+            parse_slash_command("/session replay release prep last 10"),
+            Some(SlashCommand::SessionReplay {
+                target: "release prep".to_string(),
+                last: Some(10),
+            })
+        );
+        assert_eq!(parse_slash_command("/session replay s1 --last bad"), None);
+        assert_eq!(parse_slash_command("/session replay"), None);
         assert_eq!(
             parse_slash_command("/session delete s1"),
             Some(SlashCommand::SessionDelete("s1".to_string()))

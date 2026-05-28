@@ -91,6 +91,8 @@ export function slashArgumentContext(
   if (sessionListStatusContext) return sessionListStatusContext;
   const sessionPruneContext = sessionPruneArgumentContext(query);
   if (sessionPruneContext) return sessionPruneContext;
+  const sessionReplayContext = sessionReplayArgumentContext(query);
+  if (sessionReplayContext) return sessionReplayContext;
   const sessionContext = sessionTargetArgumentContext(query, sessionTargets);
   if (sessionContext) return sessionContext;
   const sessionSubcommandContext = sessionSubcommandArgumentContext(query);
@@ -356,6 +358,7 @@ function sessionTargetArgumentContext(
     '/session show',
     '/session locate',
     '/session resume',
+    '/session replay',
   ]
     .filter((candidate) => query === candidate || query.startsWith(`${candidate} `))
     .sort((a, b) => b.length - a.length)[0];
@@ -400,6 +403,7 @@ function sessionSubcommandArgumentContext(query: string): SlashArgumentContext |
     'show',
     'locate',
     'resume',
+    'replay',
   ];
   const terminalOptions = ['save', 'list', 'count'];
   const hasTrailingSpace = /\s$/.test(query);
@@ -423,6 +427,33 @@ function sessionSubcommandArgumentContext(query: string): SlashArgumentContext |
 }
 
 const SESSION_STATUS_OPTIONS = ['idle', 'running', 'suspended', 'done', 'failed'];
+
+function sessionReplayArgumentContext(query: string): SlashArgumentContext | undefined {
+  const commandName = '/session replay';
+  if (!query.startsWith(`${commandName} `)) return undefined;
+  const rest = query.slice(commandName.length).trimStart();
+  if (rest.length === 0 || !/\s/.test(rest)) return undefined;
+  const hasTrailingSpace = /\s$/.test(query);
+  const parts = rest.split(/\s+/).filter((part) => part.length > 0);
+  const prefix = hasTrailingSpace ? '' : (parts.pop() ?? '');
+  if (parts.length === 0) return undefined;
+  if (parts.length === 1) {
+    const needle = prefix.toLowerCase();
+    const options = ['--last', 'last'].filter((option) => needle.length === 0 || option.startsWith(needle));
+    if (options.length === 0) return undefined;
+    return {
+      command: {
+        name: commandName,
+        description: 'session replay filter',
+        category: 'session',
+      },
+      options,
+      appendSpace: true,
+    };
+  }
+  if (parts.length === 2 && (parts[1] === '--last' || parts[1] === 'last')) return undefined;
+  return undefined;
+}
 
 function sessionListStatusArgumentContext(query: string): SlashArgumentContext | undefined {
   const commandName = '/session list';

@@ -1585,6 +1585,13 @@ fn apply_session_command(
                 Err(err) => state.push_error(format!("session resume: {err}")),
             }
         }
+        SessionCommandEvent::SessionReplay { target, last } => {
+            let id = resolve_session_id(state, &target).unwrap_or(target);
+            match commands::session_replay_summary(project_template, &id, last) {
+                Ok(result) => state.push_transcript(render_session_replay_text(&result)),
+                Err(err) => state.push_error(format!("session replay: {err}")),
+            }
+        }
         SessionCommandEvent::Fork(task) => {
             let new_id = format!("fork-{}-{}", std::process::id(), unix_timestamp());
             let title = task.clone();
@@ -1847,6 +1854,33 @@ fn render_session_prune_text(result: &commands::SessionPruneResult) -> String {
             result.removed.join("\n  ")
         )
     }
+}
+
+fn render_session_replay_text(result: &commands::SessionReplayResult) -> String {
+    let mut body = format!(
+        "session replay: {} timeline entr{}",
+        result.timeline.len(),
+        if result.timeline.len() == 1 {
+            "y"
+        } else {
+            "ies"
+        }
+    );
+    if result.timeline.is_empty() {
+        body.push_str("\n  <empty>");
+    } else {
+        for entry in &result.timeline {
+            body.push_str(&format!("\n{} {}", entry.marker, entry.text));
+        }
+    }
+    if result.truncated {
+        body.push_str(&format!(
+            "\n... showing {} of {} timeline entries; drop --last for the full replay.",
+            result.timeline.len(),
+            result.timeline_total
+        ));
+    }
+    body
 }
 
 fn context_snapshot_path(project_root: &Path, session_id: &str) -> PathBuf {

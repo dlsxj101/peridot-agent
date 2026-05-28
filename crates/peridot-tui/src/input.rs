@@ -1248,6 +1248,13 @@ pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
             state.push_transcript(format!("session resume: loading {target}..."));
             state.push_pending_session_command(SessionCommandEvent::SessionResume(target));
         }
+        SlashCommand::SessionReplay { target, last } => {
+            let suffix = last
+                .map(|count| format!(" (last {count})"))
+                .unwrap_or_default();
+            state.push_transcript(format!("session replay: loading {target}{suffix}..."));
+            state.push_pending_session_command(SessionCommandEvent::SessionReplay { target, last });
+        }
         SlashCommand::SubagentModel(change) => match change {
             peridot_core::SubagentModelChange::Set(name) => {
                 let from = previous_subagent_model

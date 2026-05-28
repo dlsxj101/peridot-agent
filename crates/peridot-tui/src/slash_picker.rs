@@ -448,6 +448,12 @@ pub fn slash_command_catalog() -> &'static [SlashCommandSpec] {
             category: "session",
         },
         SlashCommandSpec {
+            name: "/session replay",
+            description: "replay a persisted session timeline",
+            arg_hint: Some("<id|title> [--last N]"),
+            category: "session",
+        },
+        SlashCommandSpec {
             name: "/autofix",
             description: "toggle or configure the auto-fix loop (on|off|<max>)",
             arg_hint: Some("[on|off|<N>]"),
@@ -641,6 +647,9 @@ pub(crate) fn slash_argument_context_with_dynamic(
         return Some(context);
     }
     if let Some(context) = session_prune_argument_context(query) {
+        return Some(context);
+    }
+    if let Some(context) = session_replay_argument_context(query) {
         return Some(context);
     }
     if let Some(context) = session_target_argument_context(query, sessions) {
@@ -918,6 +927,7 @@ fn session_target_argument_context(
         "/session show",
         "/session locate",
         "/session resume",
+        "/session replay",
     ]
     .into_iter()
     .filter(|command| query == *command || query.starts_with(&format!("{command} ")))
@@ -956,9 +966,51 @@ fn session_target_argument_context(
     })
 }
 
+fn session_replay_argument_context(query: &str) -> Option<SlashArgumentContext> {
+    let command_name = "/session replay";
+    if !query.starts_with(&format!("{command_name} ")) {
+        return None;
+    }
+    let rest = query[command_name.len()..].trim_start();
+    if rest.is_empty() || !rest.contains(char::is_whitespace) {
+        return None;
+    }
+    let has_trailing_space = query.chars().last().is_some_and(char::is_whitespace);
+    let mut parts: Vec<&str> = rest.split_whitespace().collect();
+    let prefix = if has_trailing_space {
+        ""
+    } else {
+        parts.pop().unwrap_or("")
+    };
+    if parts.is_empty() {
+        return None;
+    }
+    if parts.len() == 1 {
+        let needle = prefix.to_ascii_lowercase();
+        let options: Vec<String> = ["--last", "last"]
+            .into_iter()
+            .filter(|option| needle.is_empty() || option.starts_with(&needle))
+            .map(str::to_string)
+            .collect();
+        if options.is_empty() {
+            return None;
+        }
+        return Some(SlashArgumentContext {
+            command_name: command_name.to_string(),
+            options,
+            append_space: true,
+        });
+    }
+    if parts.len() == 2 && matches!(parts[1], "--last" | "last") {
+        return None;
+    }
+    None
+}
+
 fn session_subcommand_argument_context(query: &str) -> Option<SlashArgumentContext> {
     const CONTINUATION_OPTIONS: &[&str] = &[
         "new", "switch", "close", "delete", "rename", "search", "show", "locate", "resume",
+        "replay",
     ];
     const TERMINAL_OPTIONS: &[&str] = &["save", "list", "count"];
     let command_name = "/session";
@@ -1838,6 +1890,19 @@ mod tests {
         assert_eq!(context.options, vec!["s-1"]);
         assert!(!context.append_space);
 
+        let context = slash_argument_context_with_dynamic(
+            "/session replay parser",
+            &[],
+            &sessions,
+            &[],
+            &[],
+            &[],
+        )
+        .expect("replay target");
+        assert_eq!(context.command_name, "/session replay");
+        assert_eq!(context.options, vec!["s-1"]);
+        assert!(!context.append_space);
+
         assert!(
             slash_argument_context_with_dynamic(
                 "/session switch s-2",
@@ -1896,6 +1961,11 @@ mod tests {
         assert_eq!(context.options, vec!["resume"]);
         assert!(context.append_space);
 
+        let context = slash_argument_context_with_dynamic("/session rep", &[], &[], &[], &[], &[])
+            .expect("session replay option");
+        assert_eq!(context.options, vec!["replay"]);
+        assert!(context.append_space);
+
         assert!(
             slash_argument_context_with_dynamic("/session rename ", &[], &[], &[], &[], &[])
                 .is_none()
@@ -1914,6 +1984,10 @@ mod tests {
         );
         assert!(
             slash_argument_context_with_dynamic("/session resume ", &[], &[], &[], &[], &[])
+                .is_none()
+        );
+        assert!(
+            slash_argument_context_with_dynamic("/session replay ", &[], &[], &[], &[], &[])
                 .is_none()
         );
         assert!(
@@ -2005,6 +2079,34 @@ mod tests {
         assert!(
             slash_argument_context_with_dynamic(
                 "/session prune --status done",
+                &[],
+                &[],
+                &[],
+                &[],
+                &[],
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn session_replay_argument_context_filters_last_flag() {
+        let context =
+            slash_argument_context_with_dynamic("/session replay s-1 ", &[], &[], &[], &[], &[])
+                .expect("session replay last flag");
+        assert_eq!(context.command_name, "/session replay");
+        assert_eq!(context.options, vec!["--last", "last"]);
+        assert!(context.append_space);
+
+        let context =
+            slash_argument_context_with_dynamic("/session replay s-1 --", &[], &[], &[], &[], &[])
+                .expect("session replay last flag prefix");
+        assert_eq!(context.options, vec!["--last"]);
+        assert!(context.append_space);
+
+        assert!(
+            slash_argument_context_with_dynamic(
+                "/session replay s-1 --last ",
                 &[],
                 &[],
                 &[],

@@ -99,6 +99,7 @@ impl AgentState {
             | SlashCommand::SessionShow(_)
             | SlashCommand::SessionLocate(_)
             | SlashCommand::SessionResume(_)
+            | SlashCommand::SessionReplay { .. }
             | SlashCommand::SubagentModel(_)
             | SlashCommand::Reasoning(_)
             | SlashCommand::Fast(_)

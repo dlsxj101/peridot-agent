@@ -2998,6 +2998,13 @@ fn session_switch_and_close_slashes_queue_router_intents() {
     apply_slash_command(&mut state, SlashCommand::SessionResume("s1".to_string()));
     apply_slash_command(
         &mut state,
+        SlashCommand::SessionReplay {
+            target: "s1".to_string(),
+            last: Some(5),
+        },
+    );
+    apply_slash_command(
+        &mut state,
         SlashCommand::SessionRename {
             target: "s1".to_string(),
             title: "main work".to_string(),
@@ -3022,6 +3029,10 @@ fn session_switch_and_close_slashes_queue_router_intents() {
             SessionCommandEvent::SessionShow("s1".to_string()),
             SessionCommandEvent::SessionLocate("s1".to_string()),
             SessionCommandEvent::SessionResume("s1".to_string()),
+            SessionCommandEvent::SessionReplay {
+                target: "s1".to_string(),
+                last: Some(5),
+            },
             SessionCommandEvent::SessionRename {
                 target: "s1".to_string(),
                 title: "main work".to_string(),

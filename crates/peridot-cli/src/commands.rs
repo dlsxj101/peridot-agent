@@ -75,11 +75,12 @@ use output::print_json_or_text_result;
 pub(crate) use project::print_scan;
 pub(crate) use session::{
     SessionCountSummary, SessionExportReport, SessionLocateResult, SessionPruneResult,
+    SessionReplayResult, SessionReplayTimelineEntry, SessionReplayTranscriptEntry,
     SessionResumeResult, SessionSearchHit, SessionSearchResult, SessionShowResult,
     append_session_note, clear_session_notes, export_session_artifacts, prune_session_records,
     read_session_notes, rewind_context_entries, run_session_command,
-    search_session_transcript_hits, session_count_summary, session_locate, session_resume_summary,
-    session_resume_task_text, session_show_summary,
+    search_session_transcript_hits, session_count_summary, session_locate, session_replay_summary,
+    session_resume_summary, session_resume_task_text, session_show_summary,
 };
 pub(crate) use settings::run_setting_command;
 pub(crate) use setup::run_setup_command;
@@ -253,7 +254,7 @@ pub(crate) enum SessionCommand {
     Replay {
         /// Session id.
         id: String,
-        /// Limit output to the most recent N transcript entries.
+        /// Limit output to the most recent N timeline entries.
         #[arg(long)]
         last: Option<usize>,
         /// Pause for `Enter` between entries; type `q` to quit early.
