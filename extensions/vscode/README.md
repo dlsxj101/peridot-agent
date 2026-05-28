@@ -38,6 +38,8 @@ native tool calling, and 2-Tier context management.
 | `Peridot: Attach File to Session` | Picks a workspace file, runs `/attach <path>`, and renders a compact attachment block with open/copy actions. |
 | `Peridot: Show Session Attachments` | Runs `/attachments` and renders files already loaded into the current session context, with open/copy/detach actions. |
 | `Peridot: Show Workspace TODOs` | Runs `/todos` to scan the workspace for TODO, FIXME, HACK, XXX, and BUG markers. |
+| `Peridot: Show Context Top` | Runs `/context top` for the active session and renders the largest context entries plus source token totals. |
+| `Peridot: Show Working Tree Diff` | Runs `/diff` and renders the current working tree diff in the sidebar transcript. |
 | `Peridot: Add Session Note` | Prompts for an operator note and runs `/note <text>` against the active session. |
 | `Peridot: Show Session Notes` | Runs `/notes`, optionally limited to recent entries, and renders the active session's note list. |
 | `Peridot: Clear Session Notes` | Asks for confirmation and runs `/notes clear` for the active session. |

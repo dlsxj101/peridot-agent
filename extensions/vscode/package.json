@@ -239,6 +239,18 @@
         "icon": "$(checklist)"
       },
       {
+        "command": "peridot.showContextTop",
+        "title": "Peridot: Show Context Top",
+        "category": "Peridot",
+        "icon": "$(symbol-variable)"
+      },
+      {
+        "command": "peridot.showWorkingTreeDiff",
+        "title": "Peridot: Show Working Tree Diff",
+        "category": "Peridot",
+        "icon": "$(diff)"
+      },
+      {
         "command": "peridot.addSessionNote",
         "title": "Peridot: Add Session Note",
         "category": "Peridot",
@@ -442,6 +454,16 @@
           "command": "peridot.showTodos",
           "when": "view == peridot.chatView",
           "group": "navigation@5.0005"
+        },
+        {
+          "command": "peridot.showContextTop",
+          "when": "view == peridot.chatView",
+          "group": "navigation@5.0006"
+        },
+        {
+          "command": "peridot.showWorkingTreeDiff",
+          "when": "view == peridot.chatView",
+          "group": "navigation@5.0007"
         },
         {
           "command": "peridot.addSessionNote",

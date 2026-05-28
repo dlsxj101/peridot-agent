@@ -69,6 +69,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **VS Code workspace TODO GUI** now exposes `/todos` from the command
   palette and sidebar title bar, rendering marker hits with existing
   file-open rows.
+- **VS Code context/diff GUI** now exposes `/context top` and `/diff` from
+  the command palette and sidebar title bar, reusing the existing structured
+  command-result renderer for token totals and working-tree diffs.
 - **`/session prune` slash parity** lets both TUI and VS Code users prune
   persisted sessions with `--status`, `--older-than-days`, and `--dry-run`
   filters through the shared session command path.

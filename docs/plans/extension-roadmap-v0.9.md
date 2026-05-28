@@ -1501,6 +1501,18 @@ shared daemon, TUI, and VS Code extension surfaces.
   daemon command path, renders TODO/FIXME/HACK/XXX/BUG hits in the existing
   command-result rows, and preserves file-open affordances for each marker.
 
+### E118. VS Code Context/Diff GUI
+
+- **Status**: landed.
+- **Goal**: expose read-only context and working-tree inspection utilities
+  from the editor without requiring manual slash commands.
+- **Where**: VS Code command contributions, sidebar title-bar actions,
+  README, and changelog docs.
+- **Result**: `Peridot: Show Context Top` runs `/context top` for the
+  active daemon session and renders source token totals plus the largest
+  context entries. `Peridot: Show Working Tree Diff` runs `/diff` and
+  renders the current Git working tree diff in the sidebar transcript.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

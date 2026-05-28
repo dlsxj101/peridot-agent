@@ -200,6 +200,8 @@ export function activate(context: vscode.ExtensionContext) {
       detachAttachmentFromSession(path, output, sidebar),
     showAttachments: async (): Promise<void> => showSessionAttachments(output, sidebar),
     showTodos: async (): Promise<void> => showWorkspaceTodos(output, sidebar),
+    showContextTop: async (): Promise<void> => showContextTop(output, sidebar),
+    showWorkingTreeDiff: async (): Promise<void> => showWorkingTreeDiff(output, sidebar),
     addSessionNote: async (): Promise<void> => addSessionNote(output, sidebar),
     showSessionNotes: async (): Promise<void> => showSessionNotes(output, sidebar),
     clearSessionNotes: async (): Promise<void> => clearSessionNotes(output, sidebar),
@@ -423,6 +425,18 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand('peridot.showTodos', async () => {
       await showWorkspaceTodos(output, sidebar);
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('peridot.showContextTop', async () => {
+      await showContextTop(output, sidebar);
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('peridot.showWorkingTreeDiff', async () => {
+      await showWorkingTreeDiff(output, sidebar);
     }),
   );
 
@@ -1514,6 +1528,56 @@ async function showWorkspaceTodos(
     output.appendLine(`[peridot] todos failed: ${message}`);
     sidebar.appendError(message);
     await vscode.window.showErrorMessage(`Peridot TODO scan failed: ${message}`);
+  }
+}
+
+async function showContextTop(
+  output: vscode.OutputChannel,
+  sidebar: PeridotSidebarProvider,
+): Promise<void> {
+  if (!sidebar.currentDaemonSessionId()) {
+    await vscode.window.showWarningMessage(
+      'Start, save, or select a Peridot session before inspecting context.',
+    );
+    return;
+  }
+  await vscode.commands.executeCommand('peridot.chatView.focus');
+  try {
+    const result = await runSlashCommand(
+      '/context top',
+      output,
+      sidebar,
+      sidebar.currentRunOptions(),
+    );
+    sidebar.appendCommandResult(result);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    output.appendLine(`[peridot] context top failed: ${message}`);
+    sidebar.appendError(message);
+    await vscode.window.showErrorMessage(`Peridot context inspection failed: ${message}`);
+  }
+}
+
+async function showWorkingTreeDiff(
+  output: vscode.OutputChannel,
+  sidebar: PeridotSidebarProvider,
+): Promise<void> {
+  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!folder) {
+    const message = 'Open a workspace folder before showing the working tree diff.';
+    sidebar.setWorkspaceProblem(message);
+    await vscode.window.showWarningMessage(message);
+    return;
+  }
+  await vscode.commands.executeCommand('peridot.chatView.focus');
+  try {
+    const result = await runSlashCommand('/diff', output, sidebar, sidebar.currentRunOptions());
+    sidebar.appendCommandResult(result);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    output.appendLine(`[peridot] diff failed: ${message}`);
+    sidebar.appendError(message);
+    await vscode.window.showErrorMessage(`Peridot diff failed: ${message}`);
   }
 }
 

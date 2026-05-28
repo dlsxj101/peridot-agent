@@ -458,6 +458,8 @@ export type OutboundMessage =
   | { type: 'attachFile' }
   | { type: 'detachAttachment'; path: string }
   | { type: 'showTodos' }
+  | { type: 'showContextTop' }
+  | { type: 'showWorkingTreeDiff' }
   | { type: 'addSessionNote' }
   | { type: 'showSessionNotes' }
   | { type: 'clearSessionNotes' }

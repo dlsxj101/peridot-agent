@@ -66,6 +66,9 @@
 - `Peridot: Show Workspace TODOs` now exposes `/todos` from the command
   palette and sidebar title bar, rendering marker hits with existing
   file-open rows.
+- `Peridot: Show Context Top` and `Peridot: Show Working Tree Diff` now
+  expose `/context top` and `/diff` from the command palette and sidebar
+  title bar.
 - `/session prune [--status <state>] [--older-than-days N] [--dry-run]`
   now runs through the daemon command path and returns a structured prune
   result so editor users can preview or remove stale persisted sessions.
