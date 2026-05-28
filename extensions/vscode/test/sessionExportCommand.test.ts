@@ -13,12 +13,23 @@ test('sessionExportChoices puts active session first and dedupes persisted rows'
     sessionExportChoices(
       [
         { id: 's-1', title: 'First', status: 'done' },
-        { id: 's-2', summary: 'Second summary', running: true },
+        {
+          id: 's-2',
+          summary: 'Second summary',
+          running: true,
+          total_tokens: 2_400,
+          total_cost_usd: 0.0456,
+          turns_used: 4,
+        },
       ],
       's-2',
     ),
     [
-      { id: 's-2', label: 'Second summary', description: 'active session' },
+      {
+        id: 's-2',
+        label: 'Second summary',
+        description: 'active session · $0.046 · 2.4K tok · 4 turns',
+      },
       { id: 's-1', label: 'First', description: 'done' },
     ],
   );

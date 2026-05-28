@@ -169,6 +169,8 @@
   adds an `All` usage chip when multiple sessions have recorded usage.
 - The session switcher now shows each session's persisted cost, token, and
   turn totals in the subtitle when those totals are available.
+- Session QuickPick choices for inspect, replay, export, resume, switch,
+  close, rename, and delete now show the same persisted usage totals.
 - Image attachments now render bounded inline previews in the VS Code/Cursor
   attachment cards while keeping the daemon/model context as the existing
   placeholder metadata.

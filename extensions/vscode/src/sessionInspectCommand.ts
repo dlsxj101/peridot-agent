@@ -1,4 +1,5 @@
 import type { DaemonSessionSummary } from './types';
+import { sessionUsageDescription } from './sessionUsage';
 
 export interface SessionTargetChoice {
   id: string;
@@ -79,8 +80,5 @@ function sessionTitle(session: DaemonSessionSummary): string | undefined {
 }
 
 function sessionDescription(session: DaemonSessionSummary): string | undefined {
-  const parts = [session.status, session.running ? 'running' : undefined].filter(
-    (part): part is string => typeof part === 'string' && part.trim().length > 0,
-  );
-  return parts.length > 0 ? parts.join(' · ') : undefined;
+  return sessionUsageDescription(session);
 }

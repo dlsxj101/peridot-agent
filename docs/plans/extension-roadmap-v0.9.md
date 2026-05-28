@@ -2038,6 +2038,19 @@ shared daemon, TUI, and VS Code extension surfaces.
   turn totals when available, while preserving the existing `In progress` and
   status-only labels for sessions with no usage.
 
+### E160. VS Code Session Picker Usage Descriptions
+
+- **Status**: landed.
+- **Goal**: keep command-palette session pickers aligned with the session
+  switcher after usage totals became visible there.
+- **Where**: shared VS Code session usage formatter, inspect/replay/export
+  QuickPick choice builders, changelogs, and unit tests.
+- **Result**: session QuickPick descriptions now append persisted cost, token,
+  and turn totals for inspect, replay, export, resume, switch, close, rename,
+  and delete flows. Active export choices keep the `active session` prefix and
+  add usage totals when the current daemon session is present in the fetched
+  session list.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

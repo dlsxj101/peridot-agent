@@ -1,4 +1,5 @@
 import type { CommandResultView, DaemonSessionSummary, ExportedArtifactView } from './types';
+import { activeSessionUsageDescription, sessionUsageDescription } from './sessionUsage';
 
 export interface SessionExportChoice {
   id: string;
@@ -25,7 +26,7 @@ export function sessionExportChoices(
   const current = currentId?.trim();
   if (current) {
     const match = sessions.find((session) => session.id === current);
-    push(current, sessionTitle(match) ?? current, 'active session');
+    push(current, sessionTitle(match) ?? current, activeSessionUsageDescription(match));
   }
   sessions.forEach((session) => {
     push(session.id, sessionTitle(session), sessionDescription(session));
@@ -94,10 +95,7 @@ function sessionTitle(session: DaemonSessionSummary | undefined): string | undef
 }
 
 function sessionDescription(session: DaemonSessionSummary): string | undefined {
-  const parts = [session.status, session.running ? 'running' : undefined].filter(
-    (part): part is string => typeof part === 'string' && part.trim().length > 0,
-  );
-  return parts.length > 0 ? parts.join(' · ') : undefined;
+  return sessionUsageDescription(session);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

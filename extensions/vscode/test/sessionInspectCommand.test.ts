@@ -27,12 +27,23 @@ test('sessionTargetChoices lists persisted sessions without duplicates', () => {
   assert.deepEqual(
     sessionTargetChoices([
       { id: 's-1', title: 'First', status: 'done' },
-      { id: 's-2', last_task: 'Investigate bug', running: true },
+      {
+        id: 's-2',
+        last_task: 'Investigate bug',
+        running: true,
+        total_tokens: 1_200,
+        total_cost_usd: 0.0123,
+        turns_used: 2,
+      },
       { id: 's-1', title: 'Duplicate' },
     ]),
     [
       { id: 's-1', label: 'First', description: 'done' },
-      { id: 's-2', label: 'Investigate bug', description: 'running' },
+      {
+        id: 's-2',
+        label: 'Investigate bug',
+        description: 'running · $0.012 · 1.2K tok · 2 turns',
+      },
     ],
   );
 });
