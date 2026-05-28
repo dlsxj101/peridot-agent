@@ -74,6 +74,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **Session save event transcript parity** now renders `session_saved` and
   `session_save_failed` daemon events in VS Code as meaningful transcript
   rows instead of opaque event-kind labels.
+- **Hook event transcript parity** now renders `hook_fired` daemon events
+  in VS Code with hook name, category, and outcome, promoting blocking or
+  failing outcomes to error rows.
 - **Provider argument autocomplete** now exposes the supported provider ids
   for `/provider <claude-api|openai-api|openrouter-api|openai-oauth>` through
   the shared slash catalog, TUI picker, daemon JSON catalog, and VS Code

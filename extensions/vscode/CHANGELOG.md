@@ -51,6 +51,8 @@
 - Session save daemon events now render as resume-ready VS Code transcript
   rows, and session save failures render as error rows instead of opaque
   event-kind labels.
+- Hook activity daemon events now render as named VS Code transcript rows,
+  with blocking or failing outcomes promoted to error rows.
 - Provider argument autocomplete now fills supported provider ids for
   `/provider <claude-api|openai-api|openrouter-api|openai-oauth>` from the
   shared daemon slash catalog.

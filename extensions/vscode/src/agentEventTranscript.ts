@@ -47,9 +47,27 @@ export function agentTranscriptItemForEvent(
         text: `session: failed to save ${sessionId}: ${message}`,
       };
     }
+    case 'hook_fired': {
+      const name = textField(event, 'name')?.trim() || 'unknown';
+      const category = textField(event, 'category')?.trim() || 'hook';
+      const outcome = textField(event, 'outcome')?.trim() || 'unknown';
+      return {
+        role: hookOutcomeRole(outcome),
+        text: `hook:${name} - ${category}: ${outcome}`,
+      };
+    }
     default:
       return undefined;
   }
+}
+
+function hookOutcomeRole(outcome: string): TranscriptRole {
+  const normalized = outcome.toLowerCase();
+  return normalized.includes('block') ||
+    normalized.includes('fail') ||
+    normalized.includes('error')
+    ? 'error'
+    : 'status';
 }
 
 function reviewerVerdictSummary(

@@ -1029,6 +1029,19 @@ shared daemon, TUI, and VS Code extension surfaces.
   and `session_save_failed` renders as an error row with the failure
   message. Both events avoid the opaque event-kind fallback in VS Code.
 
+### E83. Hook Event Transcript Parity
+
+- **Status**: landed.
+- **Goal**: make VS Code render hook activity with the same meaning the
+  TUI activity panel exposes instead of falling back to raw event names.
+- **Where**: shared daemon `AgentRunEvent::HookFired`, TUI runtime
+  activity handling, VS Code transcript conversion, and VS Code unit
+  tests.
+- **Result**: `hook_fired` now renders as
+  `hook:<name> - <category>: <outcome>` in VS Code. Blocking, failing, or
+  error-like outcomes use an error transcript row; normal hook outcomes
+  use a status row.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

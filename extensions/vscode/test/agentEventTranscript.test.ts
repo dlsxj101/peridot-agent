@@ -110,6 +110,34 @@ test('agentTranscriptItemForEvent renders session save failures as errors', () =
   );
 });
 
+test('agentTranscriptItemForEvent renders hook fired events', () => {
+  assert.deepEqual(
+    agentTranscriptItemForEvent('hook_fired', {
+      name: 'pre:file_patch',
+      category: 'tool',
+      outcome: 'allow',
+    }),
+    {
+      role: 'status',
+      text: 'hook:pre:file_patch - tool: allow',
+    },
+  );
+});
+
+test('agentTranscriptItemForEvent renders blocking hook outcomes as errors', () => {
+  assert.deepEqual(
+    agentTranscriptItemForEvent('hook_fired', {
+      name: 'event:budget_warning',
+      category: 'event',
+      outcome: 'blocked',
+    }),
+    {
+      role: 'error',
+      text: 'hook:event:budget_warning - event: blocked',
+    },
+  );
+});
+
 test('agentTranscriptItemForEvent ignores unrelated events', () => {
   assert.equal(agentTranscriptItemForEvent('assistant_delta', { delta: 'hello' }), undefined);
 });
