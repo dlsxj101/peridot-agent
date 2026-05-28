@@ -1,10 +1,12 @@
 import type { CommandResultView, DaemonSessionSummary, ExportedArtifactView } from './types';
+import { sessionContextDetail } from './sessionContextDetail';
 import { activeSessionUsageDescription, sessionUsageDescription } from './sessionUsage';
 
 export interface SessionExportChoice {
   id: string;
   label: string;
   description?: string;
+  detail?: string;
 }
 
 export function sessionExportChoices(
@@ -13,7 +15,7 @@ export function sessionExportChoices(
 ): SessionExportChoice[] {
   const choices: SessionExportChoice[] = [];
   const seen = new Set<string>();
-  const push = (id: string, label?: string, description?: string) => {
+  const push = (id: string, label?: string, description?: string, detail?: string) => {
     const trimmed = id.trim();
     if (!trimmed || seen.has(trimmed)) return;
     seen.add(trimmed);
@@ -21,15 +23,26 @@ export function sessionExportChoices(
       id: trimmed,
       label: label?.trim() || trimmed,
       ...(description?.trim() ? { description: description.trim() } : {}),
+      ...(detail?.trim() ? { detail: detail.trim() } : {}),
     });
   };
   const current = currentId?.trim();
   if (current) {
     const match = sessions.find((session) => session.id === current);
-    push(current, sessionTitle(match) ?? current, activeSessionUsageDescription(match));
+    push(
+      current,
+      sessionTitle(match) ?? current,
+      activeSessionUsageDescription(match),
+      sessionContextDetail(match, current),
+    );
   }
   sessions.forEach((session) => {
-    push(session.id, sessionTitle(session), sessionDescription(session));
+    push(
+      session.id,
+      sessionTitle(session),
+      sessionDescription(session),
+      sessionContextDetail(session, session.id),
+    );
   });
   return choices;
 }

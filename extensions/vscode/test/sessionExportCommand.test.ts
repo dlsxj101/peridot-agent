@@ -20,6 +20,9 @@ test('sessionExportChoices puts active session first and dedupes persisted rows'
           total_tokens: 2_400,
           total_cost_usd: 0.0456,
           turns_used: 4,
+          notes_count: 1,
+          last_note: 'ship checkpoint',
+          attachment_paths: ['docs/release.md'],
         },
       ],
       's-2',
@@ -29,15 +32,21 @@ test('sessionExportChoices puts active session first and dedupes persisted rows'
         id: 's-2',
         label: 'Second summary',
         description: 'active session · $0.046 · 2.4K tok · 4 turns',
+        detail: 's-2 · Notes 1: ship checkpoint · Attachments 1',
       },
-      { id: 's-1', label: 'First', description: 'done' },
+      { id: 's-1', label: 'First', description: 'done', detail: 's-1' },
     ],
   );
 });
 
 test('sessionExportChoices keeps current session when it is not persisted yet', () => {
   assert.deepEqual(sessionExportChoices([], 'live-session'), [
-    { id: 'live-session', label: 'live-session', description: 'active session' },
+    {
+      id: 'live-session',
+      label: 'live-session',
+      description: 'active session',
+      detail: 'live-session',
+    },
   ]);
 });
 

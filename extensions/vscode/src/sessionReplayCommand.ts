@@ -1,10 +1,12 @@
 import type { DaemonSessionSummary } from './types';
+import { sessionContextDetail } from './sessionContextDetail';
 import { sessionUsageDescription } from './sessionUsage';
 
 export interface SessionReplayChoice {
   id: string;
   label: string;
   description?: string;
+  detail?: string;
 }
 
 export function sessionReplayChoices(sessions: DaemonSessionSummary[]): SessionReplayChoice[] {
@@ -14,10 +16,13 @@ export function sessionReplayChoices(sessions: DaemonSessionSummary[]): SessionR
     const id = session.id.trim();
     if (!id || seen.has(id)) continue;
     seen.add(id);
+    const description = sessionDescription(session);
+    const detail = sessionDetail(session, id);
     choices.push({
       id,
       label: sessionTitle(session) ?? id,
-      ...(sessionDescription(session) ? { description: sessionDescription(session) } : {}),
+      ...(description ? { description } : {}),
+      ...(detail ? { detail } : {}),
     });
   }
   return choices;
@@ -57,4 +62,8 @@ function sessionTitle(session: DaemonSessionSummary): string | undefined {
 
 function sessionDescription(session: DaemonSessionSummary): string | undefined {
   return sessionUsageDescription(session);
+}
+
+function sessionDetail(session: DaemonSessionSummary, fallbackId: string): string | undefined {
+  return sessionContextDetail(session, fallbackId);
 }

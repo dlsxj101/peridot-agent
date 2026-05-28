@@ -1,10 +1,12 @@
 import type { DaemonSessionSummary } from './types';
+import { sessionContextDetail } from './sessionContextDetail';
 import { sessionUsageDescription } from './sessionUsage';
 
 export interface SessionTargetChoice {
   id: string;
   label: string;
   description?: string;
+  detail?: string;
 }
 
 export function sessionCountSlashCommand(): string {
@@ -23,10 +25,13 @@ export function sessionTargetChoices(sessions: DaemonSessionSummary[]): SessionT
     const id = session.id.trim();
     if (!id || seen.has(id)) continue;
     seen.add(id);
+    const description = sessionDescription(session);
+    const detail = sessionDetail(session, id);
     choices.push({
       id,
       label: sessionTitle(session) ?? id,
-      ...(sessionDescription(session) ? { description: sessionDescription(session) } : {}),
+      ...(description ? { description } : {}),
+      ...(detail ? { detail } : {}),
     });
   }
   return choices;
@@ -81,4 +86,8 @@ function sessionTitle(session: DaemonSessionSummary): string | undefined {
 
 function sessionDescription(session: DaemonSessionSummary): string | undefined {
   return sessionUsageDescription(session);
+}
+
+function sessionDetail(session: DaemonSessionSummary, fallbackId: string): string | undefined {
+  return sessionContextDetail(session, fallbackId);
 }

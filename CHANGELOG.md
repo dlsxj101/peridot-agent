@@ -195,6 +195,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **VS Code session picker usage descriptions** now reuse the same persisted
   usage formatting in session QuickPick choices for inspect, replay, export,
   resume, switch, close, rename, and delete flows.
+- **VS Code session picker context details** now show persisted note and
+  attachment summaries under session QuickPick rows, keeping ids visible while
+  making saved session context easier to distinguish.
 - **`/session prune` slash parity** lets both TUI and VS Code users prune
   persisted sessions with `--status`, `--older-than-days`, and `--dry-run`
   filters through the shared session command path.

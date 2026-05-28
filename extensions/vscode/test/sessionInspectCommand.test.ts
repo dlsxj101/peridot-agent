@@ -34,15 +34,19 @@ test('sessionTargetChoices lists persisted sessions without duplicates', () => {
         total_tokens: 1_200,
         total_cost_usd: 0.0123,
         turns_used: 2,
+        notes_count: 2,
+        last_note: 'latest checkpoint',
+        attachment_count: 1,
       },
       { id: 's-1', title: 'Duplicate' },
     ]),
     [
-      { id: 's-1', label: 'First', description: 'done' },
+      { id: 's-1', label: 'First', description: 'done', detail: 's-1' },
       {
         id: 's-2',
         label: 'Investigate bug',
         description: 'running · $0.012 · 1.2K tok · 2 turns',
+        detail: 's-2 · Notes 2: latest checkpoint · Attachments 1',
       },
     ],
   );

@@ -2051,6 +2051,19 @@ shared daemon, TUI, and VS Code extension surfaces.
   add usage totals when the current daemon session is present in the fetched
   session list.
 
+### E161. VS Code Session Picker Context Details
+
+- **Status**: landed.
+- **Goal**: make persisted session context visible when choosing sessions from
+  command-palette QuickPick flows, not only in the sidebar menu and cards.
+- **Where**: shared VS Code session context detail formatter,
+  inspect/replay/export QuickPick choice builders, QuickPick host mapping,
+  changelogs, and unit tests.
+- **Result**: session QuickPick rows now keep the session id in `detail` and
+  append persisted Notes and Attachments summaries when available. This gives
+  inspect, replay, export, resume, switch, close, rename, and delete flows the
+  same context cues already visible in the sidebar session surfaces.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

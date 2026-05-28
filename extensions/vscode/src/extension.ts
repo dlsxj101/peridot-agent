@@ -2946,7 +2946,7 @@ async function pickPersistedSessionTarget(
     choices.map((choice) => ({
       label: choice.label,
       description: choice.description,
-      detail: choice.id,
+      detail: choice.detail ?? choice.id,
       id: choice.id,
     })),
     {
@@ -3128,7 +3128,7 @@ async function replaySessionTimeline(
           choices.map((choice) => ({
             label: choice.label,
             description: choice.description,
-            detail: choice.id,
+            detail: choice.detail ?? choice.id,
             id: choice.id,
           })),
           {
@@ -3211,7 +3211,7 @@ async function exportSessionArtifacts(
           choices.map((choice) => ({
             label: choice.label,
             description: choice.description,
-            detail: choice.id,
+            detail: choice.detail ?? choice.id,
             id: choice.id,
           })),
           {

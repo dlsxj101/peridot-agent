@@ -171,6 +171,8 @@
   turn totals in the subtitle when those totals are available.
 - Session QuickPick choices for inspect, replay, export, resume, switch,
   close, rename, and delete now show the same persisted usage totals.
+- Session QuickPick rows now include persisted note and attachment summaries
+  in their detail text while keeping the session id visible.
 - Image attachments now render bounded inline previews in the VS Code/Cursor
   attachment cards while keeping the daemon/model context as the existing
   placeholder metadata.

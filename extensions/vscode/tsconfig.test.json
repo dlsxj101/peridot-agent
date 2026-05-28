@@ -13,6 +13,7 @@
     "src/agentEventOutput.ts",
     "src/agentEventTranscript.ts",
     "src/localSlashAction.ts",
+    "src/sessionContextDetail.ts",
     "src/sessionReconcile.ts",
     "src/sessionUsage.ts",
     "src/workspacePath.ts",
