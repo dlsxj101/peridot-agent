@@ -4,10 +4,12 @@
 // task execution over JSON-RPC.
 
 import * as childProcess from 'child_process';
+import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { addAttachmentPreviewUris } from './attachmentPreview';
 import { formatAgentEventForOutput } from './agentEventOutput';
+import { decodeInlineImageAttachment } from './inlineImageAttachment';
 import {
   branchListSlashCommand,
   branchPickerSlashCommand,
@@ -89,6 +91,7 @@ import {
 import type {
   CommandResultView,
   DaemonSessionSummary,
+  InlineImageAttachmentPayload,
   McpServerSummary,
   SlashCommandSpec,
 } from './types';
@@ -234,6 +237,8 @@ export function activate(context: vscode.ExtensionContext) {
       toggleSkillPin(name, pinned, output, sidebar),
     archiveSkill: async (name: string): Promise<void> => archiveSkill(name, output, sidebar),
     restoreSkill: async (name: string): Promise<void> => restoreSkill(name, output, sidebar),
+    attachInlineImage: async (image: InlineImageAttachmentPayload): Promise<void> =>
+      attachInlineImageToSession(image, output, sidebar),
     attachFile: async (): Promise<void> => attachFileToSession(output, sidebar),
     detachAttachment: async (path: string): Promise<void> =>
       detachAttachmentFromSession(path, output, sidebar),
@@ -1343,6 +1348,49 @@ async function attachFileToSession(
   }
 }
 
+async function attachInlineImageToSession(
+  image: InlineImageAttachmentPayload,
+  output: vscode.OutputChannel,
+  sidebar: PeridotSidebarProvider,
+): Promise<void> {
+  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!folder) {
+    const message = 'Open a workspace folder before attaching an image.';
+    sidebar.setWorkspaceProblem(message);
+    await vscode.window.showWarningMessage(message);
+    return;
+  }
+  if (!sidebar.currentDaemonSessionId()) {
+    await vscode.window.showWarningMessage('Start or select a Peridot session before attaching an image.');
+    return;
+  }
+  await vscode.commands.executeCommand('peridot.chatView.focus');
+  try {
+    const attachment = decodeInlineImageAttachment(image);
+    const sessionSegment = safeAttachmentDirectorySegment(
+      sidebar.currentClientSessionId() ?? sidebar.currentDaemonSessionId() ?? 'session',
+    );
+    const relative = path
+      .join(
+        '.peridot',
+        'attachments',
+        sessionSegment,
+        `${Date.now()}-${attachment.fileName}`,
+      )
+      .replace(/\\/g, '/');
+    const absolute = path.join(folder, relative);
+    await fs.mkdir(path.dirname(absolute), { recursive: true });
+    await fs.writeFile(absolute, attachment.bytes, { flag: 'wx' });
+    const result = await runSlashCommand(`/attach ${relative}`, output, sidebar, sidebar.currentRunOptions());
+    sidebar.appendCommandResult(result);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    output.appendLine(`[peridot] inline image attach failed: ${message}`);
+    sidebar.appendError(message);
+    await vscode.window.showErrorMessage(`Peridot image attach failed: ${message}`);
+  }
+}
+
 async function showSessionAttachments(
   output: vscode.OutputChannel,
   sidebar: PeridotSidebarProvider,
@@ -1361,6 +1409,13 @@ async function showSessionAttachments(
     sidebar.appendError(message);
     await vscode.window.showErrorMessage(`Peridot attachments failed: ${message}`);
   }
+}
+
+function safeAttachmentDirectorySegment(value: string): string {
+  return value
+    .replace(/[^A-Za-z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80) || 'session';
 }
 
 async function showSkills(

@@ -102,6 +102,12 @@ export interface ExportedArtifactView {
   count?: number;
 }
 
+export interface InlineImageAttachmentPayload {
+  fileName?: string;
+  mediaType: string;
+  dataBase64: string;
+}
+
 export interface SlashStateDeltaView {
   mode?: Mode;
   permission?: Permission;
@@ -464,6 +470,7 @@ export type OutboundMessage =
   | { type: 'archiveSkill'; name: string }
   | { type: 'restoreSkill'; name: string }
   | { type: 'attachFile' }
+  | { type: 'attachInlineImage'; image: InlineImageAttachmentPayload }
   | { type: 'detachAttachment'; path: string }
   | { type: 'showTodos' }
   | { type: 'showContextTop' }

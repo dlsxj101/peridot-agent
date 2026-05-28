@@ -111,6 +111,8 @@
 - Image attachments now render bounded inline previews in the VS Code/Cursor
   attachment cards while keeping the daemon/model context as the existing
   placeholder metadata.
+- Images pasted into or dropped on the VS Code/Cursor composer are saved under
+  `.peridot/attachments/` and attached through the existing `/attach` flow.
 - `/session prune [--status <state>] [--older-than-days N] [--dry-run]`
   now runs through the daemon command path and returns a structured prune
   result so editor users can preview or remove stale persisted sessions.

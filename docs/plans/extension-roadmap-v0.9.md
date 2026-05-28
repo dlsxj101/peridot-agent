@@ -1699,6 +1699,19 @@ shared daemon, TUI, and VS Code extension surfaces.
   inventory rows, while the daemon still stores image attachments as
   placeholder metadata rather than inlining binary contents into context.
 
+### E133. VS Code Composer Image Paste/Drop Attachments
+
+- **Status**: landed.
+- **Goal**: let Cursor/VS Code users attach screenshots without leaving the
+  composer.
+- **Where**: webview composer paste/drop handlers, inline image payload
+  helpers, extension-host attachment persistence, and unit tests.
+- **Result**: PNG, JPEG, GIF, WebP, and BMP files pasted into or dropped on
+  the composer are encoded in the webview, decoded by the extension host,
+  saved under `.peridot/attachments/<session>/`, and attached through the
+  existing `/attach` daemon command. The same size and media guardrails are
+  enforced on both sides of the webview boundary.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

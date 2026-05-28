@@ -36,6 +36,7 @@ import {
   fileMentionContext as resolveFileMentionContext,
   type FileMentionContext,
 } from './fileMention';
+import { inlineImagePayload, isAttachableInlineImage } from './inlineImageAttachment';
 import { runMetricChips } from './runMetrics';
 import { riskChipView } from './riskChip';
 import { mcpContextPill } from './mcpContext';
@@ -3561,6 +3562,27 @@ function renderComposer(s: SidebarState): HTMLElement {
       updateSlashPicker(textarea, slashPicker);
     }
   });
+  textarea.addEventListener('paste', (event) => {
+    const file = firstAttachableImageFile(event.clipboardData?.files);
+    if (!file) return;
+    event.preventDefault();
+    void postInlineImageAttachment(file);
+  });
+  textarea.addEventListener('dragover', (event) => {
+    if (!hasAttachableImageFile(event.dataTransfer?.items, event.dataTransfer?.files)) return;
+    event.preventDefault();
+    inputRow.classList.add('dragging-image');
+  });
+  textarea.addEventListener('dragleave', () => {
+    inputRow.classList.remove('dragging-image');
+  });
+  textarea.addEventListener('drop', (event) => {
+    const file = firstAttachableImageFile(event.dataTransfer?.files);
+    if (!file) return;
+    event.preventDefault();
+    inputRow.classList.remove('dragging-image');
+    void postInlineImageAttachment(file);
+  });
   textarea.addEventListener('keydown', (event) => {
     if (isSlashPickerOpen(slashPicker)) {
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
@@ -3942,6 +3964,26 @@ function slashArgumentContext(input: string): SlashArgumentContext | undefined {
     state?.context.modelSuggestions ?? [],
     state?.context.branchSnapshots ?? [],
   );
+}
+
+function firstAttachableImageFile(files: FileList | undefined): File | undefined {
+  if (!files) return undefined;
+  return Array.from(files).find(isAttachableInlineImage);
+}
+
+function hasAttachableImageFile(
+  items: DataTransferItemList | undefined,
+  files: FileList | undefined,
+): boolean {
+  if (firstAttachableImageFile(files)) return true;
+  if (!items) return false;
+  return Array.from(items).some((item) => item.kind === 'file' && item.type.startsWith('image/'));
+}
+
+async function postInlineImageAttachment(file: File): Promise<void> {
+  const image = await inlineImagePayload(file);
+  if (!image) return;
+  vscode.postMessage({ type: 'attachInlineImage', image });
 }
 
 function modeSelect(opts: RunOptions): HTMLSelectElement {

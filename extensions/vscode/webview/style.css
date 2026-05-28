@@ -3070,6 +3070,11 @@ textarea {
   align-items: end;
 }
 
+.composer-input-row.dragging-image .composer-textarea {
+  border-color: var(--vscode-focusBorder, var(--peri-accent));
+  background: color-mix(in srgb, var(--peri-accent) 8%, var(--vscode-input-background));
+}
+
 .composer-textarea {
   min-height: var(--peri-composer-button-height);
   max-height: 180px;
