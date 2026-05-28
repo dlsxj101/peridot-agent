@@ -3,26 +3,26 @@ use std::path::Path;
 use std::process::Command;
 
 use anyhow::Result;
-use peridot_common::{ExecutionMode, MemoryConfig, PeridotConfig, PermissionMode};
+use peridot_common::{ExecutionMode, MemoryConfig, PeridotConfig, PermissionMode, ReasoningEffort};
 use peridot_context::{ContextEntry, ContextSource};
 use peridot_core::{AgentRunSummary, StopReason};
 use peridot_llm::Usage;
 use peridot_memory::{MemoryStore, SessionLifecycle, SessionRecord, StoredSkill};
-use peridot_tui::{HeaderState, TuiState};
+use peridot_tui::{HeaderState, SessionCommandEvent, SessionDirectoryItem, TuiState};
 
 use super::checkpoints::restore_latest_checkpoint;
 use super::interactive_io::*;
 use super::relax_security_for_approval;
 use super::run_loop::{
-    effective_committee_executor_model, guarded_reviewer_verdict, normalize_model_service_tier,
-    parse_reviewer_verdict,
+    AgentTaskOptions, effective_committee_executor_model, guarded_reviewer_verdict,
+    normalize_model_service_tier, parse_reviewer_verdict,
 };
 use super::run_output::*;
 use super::run_state::*;
 use super::session_router::SessionRouter;
 use super::{
-    context_top_report, delete_persisted_session, hydrate_persisted_sessions,
-    restore_latest_tui_state_from_disk, restore_tui_state_from_disk,
+    AskUserPending, apply_session_command, context_top_report, delete_persisted_session,
+    hydrate_persisted_sessions, restore_latest_tui_state_from_disk, restore_tui_state_from_disk,
     scan_and_suspend_running_sessions,
 };
 
@@ -767,6 +767,103 @@ fn hydrate_persisted_sessions_registers_all_unclosed_sessions() {
     }));
     assert_eq!(router.lock().unwrap().len(), 2);
     assert!(!state.current_session_id.is_empty());
+    fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn session_show_hydrates_current_tui_context_status() {
+    let root = std::env::temp_dir().join(format!(
+        "peridot-cli-session-show-context-{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(root.join(".peridot/sessions/s1")).unwrap();
+    let memory = MemoryStore::new(root.join(".peridot/memory.db"));
+    memory
+        .save_session_record(&SessionRecord {
+            id: "s1".to_string(),
+            summary: "session one".to_string(),
+            status: SessionLifecycle::Suspended,
+            created_at_unix: 1,
+            updated_at_unix: 2,
+            workspace_root: root.clone(),
+            worktree_branch: None,
+            last_task: Some("inspect context".to_string()),
+            total_tokens: 10,
+            total_cost_usd: 0.1,
+            turns_used: 1,
+        })
+        .unwrap();
+    fs::write(
+        root.join(".peridot/sessions/s1/notes.ndjson"),
+        "{\"ts\":1,\"text\":\"first\"}\n{\"ts\":2,\"text\":\"latest checkpoint\"}\n",
+    )
+    .unwrap();
+    let context = vec![ContextEntry::trusted(
+        ContextSource::PlanReminder,
+        "[attachment]\npath: docs/spec.md\nbytes: 7\n\n```text\nattached\n```",
+    )];
+    fs::write(
+        root.join(".peridot/sessions/s1/context.bin"),
+        serde_json::to_vec(&context).unwrap(),
+    )
+    .unwrap();
+
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    state.current_session_id = "s1".to_string();
+    state
+        .sessions
+        .push(SessionDirectoryItem::new("s1", "session one"));
+    state.set_note_summary(1, Some("stale note".to_string()));
+    state.set_attachment_paths(vec!["stale.md".to_string()]);
+    let router = std::sync::Arc::new(std::sync::Mutex::new(SessionRouter::new()));
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let (event_tx, _event_rx) = std::sync::mpsc::channel();
+    let config = PeridotConfig::default();
+    let options = AgentTaskOptions {
+        permission: PermissionMode::Auto,
+        model: "mock".to_string(),
+        reasoning_effort: ReasoningEffort::Low,
+        service_tier: None,
+        max_turns: 1,
+        budget_usd: 0.0,
+        resume: None,
+        mock_response_file: None,
+        live: false,
+    };
+    let ask_user_pending: AskUserPending =
+        std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+    let ask_user_next_id = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1));
+
+    apply_session_command(
+        SessionCommandEvent::SessionShow("s1".to_string()),
+        &mut state,
+        &router,
+        runtime.handle(),
+        &event_tx,
+        &options,
+        &config,
+        &root,
+        &ask_user_pending,
+        &ask_user_next_id,
+    );
+
+    assert_eq!(state.note_summary.count, 2);
+    assert_eq!(
+        state.note_summary.latest.as_deref(),
+        Some("latest checkpoint")
+    );
+    assert_eq!(state.attachment_paths, vec!["docs/spec.md".to_string()]);
+    assert!(
+        state
+            .transcript
+            .iter()
+            .any(|entry| entry.text.contains("session show: s1"))
+    );
     fs::remove_dir_all(&root).ok();
 }
 

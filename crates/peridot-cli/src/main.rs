@@ -1518,6 +1518,10 @@ fn apply_session_command(
             let id = resolve_session_id(state, &target).unwrap_or(target);
             match commands::session_show_summary(project_template, &id) {
                 Ok(result) => {
+                    if result.id == state.current_session_id {
+                        state.set_note_summary(result.notes_count, result.last_note.clone());
+                        state.set_attachment_paths(result.attachment_paths.clone());
+                    }
                     let title = result
                         .session
                         .as_ref()

@@ -1898,6 +1898,19 @@ shared daemon, TUI, and VS Code extension surfaces.
   context pills from the persisted session snapshot, clearing stale context
   when a shown session has no notes or attachments.
 
+### E149. TUI Session Show Context Hydration
+
+- **Status**: landed.
+- **Goal**: keep the TUI side panel consistent with targeted session
+  inspection the same way the editor context strip is.
+- **Where**: TUI `/session show` handling in the CLI adapter and CLI/TUI
+  regression tests.
+- **Result**: when `/session show <current>` inspects the foreground session,
+  the TUI replaces its active Notes and Attachments side-panel summaries from
+  the persisted session snapshot before rendering the transcript block. Showing
+  another session remains read-only and does not overwrite the foreground
+  context.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.
