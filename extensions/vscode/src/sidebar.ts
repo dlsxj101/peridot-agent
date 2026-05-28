@@ -509,6 +509,10 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
     return [...(this.state.context.mcpServers ?? [])];
   }
 
+  public currentBranchSnapshots(): NonNullable<SidebarContext['branchSnapshots']> {
+    return [...(this.state.context.branchSnapshots ?? [])];
+  }
+
   public currentClientSessionId(): string | undefined {
     return this.state.activeChatId;
   }

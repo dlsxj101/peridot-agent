@@ -98,6 +98,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **VS Code MCP context pill** now shows configured/up server counts and total
   tool count in the sidebar context strip, with a warning tone when a known
   server is disconnected.
+- **VS Code branch workflow GUI** now exposes `/branch`, `/branch list`,
+  `/branch save`, `/branch restore`, `/branch turn`, `/branch tree`, and
+  `/branch switch` from the command palette and sidebar title bar.
 - **`/session prune` slash parity** lets both TUI and VS Code users prune
   persisted sessions with `--status`, `--older-than-days`, and `--dry-run`
   filters through the shared session command path.

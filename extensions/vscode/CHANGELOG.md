@@ -92,6 +92,9 @@
 - The sidebar context strip now shows an `MCP` pill with configured/up server
   counts and total tool count, with tooltip details for server transport and
   connection state.
+- Branch snapshot and DAG commands are now available from the command palette
+  and sidebar title bar: show turns, list/save/restore snapshots, fork at a
+  turn id, show the branch tree, and switch to a branch limb.
 - `/session prune [--status <state>] [--older-than-days N] [--dry-run]`
   now runs through the daemon command path and returns a structured prune
   result so editor users can preview or remove stale persisted sessions.

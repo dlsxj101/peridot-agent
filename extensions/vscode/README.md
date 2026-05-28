@@ -40,6 +40,13 @@ native tool calling, and 2-Tier context management.
 | `Peridot: Show Workspace TODOs` | Runs `/todos` to scan the workspace for TODO, FIXME, HACK, XXX, and BUG markers. |
 | `Peridot: Show Context Top` | Runs `/context top` for the active session and renders the largest context entries plus source token totals. |
 | `Peridot: Show Working Tree Diff` | Runs `/diff` and renders the current working tree diff in the sidebar transcript. |
+| `Peridot: Show Branch Turns` | Runs `/branch` and renders the current session turn picker for forking from an earlier context turn. |
+| `Peridot: Show Branch Snapshots` | Runs `/branch list` and renders saved context snapshots from `.peridot/branches`. |
+| `Peridot: Save Branch Snapshot` | Prompts for a snapshot name and runs `/branch save <name>` against the active session context. |
+| `Peridot: Restore Branch Snapshot` | Picks a saved snapshot and runs `/branch restore <name>` against the active session. |
+| `Peridot: Fork Branch at Turn` | Prompts for a context turn id and runs `/branch turn <id>`. |
+| `Peridot: Show Branch Tree` | Runs `/branch tree` to show abandoned conversation limbs from the active session journal. |
+| `Peridot: Switch Branch Limb` | Prompts for a branch limb index from `/branch tree` and runs `/branch switch <index>`. |
 | `Peridot: Show MCP Servers` | Runs `/mcp list` and renders configured MCP server names, transports, and details. |
 | `Peridot: Add MCP Server` | Prompts for name, transport, and command/URL, then runs `/mcp add <name> <transport> <target>`. |
 | `Peridot: Test MCP Server` | Picks a configured MCP server, runs `/mcp test <name>`, and renders the connectivity result. |

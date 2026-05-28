@@ -1617,6 +1617,19 @@ shared daemon, TUI, and VS Code extension surfaces.
   switch the pill to a warning tone, and the tooltip lists server transport,
   tool count, and connection state.
 
+### E127. VS Code Branch Workflow GUI
+
+- **Status**: landed.
+- **Goal**: expose the existing branch snapshot and branch-DAG workflow from
+  VS Code/Cursor without requiring users to memorize slash commands.
+- **Where**: VS Code command contributions, sidebar title-bar actions,
+  branch command builders, and branch command unit tests.
+- **Result**: editor users can show turn pickers, list saved snapshots, save
+  and restore snapshots, fork at a turn id, show the branch tree, and switch
+  to a branch limb through command-palette/title-bar actions. Each action
+  still routes through the shared `/branch ...` daemon command path used by
+  the TUI.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

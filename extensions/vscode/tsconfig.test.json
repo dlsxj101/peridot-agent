@@ -7,6 +7,7 @@
     "types": ["node"]
   },
   "include": [
+    "src/branchCommand.ts",
     "src/agentEventContext.ts",
     "src/agentEventLifecycle.ts",
     "src/agentEventOutput.ts",

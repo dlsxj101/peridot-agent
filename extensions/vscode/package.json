@@ -251,6 +251,48 @@
         "icon": "$(diff)"
       },
       {
+        "command": "peridot.showBranchTurns",
+        "title": "Peridot: Show Branch Turns",
+        "category": "Peridot",
+        "icon": "$(git-branch)"
+      },
+      {
+        "command": "peridot.showBranchSnapshots",
+        "title": "Peridot: Show Branch Snapshots",
+        "category": "Peridot",
+        "icon": "$(list-tree)"
+      },
+      {
+        "command": "peridot.saveBranchSnapshot",
+        "title": "Peridot: Save Branch Snapshot",
+        "category": "Peridot",
+        "icon": "$(save)"
+      },
+      {
+        "command": "peridot.restoreBranchSnapshot",
+        "title": "Peridot: Restore Branch Snapshot",
+        "category": "Peridot",
+        "icon": "$(history)"
+      },
+      {
+        "command": "peridot.forkBranchAtTurn",
+        "title": "Peridot: Fork Branch at Turn",
+        "category": "Peridot",
+        "icon": "$(git-branch)"
+      },
+      {
+        "command": "peridot.showBranchTree",
+        "title": "Peridot: Show Branch Tree",
+        "category": "Peridot",
+        "icon": "$(list-tree)"
+      },
+      {
+        "command": "peridot.switchBranchLimb",
+        "title": "Peridot: Switch Branch Limb",
+        "category": "Peridot",
+        "icon": "$(arrow-swap)"
+      },
+      {
         "command": "peridot.showMcpServers",
         "title": "Peridot: Show MCP Servers",
         "category": "Peridot",
@@ -488,6 +530,41 @@
           "command": "peridot.showWorkingTreeDiff",
           "when": "view == peridot.chatView",
           "group": "navigation@5.0007"
+        },
+        {
+          "command": "peridot.showBranchTurns",
+          "when": "view == peridot.chatView",
+          "group": "navigation@5.00071"
+        },
+        {
+          "command": "peridot.showBranchSnapshots",
+          "when": "view == peridot.chatView",
+          "group": "navigation@5.00072"
+        },
+        {
+          "command": "peridot.saveBranchSnapshot",
+          "when": "view == peridot.chatView",
+          "group": "navigation@5.00073"
+        },
+        {
+          "command": "peridot.restoreBranchSnapshot",
+          "when": "view == peridot.chatView",
+          "group": "navigation@5.00074"
+        },
+        {
+          "command": "peridot.forkBranchAtTurn",
+          "when": "view == peridot.chatView",
+          "group": "navigation@5.00075"
+        },
+        {
+          "command": "peridot.showBranchTree",
+          "when": "view == peridot.chatView",
+          "group": "navigation@5.00076"
+        },
+        {
+          "command": "peridot.switchBranchLimb",
+          "when": "view == peridot.chatView",
+          "group": "navigation@5.00077"
         },
         {
           "command": "peridot.showMcpServers",
