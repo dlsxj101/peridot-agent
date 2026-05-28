@@ -1976,6 +1976,19 @@ shared daemon, TUI, and VS Code extension surfaces.
   therefore render accurate generated-file counts plus open/copy actions
   instead of falling back to an empty artifact block.
 
+### E155. VS Code Session Export Full-Copy Rendering
+
+- **Status**: landed.
+- **Goal**: finish the export-card path by making preserved full-copy file
+  metadata visible in the editor transcript.
+- **Where**: VS Code webview export-card summary helper, export card renderer,
+  changelogs, and unit tests.
+- **Result**: `session_export` cards now separate generated artifact files
+  from full-copy session entries in their chips and list copied session files
+  when `files` metadata is present. This matches the TUI export transcript's
+  `full copy entries` visibility while keeping generated artifacts grouped
+  with their per-artifact entry counts.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

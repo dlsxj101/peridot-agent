@@ -159,6 +159,9 @@
 - Session export cards now receive the CLI export destination and generated
   artifact rows, so they show accurate file counts plus open/copy actions
   after `Peridot: Export Session Artifacts`.
+- Session export cards now distinguish generated artifact files from full-copy
+  session entries and list copied session files when a full export payload is
+  rendered.
 - Image attachments now render bounded inline previews in the VS Code/Cursor
   attachment cards while keeping the daemon/model context as the existing
   placeholder metadata.

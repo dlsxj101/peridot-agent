@@ -44,6 +44,7 @@ import { codeMapContextPill } from './codeMapContext';
 import { mcpContextPill } from './mcpContext';
 import { noteContextPill } from './noteContext';
 import { sessionContextSummary, sessionContextSummaryChips } from './sessionContextSummary';
+import { sessionExportSummary } from './sessionExportSummary';
 import { el, formatTokens, highlightLite, isRecord, json } from './util';
 
 declare function acquireVsCodeApi(): {
@@ -2918,14 +2919,14 @@ function renderAttachmentInventoryRow(attachment: AttachmentView): HTMLElement {
 
 function renderSessionExportBlock(item: TranscriptItem): HTMLElement {
   const result = item.commandResult;
-  const artifacts = Array.isArray(result?.artifacts) ? result.artifacts : [];
+  const { generatedArtifacts, fullCopyFiles, chips: summaryChips } = sessionExportSummary(result);
   const destination = typeof result?.destination === 'string' ? result.destination : undefined;
   const wrap = el('section', 'command-block attachment-block');
   const header = el('div', 'attachment-header');
   const title = el('div', 'attachment-title');
   title.append(el('span', 'command-title', result?.title ?? 'Session Artifact Export'));
   const chips = el('div', 'attachment-chips');
-  chips.append(el('span', 'command-chip', `${artifacts.length} files`));
+  summaryChips.forEach((chip) => chips.append(el('span', 'command-chip', chip)));
   title.append(chips);
   header.append(title);
   if (destination) {
@@ -2941,9 +2942,9 @@ function renderSessionExportBlock(item: TranscriptItem): HTMLElement {
   wrap.append(header);
   if (result?.message) wrap.append(el('div', 'command-message', result.message));
   if (destination) wrap.append(el('div', 'attachment-path-row', destination));
-  if (artifacts.length > 0) {
+  if (generatedArtifacts.length > 0) {
     const list = el('div', 'attachment-list');
-    artifacts.forEach((artifact) => {
+    generatedArtifacts.forEach((artifact) => {
       const row = el('div', 'attachment-inventory-row');
       const main = el('div', 'attachment-row-main');
       const top = el('div', 'attachment-path-row');
@@ -2958,6 +2959,20 @@ function renderSessionExportBlock(item: TranscriptItem): HTMLElement {
       list.append(row);
     });
     wrap.append(list);
+  }
+  if (fullCopyFiles.length > 0) {
+    const group = el('div', 'attachment-list');
+    group.append(el('div', 'codemap-group-title', `Full Copy Entries · ${fullCopyFiles.length}`));
+    fullCopyFiles.forEach((file) => {
+      const row = el('div', 'attachment-inventory-row');
+      const main = el('div', 'attachment-row-main');
+      const top = el('div', 'attachment-path-row');
+      top.append(el('span', 'attachment-path', file));
+      main.append(top);
+      row.append(main);
+      group.append(row);
+    });
+    wrap.append(group);
   }
   return wrap;
 }
