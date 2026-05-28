@@ -40,6 +40,9 @@ native tool calling, and 2-Tier context management.
 | `Peridot: Show Workspace TODOs` | Runs `/todos` to scan the workspace for TODO, FIXME, HACK, XXX, and BUG markers. |
 | `Peridot: Show Context Top` | Runs `/context top` for the active session and renders the largest context entries plus source token totals. |
 | `Peridot: Show Working Tree Diff` | Runs `/diff` and renders the current working tree diff in the sidebar transcript. |
+| `Peridot: Compact Context` | Runs `/compact` to queue context compaction for the active daemon session's next turn. |
+| `Peridot: Rewind Last Exchange` | Runs `/rewind`, removes the visible last exchange, and restores the last prompt in the composer when available. |
+| `Peridot: Undo Last Change` | Confirms, then runs `/undo` to restore the latest Peridot file checkpoint. |
 | `Peridot: Show Branch Turns` | Runs `/branch` and renders the current session turn picker for forking from an earlier context turn. |
 | `Peridot: Show Branch Snapshots` | Runs `/branch list` and renders saved context snapshots from `.peridot/branches`. |
 | `Peridot: Save Branch Snapshot` | Prompts for a snapshot name and runs `/branch save <name>` against the active session context. |

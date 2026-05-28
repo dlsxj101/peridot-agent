@@ -469,6 +469,24 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   context.subscriptions.push(
+    vscode.commands.registerCommand('peridot.compactContext', async () => {
+      await compactContext(sidebar);
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('peridot.rewindSession', async () => {
+      await rewindSession(sidebar);
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('peridot.undoLastChange', async () => {
+      await undoLastChange(sidebar);
+    }),
+  );
+
+  context.subscriptions.push(
     vscode.commands.registerCommand('peridot.showBranchTurns', async () => {
       await showBranchTurns(output, sidebar);
     }),
@@ -1673,6 +1691,38 @@ async function showWorkingTreeDiff(
     sidebar.appendError(message);
     await vscode.window.showErrorMessage(`Peridot diff failed: ${message}`);
   }
+}
+
+async function compactContext(sidebar: PeridotSidebarProvider): Promise<void> {
+  await runSharedSlashCommand('/compact', sidebar);
+}
+
+async function rewindSession(sidebar: PeridotSidebarProvider): Promise<void> {
+  await runSharedSlashCommand('/rewind', sidebar);
+}
+
+async function undoLastChange(sidebar: PeridotSidebarProvider): Promise<void> {
+  const confirmation = await vscode.window.showWarningMessage(
+    'Undo the latest Peridot file checkpoint in this workspace?',
+    { modal: true },
+    'Undo',
+  );
+  if (confirmation !== 'Undo') return;
+  await runSharedSlashCommand('/undo', sidebar);
+}
+
+async function runSharedSlashCommand(
+  command: string,
+  sidebar: PeridotSidebarProvider,
+): Promise<void> {
+  if (!vscode.workspace.workspaceFolders?.[0]?.uri.fsPath) {
+    const message = 'Open a workspace folder before running Peridot session commands.';
+    sidebar.setWorkspaceProblem(message);
+    await vscode.window.showWarningMessage(message);
+    return;
+  }
+  await vscode.commands.executeCommand('peridot.chatView.focus');
+  await sidebar.executeSlashCommand(command);
 }
 
 async function showBranchTurns(

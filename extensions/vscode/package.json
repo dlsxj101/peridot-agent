@@ -251,6 +251,24 @@
         "icon": "$(diff)"
       },
       {
+        "command": "peridot.compactContext",
+        "title": "Peridot: Compact Context",
+        "category": "Peridot",
+        "icon": "$(fold)"
+      },
+      {
+        "command": "peridot.rewindSession",
+        "title": "Peridot: Rewind Last Exchange",
+        "category": "Peridot",
+        "icon": "$(history)"
+      },
+      {
+        "command": "peridot.undoLastChange",
+        "title": "Peridot: Undo Last Change",
+        "category": "Peridot",
+        "icon": "$(discard)"
+      },
+      {
         "command": "peridot.showBranchTurns",
         "title": "Peridot: Show Branch Turns",
         "category": "Peridot",
@@ -530,6 +548,21 @@
           "command": "peridot.showWorkingTreeDiff",
           "when": "view == peridot.chatView",
           "group": "navigation@5.0007"
+        },
+        {
+          "command": "peridot.compactContext",
+          "when": "view == peridot.chatView",
+          "group": "navigation@5.000701"
+        },
+        {
+          "command": "peridot.rewindSession",
+          "when": "view == peridot.chatView",
+          "group": "navigation@5.000702"
+        },
+        {
+          "command": "peridot.undoLastChange",
+          "when": "view == peridot.chatView",
+          "group": "navigation@5.000703"
         },
         {
           "command": "peridot.showBranchTurns",

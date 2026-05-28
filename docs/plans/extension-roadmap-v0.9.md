@@ -1630,6 +1630,19 @@ shared daemon, TUI, and VS Code extension surfaces.
   still routes through the shared `/branch ...` daemon command path used by
   the TUI.
 
+### E128. VS Code Session Utility GUI
+
+- **Status**: landed.
+- **Goal**: expose the high-value session recovery/control slashes from the
+  editor GUI so operators do not need to remember composer commands.
+- **Where**: VS Code command contributions, sidebar title-bar actions, and
+  shared slash execution in the sidebar provider.
+- **Result**: `Peridot: Compact Context`, `Peridot: Rewind Last Exchange`,
+  and `Peridot: Undo Last Change` run `/compact`, `/rewind`, and `/undo`
+  through the same daemon slash path used by the composer. Rewind keeps using
+  the extension's transcript removal and prompt-restore reconciliation, and
+  undo asks for confirmation before restoring the latest file checkpoint.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

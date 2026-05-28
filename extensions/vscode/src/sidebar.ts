@@ -501,6 +501,10 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
     return { ...this.state.runOptions };
   }
 
+  public async executeSlashCommand(input: string): Promise<void> {
+    await this.executeDaemonSlash(input, this.currentRunOptions());
+  }
+
   public currentDaemonSessionId(): string | undefined {
     return this.state.sessionId;
   }

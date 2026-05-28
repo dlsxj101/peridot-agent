@@ -95,6 +95,9 @@
 - Branch snapshot and DAG commands are now available from the command palette
   and sidebar title bar: show turns, list/save/restore snapshots, fork at a
   turn id, show the branch tree, and switch to a branch limb.
+- Session utility commands are now available from the command palette and
+  sidebar title bar: compact context, rewind the last exchange, and undo the
+  latest Peridot file checkpoint.
 - `/session prune [--status <state>] [--older-than-days N] [--dry-run]`
   now runs through the daemon command path and returns a structured prune
   result so editor users can preview or remove stale persisted sessions.
