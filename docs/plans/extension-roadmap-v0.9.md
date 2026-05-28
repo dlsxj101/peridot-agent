@@ -1848,6 +1848,18 @@ shared daemon, TUI, and VS Code extension surfaces.
   autocomplete from that directory metadata, and VS Code/Cursor folds daemon
   `session.list` snapshots into the per-session `Attachments N` context pill.
 
+### E145. Session Context Change Broadcasts
+
+- **Status**: landed.
+- **Goal**: keep subscribed editor session lists current when session context
+  metadata changes from another client or window.
+- **Where**: daemon `session.command` result handling, `session.list_changed`
+  emission, and daemon subscription tests.
+- **Result**: successful `/note`, `/attach`, and mutating `/detach` commands
+  now emit `session.list_changed` for subscribed clients. VS Code/Cursor
+  already reconciles those notifications, so note and attachment context pills
+  update across windows without a manual session-list refresh.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

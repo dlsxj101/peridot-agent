@@ -1600,6 +1600,7 @@ async fn handle_session_command(
 
     match result {
         Ok(result) => {
+            let refresh_session_list = command_result_refreshes_session_list(&result);
             if let Some(session_id) = session_id.as_deref() {
                 emit_event(
                     state,
@@ -1611,6 +1612,9 @@ async fn handle_session_command(
                 );
             }
             emit_response(state, id, result)?;
+            if refresh_session_list {
+                emit_session_list_changed(state).await;
+            }
         }
         Err(message) => {
             if let Some(session_id) = session_id.as_deref() {
@@ -1627,6 +1631,24 @@ async fn handle_session_command(
         }
     }
     Ok(())
+}
+
+fn command_result_refreshes_session_list(result: &Value) -> bool {
+    match result.get("kind").and_then(Value::as_str) {
+        Some("note" | "attach") => true,
+        Some("notes_clear") => result
+            .get("cleared")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        Some("detach") => {
+            result
+                .get("removed_count")
+                .and_then(Value::as_u64)
+                .unwrap_or_default()
+                > 0
+        }
+        _ => false,
+    }
 }
 
 async fn execute_session_command(
@@ -7957,6 +7979,95 @@ url = "https://example.com/mcp"
         }));
         shutdown_sessions(&state).await;
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn session_context_commands_emit_list_changed_notifications() {
+        let root = test_project("session-context-list-changed");
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/lib.rs"), "pub fn attached() {}\n").unwrap();
+        let store = MemoryStore::new(root.join(".peridot/memory.db"));
+        store
+            .save_session_record(&SessionRecord::new("context-session", &root))
+            .unwrap();
+        let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+        let state = DaemonState::new(
+            root.clone(),
+            PeridotConfig::default(),
+            test_options(None),
+            tx,
+        );
+
+        let _ = dispatch_line(
+            &state,
+            r#"{"jsonrpc":"2.0","id":45,"method":"session.subscribe_list"}"#,
+        )
+        .await
+        .unwrap();
+        while rx.try_recv().is_ok() {}
+
+        let _ = dispatch_line(
+            &state,
+            r#"{"jsonrpc":"2.0","id":46,"method":"session.command","params":{"session_id":"context-session","command":"/note checkpoint"}}"#,
+        )
+        .await
+        .unwrap();
+        let note_values = drain_json_lines(&mut rx);
+        let note_session =
+            changed_session(&note_values, "context-session").expect("note list change");
+        assert_eq!(note_session["notes_count"], 1);
+        assert_eq!(note_session["last_note"], "checkpoint");
+
+        let _ = dispatch_line(
+            &state,
+            r#"{"jsonrpc":"2.0","id":47,"method":"session.command","params":{"session_id":"context-session","command":"/attach src/lib.rs"}}"#,
+        )
+        .await
+        .unwrap();
+        let attach_values = drain_json_lines(&mut rx);
+        let attach_session =
+            changed_session(&attach_values, "context-session").expect("attach list change");
+        assert_eq!(attach_session["attachment_count"], 1);
+        assert_eq!(attach_session["attachment_paths"][0], "src/lib.rs");
+
+        let _ = dispatch_line(
+            &state,
+            r#"{"jsonrpc":"2.0","id":48,"method":"session.command","params":{"session_id":"context-session","command":"/detach src/lib.rs"}}"#,
+        )
+        .await
+        .unwrap();
+        let detach_values = drain_json_lines(&mut rx);
+        let detach_session =
+            changed_session(&detach_values, "context-session").expect("detach list change");
+        assert_eq!(detach_session["attachment_count"], 0);
+        assert_eq!(
+            detach_session["attachment_paths"].as_array().unwrap().len(),
+            0
+        );
+
+        shutdown_sessions(&state).await;
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    fn drain_json_lines(rx: &mut mpsc::UnboundedReceiver<String>) -> Vec<Value> {
+        let mut values = Vec::new();
+        while let Ok(line) = rx.try_recv() {
+            values.push(serde_json::from_str::<Value>(&line).unwrap());
+        }
+        values
+    }
+
+    fn changed_session<'a>(values: &'a [Value], session_id: &str) -> Option<&'a Value> {
+        values
+            .iter()
+            .rev()
+            .filter(|value| value["method"] == "session.list_changed")
+            .find_map(|value| {
+                value["params"]["sessions"]
+                    .as_array()?
+                    .iter()
+                    .find(|session| session["id"] == session_id)
+            })
     }
 
     #[tokio::test]

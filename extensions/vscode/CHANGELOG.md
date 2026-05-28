@@ -134,6 +134,9 @@
 - Daemon session-list refreshes now also hydrate the attachment pill from
   persisted context snapshots, so switching or reloading sessions preserves
   attached path context without rerunning `/attachments`.
+- Subscribed daemon session lists now refresh after `/note`, `/attach`, and
+  successful `/detach` commands, so other VS Code/Cursor windows receive the
+  updated note and attachment context without a manual session-list refresh.
 - Image attachments now render bounded inline previews in the VS Code/Cursor
   attachment cards while keeping the daemon/model context as the existing
   placeholder metadata.

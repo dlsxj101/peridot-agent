@@ -145,6 +145,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **Session-list attachment hydration** now carries attached path summaries
   through TUI persisted-session hydration, foreground swaps, daemon
   `session.list`, and VS Code/Cursor session reconciliation.
+- **Session context change broadcasts** now refresh subscribed editor session
+  lists after `/note`, `/attach`, and successful `/detach` commands so other
+  VS Code/Cursor windows pick up note and attachment status changes.
 - **`/session prune` slash parity** lets both TUI and VS Code users prune
   persisted sessions with `--status`, `--older-than-days`, and `--dry-run`
   filters through the shared session command path.
