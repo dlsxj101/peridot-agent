@@ -1063,6 +1063,10 @@ pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
             state.push_transcript("notes: loading...");
             state.push_pending_session_command(SessionCommandEvent::Notes(last));
         }
+        SlashCommand::NotesClear => {
+            state.push_transcript("notes: clearing...");
+            state.push_pending_session_command(SessionCommandEvent::NotesClear);
+        }
         SlashCommand::Info => {
             let session_id = if state.current_session_id.is_empty() {
                 "<none>".to_string()

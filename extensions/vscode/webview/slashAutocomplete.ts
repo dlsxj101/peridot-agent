@@ -100,7 +100,7 @@ export function slashArgumentContext(
   if (codemapContinuationContext) return codemapContinuationContext;
   const goalContext = goalControlArgumentContext(query);
   if (goalContext) return goalContext;
-  const notesContext = notesLastArgumentContext(query);
+  const notesContext = notesArgumentContext(query);
   if (notesContext) return notesContext;
   const exportContext = exportArtifactArgumentContext(query);
   if (exportContext) return exportContext;
@@ -139,8 +139,24 @@ function goalControlArgumentContext(query: string): SlashArgumentContext | undef
   );
 }
 
-function notesLastArgumentContext(query: string): SlashArgumentContext | undefined {
-  return staticSubcommandArgumentContext(query, '/notes', ['last'], true, false);
+function notesArgumentContext(query: string): SlashArgumentContext | undefined {
+  const commandName = '/notes';
+  if (!query.startsWith(`${commandName} `)) return undefined;
+  const hasTrailingSpace = /\s$/.test(query);
+  const needle = query.slice(commandName.length).trim().toLowerCase();
+  if (/\s/.test(needle)) return undefined;
+  const options = ['last', 'clear'].filter((option) => needle.length === 0 || option.startsWith(needle));
+  if (options.length === 0) return undefined;
+  if (hasTrailingSpace && options.some((option) => option.toLowerCase() === needle)) return undefined;
+  return {
+    command: {
+      name: commandName,
+      description: 'subcommand',
+      category: 'session',
+    },
+    options,
+    appendSpace: options.length === 1 && options[0] === 'last',
+  };
 }
 
 const EXPORT_ARTIFACT_OPTIONS = ['attachments', 'notes', 'timeline', 'full'];

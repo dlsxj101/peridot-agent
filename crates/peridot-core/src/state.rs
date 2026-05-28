@@ -75,6 +75,7 @@ impl AgentState {
             | SlashCommand::Committee(_)
             | SlashCommand::Note(_)
             | SlashCommand::Notes(_)
+            | SlashCommand::NotesClear
             | SlashCommand::Info
             | SlashCommand::ContextTop
             | SlashCommand::Compact

@@ -1256,6 +1256,18 @@ shared daemon, TUI, and VS Code extension surfaces.
   foreground session; VS Code receives a `start_task` command result and
   dispatches it through the existing automatic task-start path.
 
+### E100. Notes Clear Slash Parity
+
+- **Status**: landed.
+- **Goal**: finish the interactive notes lifecycle by letting operators
+  clear active-session notes without using the CLI subcommand directly.
+- **Where**: shared slash parser/catalog, TUI session command queue, daemon
+  `session.command`, and the CLI note-clear helper.
+- **Result**: `/notes clear` removes the active session's `notes.ndjson`
+  through the same helper as `peridot session note <id> clear`. TUI reports
+  whether notes were cleared, and VS Code receives a structured
+  `notes_clear` command result rendered in the existing notes block.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

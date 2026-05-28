@@ -3413,16 +3413,26 @@ fn notes_slash_queues_note_inventory_load() {
     ));
 
     apply_slash_command(&mut state, SlashCommand::Notes(Some(2)));
+    apply_slash_command(&mut state, SlashCommand::NotesClear);
 
     assert_eq!(
         state.drain_pending_session_commands(),
-        vec![SessionCommandEvent::Notes(Some(2))]
+        vec![
+            SessionCommandEvent::Notes(Some(2)),
+            SessionCommandEvent::NotesClear,
+        ]
     );
     assert!(
         state
             .transcript
             .iter()
             .any(|line| line.text.contains("notes: loading"))
+    );
+    assert!(
+        state
+            .transcript
+            .iter()
+            .any(|line| line.text.contains("notes: clearing"))
     );
 }
 

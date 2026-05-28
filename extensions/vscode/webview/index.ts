@@ -2575,7 +2575,9 @@ function renderCommandBlock(item: TranscriptItem): HTMLElement {
   if (result?.kind === 'attachments') return renderAttachmentInventoryBlock(item);
   if (result?.kind === 'detach') return renderDetachBlock(item);
   if (result?.kind === 'session_export') return renderSessionExportBlock(item);
-  if (result?.kind === 'note' || result?.kind === 'notes') return renderNotesBlock(item);
+  if (result?.kind === 'note' || result?.kind === 'notes' || result?.kind === 'notes_clear') {
+    return renderNotesBlock(item);
+  }
   if (result?.kind === 'skills') return renderSkillsBlock(item);
   if (result?.kind === 'skill_detail') return renderSkillDetailBlock(item);
   const wrap = el('section', `command-block ${result?.severity === 'error' ? 'error' : ''}`);

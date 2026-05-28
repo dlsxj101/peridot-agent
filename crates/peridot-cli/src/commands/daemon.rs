@@ -35,10 +35,10 @@ use tokio::sync::{Mutex, mpsc, oneshot};
 use crate::branch_snapshot_names;
 use crate::checkpoints::restore_latest_checkpoint;
 use crate::commands::{
-    AuthProvider, append_session_note, move_auto_skill_to_archive, read_managed_env_var,
-    read_session_notes, read_stored_api_key, read_stored_openai_oauth_credentials,
-    restore_archived_skill, search_session_transcript_hits, session_count_summary, session_locate,
-    session_resume_summary, session_show_summary,
+    AuthProvider, append_session_note, clear_session_notes, move_auto_skill_to_archive,
+    read_managed_env_var, read_session_notes, read_stored_api_key,
+    read_stored_openai_oauth_credentials, restore_archived_skill, search_session_transcript_hits,
+    session_count_summary, session_locate, session_resume_summary, session_show_summary,
 };
 use crate::run_loop::{AgentTaskOptions, MessageBusHookup, run_task_with_events};
 use crate::session_router::{RouterMessageBus, SessionHandle, SessionRouter, WorkspaceIsolation};
@@ -1704,6 +1704,7 @@ async fn execute_session_command(
         }
         SlashCommand::Note(note) => handle_command_note(state, session_id, raw_command, &note),
         SlashCommand::Notes(last) => handle_command_notes(state, session_id, raw_command, last),
+        SlashCommand::NotesClear => handle_command_notes_clear(state, session_id, raw_command),
         SlashCommand::Lang(locale) => Ok(command_result_with_state_delta(
             "setting",
             "Language",
@@ -3853,6 +3854,34 @@ fn handle_command_notes(
     }))
 }
 
+fn handle_command_notes_clear(
+    state: &DaemonState,
+    session_id: Option<&str>,
+    raw_command: &str,
+) -> Result<Value, String> {
+    let session_id = require_session_id(session_id, "notes")?;
+    let cleared = clear_session_notes(&state.project_root, &session_id)
+        .map_err(|err| format!("notes: failed to clear session notes: {err}"))?;
+    Ok(serde_json::json!({
+        "kind": "notes_clear",
+        "title": "Session Notes",
+        "message": if cleared {
+            format!("notes: cleared for {session_id}")
+        } else {
+            format!("notes: none for {session_id}")
+        },
+        "severity": "info",
+        "command": raw_command,
+        "session_id": session_id,
+        "cleared": cleared,
+        "total": 0,
+        "items": [
+            { "label": "session", "detail": session_id },
+            { "label": "cleared", "detail": cleared.to_string() },
+        ],
+    }))
+}
+
 fn append_plan_reminder_to_context(
     state: &DaemonState,
     session_id: &str,
@@ -5914,6 +5943,23 @@ mod tests {
         assert_eq!(value["total"], 2);
         assert_eq!(value["items"].as_array().unwrap().len(), 1);
         assert_eq!(value["items"][0]["text"], "second checkpoint");
+
+        let value = execute_session_command(
+            &state,
+            Some("note-session"),
+            "/notes clear",
+            SlashCommand::NotesClear,
+        )
+        .await
+        .unwrap();
+        assert_eq!(value["kind"], "notes_clear");
+        assert_eq!(value["session_id"], "note-session");
+        assert_eq!(value["cleared"], true);
+        assert!(
+            !root
+                .join(".peridot/sessions/note-session/notes.ndjson")
+                .exists()
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 

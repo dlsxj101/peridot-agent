@@ -35,6 +35,9 @@
   result block as other session utilities.
 - `/session resume <id|title>` now runs through the daemon command path and
   starts a continuation task from the selected persisted session summary.
+- `/notes clear` now runs through the daemon command path and clears
+  operator notes for the active session, with autocomplete alongside
+  `/notes last`.
 - `/session show <id|title>` now runs through the daemon command path and
   renders structured persisted session details without requiring a separate
   terminal invocation.

@@ -79,6 +79,8 @@ pub enum SlashCommand {
     Note(String),
     /// List operator notes attached to the current session.
     Notes(Option<usize>),
+    /// Clear operator notes attached to the current session.
+    NotesClear,
     /// Attach a workspace file to the current session context.
     Attach(String),
     /// Print a one-shot summary of the current session (model, provider,
@@ -455,6 +457,7 @@ pub fn parse_slash_command(input: &str) -> Option<SlashCommand> {
         "note" if !rest.is_empty() => Some(SlashCommand::Note(rest.to_string())),
         "note" => None,
         "notes" if rest.is_empty() => Some(SlashCommand::Notes(None)),
+        "notes" if rest == "clear" => Some(SlashCommand::NotesClear),
         "notes" if rest.starts_with("last ") => {
             let count = rest.strip_prefix("last ")?.trim().parse().ok()?;
             Some(SlashCommand::Notes(Some(count)))
@@ -968,6 +971,10 @@ mod tests {
         assert_eq!(
             parse_slash_command("/notes last 3"),
             Some(SlashCommand::Notes(Some(3)))
+        );
+        assert_eq!(
+            parse_slash_command("/notes clear"),
+            Some(SlashCommand::NotesClear)
         );
         assert_eq!(parse_slash_command("/notes recent"), None);
         assert_eq!(parse_slash_command("/notes last nope"), None);

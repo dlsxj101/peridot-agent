@@ -702,6 +702,15 @@ pub(crate) fn read_session_notes(
     Ok((notes, total))
 }
 
+pub(crate) fn clear_session_notes(project_root: &Path, id: &str) -> Result<bool> {
+    let notes_path = session_notes_path(project_root, id);
+    match std::fs::remove_file(&notes_path) {
+        Ok(()) => Ok(true),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(err) => Err(err.into()),
+    }
+}
+
 fn handle_session_note(
     project_root: &Path,
     id: &str,
@@ -753,8 +762,7 @@ fn handle_session_note(
             }
         }
         SessionNoteAction::Clear => {
-            let notes_path = session_notes_path(project_root, id);
-            let removed = std::fs::remove_file(&notes_path).is_ok();
+            let removed = clear_session_notes(project_root, id)?;
             print_json_or_text_result(
                 serde_json::json!({"cleared": removed, "id": id}),
                 format!("cleared notes for {id}: {removed}"),

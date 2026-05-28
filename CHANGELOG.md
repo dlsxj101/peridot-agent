@@ -39,6 +39,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **`/session resume <id|title>` slash parity** lets both TUI and VS Code
   users start a continuation task from a persisted session summary without
   leaving the interactive surface.
+- **`/notes clear` slash parity** lets both TUI and VS Code users remove
+  all operator notes from the active session through the shared notes
+  lifecycle path.
 - **Skill-name argument autocomplete** now works in both TUI and VS Code
   for skill management commands such as `/skills show <name>` and
   `/skills use <name>`, while `/skills restore <name>` completes archived

@@ -123,8 +123,8 @@ pub fn slash_command_catalog() -> &'static [SlashCommandSpec] {
         },
         SlashCommandSpec {
             name: "/notes",
-            description: "list operator notes attached to the current session",
-            arg_hint: Some("[last <N>]"),
+            description: "list or clear operator notes attached to the current session",
+            arg_hint: Some("[last <N>|clear]"),
             category: "session",
         },
         SlashCommandSpec {
@@ -650,7 +650,7 @@ pub(crate) fn slash_argument_context_with_dynamic(
     if let Some(context) = goal_control_argument_context(query) {
         return Some(context);
     }
-    if let Some(context) = notes_last_argument_context(query) {
+    if let Some(context) = notes_argument_context(query) {
         return Some(context);
     }
     if let Some(context) = export_artifact_argument_context(query) {
@@ -1076,8 +1076,29 @@ fn goal_control_argument_context(query: &str) -> Option<SlashArgumentContext> {
     )
 }
 
-fn notes_last_argument_context(query: &str) -> Option<SlashArgumentContext> {
-    static_subcommand_argument_context(query, "/notes", &["last"], true, false)
+fn notes_argument_context(query: &str) -> Option<SlashArgumentContext> {
+    let command_name = "/notes";
+    if !query.starts_with(&format!("{command_name} ")) {
+        return None;
+    }
+    let has_trailing_space = query.chars().last().is_some_and(char::is_whitespace);
+    let rest = query[command_name.len()..].trim().to_ascii_lowercase();
+    if rest.contains(char::is_whitespace) {
+        return None;
+    }
+    let options: Vec<String> = ["last", "clear"]
+        .into_iter()
+        .filter(|option| rest.is_empty() || option.starts_with(&rest))
+        .map(str::to_string)
+        .collect();
+    if options.is_empty() || (has_trailing_space && options.iter().any(|option| option == &rest)) {
+        return None;
+    }
+    Some(SlashArgumentContext {
+        command_name: command_name.to_string(),
+        append_space: options.len() == 1 && options[0] == "last",
+        options,
+    })
 }
 
 fn export_artifact_argument_context(query: &str) -> Option<SlashArgumentContext> {
@@ -1903,7 +1924,7 @@ mod tests {
     }
 
     #[test]
-    fn notes_last_argument_context_leaves_room_for_count() {
+    fn notes_argument_context_handles_last_and_clear() {
         assert!(
             slash_argument_context_with_dynamic("/notes", &[], &[], &[], &[], &[]).is_none(),
             "bare /notes remains runnable"
@@ -1915,12 +1936,26 @@ mod tests {
         assert_eq!(context.options, vec!["last"]);
         assert!(context.append_space);
 
+        let context = slash_argument_context_with_dynamic("/notes c", &[], &[], &[], &[], &[])
+            .expect("notes clear");
+        assert_eq!(context.command_name, "/notes");
+        assert_eq!(context.options, vec!["clear"]);
+        assert!(!context.append_space);
+
+        let context = slash_argument_context_with_dynamic("/notes ", &[], &[], &[], &[], &[])
+            .expect("notes subcommands");
+        assert_eq!(context.options, vec!["last", "clear"]);
+        assert!(!context.append_space);
+
         let context = slash_argument_context_with_dynamic("/notes last", &[], &[], &[], &[], &[])
             .expect("notes exact");
         assert_eq!(context.options, vec!["last"]);
         assert!(context.append_space);
         assert!(
             slash_argument_context_with_dynamic("/notes last ", &[], &[], &[], &[], &[]).is_none()
+        );
+        assert!(
+            slash_argument_context_with_dynamic("/notes clear ", &[], &[], &[], &[], &[]).is_none()
         );
     }
 

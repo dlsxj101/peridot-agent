@@ -127,6 +127,10 @@ Remaining scoped polish: none currently tracked in this runbook.
   editor clients; the extension renders it as a picker and dispatches
   `/branch turn <id>` when the operator selects a turn.
 
+### M36 — `/notes clear` interactive parity (landed)
+- `clear_session_notes` is now shared by CLI note clearing, TUI `/notes clear`, and VS Code daemon `session.command`, so the active session's `notes.ndjson` is removed consistently across surfaces.
+- TUI queues a `NotesClear` session command and reports whether any notes existed. The VS Code daemon returns a structured `notes_clear` result rendered by the existing notes block, and autocomplete offers both `last` and `clear` after `/notes`.
+
 ### M35 — `/session resume <id|title>` interactive parity (landed)
 - `session_resume_task_text` is now shared between CLI resume handling and interactive slash commands, so `peridot session resume <id>`, TUI `/session resume <id|title>`, and VS Code daemon `session.command` all produce the same continuation prompt.
 - The TUI resolves visible session ids/titles first and starts the continuation in the current foreground session. The VS Code daemon resolves persisted titles through `session_list_result` and returns a `start_task` result, reusing the extension's existing automatic dispatch path.

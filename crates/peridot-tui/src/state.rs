@@ -949,6 +949,8 @@ pub enum SessionCommandEvent {
     Export(Vec<peridot_core::ExportArtifact>),
     /// `/notes [last N]` — list operator notes for the active session.
     Notes(Option<usize>),
+    /// `/notes clear` — remove every operator note from the active session.
+    NotesClear,
     /// `/rewind` — remove the last user turn from the context snapshot.
     RewindContext,
     /// `/branch save <name>` — copy the active session's context

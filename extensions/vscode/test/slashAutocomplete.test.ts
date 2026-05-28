@@ -464,6 +464,12 @@ test('slashArgumentContext filters goal and notes subcommands', () => {
   assert.equal(notes?.appendSpace, true);
   assert.deepEqual(slashArgumentContext('/notes last', commands)?.options, ['last']);
   assert.equal(slashArgumentContext('/notes last ', commands), undefined);
+  const notesClear = slashArgumentContext('/notes c', commands);
+  assert.equal(notesClear?.command.name, '/notes');
+  assert.deepEqual(notesClear?.options, ['clear']);
+  assert.equal(notesClear?.appendSpace, false);
+  assert.deepEqual(slashArgumentContext('/notes ', commands)?.options, ['last', 'clear']);
+  assert.equal(slashArgumentContext('/notes clear ', commands), undefined);
 });
 
 test('slashArgumentContext filters think alias arguments', () => {
