@@ -1279,6 +1279,27 @@ fn ctrl_t_opens_session_picker_and_switches_by_prefix() {
 }
 
 #[test]
+fn session_picker_rows_show_usage_notes_and_attachments() {
+    let picker = SessionPickerState::opening();
+    let mut session = SessionDirectoryItem::new("beta", "Beta review");
+    session.status = AgentRunStatus::Running;
+    session.tokens = 48_000;
+    session.cost_usd = 0.1234;
+    session.notes_count = 2;
+    session.last_note = Some("latest checkpoint before release".to_string());
+    session.attachment_paths = vec!["docs/release.md".to_string(), "src/main.rs".to_string()];
+
+    let rendered = render_session_picker(&picker, &[session], "alpha", Locale::En);
+
+    assert!(rendered.contains("Beta review  [running]  beta"));
+    assert!(rendered.contains("$0.1234"));
+    assert!(rendered.contains("48.0k tok"));
+    assert!(rendered.contains("2 notes"));
+    assert!(rendered.contains("latest: latest checkpoint before release"));
+    assert!(rendered.contains("2 files attached"));
+}
+
+#[test]
 fn ctrl_w_still_cycles_sessions() {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 

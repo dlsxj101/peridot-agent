@@ -1576,6 +1576,7 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
                 picker,
                 &state.sessions,
                 &state.current_session_id,
+                state.config.language,
             ))
             .block(overlay_block())
             .wrap(Wrap { trim: false }),
@@ -2290,6 +2291,7 @@ pub(super) fn render_session_picker(
     picker: &crate::SessionPickerState,
     sessions: &[crate::SessionDirectoryItem],
     current_session_id: &str,
+    locale: peridot_common::Locale,
 ) -> String {
     let mut sections = vec!["Switch session".to_string(), String::new()];
     sections.push(format!("  filter: {}", picker.query));
@@ -2307,10 +2309,15 @@ pub(super) fn render_session_picker(
                 " "
             };
             let attention = if item.pending_attention { "!" } else { " " };
+            let metadata = session_picker_metadata(item, locale);
+            let metadata = metadata
+                .as_deref()
+                .map(|detail| format!("  · {detail}"))
+                .unwrap_or_default();
             sections.push(format!(
-                "  {cursor}{current}{attention} {title}  [{status}]  {id}",
+                "  {cursor}{current}{attention} {title}  [{status}]  {id}{metadata}",
                 title = item.title,
-                status = format!("{:?}", item.status).to_ascii_lowercase(),
+                status = agent_run_status_label(&item.status),
                 id = item.id,
             ));
         }
@@ -2319,6 +2326,50 @@ pub(super) fn render_session_picker(
     sections.push(String::new());
     sections.push("  type to filter  •  ↑/↓ navigate  •  Enter switch  •  Esc cancel".to_string());
     sections.join("\n")
+}
+
+fn session_picker_metadata(
+    item: &crate::SessionDirectoryItem,
+    locale: peridot_common::Locale,
+) -> Option<String> {
+    let mut parts = Vec::new();
+    if item.cost_usd > 0.0 {
+        parts.push(format!("${:.4}", item.cost_usd));
+    }
+    if item.tokens > 0 {
+        parts.push(format!("{} tok", format_status_token_count(item.tokens)));
+    }
+    if item.notes_count > 0 {
+        parts.push(format!(
+            "{} {}",
+            item.notes_count,
+            tr(PhraseKey::NotesCountSuffix, locale)
+        ));
+    }
+    if let Some(note) = item
+        .last_note
+        .as_deref()
+        .filter(|note| !note.trim().is_empty())
+    {
+        parts.push(format!(
+            "{}: {}",
+            tr(PhraseKey::NotesLatestLabel, locale),
+            truncate_display_width(note.trim(), 36)
+        ));
+    }
+    if !item.attachment_paths.is_empty() {
+        parts.push(format!(
+            "{} {}",
+            item.attachment_paths.len(),
+            tr(PhraseKey::AttachmentFilesAttached, locale)
+        ));
+    }
+
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(" · "))
+    }
 }
 
 pub(super) fn render_approval_panel(panel: &ApprovalPanel) -> String {

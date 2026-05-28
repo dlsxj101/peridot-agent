@@ -2064,6 +2064,18 @@ shared daemon, TUI, and VS Code extension surfaces.
   inspect, replay, export, resume, switch, close, rename, and delete flows the
   same context cues already visible in the sidebar session surfaces.
 
+### E162. TUI Session Picker Metadata
+
+- **Status**: landed.
+- **Goal**: keep the terminal `Ctrl+T` session switcher aligned with the
+  richer session context now visible in VS Code/Cursor pickers.
+- **Where**: TUI session picker rendering, localized note/attachment labels,
+  changelog, and regression tests.
+- **Result**: `Ctrl+T` rows now append known cost, token, note, latest-note,
+  and attachment-count metadata from `SessionDirectoryItem`, so terminal users
+  can distinguish similar sessions without switching or running `/session
+  show`.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

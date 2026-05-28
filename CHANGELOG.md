@@ -198,6 +198,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **VS Code session picker context details** now show persisted note and
   attachment summaries under session QuickPick rows, keeping ids visible while
   making saved session context easier to distinguish.
+- **TUI session picker metadata** now mirrors the session-directory context in
+  `Ctrl+T`, showing per-session cost, tokens, notes, latest note, and attached
+  file counts directly in the switcher.
 - **`/session prune` slash parity** lets both TUI and VS Code users prune
   persisted sessions with `--status`, `--older-than-days`, and `--dry-run`
   filters through the shared session command path.
