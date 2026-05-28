@@ -3611,6 +3611,7 @@ fn mcp_tui_summaries(config: &PeridotConfig) -> Vec<peridot_tui::McpServerSummar
         .iter()
         .map(|entry| peridot_tui::McpServerSummary {
             name: entry.name.clone(),
+            transport: Some(entry.transport.to_string()),
             tool_count: 0,
             connected: false,
         })
@@ -4413,6 +4414,7 @@ fn tui_runtime_event_from_agent(event: AgentRunEvent) -> TuiRuntimeEvent {
                 .into_iter()
                 .map(|server| peridot_tui::McpServerSummary {
                     name: server.name,
+                    transport: None,
                     tool_count: server.tool_count,
                     connected: server.connected,
                 })

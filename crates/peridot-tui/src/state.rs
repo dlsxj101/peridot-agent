@@ -135,6 +135,9 @@ pub struct SessionStats {
 pub struct McpServerSummary {
     /// Display name.
     pub name: String,
+    /// Transport kind, when known.
+    #[serde(default)]
+    pub transport: Option<String>,
     /// Tool count exposed by the server.
     pub tool_count: u32,
     /// Whether the server is currently connected.

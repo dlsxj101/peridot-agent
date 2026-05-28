@@ -91,6 +91,10 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
   structured: TUI marks the tested server connected/disconnected with the
   exposed tool count, and VS Code command rows can render `connected` plus
   `tool_count` returned by the daemon.
+- **MCP status panel visibility** now renders MCP servers in the TUI status
+  panel with transport, tool count, and connection state. VS Code also folds
+  structured MCP command-result rows back into sidebar context so later MCP
+  pickers show the latest metadata.
 - **`/session prune` slash parity** lets both TUI and VS Code users prune
   persisted sessions with `--status`, `--older-than-days`, and `--dry-run`
   filters through the shared session command path.

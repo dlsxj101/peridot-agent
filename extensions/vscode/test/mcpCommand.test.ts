@@ -5,6 +5,7 @@ import {
   mcpAddSlashCommand,
   mcpConfigChangingSlashCommand,
   mcpRemoveSlashCommand,
+  mcpServersFromCommandResult,
   mcpServerChoices,
   mcpTestSlashCommand,
 } from '../src/mcpCommand';
@@ -56,4 +57,21 @@ test('mcpConfigChangingSlashCommand detects add and remove only', () => {
   assert.equal(mcpConfigChangingSlashCommand('/mcp test github'), false);
   assert.equal(mcpConfigChangingSlashCommand('/mcp list'), false);
   assert.equal(mcpConfigChangingSlashCommand('/session list'), false);
+});
+
+test('mcpServersFromCommandResult normalizes inventory rows', () => {
+  assert.deepEqual(
+    mcpServersFromCommandResult({
+      kind: 'mcp',
+      items: [
+        { label: ' github ', transport: 'http', tool_count: 3, connected: true },
+        { label: 'local', transport: 'stdio', detail: 'node server.js' },
+      ],
+    }),
+    [
+      { name: 'github', transport: 'http', toolCount: 3, connected: true },
+      { name: 'local', transport: 'stdio' },
+    ],
+  );
+  assert.equal(mcpServersFromCommandResult({ kind: 'session_list', items: [] }), undefined);
 });

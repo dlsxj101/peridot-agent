@@ -290,6 +290,35 @@ fn render_committee_block(state: &TuiState) -> String {
     )
 }
 
+fn render_mcp_block(state: &TuiState) -> String {
+    if state.side_panel.mcp_status.is_empty() {
+        return String::new();
+    }
+    let locale = state.config.language;
+    let mut lines = vec![tr(PhraseKey::McpPanelTitle, locale).to_string()];
+    for server in state.side_panel.mcp_status.iter().take(5) {
+        let status = if server.connected {
+            tr(PhraseKey::McpConnected, locale)
+        } else {
+            tr(PhraseKey::McpDisconnected, locale)
+        };
+        let transport = server
+            .transport
+            .as_deref()
+            .filter(|transport| !transport.is_empty())
+            .map(|transport| format!(" [{transport}]"))
+            .unwrap_or_default();
+        lines.push(format!(
+            "- {}{}: {} tools, {}",
+            server.name, transport, server.tool_count, status
+        ));
+    }
+    if state.side_panel.mcp_status.len() > 5 {
+        lines.push(format!("... +{}", state.side_panel.mcp_status.len() - 5));
+    }
+    format!("{}\n\n", lines.join("\n"))
+}
+
 /// Renders the side-panel Goal block as plain text (joined later into the
 /// side panel string). When no goal is active the block collapses to an
 /// empty string so the panel doesn't carry a "Goal" header for nothing.
@@ -1287,6 +1316,9 @@ pub fn render_text_snapshot(state: &TuiState) -> String {
                 state.side_panel.context_overhead_tokens,
             );
         }
+        if !state.side_panel.mcp_status.is_empty() {
+            let _ = write!(output, "{}", render_mcp_block(state));
+        }
         if state.agent_run_status != AgentRunStatus::Idle {
             let _ = writeln!(
                 output,
@@ -1719,10 +1751,11 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
         } else {
             format!("id: {}\n", short_session_id(&state.current_session_id))
         };
+        let mcp_block = render_mcp_block(state);
         let committee_block = render_committee_block(state);
         let request_context_block = render_request_context_block(state);
         let side = format!(
-            "{goal}Plan {done}/{}\n{}\n\nSession\n{session_id_line}agent: {}\nsteps: {}\nerrors: {}\nelapsed: {}s\n\n{}{}{}",
+            "{goal}Plan {done}/{}\n{}\n\nSession\n{session_id_line}agent: {}\nsteps: {}\nerrors: {}\nelapsed: {}s\n\n{}{}{}{}",
             state.side_panel.plan.len(),
             plan,
             agent_run_status_label(&state.agent_run_status),
@@ -1730,6 +1763,7 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
             state.side_panel.stats.errors,
             state.side_panel.stats.elapsed_seconds,
             request_context_block,
+            mcp_block,
             committee_block,
             render_subagent_monitor(&state.subagents),
         );

@@ -36,7 +36,7 @@ import {
   terminalStatusForEvent,
 } from './agentEventLifecycle';
 import { agentsSummaryForLoadedEvent, mcpServersForStatusEvent } from './agentEventContext';
-import { mcpConfigChangingSlashCommand } from './mcpCommand';
+import { mcpConfigChangingSlashCommand, mcpServersFromCommandResult } from './mcpCommand';
 
 export type {
   ApprovalResponse,
@@ -543,6 +543,13 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
   public appendCommandResult(result: CommandResultView): void {
     if (result.kind === 'branch_picker') {
       this.state.branchPicker = result;
+    }
+    const mcpServers = mcpServersFromCommandResult(result);
+    if (mcpServers) {
+      this.state.context = {
+        ...this.state.context,
+        mcpServers,
+      };
     }
     this.append({
       role: result.severity === 'error' ? 'error' : 'command',

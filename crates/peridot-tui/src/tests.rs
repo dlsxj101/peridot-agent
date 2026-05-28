@@ -1521,11 +1521,15 @@ fn cross_crate_events_update_side_panel_state() {
     state.apply_runtime_event(TuiRuntimeEvent::McpStatusChanged {
         servers: vec![McpServerSummary {
             name: "fs".to_string(),
+            transport: Some("stdio".to_string()),
             tool_count: 4,
             connected: true,
         }],
     });
     assert_eq!(state.side_panel.mcp_status.len(), 1);
+    let snapshot = render_text_snapshot(&state);
+    assert!(snapshot.contains("MCP"));
+    assert!(snapshot.contains("- fs [stdio]: 4 tools, connected"));
 
     state.apply_runtime_event(TuiRuntimeEvent::AgentsMdLoaded {
         rule_count: 12,
@@ -2058,11 +2062,13 @@ fn tab_autocompletes_mcp_server_name_arguments() {
     state.side_panel.mcp_status = vec![
         McpServerSummary {
             name: "filesystem".to_string(),
+            transport: Some("stdio".to_string()),
             tool_count: 4,
             connected: true,
         },
         McpServerSummary {
             name: "github".to_string(),
+            transport: Some("http".to_string()),
             tool_count: 2,
             connected: false,
         },

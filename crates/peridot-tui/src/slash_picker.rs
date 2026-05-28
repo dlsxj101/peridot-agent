@@ -2346,11 +2346,13 @@ mod tests {
         let servers = vec![
             crate::state::McpServerSummary {
                 name: "filesystem".to_string(),
+                transport: Some("stdio".to_string()),
                 tool_count: 4,
                 connected: true,
             },
             crate::state::McpServerSummary {
                 name: "github".to_string(),
+                transport: Some("http".to_string()),
                 tool_count: 2,
                 connected: false,
             },

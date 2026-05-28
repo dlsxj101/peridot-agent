@@ -1,4 +1,4 @@
-import type { McpServerSummary } from './types';
+import type { CommandResultView, McpServerSummary } from './types';
 
 export interface McpServerChoice {
   name: string;
@@ -50,6 +50,25 @@ export function mcpConfigChangingSlashCommand(input: string): boolean {
     .split(/\s+/)
     .map((part) => part.toLowerCase());
   return parts[0] === '/mcp' && (parts[1] === 'add' || parts[1] === 'remove');
+}
+
+export function mcpServersFromCommandResult(result: CommandResultView): McpServerSummary[] | undefined {
+  if (result.kind !== 'mcp' || !Array.isArray(result.items)) return undefined;
+  const servers = result.items
+    .map((item) => {
+      const name = (item.label ?? '').trim();
+      if (!name) return undefined;
+      const server: McpServerSummary = { name };
+      if (typeof item.transport === 'string' && item.transport.trim()) {
+        server.transport = item.transport.trim();
+      }
+      const toolCount = item.tool_count ?? item.toolCount;
+      if (typeof toolCount === 'number') server.toolCount = toolCount;
+      if (typeof item.connected === 'boolean') server.connected = item.connected;
+      return server;
+    })
+    .filter((server): server is McpServerSummary => Boolean(server));
+  return servers.length > 0 ? servers : undefined;
 }
 
 function mcpServerNameArg(name: string): string {

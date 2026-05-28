@@ -86,6 +86,9 @@
 - `/mcp test <name>` command results can now carry and render structured
   connectivity metadata, including `connected` and `tool_count`, alongside
   the server transport.
+- MCP command-result inventories now update sidebar context directly, so
+  later MCP pickers reflect the latest transport, tool count, and connection
+  state after `/mcp list`, `/mcp add`, `/mcp remove`, or `/mcp test`.
 - `/session prune [--status <state>] [--older-than-days N] [--dry-run]`
   now runs through the daemon command path and returns a structured prune
   result so editor users can preview or remove stale persisted sessions.

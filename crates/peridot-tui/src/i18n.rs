@@ -39,6 +39,12 @@ pub enum PhraseKey {
     /// (e.g. " sessions need attention" in English, "개 세션이 응답 대기 중"
     /// in Korean). Always rendered as `format!("{count}{suffix}")`.
     StatusSessionsAttentionSuffix,
+    /// TUI side-panel MCP block title.
+    McpPanelTitle,
+    /// TUI side-panel MCP connected marker.
+    McpConnected,
+    /// TUI side-panel MCP disconnected marker.
+    McpDisconnected,
 }
 
 /// Looks up the rendered phrase for `key` in `locale`.
@@ -72,6 +78,12 @@ pub fn tr(key: PhraseKey, locale: Locale) -> &'static str {
         (PhraseKey::NoticeSkillsLoading, Locale::Ko) => "스킬: 활성 스킬 목록을 불러오는 중...",
         (PhraseKey::StatusSessionsAttentionSuffix, Locale::En) => " sessions need attention",
         (PhraseKey::StatusSessionsAttentionSuffix, Locale::Ko) => "개 세션이 응답 대기 중",
+        (PhraseKey::McpPanelTitle, Locale::En) => "MCP",
+        (PhraseKey::McpPanelTitle, Locale::Ko) => "MCP",
+        (PhraseKey::McpConnected, Locale::En) => "connected",
+        (PhraseKey::McpConnected, Locale::Ko) => "연결됨",
+        (PhraseKey::McpDisconnected, Locale::En) => "disconnected",
+        (PhraseKey::McpDisconnected, Locale::Ko) => "연결 안 됨",
     }
 }
 

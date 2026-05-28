@@ -1592,6 +1592,19 @@ shared daemon, TUI, and VS Code extension surfaces.
   `connected` and `tool_count`, and VS Code command rows render those values
   alongside transport metadata.
 
+### E125. MCP Status Panel Visibility
+
+- **Status**: landed.
+- **Goal**: make the MCP inventory snapshot visible after it is refreshed,
+  not only available as hidden autocomplete context.
+- **Where**: TUI side-panel rendering, localized side-panel labels, VS Code
+  MCP command-result reconciliation, and MCP command helper tests.
+- **Result**: TUI status panel now renders configured MCP servers with
+  transport, tool count, and connected/disconnected state. VS Code applies
+  structured MCP command-result rows back into sidebar context, so after
+  `/mcp list`, `/mcp add`, `/mcp remove`, or `/mcp test`, later MCP pickers
+  show the latest transport and connectivity metadata.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.
