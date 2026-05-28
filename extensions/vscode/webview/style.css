@@ -1830,12 +1830,27 @@ textarea {
   color: var(--peri-fg-muted);
 }
 
+.completion-status {
+  width: fit-content;
+  max-width: 100%;
+  margin: 2px 0 4px;
+  padding: 6px 10px;
+  border: 1px solid var(--peri-border);
+  border-radius: var(--peri-radius);
+  background: var(--peri-bg-elev);
+  color: var(--peri-fg);
+}
+
 .status-dot {
   width: 5px;
   height: 5px;
   border-radius: 50%;
   background: var(--peri-fg-muted);
   flex: 0 0 auto;
+}
+
+.completion-dot {
+  background: var(--peri-accent-strong);
 }
 
 .status-detail {

@@ -743,6 +743,13 @@ async fn shell_readonly_allows_search_and_rejects_writes() {
     ));
     fs::create_dir_all(&root).unwrap();
     fs::write(root.join("notes.txt"), "hello readonly\n").unwrap();
+    let nested = root.join("megaapim-gateway/megaapim-gateway-services/megaapim-gateway-services-endpoint-discovery/src/main/java/com/megatus/megaapim/gateway/services/endpoint/discovery");
+    fs::create_dir_all(&nested).unwrap();
+    fs::write(
+        nested.join("EndpointDiscoveryService.java"),
+        "class EndpointDiscoveryService {}\n",
+    )
+    .unwrap();
     let ctx = ToolContext::new(&root, PermissionMode::Auto);
 
     let result = ShellReadOnlyTool
@@ -766,6 +773,24 @@ async fn shell_readonly_allows_search_and_rejects_writes() {
             .as_str()
             .unwrap()
             .contains("hello readonly")
+    );
+
+    let nested_numbered = ShellReadOnlyTool
+        .execute(
+            serde_json::json!({
+                "command": "nl -ba megaapim-gateway/megaapim-gateway-services/megaapim-gateway-services-endpoint-discovery/src/main/java/com/megatus/megaapim/gateway/services/endpoint/discovery/EndpointDiscoveryService.java"
+            }),
+            &ctx,
+        )
+        .await
+        .unwrap();
+    assert!(nested_numbered.success);
+    assert_eq!(nested_numbered.output["workspace_mutated"], false);
+    assert!(
+        nested_numbered.output["stdout"]
+            .as_str()
+            .unwrap()
+            .contains("EndpointDiscoveryService")
     );
 
     let err = ShellReadOnlyTool

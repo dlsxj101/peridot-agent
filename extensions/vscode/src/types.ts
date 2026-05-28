@@ -231,6 +231,7 @@ export interface CompactionSnapshotView {
 export interface TranscriptItem {
   role: TranscriptRole;
   text: string;
+  statusKind?: 'completion';
   detail?: string;
   compaction?: CompactionSnapshotView;
   commandResult?: CommandResultView;

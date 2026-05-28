@@ -1549,7 +1549,11 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         : finalStatus === 'Interrupted'
           ? 'Interrupted after'
           : 'Finished in';
-      this.state.transcript.push({ role: 'status', text: `${label} ${formatElapsed(elapsed)}` });
+      this.state.transcript.push({
+        role: 'status',
+        statusKind: 'completion',
+        text: `${label} ${formatElapsed(elapsed)}`,
+      });
     }
   }
 

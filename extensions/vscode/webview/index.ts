@@ -67,7 +67,7 @@ let lastTranscriptAnimationKey = '';
 let lastTranscriptCount = 0;
 let lastComposerRunning: boolean | undefined;
 let editingSessionId: string | undefined;
-let editingSessionDraft = '';
+let editingSessionDraft: string | undefined;
 let editingSessionSelectOnFocus: string | undefined;
 let deletingSessionId: string | undefined;
 let sessionMenuOpen = false;
@@ -123,7 +123,7 @@ document.addEventListener('click', (event) => {
   const menu = document.querySelector('.session-menu');
   if (menu && !menu.contains(event.target as Node)) {
     editingSessionId = undefined;
-    editingSessionDraft = '';
+    editingSessionDraft = undefined;
     editingSessionSelectOnFocus = undefined;
     deletingSessionId = undefined;
     sessionMenuOpen = false;
@@ -889,7 +889,7 @@ function renderSessionMenu(s: SidebarState): HTMLElement {
       input.id = `session-rename-${session.id}`;
       input.className = 'session-menu-rename-input';
       input.dataset.sessionId = session.id;
-      input.value = editingSessionDraft || session.title;
+      input.value = editingSessionDraft ?? session.title;
       input.setAttribute('aria-label', `New title for ${session.title}`);
       input.addEventListener('click', (event) => {
         event.preventDefault();
@@ -923,7 +923,7 @@ function renderSessionMenu(s: SidebarState): HTMLElement {
     const actions = el('span', 'session-menu-actions');
     if (isEditing) {
       const save = sessionMenuAction('check', `Save ${session.title}`, () =>
-        commitSessionRename(session.id, editingSessionDraft || session.title),
+        commitSessionRename(session.id, editingSessionDraft ?? session.title),
       );
       const cancel = sessionMenuAction('remove', 'Cancel rename', cancelSessionRename);
       actions.append(save, cancel);
@@ -932,7 +932,7 @@ function renderSessionMenu(s: SidebarState): HTMLElement {
       const confirm = sessionMenuAction('check', 'Confirm delete', () => {
         deletingSessionId = undefined;
         editingSessionId = undefined;
-        editingSessionDraft = '';
+        editingSessionDraft = undefined;
         editingSessionSelectOnFocus = undefined;
         vscode.postMessage({ type: 'deleteSession', id: session.id });
       });
@@ -987,7 +987,7 @@ function commitSessionRename(id: string, title: string): void {
   const trimmed = title.trim();
   if (!trimmed) return;
   editingSessionId = undefined;
-  editingSessionDraft = '';
+  editingSessionDraft = undefined;
   editingSessionSelectOnFocus = undefined;
   sessionMenuOpen = true;
   vscode.postMessage({ type: 'renameSession', id, title: trimmed });
@@ -995,7 +995,7 @@ function commitSessionRename(id: string, title: string): void {
 
 function cancelSessionRename(): void {
   editingSessionId = undefined;
-  editingSessionDraft = '';
+  editingSessionDraft = undefined;
   editingSessionSelectOnFocus = undefined;
   deletingSessionId = undefined;
   sessionMenuOpen = true;
@@ -1452,6 +1452,7 @@ function transcriptItemSignature(item: TranscriptItem): string {
   return json({
     role: item.role,
     text: item.text,
+    statusKind: item.statusKind,
     detail: item.detail,
     commandResult: item.commandResult,
     requestId: item.requestId,
@@ -2206,8 +2207,17 @@ function appendSelectOptions<Value extends string>(
 
 function renderStatusLine(item: TranscriptItem): HTMLElement {
   if (item.compaction) return renderCompactionStatus(item);
+  if (item.statusKind === 'completion') return renderCompletionStatus(item);
   const wrap = el('div', 'status-line');
   wrap.append(el('span', 'status-dot'));
+  wrap.append(el('span', 'status-text', item.text));
+  if (item.detail) wrap.append(el('span', 'status-detail', `· ${item.detail}`));
+  return wrap;
+}
+
+function renderCompletionStatus(item: TranscriptItem): HTMLElement {
+  const wrap = el('div', 'status-line completion-status');
+  wrap.append(el('span', 'status-dot completion-dot'));
   wrap.append(el('span', 'status-text', item.text));
   if (item.detail) wrap.append(el('span', 'status-detail', `· ${item.detail}`));
   return wrap;

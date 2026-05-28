@@ -87,6 +87,15 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
   resolution for nested workspaces, moves completed run duration into the
   transcript, and keeps session-title rename edits from being re-selected on
   refresh.
+- **Cursor file-link fuzzy fallback** now opens abbreviated paths with
+  `...` and reordered camel-case filename hints by searching under the
+  matching workspace prefix before warning.
+- **VS Code completion duration bubbles** now render finished / failed /
+  interrupted timings as transcript bubbles after the assistant output
+  instead of a composer-adjacent status line.
+- **VS Code session rename drafts** now preserve empty in-progress input
+  during sidebar refreshes, preventing slow typing or deletion from being
+  overwritten by the previous title.
 - **Read-only shell inspection** now allows `nl` so numbered file reads such
   as `nl -ba path/to/File.java` run without a false permission denial.
 - **VS Code live usage budget dock** now renders executor tokens,

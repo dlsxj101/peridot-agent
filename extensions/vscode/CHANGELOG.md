@@ -65,6 +65,14 @@
 - Completed run duration now lands in the transcript instead of staying pinned
   above the composer, and session title rename inputs no longer re-select text
   on every sidebar refresh.
+- Abbreviated file links containing `...` now expand to workspace globs, and
+  Java-like reordered camel-case hints such as `ApiKeyMongo.java` can resolve to
+  the best matching file under the same project prefix.
+- Completed run duration now renders as a transcript completion bubble, so the
+  final timing reads as part of the conversation rather than a composer-pinned
+  status line.
+- Session title rename drafts now preserve empty input across sidebar refreshes,
+  avoiding title text being restored over slow edits or deletions.
 - Live usage and budget updates now render as compact composer chips for
   executor tokens, aggregate executor+committee cost, budget percentage, and
   turn pressure.

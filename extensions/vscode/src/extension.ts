@@ -12,7 +12,13 @@ import { peridotChildEnv } from './processEnv';
 import { SettingsPanelManager } from './settingsPanel';
 import { StatusCache } from './statusCache';
 import { isTerminalAgentEvent } from './agentEventLifecycle';
-import { isAbsoluteWorkspacePath, workspaceFileCandidatePaths, workspaceFindFilePatterns } from './workspacePath';
+import {
+  bestWorkspaceFileMatch,
+  isAbsoluteWorkspacePath,
+  workspaceFileCandidatePaths,
+  workspaceFindFilePatterns,
+  workspaceFuzzyFindFilePatterns,
+} from './workspacePath';
 import type { CommandResultView, DaemonSessionSummary, SlashCommandSpec } from './types';
 import {
   PeridotSidebarProvider,
@@ -2653,6 +2659,28 @@ async function openWorkspaceFile(
         const found = await vscode.workspace.findFiles(pattern, undefined, 1);
         if (found.length > 0) {
           const document = await vscode.workspace.openTextDocument(found[0]);
+          await vscode.window.showTextDocument(document, {
+            ...selectionOptions,
+            preview: openOptions?.preview ?? false,
+            viewColumn:
+              openOptions?.beside && vscode.window.activeTextEditor
+                ? vscode.ViewColumn.Beside
+                : vscode.ViewColumn.Active,
+          });
+          return;
+        }
+      } catch (err) {
+        errors.push(`findFiles ${pattern}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
+    for (const pattern of workspaceFuzzyFindFilePatterns(relativePath)) {
+      try {
+        const found = await vscode.workspace.findFiles(pattern, undefined, 50);
+        const best = bestWorkspaceFileMatch(relativePath, found.map((uri) => uri.fsPath));
+        const uri = best ? found.find((candidate) => candidate.fsPath === best) : undefined;
+        if (uri) {
+          const document = await vscode.workspace.openTextDocument(uri);
           await vscode.window.showTextDocument(document, {
             ...selectionOptions,
             preview: openOptions?.preview ?? false,

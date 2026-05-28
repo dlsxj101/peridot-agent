@@ -1095,6 +1095,23 @@ shared daemon, TUI, and VS Code extension surfaces.
   Budget and turn chips switch to warning/critical tones near their
   configured limits.
 
+### E88. Cursor Path And Run-Finish Polish
+
+- **Status**: landed.
+- **Goal**: close the Cursor-observed gaps left after the first path and
+  session polish pass: abbreviated file links, completion timing placement,
+  slow session-title editing, and `nl -ba` read-only confidence.
+- **Where**: VS Code workspace file resolution, webview transcript/status
+  rendering, session menu rename draft handling, and read-only shell tests.
+- **Result**: abbreviated file links containing `...` expand to workspace
+  globs, then fall back to a narrowed fuzzy match that can resolve
+  reordered camel-case Java hints such as `ApiKeyMongo.java` to
+  `MongoApiKeyRepository.java` under the same project prefix. Finished /
+  failed / interrupted durations now render as transcript completion
+  bubbles instead of composer-adjacent status rows. Session rename drafts
+  preserve empty in-progress input across refreshes, and `nl -ba` remains
+  covered for long nested Java paths.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.
