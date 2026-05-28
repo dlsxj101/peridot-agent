@@ -38,7 +38,7 @@ use crate::commands::{
     AuthProvider, append_session_note, move_auto_skill_to_archive, read_managed_env_var,
     read_session_notes, read_stored_api_key, read_stored_openai_oauth_credentials,
     restore_archived_skill, search_session_transcript_hits, session_count_summary, session_locate,
-    session_show_summary,
+    session_resume_summary, session_show_summary,
 };
 use crate::run_loop::{AgentTaskOptions, MessageBusHookup, run_task_with_events};
 use crate::session_router::{RouterMessageBus, SessionHandle, SessionRouter, WorkspaceIsolation};
@@ -1848,6 +1848,9 @@ async fn execute_session_command(
         SlashCommand::SessionLocate(target) => {
             handle_command_session_locate(state, raw_command, &target).await
         }
+        SlashCommand::SessionResume(target) => {
+            handle_command_session_resume(state, raw_command, &target).await
+        }
         SlashCommand::SessionDelete(target) => {
             handle_command_session_delete(state, raw_command, &target).await
         }
@@ -2315,6 +2318,34 @@ async fn handle_command_session_locate(
         "items": [
             { "label": "session", "detail": located.id },
             { "label": "directory", "path": located.path, "detail": if located.exists { "present" } else { "not present" } },
+        ],
+    }))
+}
+
+async fn handle_command_session_resume(
+    state: &DaemonState,
+    raw_command: &str,
+    target: &str,
+) -> Result<Value, String> {
+    let session_id = resolve_session_target_id(state, target)
+        .await?
+        .unwrap_or_else(|| target.to_string());
+    let resume = session_resume_summary(&state.project_root, &session_id)
+        .map_err(|err| format!("session resume: {target} not found ({err})"))?;
+    Ok(serde_json::json!({
+        "kind": "start_task",
+        "title": "Session Resume",
+        "message": format!("session resume: starting {}", resume.id),
+        "severity": "info",
+        "command": raw_command,
+        "target": target,
+        "session_id": resume.id,
+        "summary": resume.summary,
+        "task": resume.resume_task,
+        "label": "session resume",
+        "items": [
+            { "label": "session", "detail": resume.id },
+            { "label": "summary", "detail": resume.summary },
         ],
     }))
 }
@@ -6363,6 +6394,44 @@ mod tests {
             result["items"][1]["path"],
             session_dir.display().to_string()
         );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn session_command_resume_returns_start_task() {
+        let root = test_project("session-command-resume");
+        let store = MemoryStore::new(root.join(".peridot/memory.db"));
+        let mut record = SessionRecord::new("resume-session", &root);
+        record.summary = "resume target".into();
+        record.last_task = Some("fix parser".into());
+        store.save_session_record(&record).unwrap();
+        let (tx, _rx) = mpsc::unbounded_channel::<String>();
+        let state = DaemonState::new(
+            root.clone(),
+            PeridotConfig::default(),
+            test_options(None),
+            tx,
+        );
+
+        let result = execute_session_command(
+            &state,
+            None,
+            "/session resume fix",
+            SlashCommand::SessionResume("fix".into()),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result["kind"], "start_task");
+        assert_eq!(result["title"], "Session Resume");
+        assert_eq!(result["label"], "session resume");
+        assert_eq!(result["session_id"], "resume-session");
+        assert_eq!(result["summary"], "resume target");
+        assert_eq!(
+            result["task"],
+            "Resume session resume-session from this summary: resume target"
+        );
+        assert_eq!(result["items"][0]["detail"], "resume-session");
         let _ = std::fs::remove_dir_all(root);
     }
 

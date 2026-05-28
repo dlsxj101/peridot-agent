@@ -8,20 +8,12 @@ pub(super) fn apply_resume(
     let Some(resume_id) = resume_id else {
         return Ok(task);
     };
-    let store = MemoryStore::new(project_root.join(".peridot/memory.db"));
-    let session = store
-        .get_session(resume_id)?
-        .with_context(|| format!("session not found: {resume_id}"))?;
-    Ok(resume_task_text(&session.id, &session.summary, &task))
-}
-
-pub(super) fn resume_task_text(id: &str, summary: &str, task: &str) -> String {
-    let task = task.trim();
-    if task.is_empty() {
-        format!("Resume session {id} from this summary: {summary}")
-    } else {
-        format!("Resume session {id} from this summary: {summary}\n\nCurrent task: {task}")
-    }
+    let resume = commands::session_resume_summary(project_root, resume_id)?;
+    Ok(commands::session_resume_task_text(
+        &resume.id,
+        &resume.summary,
+        &task,
+    ))
 }
 
 pub(super) async fn save_run_session(

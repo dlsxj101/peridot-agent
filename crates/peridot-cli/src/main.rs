@@ -16,6 +16,7 @@ use commands::{
     run_config_command, run_doctor_command, run_env_command, run_login_command, run_logout_command,
     run_mcp_command, run_session_command, run_setting_command, run_setup_command, run_ship_command,
     run_skill_command, run_update_command, run_verify_command, session_count_summary,
+    session_resume_summary,
 };
 use peridot_common::{
     AskUserAnswer, AskUserRequest, ContextConfig, ExecutionMode, MemoryConfig, PeriError,
@@ -1502,6 +1503,32 @@ fn apply_session_command(
             let result = commands::session_locate(project_template, &id);
             let suffix = if result.exists { "" } else { " (not present)" };
             state.push_transcript(format!("session locate: {}{}", result.path, suffix));
+        }
+        SessionCommandEvent::SessionResume(target) => {
+            let id = resolve_session_id(state, &target).unwrap_or(target);
+            match session_resume_summary(project_template, &id) {
+                Ok(result) => {
+                    state.push_transcript(format!("session resume: starting {}", result.id));
+                    spawn_session_task(
+                        handle,
+                        event_tx,
+                        router,
+                        state.current_session_id.clone(),
+                        result.resume_task,
+                        state.header.mode,
+                        state.header.permission,
+                        state.header.model.clone(),
+                        state.reasoning_effort,
+                        state.service_tier.clone(),
+                        options_template,
+                        config_template,
+                        project_template,
+                        ask_user_pending,
+                        ask_user_next_id,
+                    );
+                }
+                Err(err) => state.push_error(format!("session resume: {err}")),
+            }
         }
         SessionCommandEvent::Fork(task) => {
             let new_id = format!("fork-{}-{}", std::process::id(), unix_timestamp());

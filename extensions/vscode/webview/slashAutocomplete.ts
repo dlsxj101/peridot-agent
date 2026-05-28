@@ -325,7 +325,15 @@ function sessionTargetArgumentContext(
   query: string,
   sessionTargets: SlashSessionTarget[],
 ): SlashArgumentContext | undefined {
-  const commandName = ['/session switch', '/session close', '/session delete', '/session rename']
+  const commandName = [
+    '/session switch',
+    '/session close',
+    '/session delete',
+    '/session rename',
+    '/session show',
+    '/session locate',
+    '/session resume',
+  ]
     .filter((candidate) => query === candidate || query.startsWith(`${candidate} `))
     .sort((a, b) => b.length - a.length)[0];
   if (!commandName) return undefined;
@@ -359,7 +367,17 @@ function sessionTargetArgumentContext(
 function sessionSubcommandArgumentContext(query: string): SlashArgumentContext | undefined {
   const commandName = '/session';
   if (!query.startsWith(`${commandName} `)) return undefined;
-  const continuationOptions = ['new', 'switch', 'close', 'delete', 'rename'];
+  const continuationOptions = [
+    'new',
+    'switch',
+    'close',
+    'delete',
+    'rename',
+    'search',
+    'show',
+    'locate',
+    'resume',
+  ];
   const terminalOptions = ['save', 'list', 'count'];
   const hasTrailingSpace = /\s$/.test(query);
   const needle = query.slice(commandName.length).trim().toLowerCase();

@@ -2983,6 +2983,7 @@ fn session_switch_and_close_slashes_queue_router_intents() {
     );
     apply_slash_command(&mut state, SlashCommand::SessionShow("s1".to_string()));
     apply_slash_command(&mut state, SlashCommand::SessionLocate("s1".to_string()));
+    apply_slash_command(&mut state, SlashCommand::SessionResume("s1".to_string()));
     apply_slash_command(
         &mut state,
         SlashCommand::SessionRename {
@@ -3002,6 +3003,7 @@ fn session_switch_and_close_slashes_queue_router_intents() {
             SessionCommandEvent::SessionSearch("parser failure".to_string()),
             SessionCommandEvent::SessionShow("s1".to_string()),
             SessionCommandEvent::SessionLocate("s1".to_string()),
+            SessionCommandEvent::SessionResume("s1".to_string()),
             SessionCommandEvent::SessionRename {
                 target: "s1".to_string(),
                 title: "main work".to_string(),

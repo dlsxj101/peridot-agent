@@ -51,6 +51,10 @@ fn parses_goal_slash_commands() {
         Some(SlashCommand::SessionLocate("s1".to_string()))
     );
     assert_eq!(
+        parse_slash_command("/session resume s1"),
+        Some(SlashCommand::SessionResume("s1".to_string()))
+    );
+    assert_eq!(
         parse_slash_command("/fast on"),
         Some(SlashCommand::Fast(Some(true)))
     );

@@ -888,6 +888,8 @@ pub enum SessionCommandEvent {
     SessionShow(String),
     /// `/session locate <id|title>` — show the session directory path.
     SessionLocate(String),
+    /// `/session resume <id|title>` — start a task from a saved session summary.
+    SessionResume(String),
     /// `/fork <task>` — spawn a single-turn Fork subagent inline.
     Fork(String),
     /// `/teammate <task>` — spawn a worktree-isolated Teammate subagent.

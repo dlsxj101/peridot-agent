@@ -32,6 +32,13 @@ pub(crate) struct SessionLocateResult {
     pub(crate) exists: bool,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+pub(crate) struct SessionResumeResult {
+    pub(crate) id: String,
+    pub(crate) summary: String,
+    pub(crate) resume_task: String,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct RewindContextResult {
     pub(crate) restored_prompt: String,
@@ -73,6 +80,45 @@ pub(crate) fn rewind_context_entries(
             rewind_turn_id,
         },
     ))
+}
+
+pub(crate) fn session_resume_task_text(id: &str, summary: &str, task: &str) -> String {
+    let task = task.trim();
+    if task.is_empty() {
+        format!("Resume session {id} from this summary: {summary}")
+    } else {
+        format!("Resume session {id} from this summary: {summary}\n\nCurrent task: {task}")
+    }
+}
+
+pub(crate) fn session_resume_summary(project_root: &Path, id: &str) -> Result<SessionResumeResult> {
+    let store = memory_store(project_root);
+    let session = store.get_session(id)?;
+    let record = store.get_session_record(id).unwrap_or_default();
+    let summary = session
+        .as_ref()
+        .map(|session| session.summary.trim())
+        .filter(|summary| !summary.is_empty())
+        .or_else(|| {
+            record
+                .as_ref()
+                .map(|record| record.summary.trim())
+                .filter(|summary| !summary.is_empty())
+        })
+        .or_else(|| {
+            record
+                .as_ref()
+                .and_then(|record| record.last_task.as_deref())
+                .map(str::trim)
+                .filter(|task| !task.is_empty())
+        })
+        .with_context(|| format!("session not found: {id}"))?
+        .to_string();
+    Ok(SessionResumeResult {
+        id: id.to_string(),
+        resume_task: session_resume_task_text(id, &summary, ""),
+        summary,
+    })
 }
 
 pub(crate) fn run_session_command(
@@ -158,23 +204,17 @@ pub(crate) fn run_session_command(
             }
         }
         SessionCommand::Resume { id } => {
-            let session = store
-                .get_session(id)?
-                .with_context(|| format!("session not found: {id}"))?;
-            let resume_task = format!(
-                "Resume session {} from this summary: {}",
-                session.id, session.summary
-            );
+            let resume = session_resume_summary(project_root, id)?;
             match output {
                 OutputFormat::Json => println!(
                     "{}",
                     serde_json::to_string_pretty(&serde_json::json!({
-                        "id": session.id,
-                        "summary": session.summary,
-                        "resume_task": resume_task
+                        "id": resume.id,
+                        "summary": resume.summary,
+                        "resume_task": resume.resume_task
                     }))?
                 ),
-                OutputFormat::Text => println!("{resume_task}"),
+                OutputFormat::Text => println!("{}", resume.resume_task),
             }
         }
         SessionCommand::Save { id, summary } => {

@@ -1223,6 +1223,10 @@ pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
             state.push_transcript(format!("session locate: resolving {target}..."));
             state.push_pending_session_command(SessionCommandEvent::SessionLocate(target));
         }
+        SlashCommand::SessionResume(target) => {
+            state.push_transcript(format!("session resume: loading {target}..."));
+            state.push_pending_session_command(SessionCommandEvent::SessionResume(target));
+        }
         SlashCommand::SubagentModel(change) => match change {
             peridot_core::SubagentModelChange::Set(name) => {
                 let from = previous_subagent_model

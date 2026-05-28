@@ -127,6 +127,10 @@ Remaining scoped polish: none currently tracked in this runbook.
   editor clients; the extension renders it as a picker and dispatches
   `/branch turn <id>` when the operator selects a turn.
 
+### M35 — `/session resume <id|title>` interactive parity (landed)
+- `session_resume_task_text` is now shared between CLI resume handling and interactive slash commands, so `peridot session resume <id>`, TUI `/session resume <id|title>`, and VS Code daemon `session.command` all produce the same continuation prompt.
+- The TUI resolves visible session ids/titles first and starts the continuation in the current foreground session. The VS Code daemon resolves persisted titles through `session_list_result` and returns a `start_task` result, reusing the extension's existing automatic dispatch path.
+
 ### M34 — `peridot version --detailed` (landed)
 - Bare `peridot version` still prints `peridot <semver>` for backwards compatibility with scripts that grep the first token.
 - `peridot version --detailed` adds three indented follow-up lines: `target: <os>`, `arch: <arch>`, and `profile: <release|dev>` when the binary was built with `CARGO_BUILD_PROFILE` propagated. Helpful when triaging "which binary is the operator running" against a release vs a local dev build.

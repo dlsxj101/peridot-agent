@@ -281,7 +281,7 @@ fn parse_reviewer_verdict_strips_json_code_fence() {
 
 #[test]
 fn resume_text_wraps_current_task() {
-    let text = resume_task_text("demo", "created parser", "finish tests");
+    let text = super::commands::session_resume_task_text("demo", "created parser", "finish tests");
 
     assert!(text.contains("Resume session demo"));
     assert!(text.contains("created parser"));
@@ -290,7 +290,7 @@ fn resume_text_wraps_current_task() {
 
 #[test]
 fn resume_text_handles_empty_task() {
-    let text = resume_task_text("demo", "created parser", "");
+    let text = super::commands::session_resume_task_text("demo", "created parser", "");
 
     assert_eq!(
         text,

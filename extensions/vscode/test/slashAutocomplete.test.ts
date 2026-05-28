@@ -52,6 +52,26 @@ const commands: SlashCommandSpec[] = [
     argHint: '<id|title> <new-title>',
   },
   {
+    name: '/session search',
+    description: 'search sessions',
+    argHint: '<query>',
+  },
+  {
+    name: '/session show',
+    description: 'show session',
+    argHint: '<id|title>',
+  },
+  {
+    name: '/session locate',
+    description: 'locate session',
+    argHint: '<id|title>',
+  },
+  {
+    name: '/session resume',
+    description: 'resume session',
+    argHint: '<id|title>',
+  },
+  {
     name: '/session save',
     description: 'save session',
   },
@@ -303,6 +323,21 @@ test('slashArgumentContext filters session target arguments', () => {
   assert.deepEqual(rename?.options, ['s-1']);
   assert.equal(rename?.appendSpace, true);
   assert.equal(slashArgumentContext('/session rename s-1 new title', commands, sessions), undefined);
+
+  const show = slashArgumentContext('/session show parser', commands, sessions);
+  assert.equal(show?.command.name, '/session show');
+  assert.deepEqual(show?.options, ['s-1']);
+  assert.equal(show?.appendSpace, false);
+
+  const locate = slashArgumentContext('/session locate release', commands, sessions);
+  assert.equal(locate?.command.name, '/session locate');
+  assert.deepEqual(locate?.options, ['s-2']);
+  assert.equal(locate?.appendSpace, false);
+
+  const resume = slashArgumentContext('/session resume parser', commands, sessions);
+  assert.equal(resume?.command.name, '/session resume');
+  assert.deepEqual(resume?.options, ['s-1']);
+  assert.equal(resume?.appendSpace, false);
 });
 
 test('slashArgumentContext leaves argument room after session subcommands', () => {
@@ -317,11 +352,17 @@ test('slashArgumentContext leaves argument room after session subcommands', () =
   assert.deepEqual(rename?.options, ['rename']);
   assert.equal(rename?.appendSpace, true);
 
+  const resume = slashArgumentContext('/session resu', commands);
+  assert.equal(resume?.command.name, '/session');
+  assert.deepEqual(resume?.options, ['resume']);
+  assert.equal(resume?.appendSpace, true);
+
   assert.equal(slashArgumentContext('/session rename ', commands), undefined);
+  assert.equal(slashArgumentContext('/session resume ', commands), undefined);
   assert.equal(slashArgumentContext('/session s', commands), undefined);
   assert.deepEqual(
     filteredSlashCommands('/session s', commands).map((command) => command.name),
-    ['/session save', '/session switch'],
+    ['/session save', '/session search', '/session show', '/session switch'],
   );
   assert.equal(slashArgumentContext('/session save', commands), undefined);
 });

@@ -36,6 +36,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
   signature changes while the TUI is open, so skills added by another
   client or CLI command appear in `/skill-name` suggestions without
   waiting for the next agent run.
+- **`/session resume <id|title>` slash parity** lets both TUI and VS Code
+  users start a continuation task from a persisted session summary without
+  leaving the interactive surface.
 - **Skill-name argument autocomplete** now works in both TUI and VS Code
   for skill management commands such as `/skills show <name>` and
   `/skills use <name>`, while `/skills restore <name>` completes archived

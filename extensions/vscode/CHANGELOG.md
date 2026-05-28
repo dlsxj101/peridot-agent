@@ -25,14 +25,16 @@
   `/skills restore <name>` without showing archived skills as direct
   `/skill-name` suggestions.
 - Session-target argument autocomplete now fills stable session ids for
-  `/session switch|close|delete|rename`, including matches from visible
-  session titles.
+  `/session switch|close|delete|rename|show|locate|resume`, including
+  matches from visible session titles.
 - Session subcommand continuation autocomplete now accepts partial
   subcommands such as `/session sw` into `/session switch ` so users can
   immediately type or autocomplete the target session.
 - `/session search <query>` now runs through the daemon command path and
   renders structured cross-session transcript hits in the same command
   result block as other session utilities.
+- `/session resume <id|title>` now runs through the daemon command path and
+  starts a continuation task from the selected persisted session summary.
 - `/session show <id|title>` now runs through the daemon command path and
   renders structured persisted session details without requiring a separate
   terminal invocation.

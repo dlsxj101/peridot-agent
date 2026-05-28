@@ -1243,6 +1243,19 @@ shared daemon, TUI, and VS Code extension surfaces.
   clients. VS Code receives a structured `session_locate` command result with
   a path row, so the existing command renderer can expose the directory path.
 
+### E99. Session Resume Slash Parity
+
+- **Status**: landed.
+- **Goal**: let editor and TUI users continue from a persisted session
+  summary without copying the CLI `peridot session resume` output manually.
+- **Where**: shared slash parser/catalog, TUI session command queue, daemon
+  `session.command`, and a reusable resume-task helper shared with the CLI.
+- **Result**: `/session resume <id|title>` resolves visible or persisted
+  session targets and builds the same continuation prompt as
+  `peridot session resume <id>`. TUI starts the task in the current
+  foreground session; VS Code receives a `start_task` command result and
+  dispatches it through the existing automatic task-start path.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.
