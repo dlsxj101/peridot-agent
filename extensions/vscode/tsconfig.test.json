@@ -8,9 +8,11 @@
   },
   "include": [
     "src/agentEventContext.ts",
+    "src/agentEventLifecycle.ts",
     "src/agentEventTranscript.ts",
     "src/localSlashAction.ts",
     "src/sessionReconcile.ts",
+    "src/workspacePath.ts",
     "webview/composerHistory.ts",
     "webview/slashAutocomplete.ts",
     "test/**/*.test.ts"

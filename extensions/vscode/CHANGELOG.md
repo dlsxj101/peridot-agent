@@ -56,6 +56,15 @@
 - Run-start daemon events now move the VS Code sidebar from
   `Starting daemon` to `Running` immediately while remaining out of the
   transcript.
+- Interrupted daemon events now stop the active VS Code run, set the
+  sidebar status to `Interrupted`, and use the same active-run cleanup path
+  as other terminal events.
+- File links now try workspace-name-prefixed and normalized relative path
+  candidates before falling back to basename search, which improves Cursor
+  workspaces opened one level above or below the daemon project root.
+- Completed run duration now lands in the transcript instead of staying pinned
+  above the composer, and session title rename inputs no longer re-select text
+  on every sidebar refresh.
 - Provider argument autocomplete now fills supported provider ids for
   `/provider <claude-api|openai-api|openrouter-api|openai-oauth>` from the
   shared daemon slash catalog.

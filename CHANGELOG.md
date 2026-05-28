@@ -80,6 +80,15 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **Run start status parity** now applies `run_started` daemon events to
   the VS Code sidebar status immediately, moving from `Starting daemon` to
   `Running` before the first model/tool event arrives.
+- **Interrupted event lifecycle parity** now treats `interrupted` daemon
+  events as terminal in VS Code, clearing the active running state and
+  surfacing `Interrupted` in the sidebar.
+- **VS Code/Cursor path and session polish** improves relative file-link
+  resolution for nested workspaces, moves completed run duration into the
+  transcript, and keeps session-title rename edits from being re-selected on
+  refresh.
+- **Read-only shell inspection** now allows `nl` so numbered file reads such
+  as `nl -ba path/to/File.java` run without a false permission denial.
 - **Provider argument autocomplete** now exposes the supported provider ids
   for `/provider <claude-api|openai-api|openrouter-api|openai-oauth>` through
   the shared slash catalog, TUI picker, daemon JSON catalog, and VS Code

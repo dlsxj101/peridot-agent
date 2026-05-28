@@ -755,6 +755,19 @@ async fn shell_readonly_allows_search_and_rejects_writes() {
     assert!(result.success);
     assert_eq!(result.output["workspace_mutated"], false);
 
+    let numbered = ShellReadOnlyTool
+        .execute(serde_json::json!({"command": "nl -ba notes.txt"}), &ctx)
+        .await
+        .unwrap();
+    assert!(numbered.success);
+    assert_eq!(numbered.output["workspace_mutated"], false);
+    assert!(
+        numbered.output["stdout"]
+            .as_str()
+            .unwrap()
+            .contains("hello readonly")
+    );
+
     let err = ShellReadOnlyTool
         .execute(
             serde_json::json!({"command": "printf nope > notes.txt"}),

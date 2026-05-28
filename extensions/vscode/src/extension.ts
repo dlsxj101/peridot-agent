@@ -11,6 +11,8 @@ import { resetBinaryCache, resolvePeridotBinary } from './peridotBin';
 import { peridotChildEnv } from './processEnv';
 import { SettingsPanelManager } from './settingsPanel';
 import { StatusCache } from './statusCache';
+import { isTerminalAgentEvent } from './agentEventLifecycle';
+import { isAbsoluteWorkspacePath, workspaceFileCandidatePaths, workspaceFindFilePatterns } from './workspacePath';
 import type { CommandResultView, DaemonSessionSummary, SlashCommandSpec } from './types';
 import {
   PeridotSidebarProvider,
@@ -2597,7 +2599,7 @@ async function openWorkspaceFile(
     return;
   }
 
-  const isAbsolute = relativePath.startsWith('/') || /^[A-Za-z]:[\\/]/.test(relativePath);
+  const isAbsolute = isAbsoluteWorkspacePath(relativePath);
 
   // Build candidate URIs for relative paths.  Prefer the daemon's project
   // root (which may differ from the VS Code workspace folder) so that paths
@@ -2605,27 +2607,10 @@ async function openWorkspaceFile(
   //
   // URI construction uses the workspace folder's scheme + authority so it
   // works correctly in remote environments (WSL, SSH, containers).
-  const candidateUris: vscode.Uri[] = [];
-  if (isAbsolute) {
-    // Absolute path: use the folder's scheme/authority for remote compatibility
-    const uri = folder
-      ? folder.uri.with({ path: relativePath })
-      : vscode.Uri.file(relativePath);
-    candidateUris.push(uri);
-  } else {
-    // Relative path: try project root first, then workspace folder, then
-    // a findFiles fallback for cases where both roots are the same or wrong.
-    if (projectRoot && folder) {
-      candidateUris.push(vscode.Uri.joinPath(folder.uri.with({ path: projectRoot }), relativePath));
-    }
-    if (folder) {
-      const folderCandidate = vscode.Uri.joinPath(folder.uri, relativePath);
-      // Avoid duplicate when projectRoot === folder path
-      if (!candidateUris.some((u) => u.toString() === folderCandidate.toString())) {
-        candidateUris.push(folderCandidate);
-      }
-    }
-  }
+  const candidateUris = workspaceFileCandidatePaths(relativePath, [projectRoot, folder?.uri.fsPath])
+    .map((candidatePath) =>
+      folder ? folder.uri.with({ path: candidatePath }) : vscode.Uri.file(candidatePath),
+    );
 
   const selectionOptions =
     typeof line === 'number'
@@ -2663,23 +2648,24 @@ async function openWorkspaceFile(
   // folder is a parent of the actual project root (e.g. workspace is
   // /home/user/workspace but project is /home/user/workspace/my-project).
   if (!isAbsolute) {
-    try {
-      const pattern = `**/${relativePath}`;
-      const found = await vscode.workspace.findFiles(pattern, undefined, 1);
-      if (found.length > 0) {
-        const document = await vscode.workspace.openTextDocument(found[0]);
-        await vscode.window.showTextDocument(document, {
-          ...selectionOptions,
-          preview: openOptions?.preview ?? false,
-          viewColumn:
-            openOptions?.beside && vscode.window.activeTextEditor
-              ? vscode.ViewColumn.Beside
-              : vscode.ViewColumn.Active,
-        });
-        return;
+    for (const pattern of workspaceFindFilePatterns(relativePath)) {
+      try {
+        const found = await vscode.workspace.findFiles(pattern, undefined, 1);
+        if (found.length > 0) {
+          const document = await vscode.workspace.openTextDocument(found[0]);
+          await vscode.window.showTextDocument(document, {
+            ...selectionOptions,
+            preview: openOptions?.preview ?? false,
+            viewColumn:
+              openOptions?.beside && vscode.window.activeTextEditor
+                ? vscode.ViewColumn.Beside
+                : vscode.ViewColumn.Active,
+          });
+          return;
+        }
+      } catch (err) {
+        errors.push(`findFiles ${pattern}: ${err instanceof Error ? err.message : String(err)}`);
       }
-    } catch (err) {
-      errors.push(`findFiles: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
@@ -2761,7 +2747,7 @@ async function handleDaemonNotification(
     });
   }
 
-  if (isTerminalEvent(event)) {
+  if (isTerminalAgentEvent(event)) {
     await finishRunBySession(sessionId, output);
     void refreshStatus(output, sidebar, { force: true });
     drainQueue(output, sidebar);
@@ -2844,16 +2830,11 @@ function formatEvent(sessionId: string, event: unknown): string {
       return `[${sessionId}] finished: ${json(event)}`;
     case 'error':
       return `[${sessionId}] error: ${stringField(event, 'message')}`;
+    case 'interrupted':
+      return `[${sessionId}] interrupted: ${stringField(event, 'stage')}`;
     default:
       return `[${sessionId}] ${kind}: ${json(event)}`;
   }
-}
-
-function isTerminalEvent(event: unknown): boolean {
-  return (
-    isRecord(event) &&
-    (event.kind === 'finished' || event.kind === 'error' || event.kind === 'approval_denied')
-  );
 }
 
 function planDocumentPathFromEvent(event: unknown): string | undefined {

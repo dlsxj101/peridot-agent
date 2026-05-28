@@ -27,6 +27,7 @@ import {
 import { localSlashAction } from './localSlashAction';
 import { staleDaemonBackedSessionIds } from './sessionReconcile';
 import { agentTranscriptItemForEvent } from './agentEventTranscript';
+import { isTerminalAgentEvent, terminalStatusForEvent } from './agentEventLifecycle';
 import { agentsSummaryForLoadedEvent, mcpServersForStatusEvent } from './agentEventContext';
 
 export type {
@@ -335,11 +336,12 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       this.state.pendingApproval = undefined;
       this.publish();
     }
-    if (isTerminalEvent(event)) {
+    if (isTerminalAgentEvent(event)) {
+      const status = terminalStatusForEvent(event);
       this.state.pendingApproval = undefined;
-      this.finishRunTimer();
+      this.finishRunTimer(status);
       this.state.running = false;
-      this.state.status = isErrorEvent(event) ? 'Failed' : 'Finished';
+      this.state.status = status;
       this.state.context = {
         ...this.state.context,
         status: this.state.status,
@@ -1535,11 +1537,20 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
     return session;
   }
 
-  private finishRunTimer(): void {
+  private finishRunTimer(finalStatus?: string): void {
     const startedAt = this.state.runStartedAtMs;
     if (typeof startedAt !== 'number') return;
-    this.state.lastRunElapsedMs = Math.max(0, Date.now() - startedAt);
+    const elapsed = Math.max(0, Date.now() - startedAt);
+    this.state.lastRunElapsedMs = elapsed;
     this.state.runStartedAtMs = undefined;
+    if (finalStatus) {
+      const label = finalStatus === 'Failed'
+        ? 'Stopped after'
+        : finalStatus === 'Interrupted'
+          ? 'Interrupted after'
+          : 'Finished in';
+      this.state.transcript.push({ role: 'status', text: `${label} ${formatElapsed(elapsed)}` });
+    }
   }
 
   private activeStoredSession(): StoredChatSession | undefined {
@@ -2250,17 +2261,6 @@ function summarizeToolResult(event: Record<string, unknown>): string {
   return json(event.result ?? event);
 }
 
-function isTerminalEvent(event: unknown): boolean {
-  return (
-    isRecord(event) &&
-    (event.kind === 'finished' || event.kind === 'error' || event.kind === 'approval_denied')
-  );
-}
-
-function isErrorEvent(event: unknown): boolean {
-  return isRecord(event) && (event.kind === 'error' || event.kind === 'approval_denied');
-}
-
 function isApprovalWaitingEvent(event: unknown): boolean {
   return (
     isRecord(event) &&
@@ -2363,6 +2363,16 @@ function queueId(): string {
 function taskTitle(task: string): string {
   const title = task.replace(/\s+/g, ' ').trim();
   return title.length > 42 ? `${title.slice(0, 39)}...` : title || 'New session';
+}
+
+function formatElapsed(ms: number): string {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const seconds = totalSeconds % 60;
+  const minutes = Math.floor(totalSeconds / 60) % 60;
+  const hours = Math.floor(totalSeconds / 3600);
+  const two = (value: number) => String(value).padStart(2, '0');
+  if (hours > 0) return `${hours}:${two(minutes)}:${two(seconds)}`;
+  return `${minutes}:${two(seconds)}`;
 }
 
 async function readWorkspaceFile(relativePath: string): Promise<string | null> {

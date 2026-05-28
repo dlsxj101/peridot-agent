@@ -499,6 +499,7 @@ fn is_allowed_readonly_segment(segment: &str) -> bool {
             | "ls"
             | "pwd"
             | "cat"
+            | "nl"
             | "head"
             | "tail"
             | "sed"

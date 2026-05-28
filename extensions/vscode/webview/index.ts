@@ -67,6 +67,7 @@ let lastTranscriptCount = 0;
 let lastComposerRunning: boolean | undefined;
 let editingSessionId: string | undefined;
 let editingSessionDraft = '';
+let editingSessionSelectOnFocus: string | undefined;
 let deletingSessionId: string | undefined;
 let sessionMenuOpen = false;
 interface AssistantStreamSnapshot {
@@ -122,6 +123,7 @@ document.addEventListener('click', (event) => {
   if (menu && !menu.contains(event.target as Node)) {
     editingSessionId = undefined;
     editingSessionDraft = '';
+    editingSessionSelectOnFocus = undefined;
     deletingSessionId = undefined;
     sessionMenuOpen = false;
     if (menu instanceof HTMLDetailsElement) menu.open = false;
@@ -175,6 +177,18 @@ function render(s: SidebarState): void {
   // Remember which element had focus so we can re-focus after the
   // destructive replaceChildren below.
   const focusId = (document.activeElement && (document.activeElement as HTMLElement).id) || '';
+  const activeRenameInput =
+    document.activeElement instanceof HTMLInputElement &&
+    document.activeElement.classList.contains('session-menu-rename-input')
+      ? document.activeElement
+      : undefined;
+  const renameSelection = activeRenameInput
+    ? {
+        id: activeRenameInput.dataset.sessionId,
+        start: activeRenameInput.selectionStart ?? activeRenameInput.value.length,
+        end: activeRenameInput.selectionEnd ?? activeRenameInput.value.length,
+      }
+    : undefined;
 
   const currentSession = root.firstElementChild;
   if (s.view === 'session' && currentSession instanceof HTMLElement && currentSession.classList.contains('session')) {
@@ -190,6 +204,21 @@ function render(s: SidebarState): void {
   if (focusId) {
     const target = document.getElementById(focusId) as HTMLElement | null;
     target?.focus({ preventScroll: true });
+  }
+  if (editingSessionId) {
+    const input = document.getElementById(`session-rename-${editingSessionId}`) as HTMLInputElement | null;
+    if (input) {
+      input.focus({ preventScroll: true });
+      if (editingSessionSelectOnFocus === editingSessionId) {
+        input.select();
+        editingSessionSelectOnFocus = undefined;
+      } else if (renameSelection?.id === editingSessionId) {
+        input.setSelectionRange(
+          Math.min(renameSelection.start, input.value.length),
+          Math.min(renameSelection.end, input.value.length),
+        );
+      }
+    }
   }
 }
 
@@ -675,22 +704,19 @@ function updateSession(wrap: HTMLElement, s: SidebarState): void {
 
 function renderRunFooter(s: SidebarState): HTMLElement | undefined {
   const running = Boolean(s.running && typeof s.runStartedAtMs === 'number');
-  const finished = !running && typeof s.lastRunElapsedMs === 'number';
-  if (!running && !finished) return undefined;
+  if (!running) return undefined;
 
-  const footer = el('div', `run-footer${running ? ' running' : ' complete'}`);
+  const footer = el('div', 'run-footer running');
   footer.setAttribute('role', 'status');
-  if (running) footer.dataset.runStart = String(s.runStartedAtMs);
-  if (finished) footer.dataset.runElapsed = String(s.lastRunElapsedMs);
+  footer.dataset.runStart = String(s.runStartedAtMs);
 
   const gem = el('span', 'peridot-loader', '◆');
   gem.setAttribute('aria-hidden', 'true');
   footer.append(gem);
 
   const label = el('span', 'run-footer-text');
-  const completeLabel = String(s.status ?? '').toLowerCase().includes('fail') ? 'Stopped after ' : 'Finished in ';
-  label.append(document.createTextNode(running ? 'Peridot is working · ' : completeLabel));
-  label.append(el('span', 'run-footer-time', formatElapsed(running ? Date.now() - (s.runStartedAtMs ?? Date.now()) : s.lastRunElapsedMs ?? 0)));
+  label.append(document.createTextNode('Peridot is working · '));
+  label.append(el('span', 'run-footer-time', formatElapsed(Date.now() - (s.runStartedAtMs ?? Date.now()))));
   footer.append(label);
   return footer;
 }
@@ -859,7 +885,9 @@ function renderSessionMenu(s: SidebarState): HTMLElement {
     const text = el('span', 'session-menu-text');
     if (isEditing) {
       const input = document.createElement('input');
+      input.id = `session-rename-${session.id}`;
       input.className = 'session-menu-rename-input';
+      input.dataset.sessionId = session.id;
       input.value = editingSessionDraft || session.title;
       input.setAttribute('aria-label', `New title for ${session.title}`);
       input.addEventListener('click', (event) => {
@@ -881,10 +909,6 @@ function renderSessionMenu(s: SidebarState): HTMLElement {
         }
       });
       text.append(input);
-      window.setTimeout(() => {
-        input.focus();
-        input.select();
-      }, 0);
     } else {
       text.append(el('span', 'session-menu-title', session.title));
     }
@@ -908,6 +932,7 @@ function renderSessionMenu(s: SidebarState): HTMLElement {
         deletingSessionId = undefined;
         editingSessionId = undefined;
         editingSessionDraft = '';
+        editingSessionSelectOnFocus = undefined;
         vscode.postMessage({ type: 'deleteSession', id: session.id });
       });
       confirm.classList.add('session-menu-confirm-delete');
@@ -922,6 +947,7 @@ function renderSessionMenu(s: SidebarState): HTMLElement {
       const rename = sessionMenuAction('edit', `Rename ${session.title}`, () => {
         editingSessionId = session.id;
         editingSessionDraft = session.title;
+        editingSessionSelectOnFocus = session.id;
         deletingSessionId = undefined;
         sessionMenuOpen = true;
         render(state ?? s);
@@ -961,6 +987,7 @@ function commitSessionRename(id: string, title: string): void {
   if (!trimmed) return;
   editingSessionId = undefined;
   editingSessionDraft = '';
+  editingSessionSelectOnFocus = undefined;
   sessionMenuOpen = true;
   vscode.postMessage({ type: 'renameSession', id, title: trimmed });
 }
@@ -968,6 +995,7 @@ function commitSessionRename(id: string, title: string): void {
 function cancelSessionRename(): void {
   editingSessionId = undefined;
   editingSessionDraft = '';
+  editingSessionSelectOnFocus = undefined;
   deletingSessionId = undefined;
   sessionMenuOpen = true;
   if (state) render(state);

@@ -1055,6 +1055,33 @@ shared daemon, TUI, and VS Code extension surfaces.
   staying out of the transcript, so users see the live run state before
   the first model/tool event arrives.
 
+### E85. Interrupted Event Lifecycle Parity
+
+- **Status**: landed.
+- **Goal**: make VS Code treat external interruption as a terminal run
+  lifecycle state, matching the TUI's interrupted status instead of
+  leaving the sidebar running.
+- **Where**: shared daemon `AgentRunEvent::Interrupted`, TUI
+  `AgentRunStatus::Interrupted`, VS Code sidebar lifecycle handling, VS
+  Code extension active-run cleanup, and VS Code unit tests.
+- **Result**: `interrupted` now stops the active VS Code run, clears the
+  running flag, sets the status/context strip to `Interrupted`, refreshes
+  daemon status, and drains any queued task using the same terminal-event
+  path as `finished` / `error`.
+
+### E86. Cursor File Link And Session Polish
+
+- **Status**: landed.
+- **Goal**: address Cursor-observed sidebar friction around relative file
+  links, completed run timing, and session rename editing.
+- **Where**: VS Code file-open path resolution, webview run footer,
+  session menu rename input handling, and read-only shell allowlist.
+- **Result**: file links now try normalized project/workspace candidates,
+  workspace-name-prefixed variants, and basename search fallback; finished
+  durations are appended to the transcript instead of staying pinned above
+  the composer; rename inputs select only once when editing starts; and
+  `nl -ba` is accepted as a read-only inspection command.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.
