@@ -265,7 +265,12 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       approvalPayloadForEvent(event) ??
       (kind === 'approval_waiting' ? this.approvalPayloadFromPendingTool() : undefined);
 
-    if (kind === 'assistant_started') {
+    if (kind === 'run_started') {
+      this.state.status = 'Running';
+      this.state.context = { ...this.state.context, status: this.state.status, running: true };
+      this.state.running = true;
+      this.publish();
+    } else if (kind === 'assistant_started') {
       this.state.status = 'Waiting for model';
       this.state.context = { ...this.state.context, status: this.state.status, running: true };
       this.publish();

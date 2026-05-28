@@ -1042,6 +1042,19 @@ shared daemon, TUI, and VS Code extension surfaces.
   error-like outcomes use an error transcript row; normal hook outcomes
   use a status row.
 
+### E84. Run Start Status Parity
+
+- **Status**: landed.
+- **Goal**: make VS Code react to daemon run-start events the same way the
+  TUI marks the active run as running.
+- **Where**: shared daemon `AgentRunEvent::RunStarted`, TUI
+  `mark_agent_running`, VS Code sidebar runtime state, and extension
+  verification.
+- **Result**: `run_started` now transitions the VS Code sidebar status and
+  context strip from `Starting daemon` to `Running` immediately while
+  staying out of the transcript, so users see the live run state before
+  the first model/tool event arrives.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

@@ -77,6 +77,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **Hook event transcript parity** now renders `hook_fired` daemon events
   in VS Code with hook name, category, and outcome, promoting blocking or
   failing outcomes to error rows.
+- **Run start status parity** now applies `run_started` daemon events to
+  the VS Code sidebar status immediately, moving from `Starting daemon` to
+  `Running` before the first model/tool event arrives.
 - **Provider argument autocomplete** now exposes the supported provider ids
   for `/provider <claude-api|openai-api|openrouter-api|openai-oauth>` through
   the shared slash catalog, TUI picker, daemon JSON catalog, and VS Code

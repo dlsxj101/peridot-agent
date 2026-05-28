@@ -53,6 +53,9 @@
   event-kind labels.
 - Hook activity daemon events now render as named VS Code transcript rows,
   with blocking or failing outcomes promoted to error rows.
+- Run-start daemon events now move the VS Code sidebar from
+  `Starting daemon` to `Running` immediately while remaining out of the
+  transcript.
 - Provider argument autocomplete now fills supported provider ids for
   `/provider <claude-api|openai-api|openrouter-api|openai-oauth>` from the
   shared daemon slash catalog.
