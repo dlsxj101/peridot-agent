@@ -1451,6 +1451,52 @@ fn apply_session_command(
                 Err(err) => state.push_error(format!("session search: {err}")),
             }
         }
+        SessionCommandEvent::SessionShow(target) => {
+            let id = resolve_session_id(state, &target).unwrap_or(target);
+            match commands::session_show_summary(project_template, &id) {
+                Ok(result) => {
+                    let title = result
+                        .session
+                        .as_ref()
+                        .map(|session| session.summary.as_str())
+                        .or_else(|| {
+                            result.record.as_ref().and_then(|record| {
+                                (!record.summary.trim().is_empty())
+                                    .then_some(record.summary.as_str())
+                                    .or(record.last_task.as_deref())
+                            })
+                        })
+                        .unwrap_or(result.id.as_str());
+                    let mut rows = vec![format!("session show: {}\n  title: {title}", result.id)];
+                    if let Some(record) = result.record.as_ref() {
+                        rows.push(format!(
+                            "  status: {:?}\n  workspace: {}\n  tokens: {}\n  cost: ${:.4}\n  turns: {}",
+                            record.status,
+                            record.workspace_root.display(),
+                            record.total_tokens,
+                            record.total_cost_usd,
+                            record.turns_used
+                        ));
+                        if let Some(branch) = record.worktree_branch.as_deref() {
+                            rows.push(format!("  worktree branch: {branch}"));
+                        }
+                        if let Some(task) = record.last_task.as_deref() {
+                            rows.push(format!("  last task: {task}"));
+                        }
+                    }
+                    if result.notes_count > 0 {
+                        let suffix = result
+                            .last_note
+                            .as_deref()
+                            .map(|note| format!("  ({note})"))
+                            .unwrap_or_default();
+                        rows.push(format!("  notes: {}{suffix}", result.notes_count));
+                    }
+                    state.push_transcript(rows.join("\n"));
+                }
+                Err(err) => state.push_error(format!("session show: {err}")),
+            }
+        }
         SessionCommandEvent::Fork(task) => {
             let new_id = format!("fork-{}-{}", std::process::id(), unix_timestamp());
             let title = task.clone();

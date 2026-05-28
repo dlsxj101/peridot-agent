@@ -128,6 +128,8 @@ pub enum SlashCommand {
     SessionCount,
     /// Search persisted session transcripts.
     SessionSearch(String),
+    /// Show one persisted session summary.
+    SessionShow(String),
     /// Override the default model used when spawning sub-agents. `reset`
     /// clears the override so future spawns inherit the caller's main model.
     SubagentModel(SubagentModelChange),
@@ -485,6 +487,14 @@ pub fn parse_slash_command(input: &str) -> Option<SlashCommand> {
                 None
             } else {
                 Some(SlashCommand::SessionSearch(query.to_string()))
+            }
+        }
+        "session" if rest == "show" || rest.starts_with("show ") => {
+            let target = rest.strip_prefix("show").unwrap_or("").trim();
+            if target.is_empty() {
+                None
+            } else {
+                Some(SlashCommand::SessionShow(target.to_string()))
             }
         }
         "session" if rest.starts_with("new") => {
@@ -1031,6 +1041,11 @@ mod tests {
             Some(SlashCommand::SessionSearch("parser failure".to_string()))
         );
         assert_eq!(parse_slash_command("/session search"), None);
+        assert_eq!(
+            parse_slash_command("/session show s1"),
+            Some(SlashCommand::SessionShow("s1".to_string()))
+        );
+        assert_eq!(parse_slash_command("/session show"), None);
         assert_eq!(
             parse_slash_command("/session delete s1"),
             Some(SlashCommand::SessionDelete("s1".to_string()))

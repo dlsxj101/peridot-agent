@@ -1218,6 +1218,19 @@ shared daemon, TUI, and VS Code extension surfaces.
   result with hit rows, while TUI prints the same capped result set into the
   transcript.
 
+### E97. Session Show Slash Parity
+
+- **Status**: landed.
+- **Goal**: let editor and TUI users inspect one persisted session after
+  finding it through `/session list`, `/session search`, or autocomplete.
+- **Where**: shared slash parser/catalog, TUI session command queue, daemon
+  `session.command`, and a reusable persisted session summary helper.
+- **Result**: `/session show <id|title>` now returns lifecycle, workspace,
+  token/cost/turn usage, worktree branch, last task, and notes summary data
+  in both TUI and VS Code. VS Code receives a structured `session_show`
+  command result, so the generic command result block can render the details
+  without duplicating CLI formatting.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

@@ -33,6 +33,9 @@
 - `/session search <query>` now runs through the daemon command path and
   renders structured cross-session transcript hits in the same command
   result block as other session utilities.
+- `/session show <id|title>` now runs through the daemon command path and
+  renders structured persisted session details without requiring a separate
+  terminal invocation.
 - Accepting free-form slash commands now leaves an editable argument slot
   instead of copying placeholder text such as `<task>` or `<objective>`
   into the composer.

@@ -38,6 +38,7 @@ use crate::commands::{
     AuthProvider, append_session_note, move_auto_skill_to_archive, read_managed_env_var,
     read_session_notes, read_stored_api_key, read_stored_openai_oauth_credentials,
     restore_archived_skill, search_session_transcript_hits, session_count_summary,
+    session_show_summary,
 };
 use crate::run_loop::{AgentTaskOptions, MessageBusHookup, run_task_with_events};
 use crate::session_router::{RouterMessageBus, SessionHandle, SessionRouter, WorkspaceIsolation};
@@ -1841,6 +1842,9 @@ async fn execute_session_command(
         SlashCommand::SessionSearch(query) => {
             handle_command_session_search(state, raw_command, &query)
         }
+        SlashCommand::SessionShow(target) => {
+            handle_command_session_show(state, raw_command, &target).await
+        }
         SlashCommand::SessionDelete(target) => {
             handle_command_session_delete(state, raw_command, &target).await
         }
@@ -2171,6 +2175,114 @@ fn handle_command_session_search(
         "hits": result.hits,
         "total": result.total,
         "truncated": result.truncated,
+    }))
+}
+
+async fn handle_command_session_show(
+    state: &DaemonState,
+    raw_command: &str,
+    target: &str,
+) -> Result<Value, String> {
+    let session_id = resolve_session_target_id(state, target)
+        .await?
+        .unwrap_or_else(|| target.to_string());
+    let summary = match session_show_summary(&state.project_root, &session_id) {
+        Ok(summary) => summary,
+        Err(err) => {
+            return Ok(serde_json::json!({
+                "kind": "session_show",
+                "title": "Session Show",
+                "message": format!("session show: {target} not found ({err})"),
+                "severity": "error",
+                "command": raw_command,
+                "target": target,
+                "session_id": session_id,
+                "found": false,
+            }));
+        }
+    };
+    let session_title = summary
+        .session
+        .as_ref()
+        .map(|session| session.summary.as_str())
+        .or_else(|| {
+            summary.record.as_ref().and_then(|record| {
+                (!record.summary.trim().is_empty())
+                    .then_some(record.summary.as_str())
+                    .or(record.last_task.as_deref())
+            })
+        })
+        .unwrap_or(summary.id.as_str())
+        .to_string();
+    let status = summary
+        .record
+        .as_ref()
+        .map(|record| format!("{:?}", record.status).to_ascii_lowercase())
+        .unwrap_or_else(|| "idle".to_string());
+    let workspace = summary
+        .record
+        .as_ref()
+        .map(|record| record.workspace_root.display().to_string());
+    let total_tokens = summary
+        .record
+        .as_ref()
+        .map(|record| record.total_tokens)
+        .unwrap_or_default();
+    let total_cost_usd = summary
+        .record
+        .as_ref()
+        .map(|record| record.total_cost_usd)
+        .unwrap_or_default();
+    let turns_used = summary
+        .record
+        .as_ref()
+        .map(|record| record.turns_used)
+        .unwrap_or_default();
+    let last_task = summary
+        .record
+        .as_ref()
+        .and_then(|record| record.last_task.clone());
+    let worktree_branch = summary
+        .record
+        .as_ref()
+        .and_then(|record| record.worktree_branch.clone());
+    let id = summary.id.clone();
+    let session = summary.session.clone();
+    let record = summary.record.clone();
+    let summary_text = session_title.clone();
+    let workspace_detail = workspace.clone().unwrap_or_else(|| "<unknown>".to_string());
+    Ok(serde_json::json!({
+        "kind": "session_show",
+        "title": "Session Show",
+        "message": format!("session show: {id} ({status})"),
+        "severity": "info",
+        "command": raw_command,
+        "target": target,
+        "session_id": id.clone(),
+        "session_title": session_title.clone(),
+        "summary": summary_text,
+        "session": session,
+        "record": record,
+        "status": status.clone(),
+        "workspace": workspace.clone(),
+        "last_task": last_task,
+        "worktree_branch": worktree_branch,
+        "total_tokens": total_tokens,
+        "total_cost_usd": total_cost_usd,
+        "turns_used": turns_used,
+        "notes_count": summary.notes_count,
+        "last_note": summary.last_note,
+        "found": true,
+        "items": [
+            { "label": "session", "detail": id },
+            { "label": "title", "detail": session_title },
+            { "label": "status", "detail": status },
+            { "label": "workspace", "detail": workspace_detail },
+            { "label": "tokens", "detail": total_tokens.to_string() },
+            { "label": "cost", "detail": format!("${:.4}", total_cost_usd) },
+            { "label": "turns", "detail": turns_used.to_string() },
+            { "label": "notes", "detail": summary.notes_count.to_string() },
+        ],
     }))
 }
 
@@ -6119,6 +6231,64 @@ mod tests {
         assert_eq!(result["items"][0]["label"], "search-session[0] user");
         assert_eq!(result["items"][0]["detail"], "parser panic");
         assert_eq!(result["hits"][1]["index"], 1);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn session_command_show_returns_persisted_details() {
+        let root = test_project("session-command-show");
+        let store = MemoryStore::new(root.join(".peridot/memory.db"));
+        let mut record = SessionRecord::new("show-session", &root);
+        record.summary = "release prep".into();
+        record.last_task = Some("release prep".into());
+        record.status = SessionLifecycle::Suspended;
+        record.total_tokens = 2048;
+        record.total_cost_usd = 0.125;
+        record.turns_used = 4;
+        record.worktree_branch = Some("peridot/show-session".into());
+        store.save_session_record(&record).unwrap();
+        store
+            .save_session(&SessionSummary {
+                id: "show-session".into(),
+                summary: "release prep".into(),
+            })
+            .unwrap();
+        let session_dir = root.join(".peridot").join("sessions").join("show-session");
+        std::fs::create_dir_all(&session_dir).unwrap();
+        std::fs::write(
+            session_dir.join("notes.ndjson"),
+            r#"{"ts":1,"text":"first note"}"#,
+        )
+        .unwrap();
+        let (tx, _rx) = mpsc::unbounded_channel::<String>();
+        let state = DaemonState::new(
+            root.clone(),
+            PeridotConfig::default(),
+            test_options(None),
+            tx,
+        );
+
+        let result = execute_session_command(
+            &state,
+            None,
+            "/session show release",
+            SlashCommand::SessionShow("release".into()),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result["kind"], "session_show");
+        assert_eq!(result["found"], true);
+        assert_eq!(result["session_id"], "show-session");
+        assert_eq!(result["session_title"], "release prep");
+        assert_eq!(result["status"], "suspended");
+        assert_eq!(result["total_tokens"], 2048);
+        assert!((result["total_cost_usd"].as_f64().unwrap() - 0.125).abs() < 1e-9);
+        assert_eq!(result["turns_used"], 4);
+        assert_eq!(result["notes_count"], 1);
+        assert_eq!(result["last_note"], "first note");
+        assert_eq!(result["worktree_branch"], "peridot/show-session");
+        assert_eq!(result["items"][0]["detail"], "show-session");
         let _ = std::fs::remove_dir_all(root);
     }
 

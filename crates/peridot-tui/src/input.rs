@@ -1215,6 +1215,10 @@ pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
             state.push_transcript(format!("session search: searching for '{query}'..."));
             state.push_pending_session_command(SessionCommandEvent::SessionSearch(query));
         }
+        SlashCommand::SessionShow(target) => {
+            state.push_transcript(format!("session show: loading {target}..."));
+            state.push_pending_session_command(SessionCommandEvent::SessionShow(target));
+        }
         SlashCommand::SubagentModel(change) => match change {
             peridot_core::SubagentModelChange::Set(name) => {
                 let from = previous_subagent_model

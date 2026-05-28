@@ -219,6 +219,7 @@ Remaining scoped polish: none currently tracked in this runbook.
 ### M12 — Session list/show carry SessionRecord (landed)
 - `peridot session list` now joins each `SessionSummary` with the matching `SessionRecord` written by M3's throttled persistence path. Text output appends `status / tokens / cost / turns`; JSON output nests the full record under each entry. Sessions without a record fall back to the previous summary-only view, so behaviour stays backwards compatible.
 - `peridot session show` mirrors the same join with a more readable multi-line layout (status, workspace, tokens, cost, turns, optional worktree branch and last task). JSON output exposes the same nested shape for tooling.
+- `/session show <id|title>` exposes the persisted detail view to interactive clients. TUI resolves visible session targets when possible and prints the summary in the transcript; VS Code receives a structured `session_show` daemon result with the same lifecycle, usage, workspace, worktree, and notes-summary fields.
 
 ### M11 — Live transcript tail (landed)
 - `peridot session tail <id> [--from-now] [--interval-ms N]` prints the existing `transcript.ndjson` and then polls the file at `interval_ms` (default 200 ms, floored to 50 ms), printing every new line as it arrives with the same five-marker vocabulary the TUI uses. Ctrl+C terminates the watcher; no special signal handling needed.

@@ -16,6 +16,15 @@ pub(crate) struct SessionSearchResult {
     pub(crate) truncated: bool,
 }
 
+#[derive(Clone, Debug, serde::Serialize)]
+pub(crate) struct SessionShowResult {
+    pub(crate) id: String,
+    pub(crate) session: Option<SessionSummary>,
+    pub(crate) record: Option<peridot_memory::SessionRecord>,
+    pub(crate) notes_count: usize,
+    pub(crate) last_note: Option<String>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct RewindContextResult {
     pub(crate) restored_prompt: String,
@@ -1708,6 +1717,23 @@ pub(crate) fn search_session_transcript_hits(
         total: hits.len(),
         hits,
         truncated,
+    })
+}
+
+pub(crate) fn session_show_summary(project_root: &Path, id: &str) -> Result<SessionShowResult> {
+    let store = memory_store(project_root);
+    let session = store.get_session(id)?;
+    let record = store.get_session_record(id)?;
+    if session.is_none() && record.is_none() {
+        anyhow::bail!("session not found: {id}");
+    }
+    let (notes_count, last_note) = read_notes_summary(project_root, id);
+    Ok(SessionShowResult {
+        id: id.to_string(),
+        session,
+        record,
+        notes_count,
+        last_note,
     })
 }
 

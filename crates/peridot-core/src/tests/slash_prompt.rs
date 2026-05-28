@@ -43,6 +43,10 @@ fn parses_goal_slash_commands() {
         Some(SlashCommand::SessionSearch("parser failure".to_string()))
     );
     assert_eq!(
+        parse_slash_command("/session show s1"),
+        Some(SlashCommand::SessionShow("s1".to_string()))
+    );
+    assert_eq!(
         parse_slash_command("/fast on"),
         Some(SlashCommand::Fast(Some(true)))
     );

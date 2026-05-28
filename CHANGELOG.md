@@ -52,6 +52,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **`/session search <query>` slash parity** now exposes cross-session
   transcript search in both the TUI and VS Code daemon command path, using
   the existing persisted session search backend with structured result rows.
+- **`/session show <id|title>` slash parity** now exposes persisted session
+  details in both TUI and VS Code, including lifecycle, workspace, usage,
+  worktree branch, last task, and notes summary data.
 - **Free-form slash command acceptance** now leaves editable argument
   slots instead of inserting placeholder text such as `<task>` or
   `<objective>` into the composer when accepting commands like `/fork`,
