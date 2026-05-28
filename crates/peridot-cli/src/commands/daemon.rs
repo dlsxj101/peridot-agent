@@ -36,7 +36,7 @@ use crate::branch_snapshot_names;
 use crate::checkpoints::restore_latest_checkpoint;
 use crate::commands::{
     AuthProvider, append_session_note, clear_session_notes, move_auto_skill_to_archive,
-    read_managed_env_var, read_session_notes, read_stored_api_key,
+    prune_session_records, read_managed_env_var, read_session_notes, read_stored_api_key,
     read_stored_openai_oauth_credentials, restore_archived_skill, search_session_transcript_hits,
     session_count_summary, session_locate, session_resume_summary, session_show_summary,
 };
@@ -1842,6 +1842,20 @@ async fn execute_session_command(
         SlashCommand::SessionListStatus(status) => {
             handle_command_session_list(state, raw_command, Some(&status)).await
         }
+        SlashCommand::SessionPrune {
+            status,
+            older_than_days,
+            dry_run,
+        } => {
+            handle_command_session_prune(
+                state,
+                raw_command,
+                status.as_deref(),
+                older_than_days,
+                dry_run,
+            )
+            .await
+        }
         SlashCommand::SessionCount => handle_command_session_count(state, raw_command),
         SlashCommand::SessionSearch(query) => {
             handle_command_session_search(state, raw_command, &query)
@@ -2101,6 +2115,71 @@ fn session_list_message(total: usize, status_filter: Option<&str>) -> String {
         (0, None) => "sessions: <none>".to_string(),
         (_, None) => format!("sessions: {total} total"),
     }
+}
+
+async fn handle_command_session_prune(
+    state: &DaemonState,
+    raw_command: &str,
+    status_filter: Option<&str>,
+    older_than_days: Option<u64>,
+    dry_run: bool,
+) -> Result<Value, String> {
+    let store = MemoryStore::new(state.project_root.join(".peridot/memory.db"));
+    let result = prune_session_records(
+        &store,
+        &state.project_root,
+        status_filter,
+        older_than_days,
+        dry_run,
+    )
+    .map_err(|err| format!("failed to prune sessions: {err}"))?;
+    if !result.dry_run && !result.removed.is_empty() {
+        let removed: std::collections::BTreeSet<&str> =
+            result.removed.iter().map(String::as_str).collect();
+        state
+            .sessions
+            .lock()
+            .await
+            .retain(|id, _| !removed.contains(id.as_str()));
+        emit_session_list_changed(state).await;
+    }
+    let affected = if result.dry_run {
+        result.considered.len()
+    } else {
+        result.removed.len()
+    };
+    let message = if result.dry_run {
+        format!("session prune (dry-run): {affected} matching session(s)")
+    } else {
+        format!("session prune: removed {affected} session(s)")
+    };
+    let items: Vec<Value> = if result.dry_run {
+        result
+            .considered
+            .iter()
+            .map(|id| serde_json::json!({"label": id, "detail": "would remove"}))
+            .collect()
+    } else {
+        result
+            .removed
+            .iter()
+            .map(|id| serde_json::json!({"label": id, "detail": "removed"}))
+            .collect()
+    };
+    Ok(serde_json::json!({
+        "kind": "session_prune",
+        "title": "Session Prune",
+        "message": message,
+        "severity": "info",
+        "command": raw_command,
+        "dry_run": result.dry_run,
+        "considered": result.considered,
+        "removed": result.removed,
+        "status_filter": result.status_filter,
+        "older_than_days": result.older_than_days,
+        "items": items,
+        "total": affected,
+    }))
 }
 
 fn handle_command_session_count(state: &DaemonState, raw_command: &str) -> Result<Value, String> {
@@ -6364,6 +6443,71 @@ mod tests {
             .map(|session| session["id"].as_str().unwrap())
             .collect();
         assert_eq!(ids, vec!["done-one", "done-two"]);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn session_command_prune_returns_structured_result_and_removes_records() {
+        let root = test_project("session-command-prune");
+        let store = MemoryStore::new(root.join(".peridot/memory.db"));
+        for (id, status) in [
+            ("done-one", SessionLifecycle::Done),
+            ("failed-one", SessionLifecycle::Failed),
+        ] {
+            let mut record = SessionRecord::new(id, &root);
+            record.status = status;
+            store.save_session_record(&record).unwrap();
+            peridot_memory::save_session_blob(
+                &root.join(".peridot/sessions"),
+                id,
+                "tui_state.json",
+                b"{}",
+            )
+            .unwrap();
+        }
+        let (tx, _rx) = mpsc::unbounded_channel::<String>();
+        let state = DaemonState::new(
+            root.clone(),
+            PeridotConfig::default(),
+            test_options(None),
+            tx,
+        );
+
+        let preview = execute_session_command(
+            &state,
+            None,
+            "/session prune --status done --dry-run",
+            SlashCommand::SessionPrune {
+                status: Some("done".to_string()),
+                older_than_days: None,
+                dry_run: true,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(preview["kind"], "session_prune");
+        assert_eq!(preview["dry_run"], true);
+        assert_eq!(preview["considered"], serde_json::json!(["done-one"]));
+        assert!(store.get_session_record("done-one").unwrap().is_some());
+
+        let result = execute_session_command(
+            &state,
+            None,
+            "/session prune --status done",
+            SlashCommand::SessionPrune {
+                status: Some("done".to_string()),
+                older_than_days: None,
+                dry_run: false,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(result["kind"], "session_prune");
+        assert_eq!(result["removed"], serde_json::json!(["done-one"]));
+        assert_eq!(result["total"], 1);
+        assert!(store.get_session_record("done-one").unwrap().is_none());
+        assert!(store.get_session_record("failed-one").unwrap().is_some());
+        assert!(!root.join(".peridot/sessions/done-one").exists());
         let _ = std::fs::remove_dir_all(root);
     }
 

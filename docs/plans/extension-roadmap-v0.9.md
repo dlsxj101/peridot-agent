@@ -1281,6 +1281,21 @@ shared daemon, TUI, and VS Code extension surfaces.
   filtered `sessions`, `items`, `total`, and `status_filter` fields, and both
   composers complete the finite lifecycle values.
 
+### E102. Session Prune Slash Parity
+
+- **Status**: landed.
+- **Goal**: let operators clean up stale persisted sessions from the same
+  TUI and editor surfaces that list, count, and inspect them.
+- **Where**: shared slash parser/catalog, reusable session prune helper, TUI
+  session command queue, daemon `session.command`, and VS Code slash
+  autocomplete.
+- **Result**: `/session prune [--status <state>] [--older-than-days N]
+  [--dry-run]` now uses the same deletion helper as `peridot session prune`.
+  TUI prints a dry-run or removal summary, VS Code receives a structured
+  `session_prune` result with `considered`, `removed`, `status_filter`,
+  `older_than_days`, and `dry_run`, and both composers complete prune flags
+  plus lifecycle status values.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

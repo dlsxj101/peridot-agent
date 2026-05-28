@@ -33,6 +33,15 @@ pub(crate) struct SessionLocateResult {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+pub(crate) struct SessionPruneResult {
+    pub(crate) dry_run: bool,
+    pub(crate) considered: Vec<String>,
+    pub(crate) removed: Vec<String>,
+    pub(crate) status_filter: Option<String>,
+    pub(crate) older_than_days: Option<u64>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
 pub(crate) struct SessionResumeResult {
     pub(crate) id: String,
     pub(crate) summary: String,
@@ -393,14 +402,14 @@ pub(crate) fn run_session_command(
             older_than_days,
             dry_run,
         } => {
-            prune_sessions(
+            let result = prune_session_records(
                 &store,
                 project_root,
                 status.as_deref(),
                 *older_than_days,
                 *dry_run,
-                output,
             )?;
+            print_prune_result(&result, output)?;
         }
         SessionCommand::Export {
             id,
@@ -1045,6 +1054,44 @@ mod tests {
     }
 
     #[test]
+    fn session_prune_records_supports_dry_run_and_removal() {
+        let root = temp_root("prune");
+        let store = memory_store(&root);
+        let sessions_root = root.join(".peridot").join("sessions");
+        for (id, status) in [
+            ("done-one", peridot_memory::SessionLifecycle::Done),
+            ("failed-one", peridot_memory::SessionLifecycle::Failed),
+        ] {
+            store
+                .save_session(&SessionSummary {
+                    id: id.to_string(),
+                    summary: id.to_string(),
+                })
+                .unwrap();
+            let mut record = peridot_memory::SessionRecord::new(id, &root);
+            record.status = status;
+            store.save_session_record(&record).unwrap();
+            peridot_memory::save_session_blob(&sessions_root, id, "tui_state.json", b"{}").unwrap();
+        }
+
+        let preview =
+            prune_session_records(&store, &root, Some("done"), None, true).expect("dry-run prune");
+        assert_eq!(preview.considered, vec!["done-one"]);
+        assert!(preview.removed.is_empty());
+        assert!(store.get_session_record("done-one").unwrap().is_some());
+        assert!(sessions_root.join("done-one").exists());
+
+        let removed =
+            prune_session_records(&store, &root, Some("done"), None, false).expect("real prune");
+        assert_eq!(removed.removed, vec!["done-one"]);
+        assert!(store.get_session("done-one").unwrap().is_none());
+        assert!(store.get_session_record("done-one").unwrap().is_none());
+        assert!(!sessions_root.join("done-one").exists());
+        assert!(store.get_session_record("failed-one").unwrap().is_some());
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
     fn session_search_returns_transcript_hits_with_limit() {
         let root = temp_root("search");
         let sessions_root = root.join(".peridot").join("sessions");
@@ -1595,14 +1642,13 @@ fn copy_dir_recursive(from: &Path, to: &Path) -> Result<()> {
     Ok(())
 }
 
-fn prune_sessions(
+pub(crate) fn prune_session_records(
     store: &MemoryStore,
     project_root: &Path,
     status_filter: Option<&str>,
     older_than_days: Option<u64>,
     dry_run: bool,
-    output: OutputFormat,
-) -> Result<()> {
+) -> Result<SessionPruneResult> {
     use peridot_memory::SessionLifecycle;
     let want_status: Option<SessionLifecycle> = match status_filter {
         Some(value) => match value.to_ascii_lowercase().as_str() {
@@ -1617,6 +1663,7 @@ fn prune_sessions(
         },
         None => None,
     };
+    let status_filter = status_filter.map(|status| status.to_ascii_lowercase());
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -1647,37 +1694,38 @@ fn prune_sessions(
             removed.push(record.id);
         }
     }
+    Ok(SessionPruneResult {
+        dry_run,
+        considered,
+        removed,
+        status_filter,
+        older_than_days,
+    })
+}
+
+fn print_prune_result(result: &SessionPruneResult, output: OutputFormat) -> Result<()> {
     match output {
         OutputFormat::Json => {
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&serde_json::json!({
-                    "dry_run": dry_run,
-                    "considered": considered,
-                    "removed": removed,
-                    "status_filter": status_filter,
-                    "older_than_days": older_than_days,
-                }))?
-            );
+            println!("{}", serde_json::to_string_pretty(result)?);
         }
         OutputFormat::Text => {
-            if dry_run {
-                if considered.is_empty() {
+            if result.dry_run {
+                if result.considered.is_empty() {
                     println!("prune (dry-run): no matching sessions");
                 } else {
                     println!(
                         "prune (dry-run): would remove {} session(s):",
-                        considered.len()
+                        result.considered.len()
                     );
-                    for id in &considered {
+                    for id in &result.considered {
                         println!("  - {id}");
                     }
                 }
-            } else if removed.is_empty() {
+            } else if result.removed.is_empty() {
                 println!("prune: no matching sessions");
             } else {
-                println!("prune: removed {} session(s):", removed.len());
-                for id in &removed {
+                println!("prune: removed {} session(s):", result.removed.len());
+                for id in &result.removed {
                     println!("  - {id}");
                 }
             }

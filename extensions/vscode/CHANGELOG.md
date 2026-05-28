@@ -38,6 +38,9 @@
 - `/session list --status <state>` now runs through the daemon command path
   and filters persisted sessions by lifecycle state, with autocomplete for
   the allowed status values.
+- `/session prune [--status <state>] [--older-than-days N] [--dry-run]`
+  now runs through the daemon command path and returns a structured prune
+  result so editor users can preview or remove stale persisted sessions.
 - `/notes clear` now runs through the daemon command path and clears
   operator notes for the active session, with autocomplete alongside
   `/notes last`.

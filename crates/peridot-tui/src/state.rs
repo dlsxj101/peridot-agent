@@ -884,6 +884,15 @@ pub enum SessionCommandEvent {
     SessionCount,
     /// `/session list --status <state>` — show persisted sessions matching one lifecycle state.
     SessionListStatus(String),
+    /// `/session prune [filters]` — remove persisted sessions matching filters.
+    SessionPrune {
+        /// Optional lifecycle filter.
+        status: Option<String>,
+        /// Optional updated-at age filter.
+        older_than_days: Option<u64>,
+        /// Preview matching sessions without deleting them.
+        dry_run: bool,
+    },
     /// `/session search <query>` — search persisted transcripts.
     SessionSearch(String),
     /// `/session show <id|title>` — show persisted session details.

@@ -43,6 +43,14 @@ fn parses_goal_slash_commands() {
         Some(SlashCommand::SessionListStatus("done".to_string()))
     );
     assert_eq!(
+        parse_slash_command("/session prune --status failed --dry-run"),
+        Some(SlashCommand::SessionPrune {
+            status: Some("failed".to_string()),
+            older_than_days: None,
+            dry_run: true,
+        })
+    );
+    assert_eq!(
         parse_slash_command("/session search parser failure"),
         Some(SlashCommand::SessionSearch("parser failure".to_string()))
     );

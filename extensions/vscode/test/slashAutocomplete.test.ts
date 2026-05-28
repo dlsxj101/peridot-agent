@@ -81,6 +81,11 @@ const commands: SlashCommandSpec[] = [
     argHint: '[--status <state>]',
   },
   {
+    name: '/session prune',
+    description: 'prune sessions',
+    argHint: '[--status <state>|--older-than-days <N>|--dry-run]',
+  },
+  {
     name: '/session count',
     description: 'count sessions',
   },
@@ -217,15 +222,18 @@ test('acceptedSlashCommandText leaves editable slots instead of placeholders', (
   const fork = commands.find((command) => command.name === '/fork');
   const plan = commands.find((command) => command.name === '/plan');
   const sessionList = commands.find((command) => command.name === '/session list');
+  const sessionPrune = commands.find((command) => command.name === '/session prune');
   assert.ok(goal);
   assert.ok(fork);
   assert.ok(plan);
   assert.ok(sessionList);
+  assert.ok(sessionPrune);
 
   assert.equal(acceptedSlashCommandText(goal), '/goal ');
   assert.equal(acceptedSlashCommandText(fork), '/fork ');
   assert.equal(acceptedSlashCommandText(plan), '/plan');
   assert.equal(acceptedSlashCommandText(sessionList), '/session list');
+  assert.equal(acceptedSlashCommandText(sessionPrune), '/session prune');
 });
 
 test('slashArgumentContext filters finite options and closes after exact option', () => {
@@ -368,6 +376,10 @@ test('slashArgumentContext leaves argument room after session subcommands', () =
     filteredSlashCommands('/session s', commands).map((command) => command.name),
     ['/session save', '/session search', '/session show', '/session switch'],
   );
+  assert.deepEqual(
+    filteredSlashCommands('/session pr', commands).map((command) => command.name),
+    ['/session prune'],
+  );
   assert.equal(slashArgumentContext('/session save', commands), undefined);
 });
 
@@ -386,6 +398,21 @@ test('slashArgumentContext filters session list status values', () => {
   assert.deepEqual(failed?.options, ['failed']);
 
   assert.equal(slashArgumentContext('/session list --status done', commands), undefined);
+});
+
+test('slashArgumentContext filters session prune arguments', () => {
+  const flag = slashArgumentContext('/session prune --', commands);
+  assert.equal(flag?.command.name, '/session prune');
+  assert.deepEqual(flag?.options, ['--status', '--older-than-days', '--dry-run']);
+  assert.equal(flag?.appendSpace, true);
+
+  const status = slashArgumentContext('/session prune --status s', commands);
+  assert.equal(status?.command.name, '/session prune --status');
+  assert.deepEqual(status?.options, ['suspended']);
+  assert.equal(status?.appendSpace, true);
+
+  assert.equal(slashArgumentContext('/session prune --older-than-days ', commands), undefined);
+  assert.equal(slashArgumentContext('/session prune --status done', commands), undefined);
 });
 
 test('slashArgumentContext filters mcp server arguments', () => {

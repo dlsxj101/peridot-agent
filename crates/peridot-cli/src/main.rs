@@ -1455,6 +1455,30 @@ fn apply_session_command(
                 state.push_transcript(format!("sessions ({target}):\n{}", rows.join("\n")));
             }
         }
+        SessionCommandEvent::SessionPrune {
+            status,
+            older_than_days,
+            dry_run,
+        } => {
+            let store = MemoryStore::new(project_template.join(".peridot/memory.db"));
+            match commands::prune_session_records(
+                &store,
+                project_template,
+                status.as_deref(),
+                older_than_days,
+                dry_run,
+            ) {
+                Ok(result) => {
+                    if !result.dry_run {
+                        state
+                            .sessions
+                            .retain(|item| !result.removed.iter().any(|id| id == &item.id));
+                    }
+                    state.push_transcript(render_session_prune_text(&result));
+                }
+                Err(err) => state.push_error(format!("session prune failed: {err}")),
+            }
+        }
         SessionCommandEvent::SessionSearch(query) => {
             match commands::search_session_transcript_hits(project_template, &query, None, Some(50))
             {
@@ -1800,6 +1824,28 @@ fn session_lifecycle_label(status: SessionLifecycle) -> &'static str {
         SessionLifecycle::Suspended => "suspended",
         SessionLifecycle::Done => "done",
         SessionLifecycle::Failed => "failed",
+    }
+}
+
+fn render_session_prune_text(result: &commands::SessionPruneResult) -> String {
+    if result.dry_run {
+        if result.considered.is_empty() {
+            "session prune (dry-run): no matching sessions".to_string()
+        } else {
+            format!(
+                "session prune (dry-run): would remove {} session(s):\n  {}",
+                result.considered.len(),
+                result.considered.join("\n  ")
+            )
+        }
+    } else if result.removed.is_empty() {
+        "session prune: no matching sessions".to_string()
+    } else {
+        format!(
+            "session prune: removed {} session(s):\n  {}",
+            result.removed.len(),
+            result.removed.join("\n  ")
+        )
     }
 }
 

@@ -1215,6 +1215,19 @@ pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
             state.push_transcript(format!("sessions: loading {status} sessions..."));
             state.push_pending_session_command(SessionCommandEvent::SessionListStatus(status));
         }
+        SlashCommand::SessionPrune {
+            status,
+            older_than_days,
+            dry_run,
+        } => {
+            let mode = if dry_run { "dry-run" } else { "removing" };
+            state.push_transcript(format!("session prune: {mode} matching sessions..."));
+            state.push_pending_session_command(SessionCommandEvent::SessionPrune {
+                status,
+                older_than_days,
+                dry_run,
+            });
+        }
         SlashCommand::SessionCount => {
             state.push_transcript("session count: loading lifecycle totals...");
             state.push_pending_session_command(SessionCommandEvent::SessionCount);

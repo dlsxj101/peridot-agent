@@ -128,6 +128,15 @@ pub enum SlashCommand {
     SessionList,
     /// List persisted sessions matching one lifecycle state.
     SessionListStatus(String),
+    /// Remove persisted sessions matching lifecycle / age filters.
+    SessionPrune {
+        /// Optional lifecycle filter.
+        status: Option<String>,
+        /// Optional updated-at age filter.
+        older_than_days: Option<u64>,
+        /// Preview matching sessions without deleting them.
+        dry_run: bool,
+    },
     /// Show persisted session lifecycle counts.
     SessionCount,
     /// Search persisted session transcripts.
@@ -492,6 +501,14 @@ pub fn parse_slash_command(input: &str) -> Option<SlashCommand> {
         "session" if rest.starts_with("list ") => {
             parse_session_list_status(rest.strip_prefix("list ").unwrap_or("").trim())
         }
+        "session" if rest == "prune" => Some(SlashCommand::SessionPrune {
+            status: None,
+            older_than_days: None,
+            dry_run: false,
+        }),
+        "session" if rest.starts_with("prune ") => {
+            parse_session_prune(rest.strip_prefix("prune ").unwrap_or("").trim())
+        }
         "session" if rest == "count" => Some(SlashCommand::SessionCount),
         "session" if rest == "search" || rest.starts_with("search ") => {
             let query = rest.strip_prefix("search").unwrap_or("").trim();
@@ -773,6 +790,35 @@ fn parse_session_list_status(rest: &str) -> Option<SlashCommand> {
         }
         _ => None,
     }
+}
+
+fn parse_session_prune(rest: &str) -> Option<SlashCommand> {
+    let mut status = None;
+    let mut older_than_days = None;
+    let mut dry_run = false;
+    let mut parts = rest.split_whitespace().peekable();
+    while let Some(part) = parts.next() {
+        match part {
+            "--dry-run" | "dry-run" => dry_run = true,
+            "--status" | "status" => {
+                let value = parts.next()?;
+                if !matches!(value, "idle" | "running" | "suspended" | "done" | "failed") {
+                    return None;
+                }
+                status = Some(value.to_string());
+            }
+            "--older-than-days" | "older-than-days" => {
+                let value = parts.next()?.parse::<u64>().ok()?;
+                older_than_days = Some(value);
+            }
+            _ => return None,
+        }
+    }
+    Some(SlashCommand::SessionPrune {
+        status,
+        older_than_days,
+        dry_run,
+    })
 }
 
 fn parse_skill_use(request: &str) -> Option<SlashCommand> {
@@ -1090,6 +1136,23 @@ mod tests {
             Some(SlashCommand::SessionListStatus("failed".to_string()))
         );
         assert_eq!(parse_slash_command("/session list --status bogus"), None);
+        assert_eq!(
+            parse_slash_command("/session prune --status done --older-than-days 7 --dry-run"),
+            Some(SlashCommand::SessionPrune {
+                status: Some("done".to_string()),
+                older_than_days: Some(7),
+                dry_run: true,
+            })
+        );
+        assert_eq!(
+            parse_slash_command("/session prune dry-run"),
+            Some(SlashCommand::SessionPrune {
+                status: None,
+                older_than_days: None,
+                dry_run: true,
+            })
+        );
+        assert_eq!(parse_slash_command("/session prune --status bogus"), None);
         assert_eq!(
             parse_slash_command("/session search parser failure"),
             Some(SlashCommand::SessionSearch("parser failure".to_string()))

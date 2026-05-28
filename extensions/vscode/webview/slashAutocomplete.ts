@@ -89,6 +89,8 @@ export function slashArgumentContext(
   if (skillSearchContext) return skillSearchContext;
   const sessionListStatusContext = sessionListStatusArgumentContext(query);
   if (sessionListStatusContext) return sessionListStatusContext;
+  const sessionPruneContext = sessionPruneArgumentContext(query);
+  if (sessionPruneContext) return sessionPruneContext;
   const sessionContext = sessionTargetArgumentContext(query, sessionTargets);
   if (sessionContext) return sessionContext;
   const sessionSubcommandContext = sessionSubcommandArgumentContext(query);
@@ -458,6 +460,48 @@ function sessionListStatusArgumentContext(query: string): SlashArgumentContext |
       category: 'session',
     },
     options,
+  };
+}
+
+function sessionPruneArgumentContext(query: string): SlashArgumentContext | undefined {
+  const commandName = '/session prune';
+  if (query !== commandName && !query.startsWith(`${commandName} `)) return undefined;
+  const rest = query.slice(commandName.length).trimStart();
+  if (rest.length === 0) return undefined;
+  const hasTrailingSpace = /\s$/.test(query);
+  const parts = rest.split(/\s+/).filter((part) => part.length > 0);
+  const prefix = hasTrailingSpace ? '' : (parts.pop() ?? '');
+  const last = parts.at(-1);
+  if (last === '--status' || last === 'status') {
+    const needle = prefix.toLowerCase();
+    if (needle && SESSION_STATUS_OPTIONS.some((option) => option === needle)) return undefined;
+    const options = SESSION_STATUS_OPTIONS.filter((option) => needle.length === 0 || option.startsWith(needle));
+    if (options.length === 0) return undefined;
+    return {
+      command: {
+        name: `${commandName} ${parts.join(' ')}`,
+        description: 'session prune status',
+        category: 'session',
+      },
+      options,
+      appendSpace: true,
+    };
+  }
+  if (last === '--older-than-days' || last === 'older-than-days') return undefined;
+  const used = new Set(parts);
+  const needle = prefix.toLowerCase();
+  const options = ['--status', 'status', '--older-than-days', 'older-than-days', '--dry-run', 'dry-run']
+    .filter((option) => !used.has(option))
+    .filter((option) => needle.length === 0 || option.startsWith(needle));
+  if (options.length === 0) return undefined;
+  return {
+    command: {
+      name: commandName,
+      description: 'session prune filter',
+      category: 'session',
+    },
+    options,
+    appendSpace: true,
   };
 }
 

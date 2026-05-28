@@ -93,6 +93,7 @@ impl AgentState {
             | SlashCommand::SessionRename { .. }
             | SlashCommand::SessionList
             | SlashCommand::SessionListStatus(_)
+            | SlashCommand::SessionPrune { .. }
             | SlashCommand::SessionCount
             | SlashCommand::SessionSearch(_)
             | SlashCommand::SessionShow(_)

@@ -412,6 +412,12 @@ pub fn slash_command_catalog() -> &'static [SlashCommandSpec] {
             category: "session",
         },
         SlashCommandSpec {
+            name: "/session prune",
+            description: "remove persisted sessions matching filters",
+            arg_hint: Some("[--status <state>|--older-than-days <N>|--dry-run]"),
+            category: "session",
+        },
+        SlashCommandSpec {
             name: "/session count",
             description: "show persisted session lifecycle counts",
             arg_hint: None,
@@ -632,6 +638,9 @@ pub(crate) fn slash_argument_context_with_dynamic(
         return Some(context);
     }
     if let Some(context) = session_list_status_argument_context(query) {
+        return Some(context);
+    }
+    if let Some(context) = session_prune_argument_context(query) {
         return Some(context);
     }
     if let Some(context) = session_target_argument_context(query, sessions) {
@@ -1049,6 +1058,76 @@ fn session_list_status_argument_context(query: &str) -> Option<SlashArgumentCont
         command_name: format!("{command_name} {}", parts[0]),
         options,
         append_space: false,
+    })
+}
+
+fn session_prune_argument_context(query: &str) -> Option<SlashArgumentContext> {
+    let command_name = "/session prune";
+    if query != command_name && !query.starts_with(&format!("{command_name} ")) {
+        return None;
+    }
+    let rest = query[command_name.len()..].trim_start();
+    if rest.is_empty() {
+        return None;
+    }
+    let has_trailing_space = query.chars().last().is_some_and(char::is_whitespace);
+    let mut parts: Vec<&str> = rest.split_whitespace().collect();
+    let prefix = if has_trailing_space {
+        ""
+    } else {
+        parts.pop().unwrap_or("")
+    };
+    if matches!(parts.last(), Some(&"--status") | Some(&"status")) {
+        let needle = prefix.to_ascii_lowercase();
+        if !needle.is_empty()
+            && SESSION_STATUS_OPTIONS
+                .iter()
+                .any(|option| option.eq_ignore_ascii_case(&needle))
+        {
+            return None;
+        }
+        let options: Vec<String> = SESSION_STATUS_OPTIONS
+            .iter()
+            .filter(|option| needle.is_empty() || option.starts_with(&needle))
+            .map(|option| (*option).to_string())
+            .collect();
+        if options.is_empty() {
+            return None;
+        }
+        return Some(SlashArgumentContext {
+            command_name: format!("{command_name} {}", parts.join(" ")),
+            options,
+            append_space: true,
+        });
+    }
+    if matches!(
+        parts.last(),
+        Some(&"--older-than-days") | Some(&"older-than-days")
+    ) {
+        return None;
+    }
+    let used: std::collections::BTreeSet<&str> = parts.iter().copied().collect();
+    let needle = prefix.to_ascii_lowercase();
+    let options: Vec<String> = [
+        "--status",
+        "status",
+        "--older-than-days",
+        "older-than-days",
+        "--dry-run",
+        "dry-run",
+    ]
+    .into_iter()
+    .filter(|option| !used.contains(option))
+    .filter(|option| needle.is_empty() || option.starts_with(&needle))
+    .map(str::to_string)
+    .collect();
+    if options.is_empty() {
+        return None;
+    }
+    Some(SlashArgumentContext {
+        command_name: command_name.to_string(),
+        options,
+        append_space: true,
     })
 }
 
@@ -1582,6 +1661,13 @@ mod tests {
             "/session list"
         );
         assert_eq!(
+            accepted_command_text(
+                "/session prune",
+                Some("[--status <state>|--older-than-days <N>|--dry-run]")
+            ),
+            "/session prune"
+        );
+        assert_eq!(
             accepted_command_text("/fast", Some("[on|off|toggle]")),
             "/fast "
         );
@@ -1870,6 +1956,55 @@ mod tests {
         assert!(
             slash_argument_context_with_dynamic(
                 "/session list --status done",
+                &[],
+                &[],
+                &[],
+                &[],
+                &[],
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn session_prune_argument_context_filters_flags_and_states() {
+        let context =
+            slash_argument_context_with_dynamic("/session prune --", &[], &[], &[], &[], &[])
+                .expect("session prune flags");
+        assert_eq!(context.command_name, "/session prune");
+        assert_eq!(
+            context.options,
+            vec!["--status", "--older-than-days", "--dry-run"]
+        );
+        assert!(context.append_space);
+
+        let context = slash_argument_context_with_dynamic(
+            "/session prune --status s",
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+        )
+        .expect("session prune status value");
+        assert_eq!(context.command_name, "/session prune --status");
+        assert_eq!(context.options, vec!["suspended"]);
+        assert!(context.append_space);
+
+        assert!(
+            slash_argument_context_with_dynamic(
+                "/session prune --older-than-days ",
+                &[],
+                &[],
+                &[],
+                &[],
+                &[],
+            )
+            .is_none()
+        );
+        assert!(
+            slash_argument_context_with_dynamic(
+                "/session prune --status done",
                 &[],
                 &[],
                 &[],

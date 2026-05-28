@@ -96,6 +96,17 @@ Remaining scoped polish: none currently tracked in this runbook.
   finite lifecycle state values, while bare `/session list` stays directly
   runnable.
 
+### M41 — `/session prune` interactive parity (landed)
+- `/session prune [--status idle|running|suspended|done|failed]
+  [--older-than-days N] [--dry-run]` now works in TUI and daemon-backed VS
+  Code sessions, matching `peridot session prune`.
+- The shared prune helper returns a structured result before formatting, so
+  CLI text/JSON, TUI transcript output, and daemon command results stay
+  aligned.
+- Non-dry-run daemon prune emits a session-list change notification and drops
+  pruned live registry entries so the VS Code sidebar reconciles after the
+  persisted records are removed.
+
 ### M39 — Stale worktree reconciliation (landed)
 - TUI startup and daemon `peridot.status` both call the shared worktree
   reconciler before reporting session state.
