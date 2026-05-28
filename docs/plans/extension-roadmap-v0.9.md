@@ -1003,6 +1003,20 @@ shared daemon, TUI, and VS Code extension surfaces.
   names from the daemon event stream without waiting for a later status
   refresh.
 
+### E81. AGENTS.md Hot-Reload Status Parity
+
+- **Status**: landed.
+- **Goal**: make VS Code expose AGENTS.md hot-reload events the same way
+  the TUI side panel exposes the active instruction summary.
+- **Where**: shared daemon `AgentRunEvent::AgentsMdLoaded`, TUI side-panel
+  state, VS Code sidebar context state, VS Code context strip, and VS Code
+  unit tests.
+- **Result**: `agents_md_loaded` now updates a sidebar `agents` summary
+  and stays suppressed from the transcript. The webview context strip
+  shows an `AGENTS <rule-count>` pill with source paths in the hover title,
+  so an operator can see mid-run instruction reloads without reading an
+  opaque event row.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

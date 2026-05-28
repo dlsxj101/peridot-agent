@@ -1,7 +1,24 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { mcpServersForStatusEvent } from '../src/agentEventContext';
+import { agentsSummaryForLoadedEvent, mcpServersForStatusEvent } from '../src/agentEventContext';
+
+test('agentsSummaryForLoadedEvent normalizes AGENTS.md load events', () => {
+  assert.deepEqual(
+    agentsSummaryForLoadedEvent({
+      rule_count: 7,
+      paths: [' AGENTS.md ', '', 4, '.peridot/AGENTS.md'],
+    }),
+    {
+      ruleCount: 7,
+      paths: ['AGENTS.md', '.peridot/AGENTS.md'],
+    },
+  );
+});
+
+test('agentsSummaryForLoadedEvent ignores unrelated events', () => {
+  assert.equal(agentsSummaryForLoadedEvent({}), undefined);
+});
 
 test('mcpServersForStatusEvent normalizes daemon mcp status snapshots', () => {
   assert.deepEqual(

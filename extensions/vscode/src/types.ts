@@ -277,9 +277,15 @@ export interface SidebarContext {
   status?: string;
   problem?: string;
   running?: boolean;
+  agents?: AgentsSummary;
   mcpServers?: McpServerSummary[];
   modelSuggestions?: string[];
   branchSnapshots?: string[];
+}
+
+export interface AgentsSummary {
+  ruleCount: number;
+  paths: string[];
 }
 
 export interface McpServerSummary {

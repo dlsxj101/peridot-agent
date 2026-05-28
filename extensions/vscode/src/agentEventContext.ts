@@ -1,4 +1,21 @@
-import type { McpServerSummary } from './types';
+import type { AgentsSummary, McpServerSummary } from './types';
+
+export function agentsSummaryForLoadedEvent(
+  event: Record<string, unknown>,
+): AgentsSummary | undefined {
+  const ruleCount = numberField(event, 'rule_count');
+  const paths = Array.isArray(event.paths)
+    ? event.paths
+        .filter((path): path is string => typeof path === 'string')
+        .map((path) => path.trim())
+        .filter((path) => path.length > 0)
+    : [];
+  if (typeof ruleCount !== 'number' && paths.length === 0) return undefined;
+  return {
+    ruleCount: ruleCount ?? 0,
+    paths,
+  };
+}
 
 export function mcpServersForStatusEvent(
   event: Record<string, unknown>,

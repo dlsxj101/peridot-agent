@@ -68,6 +68,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
   daemon events in VS Code as sidebar context updates, matching the TUI
   side-panel behavior and keeping `/mcp remove|test` autocomplete current
   without adding opaque transcript rows.
+- **AGENTS.md hot-reload status parity** now consumes `agents_md_loaded`
+  daemon events in VS Code as an `AGENTS <rule-count>` context-strip pill
+  with source paths, matching the TUI side-panel instruction summary.
 - **Provider argument autocomplete** now exposes the supported provider ids
   for `/provider <claude-api|openai-api|openrouter-api|openai-oauth>` through
   the shared slash catalog, TUI picker, daemon JSON catalog, and VS Code

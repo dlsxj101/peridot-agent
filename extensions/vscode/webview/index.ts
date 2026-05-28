@@ -1070,6 +1070,13 @@ function renderContextStrip(context: SidebarContext): HTMLElement {
   if (context.committeeMode && context.committeeMode !== 'off') {
     pills.append(pill(`committee ${context.committeeMode}`, 'mode'));
   }
+  if (context.agents && (context.agents.ruleCount > 0 || context.agents.paths.length > 0)) {
+    const agentsPill = pill(`AGENTS ${context.agents.ruleCount}`, 'mute');
+    if (context.agents.paths.length > 0) {
+      agentsPill.title = context.agents.paths.join('\n');
+    }
+    pills.append(agentsPill);
+  }
   if (context.serviceTier && context.serviceTier !== 'standard') {
     pills.append(pill(context.serviceTier, 'mode'));
   }

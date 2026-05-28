@@ -27,7 +27,7 @@ import {
 import { localSlashAction } from './localSlashAction';
 import { staleDaemonBackedSessionIds } from './sessionReconcile';
 import { agentTranscriptItemForEvent } from './agentEventTranscript';
-import { mcpServersForStatusEvent } from './agentEventContext';
+import { agentsSummaryForLoadedEvent, mcpServersForStatusEvent } from './agentEventContext';
 
 export type {
   ApprovalResponse,
@@ -886,6 +886,17 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
           this.state.context = {
             ...this.state.context,
             mcpServers,
+          };
+          this.publish();
+        }
+        return;
+      }
+      case 'agents_md_loaded': {
+        const agents = agentsSummaryForLoadedEvent(event);
+        if (agents) {
+          this.state.context = {
+            ...this.state.context,
+            agents,
           };
           this.publish();
         }

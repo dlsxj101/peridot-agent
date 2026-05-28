@@ -45,6 +45,9 @@
 - Live MCP status daemon events now update VS Code's MCP server snapshot
   for `/mcp remove|test` autocomplete and no longer appear as opaque
   transcript event-kind rows.
+- AGENTS.md hot-reload daemon events now update a VS Code context-strip
+  `AGENTS <rule-count>` pill with source paths, matching the TUI
+  instruction-summary side panel.
 - Provider argument autocomplete now fills supported provider ids for
   `/provider <claude-api|openai-api|openrouter-api|openai-oauth>` from the
   shared daemon slash catalog.
