@@ -457,6 +457,9 @@ export type OutboundMessage =
   | { type: 'restoreSkill'; name: string }
   | { type: 'attachFile' }
   | { type: 'detachAttachment'; path: string }
+  | { type: 'addSessionNote' }
+  | { type: 'showSessionNotes' }
+  | { type: 'clearSessionNotes' }
   | { type: 'newPersistedSession' }
   | { type: 'switchPersistedSession' }
   | { type: 'closePersistedSession' }

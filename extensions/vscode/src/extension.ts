@@ -26,6 +26,12 @@ import {
   type SessionTargetChoice,
 } from './sessionInspectCommand';
 import { sessionListSlashCommand, sessionListStatusChoices } from './sessionListCommand';
+import {
+  parseNotesLastInput,
+  sessionNoteSlashCommand,
+  sessionNotesClearSlashCommand,
+  sessionNotesSlashCommand,
+} from './sessionNotesCommand';
 import { sessionSearchSlashCommand } from './sessionSearchCommand';
 import {
   parseReplayLastInput,
@@ -193,6 +199,9 @@ export function activate(context: vscode.ExtensionContext) {
     detachAttachment: async (path: string): Promise<void> =>
       detachAttachmentFromSession(path, output, sidebar),
     showAttachments: async (): Promise<void> => showSessionAttachments(output, sidebar),
+    addSessionNote: async (): Promise<void> => addSessionNote(output, sidebar),
+    showSessionNotes: async (): Promise<void> => showSessionNotes(output, sidebar),
+    clearSessionNotes: async (): Promise<void> => clearSessionNotes(output, sidebar),
     newPersistedSession: async (): Promise<void> => newPersistedSession(output, sidebar),
     switchPersistedSession: async (): Promise<void> => switchPersistedSession(output, sidebar),
     closePersistedSession: async (): Promise<void> => closePersistedSession(output, sidebar),
@@ -407,6 +416,24 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand('peridot.showAttachments', async () => {
       await showSessionAttachments(output, sidebar);
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('peridot.addSessionNote', async () => {
+      await addSessionNote(output, sidebar);
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('peridot.showSessionNotes', async () => {
+      await showSessionNotes(output, sidebar);
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('peridot.clearSessionNotes', async () => {
+      await clearSessionNotes(output, sidebar);
     }),
   );
 
@@ -1451,6 +1478,114 @@ async function detachAttachmentFromSession(
     sidebar.appendError(message);
     await vscode.window.showErrorMessage(`Peridot detach failed: ${message}`);
   }
+}
+
+async function addSessionNote(
+  output: vscode.OutputChannel,
+  sidebar: PeridotSidebarProvider,
+): Promise<void> {
+  if (!(await ensureActiveNotesSession(sidebar))) return;
+  const note = await vscode.window.showInputBox({
+    title: 'Peridot: Add Session Note',
+    prompt: 'Add an operator note to the active Peridot session.',
+    placeHolder: 'checkpoint: verified replay output',
+    ignoreFocusOut: true,
+  });
+  if (note === undefined) return;
+  let command: string;
+  try {
+    command = sessionNoteSlashCommand(note);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    await vscode.window.showErrorMessage(`Peridot note failed: ${message}`);
+    return;
+  }
+  await vscode.commands.executeCommand('peridot.chatView.focus');
+  try {
+    const result = await runSlashCommand(command, output, sidebar, sidebar.currentRunOptions());
+    sidebar.appendCommandResult(result);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    output.appendLine(`[peridot] note failed: ${message}`);
+    sidebar.appendError(message);
+    await vscode.window.showErrorMessage(`Peridot note failed: ${message}`);
+  }
+}
+
+async function showSessionNotes(
+  output: vscode.OutputChannel,
+  sidebar: PeridotSidebarProvider,
+): Promise<void> {
+  if (!(await ensureActiveNotesSession(sidebar))) return;
+  const lastInput = await vscode.window.showInputBox({
+    title: 'Peridot: Show Session Notes',
+    prompt: 'Notes to show. Leave empty for all notes.',
+    placeHolder: 'all',
+    ignoreFocusOut: true,
+    validateInput: (value) => {
+      try {
+        parseNotesLastInput(value);
+        return undefined;
+      } catch (err) {
+        return err instanceof Error ? err.message : String(err);
+      }
+    },
+  });
+  if (lastInput === undefined) return;
+  let command: string;
+  try {
+    command = sessionNotesSlashCommand(parseNotesLastInput(lastInput));
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    await vscode.window.showErrorMessage(`Peridot notes failed: ${message}`);
+    return;
+  }
+  await vscode.commands.executeCommand('peridot.chatView.focus');
+  try {
+    const result = await runSlashCommand(command, output, sidebar, sidebar.currentRunOptions());
+    sidebar.appendCommandResult(result);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    output.appendLine(`[peridot] notes failed: ${message}`);
+    sidebar.appendError(message);
+    await vscode.window.showErrorMessage(`Peridot notes failed: ${message}`);
+  }
+}
+
+async function clearSessionNotes(
+  output: vscode.OutputChannel,
+  sidebar: PeridotSidebarProvider,
+): Promise<void> {
+  if (!(await ensureActiveNotesSession(sidebar))) return;
+  const confirmed = await vscode.window.showWarningMessage(
+    'Clear all notes for the active Peridot session?',
+    { modal: true },
+    'Clear Notes',
+  );
+  if (confirmed !== 'Clear Notes') return;
+  await vscode.commands.executeCommand('peridot.chatView.focus');
+  try {
+    const result = await runSlashCommand(
+      sessionNotesClearSlashCommand(),
+      output,
+      sidebar,
+      sidebar.currentRunOptions(),
+    );
+    sidebar.appendCommandResult(result);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    output.appendLine(`[peridot] notes clear failed: ${message}`);
+    sidebar.appendError(message);
+    await vscode.window.showErrorMessage(`Peridot notes clear failed: ${message}`);
+  }
+}
+
+async function ensureActiveNotesSession(sidebar: PeridotSidebarProvider): Promise<boolean> {
+  if (sidebar.currentDaemonSessionId()) return true;
+  await vscode.window.showWarningMessage(
+    'Start, save, or select a persisted Peridot session before using session notes.',
+  );
+  return false;
 }
 
 async function showSessions(

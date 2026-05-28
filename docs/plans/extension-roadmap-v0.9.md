@@ -1477,6 +1477,19 @@ shared daemon, TUI, and VS Code extension surfaces.
   explicit confirmation, runs `/session close <id>`, finishes any cancelled
   live run, and refreshes the session list.
 
+### E116. VS Code Session Notes GUI
+
+- **Status**: landed.
+- **Goal**: make active-session operator notes discoverable from the editor
+  without requiring manual `/note` or `/notes` commands.
+- **Where**: VS Code command contributions, sidebar title-bar actions,
+  session notes command construction, README, and changelog docs.
+- **Result**: `Peridot: Add Session Note` prompts for note text and runs
+  `/note <text>`. `Peridot: Show Session Notes` optionally limits the list
+  with `/notes last N`, and `Peridot: Clear Session Notes` asks for
+  confirmation before running `/notes clear`. All three render through the
+  existing structured notes command-result block.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

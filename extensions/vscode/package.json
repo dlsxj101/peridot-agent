@@ -233,6 +233,24 @@
         "icon": "$(references)"
       },
       {
+        "command": "peridot.addSessionNote",
+        "title": "Peridot: Add Session Note",
+        "category": "Peridot",
+        "icon": "$(note)"
+      },
+      {
+        "command": "peridot.showSessionNotes",
+        "title": "Peridot: Show Session Notes",
+        "category": "Peridot",
+        "icon": "$(notebook)"
+      },
+      {
+        "command": "peridot.clearSessionNotes",
+        "title": "Peridot: Clear Session Notes",
+        "category": "Peridot",
+        "icon": "$(clear-all)"
+      },
+      {
         "command": "peridot.newPersistedSession",
         "title": "Peridot: New Session",
         "category": "Peridot",
@@ -413,6 +431,21 @@
           "command": "peridot.attachFile",
           "when": "view == peridot.chatView",
           "group": "navigation@5"
+        },
+        {
+          "command": "peridot.addSessionNote",
+          "when": "view == peridot.chatView",
+          "group": "navigation@5.001"
+        },
+        {
+          "command": "peridot.showSessionNotes",
+          "when": "view == peridot.chatView",
+          "group": "navigation@5.002"
+        },
+        {
+          "command": "peridot.clearSessionNotes",
+          "when": "view == peridot.chatView",
+          "group": "navigation@5.003"
         },
         {
           "command": "peridot.newPersistedSession",

@@ -59,6 +59,10 @@
   Session` now expose the remaining persisted session lifecycle commands
   from the command palette and sidebar title bar, with daemon-backed
   selection and session-list reconciliation.
+- `Peridot: Add Session Note`, `Peridot: Show Session Notes`, and
+  `Peridot: Clear Session Notes` now expose active-session notes from the
+  command palette and sidebar title bar through the shared daemon slash
+  paths.
 - `/session prune [--status <state>] [--older-than-days N] [--dry-run]`
   now runs through the daemon command path and returns a structured prune
   result so editor users can preview or remove stale persisted sessions.

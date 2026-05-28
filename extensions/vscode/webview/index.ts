@@ -822,6 +822,9 @@ function renderHeader(s: SidebarState): HTMLElement {
   right.append(iconButton('search', 'Search Skills', () => vscode.postMessage({ type: 'searchSkills' })));
   right.append(iconButton('search-archive', 'Search Archived Skills', () => vscode.postMessage({ type: 'searchArchivedSkills' })));
   right.append(iconButton('attach', 'Attach File', () => vscode.postMessage({ type: 'attachFile' })));
+  right.append(iconButton('note-add', 'Add Session Note', () => vscode.postMessage({ type: 'addSessionNote' })));
+  right.append(iconButton('note-list', 'Show Session Notes', () => vscode.postMessage({ type: 'showSessionNotes' })));
+  right.append(iconButton('note-clear', 'Clear Session Notes', () => vscode.postMessage({ type: 'clearSessionNotes' })));
   right.append(iconButton('session-new', 'New Session', () => vscode.postMessage({ type: 'newPersistedSession' })));
   right.append(iconButton('session-switch', 'Switch Session', () => vscode.postMessage({ type: 'switchPersistedSession' })));
   right.append(iconButton('session-close', 'Close Session', () => vscode.postMessage({ type: 'closePersistedSession' })));
@@ -1072,6 +1075,12 @@ function iconSvg(kind: string): string {
       return `<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4.5h11v9h-11z"/><path d="M1.8 2.5h12.4v2h-12.4z"/><path d="M8 11V7"/><path d="M5.8 9.2 8 7l2.2 2.2"/></svg>`;
     case 'attach':
       return `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5.2 8.7l3.9-3.9a2.4 2.4 0 0 1 3.4 3.4l-5.1 5.1a3.6 3.6 0 0 1-5.1-5.1l5.5-5.5"/><path d="M6.3 9.8l4.2-4.2"/></svg>`;
+    case 'note-add':
+      return `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3.2 2.8h7.6l2 2v8.4h-9.6z"/><path d="M10.8 2.8v2h2"/><path d="M5.5 8.4h5"/><path d="M8 5.9v5"/></svg>`;
+    case 'note-list':
+      return `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3.2 2.8h7.6l2 2v8.4h-9.6z"/><path d="M10.8 2.8v2h2"/><path d="M5.4 6.8h5.2"/><path d="M5.4 9.2h5.2"/><path d="M5.4 11.6h3.4"/></svg>`;
+    case 'note-clear':
+      return `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3.2 2.8h7.6l2 2v8.4h-9.6z"/><path d="M10.8 2.8v2h2"/><path d="M5.6 7.2l4.8 4.8"/><path d="M10.4 7.2l-4.8 4.8"/></svg>`;
     case 'session-new':
       return `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><rect x="2.5" y="3" width="11" height="10" rx="1.5"/><path d="M8 5.5v5M5.5 8h5"/></svg>`;
     case 'session-switch':
