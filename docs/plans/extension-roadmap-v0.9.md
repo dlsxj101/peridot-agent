@@ -1723,6 +1723,18 @@ shared daemon, TUI, and VS Code extension surfaces.
   same fuzzy workspace-relative file index as `@file` mentions. Exact completed
   paths close the argument picker so the command remains directly runnable.
 
+### E135. Attached File Detach Autocomplete
+
+- **Status**: landed.
+- **Goal**: make attachment removal use the same path-completion ergonomics
+  as attachment creation.
+- **Where**: TUI session state, TUI slash picker, VS Code sidebar context,
+  VS Code webview slash autocomplete, and unit tests.
+- **Result**: `/detach <path>` now suggests paths currently known to be
+  attached to the active session. The cache updates from `/attach`,
+  `/attachments`, and `/detach` results, and exact completed paths remain
+  directly runnable.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

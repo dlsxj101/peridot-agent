@@ -111,6 +111,8 @@
 - `/attach <path>` and `/codemap outline <path>` now reuse the workspace file
   index for slash argument autocomplete, matching the TUI path-completion
   behavior while keeping exact completed paths directly runnable.
+- `/detach <path>` now suggests currently attached session paths after
+  `/attach`, `/attachments`, or `/detach` results update the sidebar context.
 - Image attachments now render bounded inline previews in the VS Code/Cursor
   attachment cards while keeping the daemon/model context as the existing
   placeholder metadata.

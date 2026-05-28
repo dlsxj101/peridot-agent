@@ -1,0 +1,58 @@
+import type { AttachmentView, CommandResultItem, CommandResultView } from './types';
+
+export function attachmentPathsFromCommandResult(
+  result: CommandResultView,
+  existing: string[] = [],
+): string[] | undefined {
+  if (result.kind === 'attach') {
+    return dedupeSorted([...existing, ...attachmentPathsFromResult(result)]);
+  }
+  if (result.kind === 'attachments') {
+    return dedupeSorted(attachmentPathsFromResult(result));
+  }
+  if (result.kind === 'detach') {
+    const remaining = attachmentPathsFromResult(result);
+    if (Array.isArray(result.attachments)) return dedupeSorted(remaining);
+    const removed = attachmentPathsFromAttachments(result.removed);
+    if (removed.length === 0) return undefined;
+    return dedupeSorted(
+      existing.filter((path) => !removed.some((candidate) => candidate.toLowerCase() === path.toLowerCase())),
+    );
+  }
+  return undefined;
+}
+
+function attachmentPathsFromResult(result: CommandResultView): string[] {
+  return dedupeSorted([
+    ...attachmentPathsFromAttachments(result.attachment ? [result.attachment] : undefined),
+    ...attachmentPathsFromAttachments(result.attachments),
+    ...attachmentPathsFromItems(result.items),
+  ]);
+}
+
+function attachmentPathsFromAttachments(attachments: AttachmentView[] | undefined): string[] {
+  if (!Array.isArray(attachments)) return [];
+  return attachments
+    .map((attachment) => attachment.path?.trim() ?? '')
+    .filter((path) => path.length > 0);
+}
+
+function attachmentPathsFromItems(items: CommandResultItem[] | undefined): string[] {
+  if (!Array.isArray(items)) return [];
+  return items
+    .filter((item) => item.source === 'attachment')
+    .map((item) => (item.path ?? item.label ?? '').trim())
+    .filter((path) => path.length > 0);
+}
+
+function dedupeSorted(values: string[]): string[] {
+  const unique = new Map<string, string>();
+  values
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0)
+    .forEach((value) => {
+      const key = value.toLowerCase();
+      if (!unique.has(key)) unique.set(key, value);
+    });
+  return [...unique.values()].sort((a, b) => a.localeCompare(b));
+}

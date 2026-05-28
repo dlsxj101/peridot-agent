@@ -3765,6 +3765,7 @@ function slashPickerItemCount(input: string): number {
     state?.context.modelSuggestions ?? [],
     state?.context.branchSnapshots ?? [],
     state?.context.workspaceFiles ?? [],
+    state?.context.attachmentPaths ?? [],
   );
 }
 
@@ -3954,6 +3955,7 @@ function slashExactSelectionIsRunnable(input: string): boolean {
     state?.context.modelSuggestions ?? [],
     state?.context.branchSnapshots ?? [],
     state?.context.workspaceFiles ?? [],
+    state?.context.attachmentPaths ?? [],
   );
 }
 
@@ -3966,6 +3968,7 @@ function slashArgumentContext(input: string): SlashArgumentContext | undefined {
     state?.context.modelSuggestions ?? [],
     state?.context.branchSnapshots ?? [],
     state?.context.workspaceFiles ?? [],
+    state?.context.attachmentPaths ?? [],
   );
 }
 

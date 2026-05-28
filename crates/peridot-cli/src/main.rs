@@ -3030,10 +3030,13 @@ fn handle_attach(state: &mut TuiState, project_root: &Path, path: &str) {
             let reminder = commands::attachment_plan_reminder(&attachment);
             match append_plan_reminder_to_context(project_root, &state.current_session_id, reminder)
             {
-                Ok(()) => state.push_transcript(format!(
-                    "attach: added {} ({} bytes) to session context",
-                    attachment.path, attachment.bytes
-                )),
+                Ok(()) => {
+                    state.add_attachment_path(attachment.path.clone());
+                    state.push_transcript(format!(
+                        "attach: added {} ({} bytes) to session context",
+                        attachment.path, attachment.bytes
+                    ));
+                }
                 Err(err) => state.push_error(format!("attach: failed to update context: {err}")),
             }
         }
@@ -3049,6 +3052,12 @@ fn handle_attachments(state: &mut TuiState, project_root: &Path) {
     match read_context_snapshot(project_root, &state.current_session_id) {
         Ok(entries) => {
             let artifacts = commands::attachments_from_context(&entries);
+            state.set_attachment_paths(
+                artifacts
+                    .iter()
+                    .map(|artifact| artifact.path.clone())
+                    .collect(),
+            );
             state.push_transcript(render_attachments_text(&artifacts));
         }
         Err(err) => state.push_error(format!("attachments: failed to read context: {err}")),
@@ -3068,11 +3077,18 @@ fn handle_detach(state: &mut TuiState, project_root: &Path, path: &str) {
                 return;
             }
             match write_context_snapshot(project_root, &state.current_session_id, &kept) {
-                Ok(()) => state.push_transcript(format!(
-                    "detach: removed {} attachment(s) matching {}",
-                    removed.len(),
-                    path
-                )),
+                Ok(()) => {
+                    let removed_paths: Vec<String> = removed
+                        .iter()
+                        .map(|artifact| artifact.path.clone())
+                        .collect();
+                    state.remove_attachment_paths(&removed_paths);
+                    state.push_transcript(format!(
+                        "detach: removed {} attachment(s) matching {}",
+                        removed.len(),
+                        path
+                    ));
+                }
                 Err(err) => state.push_error(format!("detach: failed to update context: {err}")),
             }
         }

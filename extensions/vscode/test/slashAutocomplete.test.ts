@@ -151,6 +151,11 @@ const commands: SlashCommandSpec[] = [
     argHint: '<path>',
   },
   {
+    name: '/detach',
+    description: 'detach file',
+    argHint: '<path>',
+  },
+  {
     name: '/branch turn',
     description: 'fork at a turn id',
     argHint: '<turn-id>',
@@ -193,6 +198,7 @@ const mcpServers = [{ name: 'filesystem' }, { name: 'github' }];
 const modelSuggestions = ['claude-sonnet-4-6', 'gpt-5.1-codex'];
 const branchSnapshots = ['parser-snapshot', 'release-branch'];
 const workspaceFiles = ['docs/notes.md', 'src/lib.rs', 'src/main.rs', 'tests/main.rs'];
+const attachmentPaths = ['docs/notes.md', 'src/main.rs'];
 
 test('filteredSlashCommands ranks prefixes before description matches', () => {
   const matches = filteredSlashCommands('/switch', commands);
@@ -582,6 +588,26 @@ test('slashArgumentContext filters workspace file path arguments', () => {
   );
 });
 
+test('slashArgumentContext filters attached file path arguments for detach', () => {
+  const detach = slashArgumentContext(
+    '/detach main',
+    commands,
+    [],
+    [],
+    [],
+    [],
+    [],
+    attachmentPaths,
+  );
+  assert.equal(detach?.command.name, '/detach');
+  assert.deepEqual(detach?.options, ['src/main.rs']);
+
+  assert.equal(
+    slashArgumentContext('/detach src/main.rs', commands, [], [], [], [], [], attachmentPaths),
+    undefined,
+  );
+});
+
 test('slashArgumentContext leaves argument room after branch subcommands', () => {
   const turn = slashArgumentContext('/branch tu', commands);
 
@@ -687,6 +713,7 @@ test('slashPickerItemCount uses argument options when an argument picker is open
   assert.equal(slashPickerItemCount('/model ', commands, [], [], modelSuggestions), 2);
   assert.equal(slashPickerItemCount('/branch restore ', commands, [], [], [], branchSnapshots), 2);
   assert.equal(slashPickerItemCount('/attach ', commands, [], [], [], [], workspaceFiles), 4);
+  assert.equal(slashPickerItemCount('/detach ', commands, [], [], [], [], [], attachmentPaths), 2);
   assert.equal(slashPickerItemCount('/branch tu', commands), 1);
   assert.equal(slashPickerItemCount('/codemap loc', commands), 1);
   assert.equal(slashPickerItemCount('/goal ', commands), 4);

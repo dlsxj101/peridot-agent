@@ -303,6 +303,7 @@ export interface SidebarContext {
   modelSuggestions?: string[];
   branchSnapshots?: string[];
   workspaceFiles?: string[];
+  attachmentPaths?: string[];
 }
 
 export interface AgentsSummary {

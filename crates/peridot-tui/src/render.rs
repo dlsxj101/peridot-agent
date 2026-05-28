@@ -1872,12 +1872,15 @@ fn render_slash_picker(frame: &mut Frame<'_>, state: &TuiState, input_area: Rect
     }
     if let Some(context) = crate::slash_picker::slash_argument_context_with_dynamic_and_files(
         &picker.query,
-        &state.skill_suggestions,
-        &state.sessions,
-        &state.side_panel.mcp_status,
-        &state.model_suggestions,
-        &state.branch_suggestions,
-        &state.at_picker_index,
+        crate::slash_picker::SlashDynamicSources {
+            skills: &state.skill_suggestions,
+            sessions: &state.sessions,
+            mcp_servers: &state.side_panel.mcp_status,
+            models: &state.model_suggestions,
+            branches: &state.branch_suggestions,
+            files: &state.at_picker_index,
+            attachment_paths: &state.attachment_paths,
+        },
     ) {
         let selected = picker.selected.min(context.options.len().saturating_sub(1));
         let visible_limit = 6usize;

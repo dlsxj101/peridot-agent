@@ -42,6 +42,7 @@ export function slashPickerItemCount(
   models: string[] = [],
   branches: string[] = [],
   workspaceFiles: string[] = [],
+  attachmentPaths: string[] = [],
 ): number {
   const argumentContext = slashArgumentContext(
     input,
@@ -51,6 +52,7 @@ export function slashPickerItemCount(
     models,
     branches,
     workspaceFiles,
+    attachmentPaths,
   );
   if (argumentContext) return argumentContext.options.length;
   return filteredSlashCommands(input, slashCommands).length;
@@ -65,8 +67,9 @@ export function slashExactSelectionIsRunnable(
   models: string[] = [],
   branches: string[] = [],
   workspaceFiles: string[] = [],
+  attachmentPaths: string[] = [],
 ): boolean {
-  if (slashArgumentContext(input, slashCommands, sessionTargets, mcpServers, models, branches, workspaceFiles)) return false;
+  if (slashArgumentContext(input, slashCommands, sessionTargets, mcpServers, models, branches, workspaceFiles, attachmentPaths)) return false;
   const matches = filteredSlashCommands(input, slashCommands);
   const command = matches[selected];
   if (!command) return false;
@@ -88,6 +91,7 @@ export function slashArgumentContext(
   models: string[] = [],
   branches: string[] = [],
   workspaceFiles: string[] = [],
+  attachmentPaths: string[] = [],
 ): SlashArgumentContext | undefined {
   const query = input;
   if (!query.startsWith('/') || query.includes('\n')) return undefined;
@@ -125,6 +129,8 @@ export function slashArgumentContext(
   if (codemapContinuationContext) return codemapContinuationContext;
   const workspaceFileContext = workspaceFileArgumentContext(query, workspaceFiles);
   if (workspaceFileContext) return workspaceFileContext;
+  const attachmentPathContext = attachmentPathArgumentContext(query, attachmentPaths);
+  if (attachmentPathContext) return attachmentPathContext;
   const goalContext = goalControlArgumentContext(query);
   if (goalContext) return goalContext;
   const notesContext = notesArgumentContext(query);
@@ -161,10 +167,20 @@ function workspaceFileArgumentContext(query: string, workspaceFiles: string[]): 
     .filter((candidate) => query.startsWith(`${candidate} `))
     .sort((a, b) => b.length - a.length)[0];
   if (!commandName) return undefined;
+  return pathArgumentContext(query, commandName, workspaceFiles);
+}
+
+function attachmentPathArgumentContext(query: string, attachmentPaths: string[]): SlashArgumentContext | undefined {
+  const commandName = '/detach';
+  if (!query.startsWith(`${commandName} `)) return undefined;
+  return pathArgumentContext(query, commandName, attachmentPaths);
+}
+
+function pathArgumentContext(query: string, commandName: string, paths: string[]): SlashArgumentContext | undefined {
   const rest = query.slice(commandName.length).trim();
   if (/\s/.test(rest)) return undefined;
-  if (rest.length > 0 && workspaceFiles.some((file) => file === rest)) return undefined;
-  const options = filterFileMentionPaths(workspaceFiles, rest);
+  if (rest.length > 0 && paths.some((file) => file === rest)) return undefined;
+  const options = filterFileMentionPaths(paths, rest);
   if (options.length === 0) return undefined;
   return {
     command: {

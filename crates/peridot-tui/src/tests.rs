@@ -2465,6 +2465,7 @@ fn slash_picker_selects_workspace_file_path_arguments() {
         "src/main.rs".to_string(),
         "tests/main.rs".to_string(),
     ];
+    state.set_attachment_paths(vec!["docs/notes.md".to_string(), "src/main.rs".to_string()]);
 
     for character in "/attach main".chars() {
         handle_key_event(
@@ -2485,6 +2486,17 @@ fn slash_picker_selects_workspace_file_path_arguments() {
     }
     handle_key_event(&mut state, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
     assert_eq!(state.input, "/codemap outline src/lib.rs");
+    assert!(state.slash_picker.is_none());
+
+    state.clear_input();
+    for character in "/detach main".chars() {
+        handle_key_event(
+            &mut state,
+            KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE),
+        );
+    }
+    handle_key_event(&mut state, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    assert_eq!(state.input, "/detach src/main.rs");
     assert!(state.slash_picker.is_none());
 }
 

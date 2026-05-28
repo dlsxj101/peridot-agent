@@ -115,6 +115,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **Workspace-file slash argument autocomplete** now reuses that file index
   for `/attach <path>` and `/codemap outline <path>` in both TUI and VS Code,
   so users can complete relative paths without switching to a picker command.
+- **Attached-file slash argument autocomplete** now suggests currently attached
+  session paths for `/detach <path>` in both TUI and VS Code, based on
+  `/attach`, `/attachments`, and `/detach` command results.
 - **`/session prune` slash parity** lets both TUI and VS Code users prune
   persisted sessions with `--status`, `--older-than-days`, and `--dry-run`
   filters through the shared session command path.

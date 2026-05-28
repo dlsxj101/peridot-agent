@@ -846,6 +846,12 @@ pub struct TuiState {
     /// scan happens lazily on a freshly resumed session anyway.
     #[serde(default, skip)]
     pub at_picker_index: Vec<String>,
+    /// Files currently known to be attached to the active session context.
+    /// Updated by `/attach`, `/attachments`, and `/detach`; persisted as a
+    /// small convenience cache so resumed sessions can still complete
+    /// `/detach <path>` before the operator reloads the inventory.
+    #[serde(default)]
+    pub attachment_paths: Vec<String>,
     /// Whether the auto-fix loop is enabled for this session.
     #[serde(default)]
     pub auto_fix_enabled: bool,
@@ -1181,6 +1187,7 @@ impl TuiState {
             service_tier: None,
             at_picker: None,
             at_picker_index: Vec::new(),
+            attachment_paths: Vec::new(),
             auto_fix_enabled: false,
             auto_fix_max_attempts: default_auto_fix_max(),
             collapsed_blocks: std::collections::HashSet::new(),
@@ -1674,12 +1681,15 @@ impl TuiState {
         }
         let len = crate::slash_picker::picker_len_with_dynamic_and_files(
             &query,
-            &self.skill_suggestions,
-            &self.sessions,
-            &self.side_panel.mcp_status,
-            &self.model_suggestions,
-            &self.branch_suggestions,
-            &self.at_picker_index,
+            crate::slash_picker::SlashDynamicSources {
+                skills: &self.skill_suggestions,
+                sessions: &self.sessions,
+                mcp_servers: &self.side_panel.mcp_status,
+                models: &self.model_suggestions,
+                branches: &self.branch_suggestions,
+                files: &self.at_picker_index,
+                attachment_paths: &self.attachment_paths,
+            },
         );
         if len == 0 {
             self.slash_picker = None;
@@ -1703,12 +1713,15 @@ impl TuiState {
         };
         let len = crate::slash_picker::picker_len_with_dynamic_and_files(
             &picker.query,
-            &self.skill_suggestions,
-            &self.sessions,
-            &self.side_panel.mcp_status,
-            &self.model_suggestions,
-            &self.branch_suggestions,
-            &self.at_picker_index,
+            crate::slash_picker::SlashDynamicSources {
+                skills: &self.skill_suggestions,
+                sessions: &self.sessions,
+                mcp_servers: &self.side_panel.mcp_status,
+                models: &self.model_suggestions,
+                branches: &self.branch_suggestions,
+                files: &self.at_picker_index,
+                attachment_paths: &self.attachment_paths,
+            },
         );
         if len == 0 {
             picker.selected = 0;
@@ -1727,12 +1740,15 @@ impl TuiState {
         let selected = picker.selected;
         if let Some(context) = crate::slash_picker::slash_argument_context_with_dynamic_and_files(
             &query,
-            &self.skill_suggestions,
-            &self.sessions,
-            &self.side_panel.mcp_status,
-            &self.model_suggestions,
-            &self.branch_suggestions,
-            &self.at_picker_index,
+            crate::slash_picker::SlashDynamicSources {
+                skills: &self.skill_suggestions,
+                sessions: &self.sessions,
+                mcp_servers: &self.side_panel.mcp_status,
+                models: &self.model_suggestions,
+                branches: &self.branch_suggestions,
+                files: &self.at_picker_index,
+                attachment_paths: &self.attachment_paths,
+            },
         ) {
             let Some(option) = context
                 .options
@@ -1767,12 +1783,15 @@ impl TuiState {
         };
         if crate::slash_picker::slash_argument_context_with_dynamic_and_files(
             &picker.query,
-            &self.skill_suggestions,
-            &self.sessions,
-            &self.side_panel.mcp_status,
-            &self.model_suggestions,
-            &self.branch_suggestions,
-            &self.at_picker_index,
+            crate::slash_picker::SlashDynamicSources {
+                skills: &self.skill_suggestions,
+                sessions: &self.sessions,
+                mcp_servers: &self.side_panel.mcp_status,
+                models: &self.model_suggestions,
+                branches: &self.branch_suggestions,
+                files: &self.at_picker_index,
+                attachment_paths: &self.attachment_paths,
+            },
         )
         .is_some()
         {
@@ -1806,6 +1825,32 @@ impl TuiState {
     /// created or deleted.
     pub fn refresh_at_picker_index(&mut self, project_root: &std::path::Path) {
         self.at_picker_index = crate::at_picker::build_file_index(project_root, 5_000);
+    }
+
+    /// Replaces the cached attachment path list used by `/detach` autocomplete.
+    pub fn set_attachment_paths(&mut self, paths: Vec<String>) {
+        self.attachment_paths = dedupe_sorted_nonempty(paths);
+        self.refresh_slash_picker();
+    }
+
+    /// Adds one attached path to the `/detach` autocomplete cache.
+    pub fn add_attachment_path(&mut self, path: impl Into<String>) {
+        let mut paths = self.attachment_paths.clone();
+        paths.push(path.into());
+        self.set_attachment_paths(paths);
+    }
+
+    /// Removes paths from the `/detach` autocomplete cache.
+    pub fn remove_attachment_paths(&mut self, paths: &[String]) {
+        if paths.is_empty() {
+            return;
+        }
+        self.attachment_paths.retain(|candidate| {
+            !paths
+                .iter()
+                .any(|removed| candidate.eq_ignore_ascii_case(removed))
+        });
+        self.refresh_slash_picker();
     }
 
     /// Replaces the active `@token` with the picker's currently-highlighted
