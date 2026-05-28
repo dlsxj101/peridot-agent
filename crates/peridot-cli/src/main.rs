@@ -1555,6 +1555,18 @@ fn apply_session_command(
                             .unwrap_or_default();
                         rows.push(format!("  notes: {}{suffix}", result.notes_count));
                     }
+                    if !result.attachment_paths.is_empty() {
+                        rows.push(format!(
+                            "  attachments: {}\n{}",
+                            result.attachment_paths.len(),
+                            result
+                                .attachment_paths
+                                .iter()
+                                .map(|path| format!("    - {path}"))
+                                .collect::<Vec<_>>()
+                                .join("\n")
+                        ));
+                    }
                     state.push_transcript(rows.join("\n"));
                 }
                 Err(err) => state.push_error(format!("session show: {err}")),

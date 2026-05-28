@@ -148,6 +148,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **Session context change broadcasts** now refresh subscribed editor session
   lists after `/note`, `/attach`, and successful `/detach` commands so other
   VS Code/Cursor windows pick up note and attachment status changes.
+- **Session show attachment summaries** now include attachment counts and
+  paths in CLI JSON/text, TUI `/session show`, and daemon `/session show`
+  results rendered by VS Code/Cursor.
 - **`/session prune` slash parity** lets both TUI and VS Code users prune
   persisted sessions with `--status`, `--older-than-days`, and `--dry-run`
   filters through the shared session command path.

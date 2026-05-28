@@ -2438,6 +2438,8 @@ async fn handle_command_session_show(
     let record = summary.record.clone();
     let summary_text = session_title.clone();
     let workspace_detail = workspace.clone().unwrap_or_else(|| "<unknown>".to_string());
+    let attachment_count = summary.attachment_paths.len();
+    let attachment_paths = summary.attachment_paths.clone();
     Ok(serde_json::json!({
         "kind": "session_show",
         "title": "Session Show",
@@ -2459,6 +2461,8 @@ async fn handle_command_session_show(
         "turns_used": turns_used,
         "notes_count": summary.notes_count,
         "last_note": summary.last_note,
+        "attachment_count": attachment_count,
+        "attachment_paths": attachment_paths,
         "found": true,
         "items": [
             { "label": "session", "detail": id },
@@ -2469,6 +2473,7 @@ async fn handle_command_session_show(
             { "label": "cost", "detail": format!("${:.4}", total_cost_usd) },
             { "label": "turns", "detail": turns_used.to_string() },
             { "label": "notes", "detail": summary.notes_count.to_string() },
+            { "label": "attachments", "detail": attachment_count.to_string() },
         ],
     }))
 }
@@ -7026,6 +7031,15 @@ url = "https://example.com/mcp"
             r#"{"ts":1,"text":"first note"}"#,
         )
         .unwrap();
+        let context = vec![ContextEntry::trusted(
+            ContextSource::PlanReminder,
+            "[attachment]\npath: docs/release.md\nbytes: 7\n\n```text\nrelease\n```",
+        )];
+        std::fs::write(
+            session_dir.join("context.bin"),
+            serde_json::to_vec(&context).unwrap(),
+        )
+        .unwrap();
         let (tx, _rx) = mpsc::unbounded_channel::<String>();
         let state = DaemonState::new(
             root.clone(),
@@ -7053,8 +7067,17 @@ url = "https://example.com/mcp"
         assert_eq!(result["turns_used"], 4);
         assert_eq!(result["notes_count"], 1);
         assert_eq!(result["last_note"], "first note");
+        assert_eq!(result["attachment_count"], 1);
+        assert_eq!(result["attachment_paths"][0], "docs/release.md");
         assert_eq!(result["worktree_branch"], "peridot/show-session");
         assert_eq!(result["items"][0]["detail"], "show-session");
+        assert!(
+            result["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|item| { item["label"] == "attachments" && item["detail"] == "1" })
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 

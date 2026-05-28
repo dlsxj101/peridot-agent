@@ -186,6 +186,8 @@ export interface CommandResultView {
   turns_used?: number;
   total_tokens?: number;
   total_cost_usd?: number;
+  attachment_count?: number;
+  attachment_paths?: string[];
   executor_tokens?: number;
   executor_cost_usd?: number;
   committee_tokens?: number;

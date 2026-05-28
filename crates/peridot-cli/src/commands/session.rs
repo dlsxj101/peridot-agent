@@ -23,6 +23,7 @@ pub(crate) struct SessionShowResult {
     pub(crate) record: Option<peridot_memory::SessionRecord>,
     pub(crate) notes_count: usize,
     pub(crate) last_note: Option<String>,
+    pub(crate) attachment_paths: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
@@ -284,6 +285,7 @@ pub(crate) fn run_session_command(
             let session = store.get_session(id)?;
             let record = store.get_session_record(id).unwrap_or_default();
             let (notes_count, last_note) = read_notes_summary(project_root, id);
+            let attachment_paths = session_attachment_paths(project_root, id);
             let notes_tail_entries = notes_tail
                 .filter(|n| *n > 0)
                 .map(|n| read_notes_tail(project_root, id, n));
@@ -317,6 +319,8 @@ pub(crate) fn run_session_command(
                             "record": record,
                             "notes_count": notes_count,
                             "last_note": last_note,
+                            "attachment_count": attachment_paths.len(),
+                            "attachment_paths": attachment_paths,
                             "notes_tail": notes_tail_entries,
                             "transcript_tail": tail_json,
                             "committee_tail": committee_tail_entries,
@@ -346,6 +350,12 @@ pub(crate) fn run_session_command(
                                 println!("  ({text})");
                             } else {
                                 println!();
+                            }
+                        }
+                        if !attachment_paths.is_empty() {
+                            println!("  attachments: {}", attachment_paths.len());
+                            for path in &attachment_paths {
+                                println!("    - {path}");
                             }
                         }
                         if let Some(entries) = notes_tail_entries.as_ref() {
@@ -392,6 +402,12 @@ pub(crate) fn run_session_command(
                     (Some(session), None) => {
                         println!("{}\t{}", session.id, session.summary);
                         println!("  (no SessionRecord yet — session never persisted a snapshot)");
+                        if !attachment_paths.is_empty() {
+                            println!("  attachments: {}", attachment_paths.len());
+                            for path in &attachment_paths {
+                                println!("    - {path}");
+                            }
+                        }
                     }
                     (None, _) => println!("session not found: {id}"),
                 },
@@ -1874,13 +1890,30 @@ pub(crate) fn session_show_summary(project_root: &Path, id: &str) -> Result<Sess
         anyhow::bail!("session not found: {id}");
     }
     let (notes_count, last_note) = read_notes_summary(project_root, id);
+    let attachment_paths = session_attachment_paths(project_root, id);
     Ok(SessionShowResult {
         id: id.to_string(),
         session,
         record,
         notes_count,
         last_note,
+        attachment_paths,
     })
+}
+
+fn session_attachment_paths(project_root: &Path, id: &str) -> Vec<String> {
+    read_context_snapshot_for_export(project_root, id)
+        .map(|entries| {
+            let mut paths = attachments_from_context(&entries)
+                .into_iter()
+                .map(|attachment| attachment.path)
+                .filter(|path| !path.trim().is_empty())
+                .collect::<Vec<_>>();
+            paths.sort_by_key(|path| path.to_ascii_lowercase());
+            paths.dedup_by(|left, right| left.eq_ignore_ascii_case(right));
+            paths
+        })
+        .unwrap_or_default()
 }
 
 pub(crate) fn session_locate(project_root: &Path, id: &str) -> SessionLocateResult {

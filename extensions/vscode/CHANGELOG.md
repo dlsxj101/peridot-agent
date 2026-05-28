@@ -137,6 +137,9 @@
 - Subscribed daemon session lists now refresh after `/note`, `/attach`, and
   successful `/detach` commands, so other VS Code/Cursor windows receive the
   updated note and attachment context without a manual session-list refresh.
+- `/session show <id|title>` daemon results now include attachment counts and
+  paths, so `Peridot: Show Session Details` renders attached context next to
+  the existing note and lifecycle metadata.
 - Image attachments now render bounded inline previews in the VS Code/Cursor
   attachment cards while keeping the daemon/model context as the existing
   placeholder metadata.

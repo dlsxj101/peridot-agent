@@ -1860,6 +1860,19 @@ shared daemon, TUI, and VS Code extension surfaces.
   already reconciles those notifications, so note and attachment context pills
   update across windows without a manual session-list refresh.
 
+### E146. Session Show Attachment Summary
+
+- **Status**: landed.
+- **Goal**: make targeted session inspection show the same attachment context
+  now available in session lists and side panels.
+- **Where**: `peridot session show`, TUI `/session show`, daemon
+  `/session show`, VS Code command-result typing, and daemon tests.
+- **Result**: session show summaries now include additive
+  `attachment_count` / `attachment_paths` metadata. CLI text prints attached
+  paths under the session detail block, TUI `/session show` includes the same
+  rows in the transcript, and VS Code/Cursor renders the attachment count in
+  `Peridot: Show Session Details` through the existing command-result table.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.
