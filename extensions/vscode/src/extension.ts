@@ -17,6 +17,11 @@ import {
   sessionReplayChoices,
   sessionReplaySlashCommand,
 } from './sessionReplayCommand';
+import {
+  parsePruneOlderThanDaysInput,
+  sessionPruneSlashCommand,
+  sessionPruneStatusChoices,
+} from './sessionPruneCommand';
 import { SettingsPanelManager } from './settingsPanel';
 import { StatusCache } from './statusCache';
 import { isTerminalAgentEvent } from './agentEventLifecycle';
@@ -173,6 +178,7 @@ export function activate(context: vscode.ExtensionContext) {
     detachAttachment: async (path: string): Promise<void> =>
       detachAttachmentFromSession(path, output, sidebar),
     showAttachments: async (): Promise<void> => showSessionAttachments(output, sidebar),
+    pruneSessions: async (): Promise<void> => pruneSessions(output, sidebar),
     replaySessionTimeline: async (): Promise<void> => replaySessionTimeline(output, sidebar),
     exportSessionArtifacts: async (): Promise<void> => exportSessionArtifacts(output, sidebar),
     importSessionArtifacts: async (): Promise<void> => importSessionArtifacts(output, sidebar),
@@ -373,6 +379,12 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand('peridot.showAttachments', async () => {
       await showSessionAttachments(output, sidebar);
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('peridot.pruneSessions', async () => {
+      await pruneSessions(output, sidebar);
     }),
   );
 
@@ -1344,6 +1356,100 @@ async function detachAttachmentFromSession(
     output.appendLine(`[peridot] detach failed: ${message}`);
     sidebar.appendError(message);
     await vscode.window.showErrorMessage(`Peridot detach failed: ${message}`);
+  }
+}
+
+async function pruneSessions(
+  output: vscode.OutputChannel,
+  sidebar: PeridotSidebarProvider,
+): Promise<void> {
+  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!folder) {
+    const message = 'Open a workspace folder before pruning sessions.';
+    sidebar.setWorkspaceProblem(message);
+    await vscode.window.showWarningMessage(message);
+    return;
+  }
+  const status = await vscode.window.showQuickPick(
+    sessionPruneStatusChoices().map((choice) => ({
+      label: choice.label,
+      description: choice.description,
+      status: choice.status,
+    })),
+    {
+      title: 'Peridot: Prune Sessions',
+      placeHolder: 'Choose which session status to match',
+      ignoreFocusOut: true,
+    },
+  );
+  if (!status) return;
+  const daysInput = await vscode.window.showInputBox({
+    title: 'Peridot: Prune Sessions',
+    prompt: 'Only match sessions older than this many days. Leave empty for no age filter.',
+    placeHolder: 'no age filter',
+    ignoreFocusOut: true,
+    validateInput: (value) => {
+      try {
+        parsePruneOlderThanDaysInput(value);
+        return undefined;
+      } catch (err) {
+        return err instanceof Error ? err.message : String(err);
+      }
+    },
+  });
+  if (daysInput === undefined) return;
+  let olderThanDays: number | undefined;
+  let previewCommand: string;
+  let pruneCommand: string;
+  try {
+    olderThanDays = parsePruneOlderThanDaysInput(daysInput);
+    const options = { status: status.status, olderThanDays };
+    previewCommand = sessionPruneSlashCommand({ ...options, dryRun: true });
+    pruneCommand = sessionPruneSlashCommand(options);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    await vscode.window.showErrorMessage(`Peridot session prune failed: ${message}`);
+    return;
+  }
+  await vscode.commands.executeCommand('peridot.chatView.focus');
+  try {
+    output.appendLine(`[peridot] previewing session prune: ${previewCommand}`);
+    const preview = await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: 'Peridot: previewing session prune',
+        cancellable: false,
+      },
+      async () => runSlashCommand(previewCommand, output, sidebar, sidebar.currentRunOptions()),
+    );
+    sidebar.appendCommandResult(preview);
+    const total = typeof preview.total === 'number' ? preview.total : 0;
+    if (total <= 0) {
+      await vscode.window.showInformationMessage('No persisted sessions match those prune filters.');
+      return;
+    }
+    const confirmed = await vscode.window.showWarningMessage(
+      `Remove ${total} persisted Peridot session(s)? This cannot be undone.`,
+      { modal: true },
+      'Prune Sessions',
+    );
+    if (confirmed !== 'Prune Sessions') return;
+    output.appendLine(`[peridot] pruning sessions: ${pruneCommand}`);
+    const result = await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: 'Peridot: pruning sessions',
+        cancellable: false,
+      },
+      async () => runSlashCommand(pruneCommand, output, sidebar, sidebar.currentRunOptions()),
+    );
+    sidebar.appendCommandResult(result);
+    await refreshSessionList(output, sidebar);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    output.appendLine(`[peridot] session prune failed: ${message}`);
+    sidebar.appendError(message);
+    await vscode.window.showErrorMessage(`Peridot session prune failed: ${message}`);
   }
 }
 

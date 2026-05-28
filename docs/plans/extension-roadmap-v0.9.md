@@ -1385,6 +1385,19 @@ shared daemon, TUI, and VS Code extension surfaces.
   `/session replay <id> [--last N]` daemon path, and render the replay
   result in the existing command-result transcript block.
 
+### E109. VS Code Session Prune GUI
+
+- **Status**: landed.
+- **Goal**: make persisted session cleanup discoverable from the editor
+  while keeping deletion guarded.
+- **Where**: VS Code command contributions, sidebar title-bar actions,
+  session prune command construction, README, and changelog docs.
+- **Result**: `Peridot: Prune Sessions` and the sidebar prune button prompt
+  for status and optional age filters, run `/session prune ... --dry-run`
+  first, show the preview in the command-result transcript block, ask for
+  explicit confirmation when sessions match, then run the shared
+  `/session prune` daemon path and refresh the session list.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

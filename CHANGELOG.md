@@ -48,6 +48,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **`/session prune` slash parity** lets both TUI and VS Code users prune
   persisted sessions with `--status`, `--older-than-days`, and `--dry-run`
   filters through the shared session command path.
+- **VS Code session prune GUI** now exposes that cleanup path from the
+  command palette and sidebar title bar, always previews with `--dry-run`
+  first, and asks for confirmation before removing persisted sessions.
 - **`/session replay <id|title> [--last N]` slash parity** lets both TUI
   and VS Code users inspect persisted session replay timelines, including
   committee-weaved timeline entries, without leaving the interactive

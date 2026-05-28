@@ -41,6 +41,9 @@
 - `/session prune [--status <state>] [--older-than-days N] [--dry-run]`
   now runs through the daemon command path and returns a structured prune
   result so editor users can preview or remove stale persisted sessions.
+- `Peridot: Prune Sessions` now exposes session cleanup from the command
+  palette and sidebar title bar with status and age filters, a mandatory
+  dry-run preview, and a final confirmation before deletion.
 - `/session replay <id|title> [--last N]` now runs through the daemon
   command path and renders persisted replay timeline rows, including
   committee-weaved events, in the existing command result block.

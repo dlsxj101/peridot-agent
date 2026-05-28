@@ -822,6 +822,7 @@ function renderHeader(s: SidebarState): HTMLElement {
   right.append(iconButton('search', 'Search Skills', () => vscode.postMessage({ type: 'searchSkills' })));
   right.append(iconButton('search-archive', 'Search Archived Skills', () => vscode.postMessage({ type: 'searchArchivedSkills' })));
   right.append(iconButton('attach', 'Attach File', () => vscode.postMessage({ type: 'attachFile' })));
+  right.append(iconButton('trash', 'Prune Sessions', () => vscode.postMessage({ type: 'pruneSessions' })));
   right.append(iconButton('history', 'Replay Session Timeline', () => vscode.postMessage({ type: 'replaySessionTimeline' })));
   right.append(iconButton('export', 'Export Session Artifacts', () => vscode.postMessage({ type: 'exportSessionArtifacts' })));
   right.append(iconButton('import', 'Import Session Artifacts', () => vscode.postMessage({ type: 'importSessionArtifacts' })));

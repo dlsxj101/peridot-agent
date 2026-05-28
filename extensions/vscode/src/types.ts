@@ -453,6 +453,7 @@ export type OutboundMessage =
   | { type: 'restoreSkill'; name: string }
   | { type: 'attachFile' }
   | { type: 'detachAttachment'; path: string }
+  | { type: 'pruneSessions' }
   | { type: 'replaySessionTimeline' }
   | { type: 'exportSessionArtifacts' }
   | { type: 'importSessionArtifacts' }
