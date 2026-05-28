@@ -140,6 +140,9 @@
 - `/session show <id|title>` daemon results now include attachment counts and
   paths, so `Peridot: Show Session Details` renders attached context next to
   the existing note and lifecycle metadata.
+- Session detail attachment rows now include per-file paths in the command
+  result table, giving attached files the same clickable path treatment as
+  other file-oriented command results.
 - Image attachments now render bounded inline previews in the VS Code/Cursor
   attachment cards while keeping the daemon/model context as the existing
   placeholder metadata.

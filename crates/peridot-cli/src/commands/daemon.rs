@@ -2440,6 +2440,24 @@ async fn handle_command_session_show(
     let workspace_detail = workspace.clone().unwrap_or_else(|| "<unknown>".to_string());
     let attachment_count = summary.attachment_paths.len();
     let attachment_paths = summary.attachment_paths.clone();
+    let mut items = vec![
+        serde_json::json!({ "label": "session", "detail": id.clone() }),
+        serde_json::json!({ "label": "title", "detail": session_title.clone() }),
+        serde_json::json!({ "label": "status", "detail": status.clone() }),
+        serde_json::json!({ "label": "workspace", "detail": workspace_detail }),
+        serde_json::json!({ "label": "tokens", "detail": total_tokens.to_string() }),
+        serde_json::json!({ "label": "cost", "detail": format!("${:.4}", total_cost_usd) }),
+        serde_json::json!({ "label": "turns", "detail": turns_used.to_string() }),
+        serde_json::json!({ "label": "notes", "detail": summary.notes_count.to_string() }),
+        serde_json::json!({ "label": "attachments", "detail": attachment_count.to_string() }),
+    ];
+    for path in &attachment_paths {
+        items.push(serde_json::json!({
+            "label": path,
+            "path": path,
+            "source": "attachment",
+        }));
+    }
     Ok(serde_json::json!({
         "kind": "session_show",
         "title": "Session Show",
@@ -2464,17 +2482,7 @@ async fn handle_command_session_show(
         "attachment_count": attachment_count,
         "attachment_paths": attachment_paths,
         "found": true,
-        "items": [
-            { "label": "session", "detail": id },
-            { "label": "title", "detail": session_title },
-            { "label": "status", "detail": status },
-            { "label": "workspace", "detail": workspace_detail },
-            { "label": "tokens", "detail": total_tokens.to_string() },
-            { "label": "cost", "detail": format!("${:.4}", total_cost_usd) },
-            { "label": "turns", "detail": turns_used.to_string() },
-            { "label": "notes", "detail": summary.notes_count.to_string() },
-            { "label": "attachments", "detail": attachment_count.to_string() },
-        ],
+        "items": items,
     }))
 }
 
@@ -7077,6 +7085,11 @@ url = "https://example.com/mcp"
                 .unwrap()
                 .iter()
                 .any(|item| { item["label"] == "attachments" && item["detail"] == "1" })
+        );
+        assert!(
+            result["items"].as_array().unwrap().iter().any(|item| {
+                item["source"] == "attachment" && item["path"] == "docs/release.md"
+            })
         );
         let _ = std::fs::remove_dir_all(root);
     }

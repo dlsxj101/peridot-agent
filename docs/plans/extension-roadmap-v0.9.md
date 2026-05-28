@@ -1873,6 +1873,18 @@ shared daemon, TUI, and VS Code extension surfaces.
   rows in the transcript, and VS Code/Cursor renders the attachment count in
   `Peridot: Show Session Details` through the existing command-result table.
 
+### E147. Session Show Attachment Path Rows
+
+- **Status**: landed.
+- **Goal**: make the VS Code/Cursor session detail block expose attached file
+  paths directly, not only the aggregate attachment count.
+- **Where**: daemon `/session show` command-result rows and daemon tests.
+- **Result**: `/session show <id|title>` now appends one `source:
+  "attachment"` item per attached path. The existing VS Code/Cursor generic
+  command-result renderer turns those `path` fields into clickable file rows
+  without changing the backwards-compatible top-level
+  `attachment_count` / `attachment_paths` payload.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.
