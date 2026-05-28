@@ -1989,6 +1989,18 @@ shared daemon, TUI, and VS Code extension surfaces.
   `full copy entries` visibility while keeping generated artifacts grouped
   with their per-artifact entry counts.
 
+### E156. TUI Session Export Full-Copy Entry Rows
+
+- **Status**: landed.
+- **Goal**: keep terminal export visibility aligned with the CLI and the
+  editor export card after full-copy metadata became visible in VS Code.
+- **Where**: TUI session export transcript rendering, changelog, and CLI
+  regression tests.
+- **Result**: `/export` and `/session export ... full` transcript summaries
+  now list copied session file names under `full copy entries`, while keeping
+  generated artifact rows unchanged. Operators can verify what a full export
+  copied without leaving the TUI or opening the destination directory.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

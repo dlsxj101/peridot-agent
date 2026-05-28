@@ -22,8 +22,8 @@ use super::run_state::*;
 use super::session_router::SessionRouter;
 use super::{
     AskUserPending, apply_session_command, context_top_report, delete_persisted_session,
-    hydrate_persisted_sessions, restore_latest_tui_state_from_disk, restore_tui_state_from_disk,
-    scan_and_suspend_running_sessions,
+    hydrate_persisted_sessions, render_session_export_text, restore_latest_tui_state_from_disk,
+    restore_tui_state_from_disk, scan_and_suspend_running_sessions,
 };
 
 #[test]
@@ -964,6 +964,30 @@ fn session_import_hydrates_tui_directory_context_status() {
     assert!(rendered.contains("notes: 2  (imported checkpoint)"));
     assert!(rendered.contains("attachments: 1"));
     assert!(rendered.contains("docs/imported.md"));
+    fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn session_export_text_lists_full_copy_entries() {
+    let root = std::env::temp_dir().join(format!("peridot-cli-export-text-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    let session_dir = root.join(".peridot").join("sessions").join("s1");
+    fs::create_dir_all(&session_dir).unwrap();
+    fs::write(session_dir.join("context.bin"), "[]").unwrap();
+    fs::write(
+        session_dir.join("notes.ndjson"),
+        "{\"ts\":1,\"text\":\"note\"}\n",
+    )
+    .unwrap();
+    let out = root.join("export");
+    let report = super::commands::export_session_artifacts(&root, "s1", &out, &[], false)
+        .expect("session export report");
+
+    let rendered = render_session_export_text(&report);
+
+    assert!(rendered.contains("full copy entries: 2"));
+    assert!(rendered.contains("  - context.bin"));
+    assert!(rendered.contains("  - notes.ndjson"));
     fs::remove_dir_all(&root).ok();
 }
 

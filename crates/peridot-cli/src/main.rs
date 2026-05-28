@@ -3283,6 +3283,9 @@ fn render_session_export_text(report: &commands::SessionExportReport) -> String 
     );
     if !report.files.is_empty() {
         body.push_str(&format!("\nfull copy entries: {}", report.files.len()));
+        for file in &report.files {
+            body.push_str(&format!("\n  - {file}"));
+        }
     }
     for artifact in &report.artifacts {
         body.push_str(&format!(

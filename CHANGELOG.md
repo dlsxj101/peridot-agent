@@ -179,6 +179,8 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **VS Code session export rendering** now shows generated artifact counts and
   full-copy entry counts separately, including copied session files in the
   export card when a full export payload is present.
+- **TUI session export rendering** now lists full-copy session file names in
+  the `/export` transcript, matching the CLI and VS Code export details.
 - **`/session prune` slash parity** lets both TUI and VS Code users prune
   persisted sessions with `--status`, `--older-than-days`, and `--dry-run`
   filters through the shared session command path.
