@@ -185,6 +185,10 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
   `items` as `source: "full_copy"` rows, so daemon JSON-RPC consumers and
   VS Code generic command-result views see the same copied-file list as the
   dedicated export card.
+- **VS Code aggregate usage HUD** now hydrates persisted session token, cost,
+  and turn totals from daemon session snapshots and shows an `All` metric chip
+  when multiple sessions have usage, matching the TUI's aggregate status
+  semantics more closely.
 - **`/session prune` slash parity** lets both TUI and VS Code users prune
   persisted sessions with `--status`, `--older-than-days`, and `--dry-run`
   filters through the shared session command path.

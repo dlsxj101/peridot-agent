@@ -150,6 +150,9 @@ interface StoredChatSession {
   pendingApproval?: TranscriptItem;
   runStartedAtMs?: number;
   lastRunElapsedMs?: number;
+  totalTokens?: number;
+  totalCostUsd?: number;
+  turnsUsed?: number;
   attachmentPaths?: string[];
   noteSummary?: NoteSummary;
   /**
@@ -727,6 +730,11 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       if (!session.running) {
         session.runStartedAtMs = undefined;
       }
+      if (typeof remote.total_tokens === 'number') session.totalTokens = remote.total_tokens;
+      if (typeof remote.total_cost_usd === 'number') {
+        session.totalCostUsd = remote.total_cost_usd;
+      }
+      if (typeof remote.turns_used === 'number') session.turnsUsed = remote.turns_used;
       const noteSummary = noteSummaryFromDaemonSession(remote);
       if (noteSummary) {
         session.noteSummary = noteSummary;
@@ -1971,6 +1979,9 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         status: session.status,
         running: session.running,
         active: session.id === active,
+        total_tokens: sessionSummaryTokens(session),
+        total_cost_usd: sessionSummaryCostUsd(session),
+        turns_used: sessionSummaryTurnsUsed(session),
       }),
     );
   }
@@ -2531,6 +2542,51 @@ function stringField(record: Record<string, unknown>, key: string): string {
 function numberField(record: Record<string, unknown>, key: string): number {
   const value = record[key];
   return typeof value === 'number' ? value : 0;
+}
+
+function sessionSummaryTokens(session: StoredChatSession): number | undefined {
+  const hudTokens = hudTokenTotal(session.hud);
+  const stored = session.totalTokens ?? 0;
+  const total = Math.max(stored, hudTokens);
+  return total > 0 ? total : undefined;
+}
+
+function sessionSummaryCostUsd(session: StoredChatSession): number | undefined {
+  const hudCost = hudCostUsd(session.hud);
+  const stored = session.totalCostUsd ?? 0;
+  const total = Math.max(stored, hudCost);
+  return total > 0 ? total : undefined;
+}
+
+function sessionSummaryTurnsUsed(session: StoredChatSession): number | undefined {
+  const hudTurns = session.hud.budget?.turnsUsed ?? 0;
+  const stored = session.turnsUsed ?? 0;
+  const total = Math.max(stored, hudTurns);
+  return total > 0 ? total : undefined;
+}
+
+function hudTokenTotal(hud: HudState): number {
+  const usage = hud.usage;
+  const executor = usage
+    ? usage.inputTokens +
+      usage.outputTokens +
+      (usage.cacheReadTokens ?? 0) +
+      (usage.cacheCreationTokens ?? 0)
+    : 0;
+  const committee = Object.values(hud.committee ?? {}).reduce(
+    (total, role) => total + role.tokens,
+    0,
+  );
+  return executor + committee;
+}
+
+function hudCostUsd(hud: HudState): number {
+  const executor = hud.usage?.costUsd ?? 0;
+  const committee = Object.values(hud.committee ?? {}).reduce(
+    (total, role) => total + role.costUsd,
+    0,
+  );
+  return executor + committee;
 }
 
 function optionalNumber(record: Record<string, unknown>, key: string): number | undefined {

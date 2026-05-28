@@ -2014,6 +2014,19 @@ shared daemon, TUI, and VS Code extension surfaces.
   while generic command-result renderers and downstream JSON consumers can
   inspect copied files without special-casing `session_export`.
 
+### E158. VS Code Aggregate Usage HUD Hydration
+
+- **Status**: landed.
+- **Goal**: make the editor run-metrics dock retain daemon session usage
+  totals and surface multi-session aggregate spend like the TUI status line.
+- **Where**: VS Code daemon-session reconciliation, sidebar session
+  summaries, webview run-metric chips, changelogs, and unit tests.
+- **Result**: daemon `total_tokens`, `total_cost_usd`, and `turns_used`
+  values are now stored on reconciled sessions instead of being dropped. The
+  webview metrics dock receives those totals and shows an `All` chip when
+  more than one session has recorded usage, using live HUD values for the
+  active session when they are newer than the persisted snapshot.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

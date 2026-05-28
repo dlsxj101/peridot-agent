@@ -1299,7 +1299,7 @@ function renderComposerDocks(s: SidebarState): HTMLElement {
 }
 
 function renderRunMetricsDock(s: SidebarState): HTMLElement | undefined {
-  const chips = runMetricChips(s.hud);
+  const chips = runMetricChips(s.hud, s.sessions);
   if (chips.length === 0) return undefined;
 
   const dock = el('div', 'run-metrics-dock');

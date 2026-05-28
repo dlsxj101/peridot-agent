@@ -1,4 +1,4 @@
-import type { HudState } from '../src/types';
+import type { ChatSessionSummary, HudState } from '../src/types';
 
 export type RunMetricTone = 'normal' | 'warn' | 'critical' | 'muted';
 
@@ -9,7 +9,10 @@ export interface RunMetricChip {
   title: string;
 }
 
-export function runMetricChips(hud: HudState): RunMetricChip[] {
+export function runMetricChips(
+  hud: HudState,
+  sessions: ChatSessionSummary[] = [],
+): RunMetricChip[] {
   const chips: RunMetricChip[] = [];
   const usage = hud.usage;
   const committee = committeeTotals(hud);
@@ -51,6 +54,30 @@ export function runMetricChips(hud: HudState): RunMetricChip[] {
     });
   }
 
+  const aggregate = aggregateSessionUsage(sessions, hud);
+  const currentTokens = usage
+    ? usage.inputTokens +
+      usage.outputTokens +
+      (usage.cacheReadTokens ?? 0) +
+      (usage.cacheCreationTokens ?? 0) +
+      committee.tokens
+    : committee.tokens;
+  if (
+    aggregate.sessions > 1 &&
+    (aggregate.costUsd > totalCost + 0.000_001 || aggregate.tokens > currentTokens)
+  ) {
+    chips.push({
+      label: 'All',
+      value: aggregate.costUsd > 0 ? formatUsd(aggregate.costUsd) : compactNumber(aggregate.tokens),
+      tone: 'muted',
+      title: [
+        `${aggregate.tokens.toLocaleString()} tokens`,
+        aggregate.costUsd > 0 ? `${formatUsd(aggregate.costUsd)} total` : undefined,
+        `${aggregate.sessions} sessions`,
+      ].filter(Boolean).join(' · '),
+    });
+  }
+
   const budget = hud.budget;
   if (budget?.costLimit && budget.costLimit > 0) {
     const pct = budget.costUsed / budget.costLimit;
@@ -76,6 +103,41 @@ export function runMetricChips(hud: HudState): RunMetricChip[] {
   }
 
   return chips;
+}
+
+function aggregateSessionUsage(
+  sessions: ChatSessionSummary[],
+  hud: HudState,
+): { tokens: number; costUsd: number; sessions: number } {
+  const current = currentHudUsage(hud);
+  return sessions.reduce(
+    (total, session) => {
+      const tokens = Math.max(session.total_tokens ?? 0, session.active ? current.tokens : 0);
+      const costUsd = Math.max(session.total_cost_usd ?? 0, session.active ? current.costUsd : 0);
+      if (tokens <= 0 && costUsd <= 0) return total;
+      return {
+        tokens: total.tokens + tokens,
+        costUsd: total.costUsd + costUsd,
+        sessions: total.sessions + 1,
+      };
+    },
+    { tokens: 0, costUsd: 0, sessions: 0 },
+  );
+}
+
+function currentHudUsage(hud: HudState): { tokens: number; costUsd: number } {
+  const usage = hud.usage;
+  const committee = committeeTotals(hud);
+  const executorTokens = usage
+    ? usage.inputTokens +
+      usage.outputTokens +
+      (usage.cacheReadTokens ?? 0) +
+      (usage.cacheCreationTokens ?? 0)
+    : 0;
+  return {
+    tokens: executorTokens + committee.tokens,
+    costUsd: (usage?.costUsd ?? 0) + committee.costUsd,
+  };
 }
 
 function committeeTotals(hud: HudState): { tokens: number; costUsd: number } {

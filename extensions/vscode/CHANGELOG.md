@@ -165,6 +165,8 @@
 - Session export command results now include full-copy files as generic
   `full_copy` item rows, keeping extension-side command cards and daemon
   slash results aligned for clients that inspect `items`.
+- The run metrics dock now preserves daemon session token/cost/turn totals and
+  adds an `All` usage chip when multiple sessions have recorded usage.
 - Image attachments now render bounded inline previews in the VS Code/Cursor
   attachment cards while keeping the daemon/model context as the existing
   placeholder metadata.

@@ -403,6 +403,9 @@ export interface ChatSessionSummary {
   status: string;
   running: boolean;
   active: boolean;
+  total_tokens?: number;
+  total_cost_usd?: number;
+  turns_used?: number;
 }
 
 export interface DaemonSessionSummary {

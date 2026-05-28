@@ -43,6 +43,44 @@ test('runMetricChips marks budget and turn pressure', () => {
   );
 });
 
+test('runMetricChips summarizes aggregate session usage', () => {
+  const chips = runMetricChips(
+    {
+      usage: {
+        inputTokens: 400,
+        outputTokens: 100,
+        costUsd: 0.01,
+      },
+    },
+    [
+      {
+        id: 'active',
+        title: 'Active',
+        status: 'running',
+        running: true,
+        active: true,
+        total_tokens: 300,
+        total_cost_usd: 0.005,
+      },
+      {
+        id: 'done',
+        title: 'Done',
+        status: 'done',
+        running: false,
+        active: false,
+        total_tokens: 4500,
+        total_cost_usd: 0.09,
+      },
+    ],
+  );
+
+  const aggregate = chips.find((chip) => chip.label === 'All');
+  assert.equal(aggregate?.value, '$0.100');
+  assert.equal(aggregate?.tone, 'muted');
+  assert.match(aggregate?.title ?? '', /5,000 tokens/);
+  assert.match(aggregate?.title ?? '', /2 sessions/);
+});
+
 test('runMetricChips omits empty hud metrics', () => {
   assert.deepEqual(runMetricChips({}), []);
 });
