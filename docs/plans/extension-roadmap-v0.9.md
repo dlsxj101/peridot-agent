@@ -947,6 +947,21 @@ shared daemon, TUI, and VS Code extension surfaces.
   option picker, and no-argument commands still accept to the command name
   exactly.
 
+### E77. Committee Mode Status Parity
+
+- **Status**: landed.
+- **Goal**: make committee mode visible in VS Code after the operator
+  toggles it, matching the TUI status bar's `committee <mode>` signal.
+- **Where**: daemon `peridot.status`, daemon `session.command` state
+  delta, VS Code sidebar context state, VS Code webview status strip, and
+  shared slash autocomplete tests.
+- **Result**: daemon status now includes `committee_mode`, `/committee`
+  command results use the lower-case display form (`committee: full`),
+  and VS Code applies `state_delta.committee_mode` into the sidebar
+  context. The webview renders `committee planner|full` as a mode pill
+  and keeps `off` hidden to avoid noise, while TUI and VS Code tests
+  cover `/committee off|planner|full` autocomplete choices.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

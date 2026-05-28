@@ -268,6 +268,7 @@ export interface SidebarContext {
   permission?: string;
   reasoningEffort?: string;
   serviceTier?: string;
+  committeeMode?: string;
   daemonVersion?: string;
   extensionVersion?: string;
   authConfigured?: boolean;

@@ -1271,8 +1271,10 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       };
     }
     if (delta) {
+      const committeeMode = delta.committee_mode ?? delta.committeeMode;
       this.state.context = {
         ...this.state.context,
+        ...(committeeMode ? { committeeMode } : {}),
         modelSuggestions: appendModelSuggestions(
           this.state.context.modelSuggestions,
           delta.model,

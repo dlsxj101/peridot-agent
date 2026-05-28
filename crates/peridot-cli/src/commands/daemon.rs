@@ -694,6 +694,7 @@ async fn handle_status(state: &DaemonState, id: Value) -> Result<()> {
             "reasoning_effort": format!("{:?}", config.models.reasoning_effort),
             "mode": format!("{:?}", config.defaults.mode),
             "permission": format!("{:?}", state.run_template.permission),
+            "committee_mode": config.committee.mode.to_string(),
             "auth": auth,
             "mcp": mcp,
             "worktree_cleanup": worktree_cleanup,
@@ -1671,7 +1672,7 @@ async fn execute_session_command(
         SlashCommand::Committee(mode) => Ok(command_result_with_state_delta(
             "setting",
             "Committee",
-            &format!("committee: {mode:?}"),
+            &format!("committee: {mode}"),
             "info",
             &state_delta,
         )),
@@ -5350,6 +5351,7 @@ mod tests {
         assert_eq!(out[0]["result"]["version"], env!("CARGO_PKG_VERSION"));
         assert_eq!(out[0]["result"]["provider"], "claude-api");
         assert_eq!(out[0]["result"]["model"], "claude-sonnet-4-6");
+        assert_eq!(out[0]["result"]["committee_mode"], "off");
         assert!(
             out[0]["result"]["model_suggestions"]
                 .as_array()
@@ -6297,6 +6299,32 @@ mod tests {
         assert_eq!(result["kind"], "setting");
         assert_eq!(result["message"], "mode: goal");
         assert_eq!(result["state_delta"]["mode"], "goal");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn session_command_committee_returns_lowercase_state_delta() {
+        let (tx, _rx) = mpsc::unbounded_channel::<String>();
+        let root = test_project("session-command-committee");
+        let state = DaemonState::new(
+            root.clone(),
+            PeridotConfig::default(),
+            test_options(None),
+            tx,
+        );
+
+        let result = execute_session_command(
+            &state,
+            None,
+            "/committee full",
+            SlashCommand::Committee(peridot_common::CommitteeMode::Full),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result["kind"], "setting");
+        assert_eq!(result["message"], "committee: full");
+        assert_eq!(result["state_delta"]["committee_mode"], "full");
         let _ = std::fs::remove_dir_all(root);
     }
 

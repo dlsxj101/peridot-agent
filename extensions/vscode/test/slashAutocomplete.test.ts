@@ -76,6 +76,11 @@ const commands: SlashCommandSpec[] = [
     argOptions: ['claude-api', 'openai-api', 'openrouter-api', 'openai-oauth'],
   },
   {
+    name: '/committee',
+    description: 'toggle committee mode',
+    argHint: '<off|planner|full>',
+  },
+  {
     name: '/think',
     description: 'increase reasoning effort',
     argHint: '[off|low|medium|high|xhigh]',
@@ -180,6 +185,10 @@ test('slashArgumentOptions drops placeholder-only hint arms', () => {
   assert.ok(sessionSwitch);
 
   assert.deepEqual(slashArgumentOptions(sessionSwitch), []);
+
+  const committee = commands.find((command) => command.name === '/committee');
+  assert.ok(committee);
+  assert.deepEqual(slashArgumentOptions(committee), ['off', 'planner', 'full']);
 });
 
 test('acceptedSlashCommandText leaves editable slots instead of placeholders', () => {
@@ -206,6 +215,11 @@ test('slashArgumentContext filters finite options and closes after exact option'
   assert.equal(providers?.command.name, '/provider');
   assert.deepEqual(providers?.options, ['openai-api', 'openrouter-api', 'openai-oauth']);
   assert.equal(slashArgumentContext('/provider openai-oauth', commands), undefined);
+
+  const committee = slashArgumentContext('/committee p', commands);
+  assert.equal(committee?.command.name, '/committee');
+  assert.deepEqual(committee?.options, ['planner']);
+  assert.equal(slashArgumentContext('/committee planner', commands), undefined);
 
   const codemap = slashArgumentContext('/codemap l', commands);
   assert.equal(codemap?.command.name, '/codemap');

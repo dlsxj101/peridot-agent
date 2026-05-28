@@ -53,6 +53,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
   slots instead of inserting placeholder text such as `<task>` or
   `<objective>` into the composer when accepting commands like `/fork`,
   `/teammate`, `/attach`, or `/goal`.
+- **Committee mode status parity** now carries `committee_mode` through
+  daemon status and VS Code slash state updates, so editor status pills
+  can reflect `/committee planner|full` just like the TUI status bar.
 - **Provider argument autocomplete** now exposes the supported provider ids
   for `/provider <claude-api|openai-api|openrouter-api|openai-oauth>` through
   the shared slash catalog, TUI picker, daemon JSON catalog, and VS Code

@@ -37,6 +37,7 @@ interface DaemonStatusResult {
   model_suggestions?: unknown;
   branch_snapshots?: unknown;
   reasoning_effort?: string;
+  committee_mode?: string;
   mode?: string;
   permission?: string;
   auth?: {
@@ -1847,6 +1848,7 @@ async function refreshStatus(
       model: result.model,
       reasoningEffort: result.reasoning_effort,
       serviceTier: sidebar.currentRunOptions().serviceTier,
+      committeeMode: result.committee_mode,
       mode: result.mode,
       permission: result.permission,
       daemonVersion: result.version,

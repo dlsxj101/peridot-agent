@@ -1352,6 +1352,15 @@ mod tests {
             vec!["status", "refresh", "find", "locate", "outline", "refs"]
         );
 
+        let committee = slash_command_catalog()
+            .iter()
+            .find(|spec| spec.name == "/committee")
+            .expect("committee command");
+        assert_eq!(
+            slash_command_arg_options(committee),
+            vec!["off", "planner", "full"]
+        );
+
         let branch_turn = slash_command_catalog()
             .iter()
             .find(|spec| spec.name == "/branch turn")
@@ -1390,6 +1399,11 @@ mod tests {
             vec!["openai-api", "openrouter-api", "openai-oauth"]
         );
         assert!(slash_argument_context("/provider openai-oauth").is_none());
+
+        let context = slash_argument_context("/committee p").expect("committee options");
+        assert_eq!(context.command_name, "/committee");
+        assert_eq!(context.options, vec!["planner"]);
+        assert!(slash_argument_context("/committee planner").is_none());
 
         let context = slash_argument_context("/codemap l").expect("codemap options");
         assert_eq!(context.command_name, "/codemap");

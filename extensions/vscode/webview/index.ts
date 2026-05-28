@@ -1067,6 +1067,9 @@ function renderContextStrip(context: SidebarContext): HTMLElement {
   if (context.mode) pills.append(pill(context.mode, 'mode'));
   if (context.permission) pills.append(pill(context.permission, 'mode'));
   if (context.reasoningEffort) pills.append(pill(`reasoning ${context.reasoningEffort}`, 'mode'));
+  if (context.committeeMode && context.committeeMode !== 'off') {
+    pills.append(pill(`committee ${context.committeeMode}`, 'mode'));
+  }
   if (context.serviceTier && context.serviceTier !== 'standard') {
     pills.append(pill(context.serviceTier, 'mode'));
   }
