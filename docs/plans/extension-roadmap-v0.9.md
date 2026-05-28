@@ -918,6 +918,21 @@ shared daemon, TUI, and VS Code extension surfaces.
   `ContextTop` action. Both forms remain available through the same
   daemon-backed slash command handling.
 
+### E75. Session Subcommand Continuation Autocomplete
+
+- **Status**: landed.
+- **Goal**: prevent session autocomplete from accepting placeholder text
+  such as `<id|title>` when the operator starts from a partial
+  subcommand.
+- **Where**: TUI dynamic slash argument context, TUI Tab acceptance path,
+  and VS Code webview slash autocomplete helper.
+- **Result**: accepting `/session new|switch|close|delete|rename`
+  completions now leaves a trailing argument slot in both clients
+  (`/session switch `, `/session rename `, etc.). Existing dynamic
+  session-target autocomplete still takes over after exact
+  `/session switch|close|delete|rename` commands when session ids are
+  available, while `/session save|list|count` remain directly runnable.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

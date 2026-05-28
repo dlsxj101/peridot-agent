@@ -27,6 +27,9 @@
 - Session-target argument autocomplete now fills stable session ids for
   `/session switch|close|delete|rename`, including matches from visible
   session titles.
+- Session subcommand continuation autocomplete now accepts partial
+  subcommands such as `/session sw` into `/session switch ` so users can
+  immediately type or autocomplete the target session.
 - Provider argument autocomplete now fills supported provider ids for
   `/provider <claude-api|openai-api|openrouter-api|openai-oauth>` from the
   shared daemon slash catalog.

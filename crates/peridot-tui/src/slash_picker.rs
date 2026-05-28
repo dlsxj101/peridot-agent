@@ -597,6 +597,9 @@ pub(crate) fn slash_argument_context_with_dynamic(
     if let Some(context) = session_target_argument_context(query, sessions) {
         return Some(context);
     }
+    if let Some(context) = session_subcommand_argument_context(query) {
+        return Some(context);
+    }
     if let Some(context) = mcp_server_argument_context(query, mcp_servers) {
         return Some(context);
     }
@@ -898,6 +901,45 @@ fn session_target_argument_context(
         command_name: command_name.to_string(),
         options,
         append_space: command_name == "/session rename",
+    })
+}
+
+fn session_subcommand_argument_context(query: &str) -> Option<SlashArgumentContext> {
+    const CONTINUATION_OPTIONS: &[&str] = &["new", "switch", "close", "delete", "rename"];
+    const TERMINAL_OPTIONS: &[&str] = &["save", "list", "count"];
+    let command_name = "/session";
+    if !query.starts_with(&format!("{command_name} ")) {
+        return None;
+    }
+    let has_trailing_space = query.chars().last().is_some_and(char::is_whitespace);
+    let rest = query[command_name.len()..].trim().to_ascii_lowercase();
+    if rest.is_empty() || rest.contains(char::is_whitespace) {
+        return None;
+    }
+    if TERMINAL_OPTIONS
+        .iter()
+        .any(|option| option.starts_with(&rest))
+    {
+        return None;
+    }
+    let options: Vec<String> = CONTINUATION_OPTIONS
+        .iter()
+        .filter(|option| option.starts_with(&rest))
+        .map(|option| (*option).to_string())
+        .collect();
+    if options.is_empty() {
+        return None;
+    }
+    let exact = options
+        .iter()
+        .any(|option| option.eq_ignore_ascii_case(&rest));
+    if exact && has_trailing_space {
+        return None;
+    }
+    Some(SlashArgumentContext {
+        command_name: command_name.to_string(),
+        options,
+        append_space: true,
     })
 }
 
@@ -1531,6 +1573,33 @@ mod tests {
                 &[]
             )
             .is_none()
+        );
+    }
+
+    #[test]
+    fn session_subcommand_argument_context_leaves_room_for_required_args() {
+        let context = slash_argument_context_with_dynamic("/session sw", &[], &[], &[], &[], &[])
+            .expect("session switch option");
+        assert_eq!(context.command_name, "/session");
+        assert_eq!(context.options, vec!["switch"]);
+        assert!(context.append_space);
+
+        let context =
+            slash_argument_context_with_dynamic("/session rename", &[], &[], &[], &[], &[])
+                .expect("session rename option");
+        assert_eq!(context.options, vec!["rename"]);
+        assert!(context.append_space);
+
+        assert!(
+            slash_argument_context_with_dynamic("/session rename ", &[], &[], &[], &[], &[])
+                .is_none()
+        );
+        assert!(
+            slash_argument_context_with_dynamic("/session s", &[], &[], &[], &[], &[]).is_none(),
+            "ambiguous save/switch prefixes fall back to command suggestions"
+        );
+        assert!(
+            slash_argument_context_with_dynamic("/session save", &[], &[], &[], &[], &[]).is_none()
         );
     }
 

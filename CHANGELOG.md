@@ -45,6 +45,10 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
   Code for `/session switch|close|delete|rename`, matching typed title
   prefixes to stable session ids and leaving room for the new title after
   `/session rename`.
+- **Session subcommand continuation autocomplete** now completes
+  `/session new|switch|close|delete|rename` with a trailing argument slot
+  in both TUI and VS Code, while `/session save|list|count` remain
+  directly runnable.
 - **Provider argument autocomplete** now exposes the supported provider ids
   for `/provider <claude-api|openai-api|openrouter-api|openai-oauth>` through
   the shared slash catalog, TUI picker, daemon JSON catalog, and VS Code

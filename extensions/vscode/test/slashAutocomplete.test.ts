@@ -16,9 +16,41 @@ const commands: SlashCommandSpec[] = [
     description: 'switch to plan mode',
   },
   {
+    name: '/session new',
+    description: 'create session',
+    argHint: '[task]',
+  },
+  {
     name: '/session switch',
     description: 'switch session',
     argHint: '<id|title>',
+  },
+  {
+    name: '/session close',
+    description: 'close session',
+    argHint: '<id|title>',
+  },
+  {
+    name: '/session delete',
+    description: 'delete session',
+    argHint: '<id|title>',
+  },
+  {
+    name: '/session rename',
+    description: 'rename session',
+    argHint: '<id|title> <new-title>',
+  },
+  {
+    name: '/session save',
+    description: 'save session',
+  },
+  {
+    name: '/session list',
+    description: 'list sessions',
+  },
+  {
+    name: '/session count',
+    description: 'count sessions',
   },
   {
     name: '/reasoning',
@@ -235,6 +267,27 @@ test('slashArgumentContext filters session target arguments', () => {
   assert.equal(slashArgumentContext('/session rename s-1 new title', commands, sessions), undefined);
 });
 
+test('slashArgumentContext leaves argument room after session subcommands', () => {
+  const partial = slashArgumentContext('/session sw', commands);
+
+  assert.equal(partial?.command.name, '/session');
+  assert.deepEqual(partial?.options, ['switch']);
+  assert.equal(partial?.appendSpace, true);
+
+  const rename = slashArgumentContext('/session ren', commands);
+  assert.equal(rename?.command.name, '/session');
+  assert.deepEqual(rename?.options, ['rename']);
+  assert.equal(rename?.appendSpace, true);
+
+  assert.equal(slashArgumentContext('/session rename ', commands), undefined);
+  assert.equal(slashArgumentContext('/session s', commands), undefined);
+  assert.deepEqual(
+    filteredSlashCommands('/session s', commands).map((command) => command.name),
+    ['/session save', '/session switch'],
+  );
+  assert.equal(slashArgumentContext('/session save', commands), undefined);
+});
+
 test('slashArgumentContext filters mcp server arguments', () => {
   const context = slashArgumentContext('/mcp test g', commands, [], mcpServers);
 
@@ -388,6 +441,7 @@ test('slashPickerItemCount uses argument options when an argument picker is open
   assert.equal(slashPickerItemCount('/reasoning ', commands), 5);
   assert.equal(slashPickerItemCount('/skills se', commands), 1);
   assert.equal(slashPickerItemCount('/skills sh', commands), 1);
+  assert.equal(slashPickerItemCount('/session sw', commands), 1);
   assert.equal(slashPickerItemCount('/session switch ', commands, sessions), 2);
   assert.equal(slashPickerItemCount('/mcp test ', commands, [], mcpServers), 2);
   assert.equal(slashPickerItemCount('/model ', commands, [], [], modelSuggestions), 2);

@@ -82,6 +82,8 @@ export function slashArgumentContext(
   if (skillSearchContext) return skillSearchContext;
   const sessionContext = sessionTargetArgumentContext(query, sessionTargets);
   if (sessionContext) return sessionContext;
+  const sessionSubcommandContext = sessionSubcommandArgumentContext(query);
+  if (sessionSubcommandContext) return sessionSubcommandContext;
   const mcpServerContext = mcpServerArgumentContext(query, mcpServers);
   if (mcpServerContext) return mcpServerContext;
   const mcpAddContext = mcpAddTransportArgumentContext(query);
@@ -347,6 +349,31 @@ function sessionTargetArgumentContext(
     },
     options,
     appendSpace: commandName === '/session rename',
+  };
+}
+
+function sessionSubcommandArgumentContext(query: string): SlashArgumentContext | undefined {
+  const commandName = '/session';
+  if (!query.startsWith(`${commandName} `)) return undefined;
+  const continuationOptions = ['new', 'switch', 'close', 'delete', 'rename'];
+  const terminalOptions = ['save', 'list', 'count'];
+  const hasTrailingSpace = /\s$/.test(query);
+  const needle = query.slice(commandName.length).trim().toLowerCase();
+  if (needle.length === 0 || /\s/.test(needle)) return undefined;
+  if (terminalOptions.some((option) => option.startsWith(needle))) return undefined;
+  const options = continuationOptions.filter((option) => option.startsWith(needle));
+  if (options.length === 0) return undefined;
+  if (hasTrailingSpace && options.some((option) => option.toLowerCase() === needle)) {
+    return undefined;
+  }
+  return {
+    command: {
+      name: commandName,
+      description: 'session subcommand',
+      category: 'session',
+    },
+    options,
+    appendSpace: true,
   };
 }
 

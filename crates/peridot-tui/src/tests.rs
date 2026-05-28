@@ -1958,6 +1958,36 @@ fn tab_autocompletes_session_target_arguments() {
 }
 
 #[test]
+fn tab_autocompletes_session_subcommands_before_required_arguments() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+
+    for character in "/session sw".chars() {
+        handle_key_event(
+            &mut state,
+            KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE),
+        );
+    }
+    handle_key_event(&mut state, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    assert_eq!(state.input, "/session switch ");
+
+    state.clear_input();
+    for character in "/session ren".chars() {
+        handle_key_event(
+            &mut state,
+            KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE),
+        );
+    }
+    handle_key_event(&mut state, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    assert_eq!(state.input, "/session rename ");
+}
+
+#[test]
 fn tab_autocompletes_mcp_add_transport_argument() {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
