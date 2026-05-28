@@ -26,7 +26,10 @@ import {
 } from './types';
 import { localSlashAction } from './localSlashAction';
 import { staleDaemonBackedSessionIds } from './sessionReconcile';
-import { agentTranscriptItemForEvent } from './agentEventTranscript';
+import {
+  agentTranscriptItemForEvent,
+  shouldSuppressAgentEventFallback,
+} from './agentEventTranscript';
 import { isTerminalAgentEvent, terminalStatusForEvent } from './agentEventLifecycle';
 import { agentsSummaryForLoadedEvent, mcpServersForStatusEvent } from './agentEventContext';
 
@@ -2079,7 +2082,7 @@ function transcriptItemForEvent(
     case 'interrupted':
       return { role: 'status', text: 'Interrupted', detail: stringField(event, 'stage') };
     default:
-      return { role: 'status', text: kind };
+      return shouldSuppressAgentEventFallback(kind) ? undefined : { role: 'status', text: 'Event' };
   }
 }
 

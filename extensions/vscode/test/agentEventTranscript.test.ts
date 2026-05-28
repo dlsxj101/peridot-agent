@@ -1,7 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { agentTranscriptItemForEvent } from '../src/agentEventTranscript';
+import {
+  agentTranscriptItemForEvent,
+  shouldSuppressAgentEventFallback,
+} from '../src/agentEventTranscript';
 
 test('agentTranscriptItemForEvent renders planner plan text', () => {
   assert.deepEqual(
@@ -140,4 +143,9 @@ test('agentTranscriptItemForEvent renders blocking hook outcomes as errors', () 
 
 test('agentTranscriptItemForEvent ignores unrelated events', () => {
   assert.equal(agentTranscriptItemForEvent('assistant_delta', { delta: 'hello' }), undefined);
+});
+
+test('shouldSuppressAgentEventFallback treats additive future events as no-op', () => {
+  assert.equal(shouldSuppressAgentEventFallback('new_future_event'), true);
+  assert.equal(shouldSuppressAgentEventFallback(''), false);
 });

@@ -61,6 +61,15 @@ export function agentTranscriptItemForEvent(
   }
 }
 
+/**
+ * AgentRunEvent's wire contract says additive future variants are a no-op
+ * for older clients. Keep unknown daemon events out of the chat transcript
+ * instead of rendering opaque event-kind rows.
+ */
+export function shouldSuppressAgentEventFallback(kind: string): boolean {
+  return kind.trim().length > 0;
+}
+
 function hookOutcomeRole(outcome: string): TranscriptRole {
   const normalized = outcome.toLowerCase();
   return normalized.includes('block') ||

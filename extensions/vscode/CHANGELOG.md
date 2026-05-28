@@ -83,6 +83,8 @@
 - Settings number fields now keep empty or invalid drafts out of the save
   payload until blur restores the visible value, and integer-backed settings
   normalize decimal input before sending `settings.save`.
+- Unknown future daemon event kinds are now treated as no-op transcript
+  entries in the VS Code sidebar instead of leaking opaque status rows.
 - Provider argument autocomplete now fills supported provider ids for
   `/provider <claude-api|openai-api|openrouter-api|openai-oauth>` from the
   shared daemon slash catalog.

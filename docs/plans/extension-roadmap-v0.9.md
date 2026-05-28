@@ -1154,6 +1154,19 @@ shared daemon, TUI, and VS Code extension surfaces.
   (`U32` / `Usize`) normalize decimal input to integer JSON values before
   `settings.save`.
 
+### E92. Additive Agent Event Fallback Cleanup
+
+- **Status**: landed.
+- **Goal**: keep the VS Code transcript aligned with the daemon event
+  schema contract that additive future `AgentRunEvent` variants are a
+  no-op for older clients.
+- **Where**: VS Code sidebar event-to-transcript fallback and pure event
+  transcript tests.
+- **Result**: known daemon events keep their existing structured handling,
+  but unknown non-empty event kinds no longer render opaque status rows in
+  the chat transcript. Malformed events with no kind still fall back to the
+  generic `Event` row.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.
