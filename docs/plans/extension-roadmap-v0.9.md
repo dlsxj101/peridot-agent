@@ -1963,6 +1963,19 @@ shared daemon, TUI, and VS Code extension surfaces.
   imported notes and attachment paths so operators can verify context without
   immediately switching sessions or running `/session show`.
 
+### E154. VS Code Session Export Card Payload
+
+- **Status**: landed.
+- **Goal**: make the editor export artifact card use the same structured
+  artifact metadata already returned by the CLI export JSON.
+- **Where**: VS Code export command-result construction, export payload
+  normalization helper, changelogs, and unit tests.
+- **Result**: `Peridot: Export Session Artifacts` now appends a
+  `session_export` command result that preserves `destination`, generated
+  `artifacts`, and full-copy `files`. The webview's dedicated export card can
+  therefore render accurate generated-file counts plus open/copy actions
+  instead of falling back to an empty artifact block.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

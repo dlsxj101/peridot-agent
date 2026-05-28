@@ -1,4 +1,4 @@
-import type { DaemonSessionSummary } from './types';
+import type { CommandResultView, DaemonSessionSummary, ExportedArtifactView } from './types';
 
 export interface SessionExportChoice {
   id: string;
@@ -38,6 +38,51 @@ export function sessionExportDirectoryName(sessionId: string): string {
   return `peridot-session-${sanitized || 'session'}`;
 }
 
+export function exportedArtifactsFromPayload(payload: unknown): ExportedArtifactView[] {
+  if (!isRecord(payload) || !Array.isArray(payload.artifacts)) return [];
+  return payload.artifacts
+    .filter(isRecord)
+    .map((artifact) => ({
+      class: typeof artifact.class === 'string' ? artifact.class : 'artifact',
+      path: typeof artifact.path === 'string' ? artifact.path : 'artifact',
+      count: typeof artifact.count === 'number' ? artifact.count : 0,
+    }));
+}
+
+export function sessionExportCommandResult(
+  payload: unknown,
+  sessionId: string,
+  fallbackDestination: string,
+): CommandResultView {
+  const artifacts = exportedArtifactsFromPayload(payload);
+  const destination =
+    isRecord(payload) && typeof payload.destination === 'string'
+      ? payload.destination
+      : fallbackDestination;
+  const files = isRecord(payload) && Array.isArray(payload.files)
+    ? payload.files.filter((file): file is string => typeof file === 'string')
+    : undefined;
+
+  return {
+    kind: 'session_export',
+    title: 'Session Artifact Export',
+    command: 'peridot session export',
+    message: `Exported ${artifacts.length} artifact files from ${sessionId} to ${destination}`,
+    destination,
+    artifacts,
+    ...(files ? { files } : {}),
+    items: [
+      { label: 'Session', detail: sessionId, source: 'session' },
+      { label: 'Destination', detail: destination, source: 'directory' },
+      ...artifacts.map((artifact) => ({
+        label: artifact.path ?? 'artifact',
+        detail: `${artifact.class ?? 'artifact'} · ${artifact.count ?? 0} entries`,
+        source: 'artifact',
+      })),
+    ],
+  };
+}
+
 function sessionTitle(session: DaemonSessionSummary | undefined): string | undefined {
   if (!session) return undefined;
   return session.title ?? session.last_task ?? session.summary ?? session.id;
@@ -48,4 +93,8 @@ function sessionDescription(session: DaemonSessionSummary): string | undefined {
     (part): part is string => typeof part === 'string' && part.trim().length > 0,
   );
   return parts.length > 0 ? parts.join(' · ') : undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
 }

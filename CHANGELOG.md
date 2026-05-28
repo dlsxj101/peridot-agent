@@ -173,6 +173,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **TUI session import context hydration** now fills the imported session's
   directory entry with Notes and Attachments summaries and prints those
   summaries in the `/session import` completion transcript.
+- **VS Code session export cards** now preserve the CLI export destination,
+  generated artifact rows, and full-copy file metadata in the command result
+  so the dedicated export card shows accurate counts and open/copy actions.
 - **`/session prune` slash parity** lets both TUI and VS Code users prune
   persisted sessions with `--status`, `--older-than-days`, and `--dry-run`
   filters through the shared session command path.

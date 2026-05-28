@@ -39,7 +39,11 @@ import {
   providerSlashCommand,
   reasoningSlashCommand,
 } from './runtimeCommand';
-import { sessionExportChoices, sessionExportDirectoryName } from './sessionExportCommand';
+import {
+  sessionExportChoices,
+  sessionExportCommandResult,
+  sessionExportDirectoryName,
+} from './sessionExportCommand';
 import { sessionImportSlashCommand } from './sessionImportCommand';
 import {
   sessionCloseSlashCommand,
@@ -3267,22 +3271,7 @@ async function exportSessionArtifacts(
       async () => execPeridotCli(args, folder),
     );
     const payload = parseJson(stdout);
-    const artifacts = exportedArtifactsFromPayload(payload);
-    sidebar.appendCommandResult({
-      kind: 'session_export',
-      title: 'Session Artifact Export',
-      command: 'peridot session export',
-      message: `Exported ${artifacts.length} artifact files from ${sessionId} to ${destination}`,
-      items: [
-        { label: 'Session', detail: sessionId, source: 'session' },
-        { label: 'Destination', detail: destination, source: 'directory' },
-        ...artifacts.map((artifact) => ({
-          label: artifact.path,
-          detail: `${artifact.class} · ${artifact.count} entries`,
-          source: 'artifact',
-        })),
-      ],
-    });
+    sidebar.appendCommandResult(sessionExportCommandResult(payload, sessionId, destination));
     await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(destination));
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -3660,23 +3649,6 @@ function parseJson(raw: string): unknown {
   } catch {
     return { output: raw };
   }
-}
-
-interface ExportedArtifactView {
-  class: string;
-  path: string;
-  count: number;
-}
-
-function exportedArtifactsFromPayload(payload: unknown): ExportedArtifactView[] {
-  if (!isRecord(payload) || !Array.isArray(payload.artifacts)) return [];
-  return payload.artifacts
-    .filter(isRecord)
-    .map((artifact) => ({
-      class: typeof artifact.class === 'string' ? artifact.class : 'artifact',
-      path: typeof artifact.path === 'string' ? artifact.path : 'artifact',
-      count: typeof artifact.count === 'number' ? artifact.count : 0,
-    }));
 }
 
 function shipPreviewText(value: unknown): string {

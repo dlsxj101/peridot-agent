@@ -156,6 +156,9 @@
   present.
 - TUI parity: imported sessions now hydrate their session-directory Notes and
   Attachments summaries immediately after `/session import`.
+- Session export cards now receive the CLI export destination and generated
+  artifact rows, so they show accurate file counts plus open/copy actions
+  after `Peridot: Export Session Artifacts`.
 - Image attachments now render bounded inline previews in the VS Code/Cursor
   attachment cards while keeping the daemon/model context as the existing
   placeholder metadata.
