@@ -44,6 +44,9 @@
 - `/session replay <id|title> [--last N]` now runs through the daemon
   command path and renders persisted replay timeline rows, including
   committee-weaved events, in the existing command result block.
+- `Peridot: Replay Session Timeline` now exposes replay from the command
+  palette and sidebar title bar with persisted-session picking and an
+  optional recent timeline-entry limit.
 - `/session export <id|title> [attachments|notes|timeline|full]` now runs
   through the daemon command path, so editor users can export artifacts
   from any persisted session instead of only the active session.

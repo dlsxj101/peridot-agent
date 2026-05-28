@@ -52,6 +52,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
   and VS Code users inspect persisted session replay timelines, including
   committee-weaved timeline entries, without leaving the interactive
   composer.
+- **VS Code session replay GUI** now exposes the same persisted replay path
+  from the command palette and sidebar title bar with session picking and
+  optional recent timeline-entry limiting.
 - **`/session export <id|title> [attachments|notes|timeline|full]` slash
   parity** lets both TUI and VS Code users export artifacts from any
   persisted session, not only the active one.

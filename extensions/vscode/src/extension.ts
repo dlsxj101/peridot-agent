@@ -12,6 +12,11 @@ import { resetBinaryCache, resolvePeridotBinary } from './peridotBin';
 import { peridotChildEnv } from './processEnv';
 import { sessionExportChoices, sessionExportDirectoryName } from './sessionExportCommand';
 import { sessionImportSlashCommand } from './sessionImportCommand';
+import {
+  parseReplayLastInput,
+  sessionReplayChoices,
+  sessionReplaySlashCommand,
+} from './sessionReplayCommand';
 import { SettingsPanelManager } from './settingsPanel';
 import { StatusCache } from './statusCache';
 import { isTerminalAgentEvent } from './agentEventLifecycle';
@@ -168,6 +173,7 @@ export function activate(context: vscode.ExtensionContext) {
     detachAttachment: async (path: string): Promise<void> =>
       detachAttachmentFromSession(path, output, sidebar),
     showAttachments: async (): Promise<void> => showSessionAttachments(output, sidebar),
+    replaySessionTimeline: async (): Promise<void> => replaySessionTimeline(output, sidebar),
     exportSessionArtifacts: async (): Promise<void> => exportSessionArtifacts(output, sidebar),
     importSessionArtifacts: async (): Promise<void> => importSessionArtifacts(output, sidebar),
     showPrStatus: async (): Promise<void> => showGitHubPrStatus(output, sidebar),
@@ -367,6 +373,12 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand('peridot.showAttachments', async () => {
       await showSessionAttachments(output, sidebar);
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('peridot.replaySessionTimeline', async () => {
+      await replaySessionTimeline(output, sidebar);
     }),
   );
 
@@ -1332,6 +1344,89 @@ async function detachAttachmentFromSession(
     output.appendLine(`[peridot] detach failed: ${message}`);
     sidebar.appendError(message);
     await vscode.window.showErrorMessage(`Peridot detach failed: ${message}`);
+  }
+}
+
+async function replaySessionTimeline(
+  output: vscode.OutputChannel,
+  sidebar: PeridotSidebarProvider,
+): Promise<void> {
+  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!folder) {
+    const message = 'Open a workspace folder before replaying session timelines.';
+    sidebar.setWorkspaceProblem(message);
+    await vscode.window.showWarningMessage(message);
+    return;
+  }
+  let sessions: DaemonSessionSummary[] = [];
+  try {
+    sessions = normalizeDaemonSessions(await fetchSessionList(folder, output));
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    output.appendLine(`[peridot] session list fetch before replay failed: ${message}`);
+  }
+  const choices = sessionReplayChoices(sessions);
+  if (choices.length === 0) {
+    await vscode.window.showWarningMessage('Save or import a Peridot session before replaying timelines.');
+    return;
+  }
+  const target =
+    choices.length === 1
+      ? choices[0]
+      : await vscode.window.showQuickPick(
+          choices.map((choice) => ({
+            label: choice.label,
+            description: choice.description,
+            detail: choice.id,
+            id: choice.id,
+          })),
+          {
+            title: 'Peridot: Replay Session Timeline',
+            placeHolder: 'Choose a persisted session to replay',
+            ignoreFocusOut: true,
+          },
+        );
+  if (!target) return;
+  const lastInput = await vscode.window.showInputBox({
+    title: 'Peridot: Replay Session Timeline',
+    prompt: 'Timeline entries to show. Leave empty for the full replay.',
+    placeHolder: 'all',
+    ignoreFocusOut: true,
+    validateInput: (value) => {
+      try {
+        parseReplayLastInput(value);
+        return undefined;
+      } catch (err) {
+        return err instanceof Error ? err.message : String(err);
+      }
+    },
+  });
+  if (lastInput === undefined) return;
+  let command: string;
+  try {
+    command = sessionReplaySlashCommand(target.id, parseReplayLastInput(lastInput));
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    await vscode.window.showErrorMessage(`Peridot replay failed: ${message}`);
+    return;
+  }
+  await vscode.commands.executeCommand('peridot.chatView.focus');
+  try {
+    output.appendLine(`[peridot] replaying session timeline: ${target.id}`);
+    const result = await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: 'Peridot: replaying session timeline',
+        cancellable: false,
+      },
+      async () => runSlashCommand(command, output, sidebar, sidebar.currentRunOptions()),
+    );
+    sidebar.appendCommandResult(result);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    output.appendLine(`[peridot] session replay failed: ${message}`);
+    sidebar.appendError(message);
+    await vscode.window.showErrorMessage(`Peridot replay failed: ${message}`);
   }
 }
 

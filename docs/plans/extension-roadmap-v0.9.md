@@ -1372,6 +1372,19 @@ shared daemon, TUI, and VS Code extension surfaces.
   session's portable artifacts to the chosen destination, and records the
   selected session id in the result card.
 
+### E108. VS Code Session Replay GUI
+
+- **Status**: landed.
+- **Goal**: make persisted timeline replay available without typing the
+  slash command manually.
+- **Where**: VS Code command contributions, sidebar title-bar actions,
+  session replay command construction, README, and changelog docs.
+- **Result**: `Peridot: Replay Session Timeline` and the sidebar replay
+  button fetch persisted daemon sessions, prompt for the replay target,
+  optionally limit the output to recent timeline entries, run the shared
+  `/session replay <id> [--last N]` daemon path, and render the replay
+  result in the existing command-result transcript block.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

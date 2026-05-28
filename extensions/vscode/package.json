@@ -233,6 +233,12 @@
         "icon": "$(references)"
       },
       {
+        "command": "peridot.replaySessionTimeline",
+        "title": "Peridot: Replay Session Timeline",
+        "category": "Peridot",
+        "icon": "$(history)"
+      },
+      {
         "command": "peridot.exportSessionArtifacts",
         "title": "Peridot: Export Session Artifacts",
         "category": "Peridot",
@@ -335,6 +341,11 @@
           "command": "peridot.attachFile",
           "when": "view == peridot.chatView",
           "group": "navigation@5"
+        },
+        {
+          "command": "peridot.replaySessionTimeline",
+          "when": "view == peridot.chatView",
+          "group": "navigation@5.4"
         },
         {
           "command": "peridot.exportSessionArtifacts",
