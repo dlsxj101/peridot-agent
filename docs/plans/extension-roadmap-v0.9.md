@@ -1924,6 +1924,19 @@ shared daemon, TUI, and VS Code extension surfaces.
   update behavior, and inspecting another session remains a read-only detail
   view.
 
+### E151. Session Save/Import Context Metadata
+
+- **Status**: landed.
+- **Goal**: keep session context summaries accurate immediately after save
+  and import commands, without requiring a separate session-list refresh.
+- **Where**: daemon `/session save` and `/session import` command-result
+  payloads, VS Code session reconciliation, changelogs, and tests.
+- **Result**: save/import results now include additive `notes_count`,
+  `last_note`, `attachment_count`, and `attachment_paths` fields. VS
+  Code/Cursor folds those fields into stored session summaries during
+  reconciliation, preserving explicit empty snapshots so cleared notes or
+  attachments do not leave stale pills behind.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

@@ -3013,6 +3013,10 @@ async fn handle_command_session_save(
             },
         })
         .map_err(|err| format!("failed to save legacy session summary: {err}"))?;
+    let (notes_count, last_note) =
+        crate::commands::read_notes_summary(&state.project_root, session_id);
+    let attachment_paths = session_attachment_paths(state, session_id);
+    let attachment_count = attachment_paths.len();
     Ok(serde_json::json!({
         "kind": "session_save",
         "title": "Session Saved",
@@ -3027,11 +3031,17 @@ async fn handle_command_session_save(
         "total_tokens": record.total_tokens,
         "total_cost_usd": record.total_cost_usd,
         "turns_used": record.turns_used,
+        "notes_count": notes_count,
+        "last_note": last_note,
+        "attachment_count": attachment_count,
+        "attachment_paths": attachment_paths,
         "items": [
             { "label": "session", "detail": session_id },
             { "label": "status", "detail": format!("{:?}", record.status).to_ascii_lowercase() },
             { "label": "tokens", "detail": record.total_tokens.to_string() },
             { "label": "cost", "detail": format!("${:.4}", record.total_cost_usd) },
+            { "label": "notes", "detail": notes_count.to_string() },
+            { "label": "attachments", "detail": attachment_count.to_string() },
         ],
     }))
 }
@@ -5080,6 +5090,10 @@ async fn handle_command_session_import(
             })
         })
         .collect();
+    let (notes_count, last_note) =
+        crate::commands::read_notes_summary(&state.project_root, &result.id);
+    let attachment_paths = session_attachment_paths(state, &result.id);
+    let attachment_count = attachment_paths.len();
     Ok(serde_json::json!({
         "kind": "session_import",
         "title": "Session Import",
@@ -5091,6 +5105,10 @@ async fn handle_command_session_import(
         "source": result.source,
         "destination": result.destination,
         "files": result.files,
+        "notes_count": notes_count,
+        "last_note": last_note,
+        "attachment_count": attachment_count,
+        "attachment_paths": attachment_paths,
         "items": items,
         "total": items.len(),
     }))
@@ -6988,6 +7006,20 @@ url = "https://example.com/mcp"
             "{\"kind\":\"user\",\"text\":\"task\"}\n",
         )
         .unwrap();
+        std::fs::write(
+            source.join("notes.ndjson"),
+            "{\"ts\":1,\"text\":\"imported note\"}\n",
+        )
+        .unwrap();
+        let context = vec![ContextEntry::trusted(
+            ContextSource::PlanReminder,
+            "[attachment]\npath: docs/imported.md\nbytes: 8\n\n```text\nimported\n```",
+        )];
+        std::fs::write(
+            source.join("context.bin"),
+            serde_json::to_vec(&context).unwrap(),
+        )
+        .unwrap();
         let (tx, _rx) = mpsc::unbounded_channel::<String>();
         let state = DaemonState::new(
             root.clone(),
@@ -7012,8 +7044,18 @@ url = "https://example.com/mcp"
         assert_eq!(result["kind"], "session_import");
         assert_eq!(result["id"], "imported");
         assert_eq!(result["session_id"], "imported");
-        assert_eq!(result["total"], 1);
-        assert_eq!(result["items"][0]["label"], "transcript.ndjson");
+        assert_eq!(result["total"], 3);
+        assert_eq!(result["notes_count"], 1);
+        assert_eq!(result["last_note"], "imported note");
+        assert_eq!(result["attachment_count"], 1);
+        assert_eq!(result["attachment_paths"][0], "docs/imported.md");
+        assert!(
+            result["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|item| item["label"] == "transcript.ndjson")
+        );
         assert!(
             root.join(".peridot/sessions/imported/transcript.ndjson")
                 .is_file()
@@ -7786,6 +7828,22 @@ url = "https://example.com/mcp"
                 waiting_approval: None,
             },
         );
+        let session_dir = root.join(".peridot/sessions/session-save");
+        std::fs::create_dir_all(&session_dir).unwrap();
+        std::fs::write(
+            session_dir.join("notes.ndjson"),
+            "{\"ts\":1,\"text\":\"save note\"}\n",
+        )
+        .unwrap();
+        let context = vec![ContextEntry::trusted(
+            ContextSource::PlanReminder,
+            "[attachment]\npath: docs/save.md\nbytes: 4\n\n```text\nsave\n```",
+        )];
+        std::fs::write(
+            session_dir.join("context.bin"),
+            serde_json::to_vec(&context).unwrap(),
+        )
+        .unwrap();
 
         let result = execute_session_command(
             &state,
@@ -7802,6 +7860,10 @@ url = "https://example.com/mcp"
         assert_eq!(result["total_tokens"], 1500);
         assert_eq!(result["turns_used"], 4);
         assert!((result["total_cost_usd"].as_f64().unwrap() - 0.08).abs() < 1e-9);
+        assert_eq!(result["notes_count"], 1);
+        assert_eq!(result["last_note"], "save note");
+        assert_eq!(result["attachment_count"], 1);
+        assert_eq!(result["attachment_paths"][0], "docs/save.md");
         let store = MemoryStore::new(root.join(".peridot/memory.db"));
         let record = store.get_session_record("session-save").unwrap().unwrap();
         assert_eq!(record.last_task.as_deref(), Some("save this session"));

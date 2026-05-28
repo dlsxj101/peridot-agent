@@ -50,6 +50,7 @@ import {
   noteSummaryFromCommandResult,
   noteSummaryFromDaemonSession,
 } from './noteContext';
+import { commandResultSessionContextFields } from './sessionCommandSummary';
 import { commandResultCanHydrateSessionContext } from './sessionContextHydration';
 
 export type {
@@ -1612,6 +1613,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         total_tokens: result.total_tokens,
         total_cost_usd: result.total_cost_usd,
         turns_used: result.turns_used,
+        ...commandResultSessionContextFields(result),
       },
     ]);
   }
@@ -1632,6 +1634,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         total_tokens: result.total_tokens,
         total_cost_usd: result.total_cost_usd,
         turns_used: result.turns_used,
+        ...commandResultSessionContextFields(result),
       },
     ]);
     return this.findSessionByResultId(result);
@@ -1653,6 +1656,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         total_tokens: result.total_tokens,
         total_cost_usd: result.total_cost_usd,
         turns_used: result.turns_used,
+        ...commandResultSessionContextFields(result),
       },
     ]);
     return this.findSessionByResultId(result);
@@ -1674,6 +1678,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         total_tokens: result.total_tokens,
         total_cost_usd: result.total_cost_usd,
         turns_used: result.turns_used,
+        ...commandResultSessionContextFields(result),
       },
     ]);
     return this.findSessionByResultId(result);

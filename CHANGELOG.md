@@ -163,6 +163,10 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **Editor session show context guard** now keeps VS Code/Cursor Notes and
   Attachments context pills scoped to the active session when inspecting a
   different persisted session.
+- **Session save/import context metadata** now returns Notes and Attachments
+  summaries from daemon `/session save` and `/session import` results so VS
+  Code/Cursor can reconcile sidebar session context without waiting for a
+  separate session-list refresh.
 - **`/session prune` slash parity** lets both TUI and VS Code users prune
   persisted sessions with `--status`, `--older-than-days`, and `--dry-run`
   filters through the shared session command path.

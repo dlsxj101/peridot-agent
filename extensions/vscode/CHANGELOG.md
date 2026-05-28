@@ -148,6 +148,9 @@
   as a command-result row.
 - Inspecting another persisted session no longer overwrites the active
   session's Notes or Attachments context pills in the sidebar.
+- `/session save` and `/session import` results now carry Notes and
+  Attachments summaries so session context in the sidebar reconciles
+  immediately.
 - Image attachments now render bounded inline previews in the VS Code/Cursor
   attachment cards while keeping the daemon/model context as the existing
   placeholder metadata.
