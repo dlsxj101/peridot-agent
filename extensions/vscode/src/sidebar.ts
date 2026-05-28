@@ -30,7 +30,11 @@ import {
   agentTranscriptItemForEvent,
   shouldSuppressAgentEventFallback,
 } from './agentEventTranscript';
-import { isTerminalAgentEvent, terminalStatusForEvent } from './agentEventLifecycle';
+import {
+  isAskUserWaitingEvent,
+  isTerminalAgentEvent,
+  terminalStatusForEvent,
+} from './agentEventLifecycle';
 import { agentsSummaryForLoadedEvent, mcpServersForStatusEvent } from './agentEventContext';
 
 export type {
@@ -72,7 +76,7 @@ export interface SidebarHandlers {
   showPrStatus: () => Promise<void>;
   shipChanges: () => Promise<void>;
   mergePr: () => Promise<void>;
-  respondAskUser: (requestId: string, answer: AskUserAnswer) => Promise<void>;
+  respondAskUser: (requestId: string, answer: AskUserAnswer) => Promise<boolean>;
   respondApproval: (decision: ApprovalResponse) => Promise<void>;
   openFile: (relativePath: string, line?: number, column?: number, projectRoot?: string) => Promise<void>;
   openPath: (path: string) => Promise<void>;
@@ -328,6 +332,16 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
     if (isApprovalWaitingEvent(event)) {
       this.state.running = true;
       this.state.status = 'Waiting for approval';
+      this.state.context = {
+        ...this.state.context,
+        status: this.state.status,
+        running: true,
+      };
+      this.publish();
+    }
+    if (isAskUserWaitingEvent(event)) {
+      this.state.running = true;
+      this.state.status = 'Waiting for user response';
       this.state.context = {
         ...this.state.context,
         status: this.state.status,
@@ -1056,8 +1070,10 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         return;
       case 'askUserRespond':
         if (message.requestId) {
-          await this.handlers.respondAskUser(message.requestId, message.answer);
-          this.resolveInteraction(message.requestId, answerLabel(message.answer));
+          const accepted = await this.handlers.respondAskUser(message.requestId, message.answer);
+          if (accepted) {
+            this.resolveInteraction(message.requestId, answerLabel(message.answer));
+          }
         }
         return;
       case 'approvalRespond':
@@ -1182,6 +1198,12 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       item.detail = detail;
       item.request = undefined;
     }
+    this.state.status = 'Running';
+    this.state.context = {
+      ...this.state.context,
+      status: this.state.status,
+      running: true,
+    };
     this.publish();
   }
 

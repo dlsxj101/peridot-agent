@@ -85,6 +85,9 @@
   normalize decimal input before sending `settings.save`.
 - Unknown future daemon event kinds are now treated as no-op transcript
   entries in the VS Code sidebar instead of leaking opaque status rows.
+- `agent_ask_user` pauses now move VS Code status to `Waiting for user
+  response`, and stale or rejected responses no longer replace the prompt
+  with `User response sent`.
 - Provider argument autocomplete now fills supported provider ids for
   `/provider <claude-api|openai-api|openrouter-api|openai-oauth>` from the
   shared daemon slash catalog.

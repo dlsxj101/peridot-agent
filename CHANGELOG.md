@@ -115,6 +115,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **VS Code additive agent event fallback cleanup** now honors the daemon
   event-schema contract by treating unknown future event kinds as transcript
   no-ops instead of showing opaque status rows.
+- **VS Code ask-user waiting state** now marks `agent_ask_user` pauses as
+  `Waiting for user response` and only resolves the prompt after the daemon
+  accepts the submitted `interaction.respond` answer.
 - **Provider argument autocomplete** now exposes the supported provider ids
   for `/provider <claude-api|openai-api|openrouter-api|openai-oauth>` through
   the shared slash catalog, TUI picker, daemon JSON catalog, and VS Code

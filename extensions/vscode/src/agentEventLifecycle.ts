@@ -15,6 +15,10 @@ export function terminalStatusForEvent(event: unknown): 'Finished' | 'Failed' | 
   return 'Finished';
 }
 
+export function isAskUserWaitingEvent(event: unknown): boolean {
+  return isRecord(event) && event.kind === 'ask_user_requested';
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }

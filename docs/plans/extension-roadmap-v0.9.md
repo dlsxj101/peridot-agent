@@ -1167,6 +1167,20 @@ shared daemon, TUI, and VS Code extension surfaces.
   the chat transcript. Malformed events with no kind still fall back to the
   generic `Event` row.
 
+### E93. VS Code Ask-User Waiting State
+
+- **Status**: landed.
+- **Goal**: make daemon `agent_ask_user` pauses as visible and accurate in
+  VS Code as approval pauses, without marking a rejected or stale response
+  as sent.
+- **Where**: VS Code daemon event lifecycle helpers, sidebar ask-user
+  response handling, and extension host interaction responses.
+- **Result**: `ask_user_requested` now moves the sidebar/context status to
+  `Waiting for user response` while keeping the run active. Sending an
+  answer restores the local status to `Running` only after the daemon
+  accepts the `interaction.respond` call; stale or rejected responses keep
+  the prompt visible and surface the existing error message.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

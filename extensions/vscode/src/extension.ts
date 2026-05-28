@@ -169,7 +169,7 @@ export function activate(context: vscode.ExtensionContext) {
     showPrStatus: async (): Promise<void> => showGitHubPrStatus(output, sidebar),
     shipChanges: async (): Promise<void> => shipChangesToPr(output, sidebar),
     mergePr: async (): Promise<void> => mergeGitHubPr(output, sidebar),
-    respondAskUser: async (requestId: string, answer: AskUserAnswer): Promise<void> =>
+    respondAskUser: async (requestId: string, answer: AskUserAnswer): Promise<boolean> =>
       respondAskUser(requestId, answer, output, sidebar),
     respondApproval: async (decision: ApprovalResponse): Promise<void> =>
       respondApproval(decision, output, sidebar),
@@ -2333,13 +2333,13 @@ async function respondAskUser(
   answer: AskUserAnswer,
   output: vscode.OutputChannel,
   sidebar: PeridotSidebarProvider,
-): Promise<void> {
+): Promise<boolean> {
   const run = runForAskUserRequest(requestId);
   if (!run) {
     const message = 'No active Peridot run can receive this response.';
     sidebar.appendError(message);
     await vscode.window.showWarningMessage(message);
-    return;
+    return false;
   }
   try {
     const result = (await run.daemon.send('interaction.respond', {
@@ -2354,10 +2354,12 @@ async function respondAskUser(
     if (!result.accepted) {
       sidebar.appendError('Peridot did not accept that response. The run may have already moved on.');
     }
+    return Boolean(result.accepted);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     output.appendLine(`[peridot] interaction response failed: ${message}`);
     sidebar.appendError(`Interaction response failed: ${message}`);
+    return false;
   }
 }
 
