@@ -1950,6 +1950,19 @@ shared daemon, TUI, and VS Code extension surfaces.
   present. Explicit empty context snapshots still render as `0 notes` /
   `0 attachments` chips.
 
+### E153. TUI Session Import Context Hydration
+
+- **Status**: landed.
+- **Goal**: keep TUI session directory context parity with VS Code after
+  importing a portable session.
+- **Where**: TUI session import command handling, imported directory item
+  hydration, import transcript rendering, changelog, and regression tests.
+- **Result**: `/session import` now rebuilds the imported session directory
+  entry from persisted metadata, including title, note count/latest note, and
+  attachment paths. The TUI import completion transcript also reports the
+  imported notes and attachment paths so operators can verify context without
+  immediately switching sessions or running `/session show`.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

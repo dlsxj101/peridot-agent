@@ -170,6 +170,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **VS Code session save/import context cards** now show imported or saved
   Notes and Attachments metadata directly in command-result cards, including
   latest-note copy and attachment open/copy actions when paths are present.
+- **TUI session import context hydration** now fills the imported session's
+  directory entry with Notes and Attachments summaries and prints those
+  summaries in the `/session import` completion transcript.
 - **`/session prune` slash parity** lets both TUI and VS Code users prune
   persisted sessions with `--status`, `--older-than-days`, and `--dry-run`
   filters through the shared session command path.

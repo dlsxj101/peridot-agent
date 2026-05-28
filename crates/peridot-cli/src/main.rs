@@ -1629,10 +1629,17 @@ fn apply_session_command(
                 force,
             ) {
                 Ok(result) => {
-                    state
-                        .sessions
-                        .push(SessionDirectoryItem::new(&result.id, "imported session"));
-                    state.push_transcript(render_session_import_text(&result));
+                    let item = imported_session_directory_item(project_template, &result.id);
+                    let notes_count = item.notes_count;
+                    let last_note = item.last_note.clone();
+                    let attachment_paths = item.attachment_paths.clone();
+                    state.sessions.push(item);
+                    state.push_transcript(render_session_import_text(
+                        &result,
+                        notes_count,
+                        last_note.as_deref(),
+                        &attachment_paths,
+                    ));
                 }
                 Err(err) => state.push_error(format!("session import: {err}")),
             }
@@ -3286,7 +3293,12 @@ fn render_session_export_text(report: &commands::SessionExportReport) -> String 
     body
 }
 
-fn render_session_import_text(result: &commands::SessionImportResult) -> String {
+fn render_session_import_text(
+    result: &commands::SessionImportResult,
+    notes_count: usize,
+    last_note: Option<&str>,
+    attachment_paths: &[String],
+) -> String {
     let mut body = format!(
         "session import: imported {} from {} into {} ({} entries)",
         result.id,
@@ -3296,6 +3308,18 @@ fn render_session_import_text(result: &commands::SessionImportResult) -> String 
     );
     for file in &result.files {
         body.push_str(&format!("\n  - {file}"));
+    }
+    if notes_count > 0 {
+        let suffix = last_note
+            .map(|note| format!("  ({note})"))
+            .unwrap_or_default();
+        body.push_str(&format!("\nnotes: {notes_count}{suffix}"));
+    }
+    if !attachment_paths.is_empty() {
+        body.push_str(&format!("\nattachments: {}", attachment_paths.len()));
+        for path in attachment_paths {
+            body.push_str(&format!("\n  - {path}"));
+        }
     }
     body
 }
@@ -4137,6 +4161,23 @@ fn hydrate_persisted_sessions(
     if !state.current_session_id.is_empty() {
         let _ = router.switch_to(&state.current_session_id);
     }
+}
+
+fn imported_session_directory_item(project_root: &Path, session_id: &str) -> SessionDirectoryItem {
+    let memory = MemoryStore::new(project_root.join(".peridot/memory.db"));
+    let title = memory
+        .get_session(session_id)
+        .ok()
+        .flatten()
+        .map(|session| session.summary)
+        .filter(|summary| !summary.trim().is_empty())
+        .unwrap_or_else(|| "imported session".to_string());
+    let mut item = SessionDirectoryItem::new(session_id, title);
+    let (notes_count, last_note) = read_notes_summary(project_root, session_id);
+    item.notes_count = notes_count;
+    item.last_note = last_note;
+    item.attachment_paths = session_attachment_paths(project_root, session_id);
+    item
 }
 
 fn session_attachment_paths(project_root: &Path, session_id: &str) -> Vec<String> {

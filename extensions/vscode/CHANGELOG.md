@@ -154,6 +154,8 @@
 - Session save/import cards now show note and attachment summary chips plus
   latest-note copy and attachment open/copy actions when context metadata is
   present.
+- TUI parity: imported sessions now hydrate their session-directory Notes and
+  Attachments summaries immediately after `/session import`.
 - Image attachments now render bounded inline previews in the VS Code/Cursor
   attachment cards while keeping the daemon/model context as the existing
   placeholder metadata.

@@ -868,6 +868,106 @@ fn session_show_hydrates_current_tui_context_status() {
 }
 
 #[test]
+fn session_import_hydrates_tui_directory_context_status() {
+    let root = std::env::temp_dir().join(format!(
+        "peridot-cli-session-import-context-{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&root);
+    let source = root.join("portable-session");
+    fs::create_dir_all(&source).unwrap();
+    let mut imported_state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    imported_state.last_task = Some("imported task".to_string());
+    fs::write(
+        source.join("tui_state.json"),
+        serde_json::to_vec(&imported_state).unwrap(),
+    )
+    .unwrap();
+    fs::write(
+        source.join("notes.ndjson"),
+        "{\"ts\":1,\"text\":\"first\"}\n{\"ts\":2,\"text\":\"imported checkpoint\"}\n",
+    )
+    .unwrap();
+    let context = vec![ContextEntry::trusted(
+        ContextSource::PlanReminder,
+        "[attachment]\npath: docs/imported.md\nbytes: 7\n\n```text\nattached\n```",
+    )];
+    fs::write(
+        source.join("context.bin"),
+        serde_json::to_vec(&context).unwrap(),
+    )
+    .unwrap();
+
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    let router = std::sync::Arc::new(std::sync::Mutex::new(SessionRouter::new()));
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let (event_tx, _event_rx) = std::sync::mpsc::channel();
+    let config = PeridotConfig::default();
+    let options = AgentTaskOptions {
+        permission: PermissionMode::Auto,
+        model: "mock".to_string(),
+        reasoning_effort: ReasoningEffort::Low,
+        service_tier: None,
+        max_turns: 1,
+        budget_usd: 0.0,
+        resume: None,
+        mock_response_file: None,
+        live: false,
+    };
+    let ask_user_pending: AskUserPending =
+        std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+    let ask_user_next_id = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1));
+
+    apply_session_command(
+        SessionCommandEvent::SessionImport {
+            from: source.display().to_string(),
+            id: Some("imported".to_string()),
+            force: false,
+        },
+        &mut state,
+        &router,
+        runtime.handle(),
+        &event_tx,
+        &options,
+        &config,
+        &root,
+        &ask_user_pending,
+        &ask_user_next_id,
+    );
+
+    let imported = state
+        .sessions
+        .iter()
+        .find(|item| item.id == "imported")
+        .expect("imported session directory item");
+    assert_eq!(imported.title, "imported task");
+    assert_eq!(imported.notes_count, 2);
+    assert_eq!(imported.last_note.as_deref(), Some("imported checkpoint"));
+    assert_eq!(
+        imported.attachment_paths,
+        vec!["docs/imported.md".to_string()]
+    );
+    let rendered = state
+        .transcript
+        .iter()
+        .map(|entry| entry.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(rendered.contains("notes: 2  (imported checkpoint)"));
+    assert!(rendered.contains("attachments: 1"));
+    assert!(rendered.contains("docs/imported.md"));
+    fs::remove_dir_all(&root).ok();
+}
+
+#[test]
 fn delete_persisted_session_removes_record_summary_and_blobs() {
     let root =
         std::env::temp_dir().join(format!("peridot-cli-delete-session-{}", std::process::id()));
