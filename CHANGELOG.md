@@ -121,6 +121,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **VS Code attachment path state** is now saved per chat session, so `/detach`
   autocomplete follows the active session instead of leaking paths after
   session switches or reloads.
+- **Shared TODO marker indexing** now routes `/todos` through the persisted
+  `.peridot/codemap.json` index for both TUI and VS Code daemon surfaces,
+  refreshing stale or lower-cap indexes before rendering TODO/FIXME/HACK rows.
 - **`/session prune` slash parity** lets both TUI and VS Code users prune
   persisted sessions with `--status`, `--older-than-days`, and `--dry-run`
   filters through the shared session command path.

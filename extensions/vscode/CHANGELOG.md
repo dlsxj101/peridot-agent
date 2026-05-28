@@ -116,6 +116,9 @@
 - Attached-path suggestions are now stored per chat session, so switching or
   reloading VS Code/Cursor sessions does not leak `/detach` completions from a
   different conversation.
+- `/todos` now reuses the persisted `.peridot/codemap.json` TODO marker index
+  and refreshes stale or lower-cap indexes before rendering results in the
+  sidebar.
 - Image attachments now render bounded inline previews in the VS Code/Cursor
   attachment cards while keeping the daemon/model context as the existing
   placeholder metadata.

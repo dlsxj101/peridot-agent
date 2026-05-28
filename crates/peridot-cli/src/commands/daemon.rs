@@ -4476,31 +4476,38 @@ fn handle_command_undo(state: &DaemonState, raw_command: &str) -> Result<Value, 
 }
 
 fn handle_command_todos(state: &DaemonState, raw_command: &str) -> Result<Value, String> {
-    const MAX_HITS: usize = 500;
-    const SKIP_DIRS: &[&str] = &[
-        ".git",
-        "target",
-        "node_modules",
-        ".peridot",
-        ".idea",
-        ".vscode",
-    ];
-    const MARKERS: &[&str] = &["TODO", "FIXME", "HACK", "XXX", "BUG"];
-    let mut hits = Vec::new();
-    let mut walked = 0usize;
-    walk_for_todos(
+    let load = crate::commands::load_or_refresh_code_map_index_with_status(
         state.project_root.as_ref(),
-        state.project_root.as_ref(),
-        &mut hits,
-        &mut walked,
-        SKIP_DIRS,
-        MARKERS,
-        MAX_HITS,
-    );
-    let message = if hits.is_empty() {
-        format!("todos: no markers found (scanned {walked} file(s))")
+        crate::commands::DEFAULT_MAX_SYMBOLS,
+        crate::commands::TODO_SCAN_MAX_TODOS,
+    )
+    .map_err(|err| format!("todos: failed to load code map index: {err}"))?;
+    let report = crate::commands::todo_code_map_report(&load.index);
+    let items = report
+        .todos
+        .iter()
+        .map(|todo| {
+            serde_json::json!({
+                "source": "todo",
+                "label": todo.marker,
+                "path": todo.path,
+                "line": todo.line,
+                "detail": todo.text,
+            })
+        })
+        .collect::<Vec<_>>();
+    let message = if items.is_empty() {
+        format!(
+            "todos: no markers found (indexed {} file(s) at {})",
+            report.walked_files, load.index.generated_at_unix
+        )
     } else {
-        format!("todos: {} hit(s) across {walked} file(s)", hits.len())
+        format!(
+            "todos: {} hit(s) across {} indexed file(s) (indexed at {})",
+            items.len(),
+            report.walked_files,
+            load.index.generated_at_unix
+        )
     };
     Ok(serde_json::json!({
         "kind": "todos",
@@ -4508,8 +4515,11 @@ fn handle_command_todos(state: &DaemonState, raw_command: &str) -> Result<Value,
         "message": message,
         "severity": "info",
         "command": raw_command,
-        "items": hits,
-        "truncated": hits.len() == MAX_HITS,
+        "items": items,
+        "walked_files": report.walked_files,
+        "generated_at_unix": load.index.generated_at_unix,
+        "refreshed": load.refreshed,
+        "truncated": report.todos_truncated,
     }))
 }
 
@@ -4520,15 +4530,19 @@ fn handle_command_codemap(
 ) -> Result<Value, String> {
     let index = if refresh {
         crate::commands::CodeMapIndexLoad {
-            index: crate::commands::refresh_code_map_index(state.project_root.as_ref(), 120, 80)
-                .map_err(|err| format!("codemap: failed to load index: {err}"))?,
+            index: crate::commands::refresh_code_map_index(
+                state.project_root.as_ref(),
+                crate::commands::DEFAULT_MAX_SYMBOLS,
+                crate::commands::DEFAULT_MAX_TODOS,
+            )
+            .map_err(|err| format!("codemap: failed to load index: {err}"))?,
             refreshed: true,
         }
     } else {
         crate::commands::load_or_refresh_code_map_index_with_status(
             state.project_root.as_ref(),
-            120,
-            80,
+            crate::commands::DEFAULT_MAX_SYMBOLS,
+            crate::commands::DEFAULT_MAX_TODOS,
         )
         .map_err(|err| format!("codemap: failed to load index: {err}"))?
     };
@@ -4555,8 +4569,8 @@ fn handle_command_codemap_find(
 ) -> Result<Value, String> {
     let load = crate::commands::load_or_refresh_code_map_index_with_status(
         state.project_root.as_ref(),
-        120,
-        80,
+        crate::commands::DEFAULT_MAX_SYMBOLS,
+        crate::commands::DEFAULT_MAX_TODOS,
     )
     .map_err(|err| format!("codemap: failed to load index: {err}"))?;
     let report = crate::commands::search_code_map_index(&load.index, query);
@@ -4577,8 +4591,8 @@ fn handle_command_codemap_locate(
 ) -> Result<Value, String> {
     let load = crate::commands::load_or_refresh_code_map_index_with_status(
         state.project_root.as_ref(),
-        120,
-        80,
+        crate::commands::DEFAULT_MAX_SYMBOLS,
+        crate::commands::DEFAULT_MAX_TODOS,
     )
     .map_err(|err| format!("codemap: failed to load index: {err}"))?;
     let report = crate::commands::locate_code_map_symbols(&load.index, query);
@@ -4599,8 +4613,8 @@ fn handle_command_codemap_outline(
 ) -> Result<Value, String> {
     let load = crate::commands::load_or_refresh_code_map_index_with_status(
         state.project_root.as_ref(),
-        120,
-        80,
+        crate::commands::DEFAULT_MAX_SYMBOLS,
+        crate::commands::DEFAULT_MAX_TODOS,
     )
     .map_err(|err| format!("codemap: failed to load index: {err}"))?;
     let report = crate::commands::outline_code_map_file(&load.index, path);
@@ -4621,8 +4635,8 @@ fn handle_command_codemap_refs(
 ) -> Result<Value, String> {
     let load = crate::commands::load_or_refresh_code_map_index_with_status(
         state.project_root.as_ref(),
-        120,
-        80,
+        crate::commands::DEFAULT_MAX_SYMBOLS,
+        crate::commands::DEFAULT_MAX_TODOS,
     )
     .map_err(|err| format!("codemap: failed to load index: {err}"))?;
     let report = crate::commands::find_code_map_references(
@@ -5077,69 +5091,6 @@ fn map_export_artifacts(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn walk_for_todos(
-    root: &Path,
-    dir: &Path,
-    hits: &mut Vec<Value>,
-    walked: &mut usize,
-    skip_dirs: &[&str],
-    markers: &[&str],
-    cap: usize,
-) {
-    if hits.len() >= cap {
-        return;
-    }
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        if hits.len() >= cap {
-            return;
-        }
-        let path = entry.path();
-        let Ok(file_type) = entry.file_type() else {
-            continue;
-        };
-        let name = entry.file_name();
-        let name_str = name.to_string_lossy();
-        if file_type.is_dir() {
-            if skip_dirs.iter().any(|s| *s == name_str) || name_str.starts_with('.') {
-                continue;
-            }
-            walk_for_todos(root, &path, hits, walked, skip_dirs, markers, cap);
-            continue;
-        }
-        if !file_type.is_file() || name_str.starts_with('.') {
-            continue;
-        }
-        if entry.metadata().map(|m| m.len()).unwrap_or(0) > 1_000_000 {
-            continue;
-        }
-        let Ok(content) = std::fs::read_to_string(&path) else {
-            continue;
-        };
-        *walked += 1;
-        let rel = path
-            .strip_prefix(root)
-            .unwrap_or(&path)
-            .to_string_lossy()
-            .replace('\\', "/");
-        for (idx, line) in content.lines().enumerate() {
-            if hits.len() >= cap {
-                return;
-            }
-            if let Some(marker) = markers.iter().find(|m| line.contains(**m)) {
-                hits.push(serde_json::json!({
-                    "label": marker,
-                    "path": rel,
-                    "line": idx + 1,
-                    "detail": preview_line(line.trim(), 240),
-                }));
-            }
-        }
-    }
-}
-
 fn config_path(state: &DaemonState) -> PathBuf {
     state.project_root.join(".peridot/config.toml")
 }

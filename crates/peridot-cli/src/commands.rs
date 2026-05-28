@@ -59,10 +59,11 @@ pub(crate) use auth::{
     run_logout_command,
 };
 pub(crate) use codemap::{
-    CodeMapIndex, CodeMapIndexLoad, CodeMapReport, CodeMapStatus, build_code_map, code_map_status,
+    CodeMapIndex, CodeMapIndexLoad, CodeMapReport, CodeMapStatus, DEFAULT_MAX_SYMBOLS,
+    DEFAULT_MAX_TODOS, TODO_SCAN_MAX_TODOS, build_code_map, code_map_status,
     find_code_map_references, load_or_refresh_code_map_index,
     load_or_refresh_code_map_index_with_status, locate_code_map_symbols, outline_code_map_file,
-    refresh_code_map_index, search_code_map_index,
+    refresh_code_map_index, search_code_map_index, todo_code_map_report,
 };
 use config::init_project_config_value;
 pub(crate) use config::{

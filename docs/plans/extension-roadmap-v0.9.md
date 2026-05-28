@@ -1746,6 +1746,17 @@ shared daemon, TUI, and VS Code extension surfaces.
   when that session becomes active, reset for draft/cleared sessions, and
   sanitized while loading older persisted snapshots.
 
+### E137. Shared TODO Marker Index
+
+- **Status**: landed.
+- **Goal**: stop `/todos` from maintaining a separate workspace walk path when
+  the code-map index already contains TODO/FIXME/HACK markers.
+- **Where**: shared Rust code-map index metadata, TUI `/todos`, daemon
+  `session.command` `/todos`, and VS Code TODO command documentation.
+- **Result**: `/todos` now loads `.peridot/codemap.json`, refreshes it when
+  source files changed or when a previous index was built with too small a
+  TODO cap, and renders the same indexed marker data in TUI and VS Code.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

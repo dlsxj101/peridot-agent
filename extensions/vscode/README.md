@@ -43,7 +43,7 @@ native tool calling, and 2-Tier context management.
 | `Peridot: Search Archived Skills` | Prompts for a query and runs `/skills archived <query>` against archived stored skills. |
 | `Peridot: Attach File to Session` | Picks a workspace file, runs `/attach <path>`, and renders a compact attachment block with open/copy actions. |
 | `Peridot: Show Session Attachments` | Runs `/attachments` and renders files already loaded into the current session context, with open/copy/detach actions. |
-| `Peridot: Show Workspace TODOs` | Runs `/todos` to scan the workspace for TODO, FIXME, HACK, XXX, and BUG markers. |
+| `Peridot: Show Workspace TODOs` | Runs `/todos` against the shared code-map index for TODO, FIXME, HACK, XXX, and BUG markers, refreshing stale indexes first. |
 | `Peridot: Show Context Top` | Runs `/context top` for the active session and renders the largest context entries plus source token totals. |
 | `Peridot: Show Working Tree Diff` | Runs `/diff` and renders the current working tree diff in the sidebar transcript. |
 | `Peridot: Compact Context` | Runs `/compact` to queue context compaction for the active daemon session's next turn. |

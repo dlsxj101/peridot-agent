@@ -15,6 +15,9 @@ const SKIP_DIRS: &[&str] = &[
     ".vscode",
 ];
 const TODO_MARKERS: &[&str] = &["TODO", "FIXME", "HACK", "XXX", "BUG"];
+pub(crate) const DEFAULT_MAX_SYMBOLS: usize = 120;
+pub(crate) const DEFAULT_MAX_TODOS: usize = 80;
+pub(crate) const TODO_SCAN_MAX_TODOS: usize = 500;
 
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
 pub(crate) struct CodeMapIndex {
@@ -22,6 +25,10 @@ pub(crate) struct CodeMapIndex {
     pub generated_at_unix: u64,
     #[serde(default)]
     pub source_fingerprint: String,
+    #[serde(default)]
+    pub max_symbols: usize,
+    #[serde(default)]
+    pub max_todos: usize,
     pub report: CodeMapReport,
 }
 
@@ -116,6 +123,8 @@ pub(crate) fn refresh_code_map_index(
         version: 1,
         generated_at_unix: unix_seconds(),
         source_fingerprint,
+        max_symbols,
+        max_todos,
         report,
     };
     write_code_map_index(project_root, &index)?;
@@ -147,7 +156,7 @@ pub(crate) fn load_or_refresh_code_map_index_with_status(
     max_todos: usize,
 ) -> Result<CodeMapIndexLoad> {
     match load_code_map_index(project_root)? {
-        Some(index) if !code_map_index_is_stale(project_root, &index) => {
+        Some(index) if !code_map_index_is_stale(project_root, &index, max_symbols, max_todos) => {
             return Ok(CodeMapIndexLoad {
                 index,
                 refreshed: false,
@@ -167,7 +176,14 @@ pub(crate) fn code_map_status(project_root: &Path) -> Result<CodeMapStatus> {
     let generated_at_unix = index.as_ref().map(|index| index.generated_at_unix);
     let stale = index
         .as_ref()
-        .map(|index| code_map_index_is_stale_from_status(index, &source_status))
+        .map(|index| {
+            code_map_index_is_stale_from_status(
+                index,
+                &source_status,
+                DEFAULT_MAX_SYMBOLS,
+                DEFAULT_MAX_TODOS,
+            )
+        })
         .unwrap_or(true);
     Ok(CodeMapStatus {
         index_exists: index.is_some(),
@@ -213,6 +229,18 @@ pub(crate) fn search_code_map_index(index: &CodeMapIndex, query: &str) -> CodeMa
             .collect(),
         references: Vec::new(),
         symbols_truncated: index.report.symbols_truncated,
+        todos_truncated: index.report.todos_truncated,
+        references_truncated: false,
+    }
+}
+
+pub(crate) fn todo_code_map_report(index: &CodeMapIndex) -> CodeMapReport {
+    CodeMapReport {
+        walked_files: index.report.walked_files,
+        symbols: Vec::new(),
+        todos: index.report.todos.clone(),
+        references: Vec::new(),
+        symbols_truncated: false,
         todos_truncated: index.report.todos_truncated,
         references_truncated: false,
     }
@@ -347,12 +375,25 @@ fn write_code_map_index(project_root: &Path, index: &CodeMapIndex) -> Result<()>
     fs::write(&path, bytes).with_context(|| format!("failed to write {}", path.display()))
 }
 
-fn code_map_index_is_stale(project_root: &Path, index: &CodeMapIndex) -> bool {
+fn code_map_index_is_stale(
+    project_root: &Path,
+    index: &CodeMapIndex,
+    min_symbols: usize,
+    min_todos: usize,
+) -> bool {
     let source_status = source_status(project_root);
-    code_map_index_is_stale_from_status(index, &source_status)
+    code_map_index_is_stale_from_status(index, &source_status, min_symbols, min_todos)
 }
 
-fn code_map_index_is_stale_from_status(index: &CodeMapIndex, source_status: &SourceStatus) -> bool {
+fn code_map_index_is_stale_from_status(
+    index: &CodeMapIndex,
+    source_status: &SourceStatus,
+    min_symbols: usize,
+    min_todos: usize,
+) -> bool {
+    if index.max_symbols < min_symbols || index.max_todos < min_todos {
+        return true;
+    }
     if !index.source_fingerprint.is_empty()
         && index.source_fingerprint != source_status.fingerprint_hex()
     {
@@ -417,7 +458,7 @@ fn walk_source_status(root: &Path, path: &Path, status: &mut SourceStatus) {
         }
         return;
     }
-    if !is_source_file(path) {
+    if !is_indexed_text_file(path) {
         return;
     }
     let Ok(metadata) = fs::metadata(path) else {
@@ -486,7 +527,7 @@ fn walk_code_map(
         }
         return;
     }
-    if !is_source_file(path) {
+    if !is_indexed_text_file(path) {
         return;
     }
     let Ok(metadata) = fs::metadata(path) else {
@@ -508,8 +549,9 @@ fn walk_code_map(
         .extension()
         .and_then(|extension| extension.to_str())
         .unwrap_or("");
+    let collect_symbols = is_source_file(path);
     for (line_idx, line) in content.lines().enumerate() {
-        if report.symbols.len() < max_symbols {
+        if collect_symbols && report.symbols.len() < max_symbols {
             if let Some((kind, name)) = detect_symbol(line, extension) {
                 report.symbols.push(CodeMapSymbol {
                     path: relative.clone(),
@@ -519,7 +561,7 @@ fn walk_code_map(
                     signature: line.trim().to_string(),
                 });
             }
-        } else if detect_symbol(line, extension).is_some() {
+        } else if collect_symbols && detect_symbol(line, extension).is_some() {
             report.symbols_truncated = true;
         }
         if report.todos.len() < max_todos {
@@ -637,6 +679,35 @@ fn is_source_file(path: &Path) -> bool {
                 | "hpp"
         )
     )
+}
+
+fn is_indexed_text_file(path: &Path) -> bool {
+    is_source_file(path)
+        || matches!(
+            path.extension().and_then(|extension| extension.to_str()),
+            Some(
+                "md" | "markdown"
+                    | "txt"
+                    | "toml"
+                    | "yaml"
+                    | "yml"
+                    | "json"
+                    | "jsonl"
+                    | "ndjson"
+                    | "sh"
+                    | "bash"
+                    | "zsh"
+                    | "fish"
+                    | "sql"
+                    | "html"
+                    | "css"
+                    | "scss"
+                    | "xml"
+                    | "gradle"
+                    | "properties"
+                    | "ini"
+            )
+        )
 }
 
 fn detect_symbol(line: &str, extension: &str) -> Option<(String, String)> {
@@ -880,6 +951,7 @@ mod tests {
             "pub fn indexed() {}\n// TODO: wire search\n",
         )
         .unwrap();
+        fs::write(root.join("README.md"), "<!-- TODO: document search -->\n").unwrap();
 
         let index = refresh_code_map_index(&root, 100, 100).unwrap();
         assert_eq!(index.version, 1);
@@ -897,6 +969,20 @@ mod tests {
                 .todos
                 .iter()
                 .any(|todo| todo.text.contains("TODO"))
+        );
+        assert!(
+            index
+                .report
+                .todos
+                .iter()
+                .any(|todo| todo.path == "README.md")
+        );
+        assert!(
+            index
+                .report
+                .symbols
+                .iter()
+                .all(|symbol| symbol.path != "README.md")
         );
 
         let loaded = load_code_map_index(&root).unwrap().unwrap();
@@ -928,6 +1014,8 @@ mod tests {
             version: 1,
             generated_at_unix: 1,
             source_fingerprint: String::new(),
+            max_symbols: 100,
+            max_todos: 100,
             report: build_code_map(&root, 100, 100),
         };
         write_code_map_index(&root, &index).unwrap();
@@ -950,6 +1038,8 @@ mod tests {
             version: 1,
             generated_at_unix: 1,
             source_fingerprint: String::new(),
+            max_symbols: 100,
+            max_todos: 100,
             report: CodeMapReport {
                 walked_files: 0,
                 symbols: Vec::new(),
@@ -983,6 +1073,8 @@ mod tests {
             version: 1,
             generated_at_unix: u64::MAX,
             source_fingerprint: "not-the-current-fingerprint".to_string(),
+            max_symbols: 100,
+            max_todos: 100,
             report: CodeMapReport {
                 walked_files: 1,
                 symbols: vec![CodeMapSymbol {
@@ -1018,6 +1110,33 @@ mod tests {
                 .iter()
                 .any(|symbol| symbol.name == "old_symbol")
         );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn load_or_refresh_rebuilds_when_existing_index_has_lower_caps() {
+        let root = temp_project("cap-load");
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(
+            root.join("src/lib.rs"),
+            "pub fn current_symbol() {}\n// TODO: first\n// TODO: second\n",
+        )
+        .unwrap();
+        let undersized = CodeMapIndex {
+            version: 1,
+            generated_at_unix: u64::MAX,
+            source_fingerprint: source_status(&root).fingerprint_hex(),
+            max_symbols: 1,
+            max_todos: 1,
+            report: build_code_map(&root, 1, 1),
+        };
+        write_code_map_index(&root, &undersized).unwrap();
+
+        let load = load_or_refresh_code_map_index_with_status(&root, 100, 100).unwrap();
+        assert!(load.refreshed);
+        assert_eq!(load.index.max_symbols, 100);
+        assert_eq!(load.index.max_todos, 100);
+        assert_eq!(load.index.report.todos.len(), 2);
         let _ = fs::remove_dir_all(root);
     }
 
@@ -1064,6 +1183,8 @@ mod tests {
             version: 1,
             generated_at_unix: 42,
             source_fingerprint: String::new(),
+            max_symbols: 100,
+            max_todos: 100,
             report: CodeMapReport {
                 walked_files: 2,
                 symbols: vec![
@@ -1113,6 +1234,8 @@ mod tests {
             version: 1,
             generated_at_unix: 42,
             source_fingerprint: String::new(),
+            max_symbols: 100,
+            max_todos: 100,
             report: CodeMapReport {
                 walked_files: 2,
                 symbols: vec![
@@ -1156,6 +1279,8 @@ mod tests {
             version: 1,
             generated_at_unix: 42,
             source_fingerprint: String::new(),
+            max_symbols: 100,
+            max_todos: 100,
             report: CodeMapReport {
                 walked_files: 2,
                 symbols: vec![
@@ -1237,6 +1362,8 @@ mod tests {
         }"#;
         let index: CodeMapIndex = serde_json::from_str(json).unwrap();
         assert!(index.source_fingerprint.is_empty());
+        assert_eq!(index.max_symbols, 0);
+        assert_eq!(index.max_todos, 0);
         assert!(index.report.references.is_empty());
         assert!(!index.report.references_truncated);
     }

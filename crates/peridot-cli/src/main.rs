@@ -2865,53 +2865,56 @@ fn handle_branch_list(state: &mut TuiState, project_root: &Path) {
 }
 
 /// Scans every text-ish file under `project_root` for the canonical
-/// TODO / FIXME / HACK / XXX / BUG markers and prints `path:line:
-/// trimmed-text` for each hit. Heavy directories (`.git`, `target`,
-/// `node_modules`, `.peridot`) are pruned so the scan stays sub-second
-/// on a normal project; very large repositories are capped at 500 hits
-/// with a "(further hits truncated)" footer so we don't dump a 10k-row
-/// wall into the transcript.
+/// Loads the shared code-map TODO index and prints `path:line:
+/// trimmed-text` for each hit. The index refreshes automatically when
+/// source files change or when an older cache was built with a lower
+/// TODO cap.
 fn handle_scan_todos(state: &mut TuiState, project_root: &Path) {
-    const MAX_HITS: usize = 500;
-    const SKIP_DIRS: &[&str] = &[
-        ".git",
-        "target",
-        "node_modules",
-        ".peridot",
-        ".idea",
-        ".vscode",
-    ];
-    const MARKERS: &[&str] = &["TODO", "FIXME", "HACK", "XXX", "BUG"];
-    let mut hits: Vec<String> = Vec::new();
-    let mut walked = 0usize;
-    walk_for_todos(
+    let load = commands::load_or_refresh_code_map_index_with_status(
         project_root,
-        project_root,
-        &mut hits,
-        &mut walked,
-        SKIP_DIRS,
-        MARKERS,
-        MAX_HITS,
+        commands::DEFAULT_MAX_SYMBOLS,
+        commands::TODO_SCAN_MAX_TODOS,
     );
-    if hits.is_empty() {
+    let Ok(load) = load else {
+        state.push_error("todos: failed to load workspace code map index");
+        return;
+    };
+    let report = commands::todo_code_map_report(&load.index);
+    if report.todos.is_empty() {
         state.push_transcript(format!(
-            "todos: no markers found (scanned {walked} file(s))"
+            "todos: no markers found (indexed {} file(s) at {})",
+            report.walked_files, load.index.generated_at_unix
         ));
         return;
     }
-    let mut body = format!("todos: {} hit(s) across {walked} file(s):\n", hits.len());
-    body.push_str(&hits.join("\n"));
-    if hits.len() == MAX_HITS {
-        body.push_str("\n(further hits truncated)");
+    let mut body = format!(
+        "todos: {} hit(s) across {} indexed file(s) (indexed at {}):\n",
+        report.todos.len(),
+        report.walked_files,
+        load.index.generated_at_unix
+    );
+    for todo in &report.todos {
+        body.push_str(&format!("  {}:{}: {}\n", todo.path, todo.line, todo.text));
+    }
+    if report.todos_truncated {
+        body.push_str("(further hits truncated)");
     }
     state.push_transcript(body);
 }
 
 fn handle_code_map(state: &mut TuiState, project_root: &Path, refresh: bool) {
     let index = if refresh {
-        commands::refresh_code_map_index(project_root, 120, 80)
+        commands::refresh_code_map_index(
+            project_root,
+            commands::DEFAULT_MAX_SYMBOLS,
+            commands::DEFAULT_MAX_TODOS,
+        )
     } else {
-        commands::load_or_refresh_code_map_index(project_root, 120, 80)
+        commands::load_or_refresh_code_map_index(
+            project_root,
+            commands::DEFAULT_MAX_SYMBOLS,
+            commands::DEFAULT_MAX_TODOS,
+        )
     };
     let Ok(index) = index else {
         state.push_error("codemap: failed to load workspace code map index");
@@ -2936,7 +2939,11 @@ fn handle_code_map_status(state: &mut TuiState, project_root: &Path) {
 }
 
 fn handle_code_map_find(state: &mut TuiState, project_root: &Path, query: &str) {
-    let index = commands::load_or_refresh_code_map_index(project_root, 120, 80);
+    let index = commands::load_or_refresh_code_map_index(
+        project_root,
+        commands::DEFAULT_MAX_SYMBOLS,
+        commands::DEFAULT_MAX_TODOS,
+    );
     let Ok(index) = index else {
         state.push_error("codemap: failed to load workspace code map index");
         return;
@@ -2957,7 +2964,11 @@ fn handle_code_map_find(state: &mut TuiState, project_root: &Path, query: &str) 
 }
 
 fn handle_code_map_locate(state: &mut TuiState, project_root: &Path, query: &str) {
-    let index = commands::load_or_refresh_code_map_index(project_root, 120, 80);
+    let index = commands::load_or_refresh_code_map_index(
+        project_root,
+        commands::DEFAULT_MAX_SYMBOLS,
+        commands::DEFAULT_MAX_TODOS,
+    );
     let Ok(index) = index else {
         state.push_error("codemap: failed to load workspace code map index");
         return;
@@ -2978,7 +2989,11 @@ fn handle_code_map_locate(state: &mut TuiState, project_root: &Path, query: &str
 }
 
 fn handle_code_map_outline(state: &mut TuiState, project_root: &Path, path: &str) {
-    let index = commands::load_or_refresh_code_map_index(project_root, 120, 80);
+    let index = commands::load_or_refresh_code_map_index(
+        project_root,
+        commands::DEFAULT_MAX_SYMBOLS,
+        commands::DEFAULT_MAX_TODOS,
+    );
     let Ok(index) = index else {
         state.push_error("codemap: failed to load workspace code map index");
         return;
@@ -2999,7 +3014,11 @@ fn handle_code_map_outline(state: &mut TuiState, project_root: &Path, path: &str
 }
 
 fn handle_code_map_refs(state: &mut TuiState, project_root: &Path, query: &str) {
-    let index = commands::load_or_refresh_code_map_index(project_root, 120, 80);
+    let index = commands::load_or_refresh_code_map_index(
+        project_root,
+        commands::DEFAULT_MAX_SYMBOLS,
+        commands::DEFAULT_MAX_TODOS,
+    );
     let Ok(index) = index else {
         state.push_error("codemap: failed to load workspace code map index");
         return;
@@ -3336,71 +3355,6 @@ fn render_code_map_report(
         }
     }
     body
-}
-
-#[allow(clippy::too_many_arguments)]
-fn walk_for_todos(
-    root: &Path,
-    dir: &Path,
-    hits: &mut Vec<String>,
-    walked: &mut usize,
-    skip_dirs: &[&str],
-    markers: &[&str],
-    cap: usize,
-) {
-    if hits.len() >= cap {
-        return;
-    }
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        if hits.len() >= cap {
-            return;
-        }
-        let path = entry.path();
-        let Ok(file_type) = entry.file_type() else {
-            continue;
-        };
-        let name = entry.file_name();
-        let name_str = name.to_string_lossy();
-        if file_type.is_dir() {
-            if skip_dirs.iter().any(|s| *s == name_str) {
-                continue;
-            }
-            if name_str.starts_with('.') {
-                continue;
-            }
-            walk_for_todos(root, &path, hits, walked, skip_dirs, markers, cap);
-            continue;
-        }
-        if !file_type.is_file() || name_str.starts_with('.') {
-            continue;
-        }
-        // Heuristic skip: anything larger than 1 MiB is probably a
-        // binary asset or generated artefact; we don't want to read it.
-        if entry.metadata().map(|m| m.len()).unwrap_or(0) > 1_000_000 {
-            continue;
-        }
-        let Ok(content) = std::fs::read_to_string(&path) else {
-            continue;
-        };
-        *walked += 1;
-        let rel = path
-            .strip_prefix(root)
-            .unwrap_or(&path)
-            .to_string_lossy()
-            .replace('\\', "/");
-        for (idx, line) in content.lines().enumerate() {
-            if hits.len() >= cap {
-                return;
-            }
-            if markers.iter().any(|m| line.contains(m)) {
-                let snippet = line.trim();
-                hits.push(format!("  {rel}:{}: {snippet}", idx + 1));
-            }
-        }
-    }
 }
 
 #[allow(clippy::too_many_arguments)]
