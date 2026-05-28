@@ -108,6 +108,10 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **VS Code composer metric dock cleanup** now avoids rendering an empty
   run-metrics container for sessions without live HUD values and removes the
   stale webview comment that still described token/cost HUD as omitted.
+- **VS Code settings number draft normalization** now keeps empty or invalid
+  numeric drafts out of the `settings.save` payload until blur restores the
+  visible value, and coerces integer-backed settings to integer JSON before
+  saving.
 - **Provider argument autocomplete** now exposes the supported provider ids
   for `/provider <claude-api|openai-api|openrouter-api|openai-oauth>` through
   the shared slash catalog, TUI picker, daemon JSON catalog, and VS Code

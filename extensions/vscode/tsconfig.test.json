@@ -15,6 +15,7 @@
     "src/workspacePath.ts",
     "webview/composerHistory.ts",
     "webview/runMetrics.ts",
+    "webview/settingsModel.ts",
     "webview/slashAutocomplete.ts",
     "test/**/*.test.ts"
   ],

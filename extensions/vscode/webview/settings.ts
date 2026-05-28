@@ -5,6 +5,12 @@
 
 import './settings.css';
 
+import {
+  normalizeNumberDraft,
+  type NumberSettingValue,
+  type SettingValue,
+} from './settingsModel';
+
 interface SettingItem {
   id: string;
   group: string;
@@ -21,13 +27,6 @@ interface SettingItem {
    */
   surfaces?: string[];
 }
-
-type SettingValue =
-  | { kind: 'Bool'; data: boolean }
-  | { kind: 'Choice'; data: { options: string[]; selected: number } }
-  | { kind: 'U32'; data: { value: number; min: number; max: number; step: number } }
-  | { kind: 'F64'; data: { value: number; min: number; max: number; step: number } }
-  | { kind: 'Usize'; data: { value: number; min: number; max: number; step: number } };
 
 interface VsCodeApi {
   postMessage(message: unknown): void;
@@ -313,43 +312,54 @@ function buildNumberControl(item: SettingItem, fieldId: string): HTMLElement {
     // Exhaustiveness guard: only number variants reach here.
     return document.createElement('span');
   }
-  const data = item.value.data;
   const input = document.createElement('input');
   input.type = 'number';
   input.id = fieldId;
-  input.min = String(data.min);
-  input.max = String(data.max);
-  input.step = String(data.step);
-  input.value = String(data.value);
+  input.min = String(item.value.data.min);
+  input.max = String(item.value.data.max);
+  input.step = String(item.value.data.step);
+  input.value = String(item.value.data.value);
   input.addEventListener('input', () => {
-    const raw = Number(input.value);
-    if (Number.isNaN(raw)) {
+    if (!isNumberSetting(item.value)) {
       return;
     }
-    const clamped = Math.min(data.max, Math.max(data.min, raw));
-    if (item.value.kind === 'U32') {
-      item.value = { kind: 'U32', data: { ...data, value: clamped } };
-    } else if (item.value.kind === 'F64') {
-      item.value = { kind: 'F64', data: { ...data, value: clamped } };
-    } else if (item.value.kind === 'Usize') {
-      item.value = { kind: 'Usize', data: { ...data, value: clamped } };
+    const result = normalizeNumberDraft(item.value, input.value);
+    if (result.value) {
+      item.value = result.value;
+      dirty = true;
     }
-    dirty = true;
   });
   input.addEventListener('blur', () => {
-    const raw = Number(input.value);
-    if (Number.isNaN(raw) || input.value.trim() === '') {
-      input.value = String(data.value);
-      showFlash(t(uiStrings.valueReset, data.value), 'err');
+    if (!isNumberSetting(item.value)) {
       return;
     }
-    const clamped = Math.min(data.max, Math.max(data.min, raw));
-    if (clamped !== raw) {
-      input.value = String(clamped);
-      showFlash(t(uiStrings.valueClamped, clamped, data.min, data.max), 'err');
+    const result = normalizeNumberDraft(item.value, input.value);
+    if (!result.value) {
+      input.value = result.displayValue ?? String(item.value.data.value);
+      showFlash(t(uiStrings.valueReset, input.value), 'err');
+      return;
+    }
+    item.value = result.value;
+    if (result.reason === 'clamped' || result.reason === 'normalized') {
+      input.value = result.displayValue ?? String(result.value.data.value);
+    }
+    if (result.reason === 'clamped') {
+      showFlash(
+        t(
+          uiStrings.valueClamped,
+          result.value.data.value,
+          result.value.data.min,
+          result.value.data.max,
+        ),
+        'err',
+      );
     }
   });
   return input;
+}
+
+function isNumberSetting(value: SettingValue): value is NumberSettingValue {
+  return value.kind === 'U32' || value.kind === 'F64' || value.kind === 'Usize';
 }
 
 function showFlash(message: string, kind: 'ok' | 'err'): void {

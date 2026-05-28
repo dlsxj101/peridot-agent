@@ -1140,6 +1140,20 @@ shared daemon, TUI, and VS Code extension surfaces.
   run-metrics dock for sessions with no HUD values. The stale code comment
   saying token/cost HUD was omitted has been removed.
 
+### E91. Settings Number Draft Normalization
+
+- **Status**: landed.
+- **Goal**: make the VS Code settings webview save exactly the numeric
+  value the operator sees, especially while correcting or clearing number
+  fields.
+- **Where**: VS Code settings webview numeric control model, settings
+  webview unit tests, and changelog documentation.
+- **Result**: empty or invalid numeric drafts no longer mutate the
+  settings save payload before blur restores the visible value. Out-of-range
+  numbers still clamp to the configured bounds, and integer settings
+  (`U32` / `Usize`) normalize decimal input to integer JSON values before
+  `settings.save`.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.
