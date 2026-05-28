@@ -691,7 +691,6 @@ function updateSession(wrap: HTMLElement, s: SidebarState): void {
   if (s.hud.plan && s.hud.plan.steps.length > 0) {
     children.push(sessionSlot('todo', renderTodoProgress(s.hud.plan, s.running)));
   }
-  // HUD (token/cost meters) intentionally omitted — low utility in sidebar.
   children.push(sessionSlot('transcript', transcript));
   children.push(sessionSlot('queue', renderQueue(s)));
   if (s.branchPicker) children.push(sessionSlot('branch-picker', renderBranchPicker(s)));
@@ -1187,14 +1186,18 @@ function renderContextDock(s: SidebarState): HTMLElement {
 
 function renderComposerDocks(s: SidebarState): HTMLElement {
   const wrap = el('div', 'composer-docks');
-  wrap.append(renderRunMetricsDock(s));
+  const metricDock = renderRunMetricsDock(s);
+  if (metricDock) wrap.append(metricDock);
   wrap.append(renderContextDock(s));
   return wrap;
 }
 
-function renderRunMetricsDock(s: SidebarState): HTMLElement {
+function renderRunMetricsDock(s: SidebarState): HTMLElement | undefined {
+  const chips = runMetricChips(s.hud);
+  if (chips.length === 0) return undefined;
+
   const dock = el('div', 'run-metrics-dock');
-  for (const chip of runMetricChips(s.hud)) {
+  for (const chip of chips) {
     const node = el('span', `run-metric-chip metric-${chip.tone}`);
     node.title = chip.title;
     node.append(el('span', 'run-metric-label', chip.label));

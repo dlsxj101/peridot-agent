@@ -78,6 +78,8 @@
 - Live usage and budget updates now render as compact composer chips for
   executor tokens, aggregate executor+committee cost, budget percentage, and
   turn pressure.
+- Composer metric docks now skip empty run-metrics containers when a session
+  has no live HUD values, matching the actual usage/budget chip behavior.
 - Provider argument autocomplete now fills supported provider ids for
   `/provider <claude-api|openai-api|openrouter-api|openai-oauth>` from the
   shared daemon slash catalog.

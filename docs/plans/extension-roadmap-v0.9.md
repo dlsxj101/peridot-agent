@@ -1127,6 +1127,19 @@ shared daemon, TUI, and VS Code extension surfaces.
   without the field still deserialize, and unknown future labels render
   with a sanitized fallback chip class.
 
+### E90. Composer Metric Dock Cleanup
+
+- **Status**: landed.
+- **Goal**: keep the VS Code composer metric surface aligned with the
+  implemented live usage/budget dock and avoid stale sidebar assumptions in
+  the webview code.
+- **Where**: VS Code webview composer dock rendering and roadmap/changelog
+  documentation.
+- **Result**: live usage/budget metric chips are still rendered in the
+  composer when data exists, but the webview no longer creates an empty
+  run-metrics dock for sessions with no HUD values. The stale code comment
+  saying token/cost HUD was omitted has been removed.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

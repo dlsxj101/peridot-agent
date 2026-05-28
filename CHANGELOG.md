@@ -105,6 +105,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **VS Code live usage budget dock** now renders executor tokens,
   aggregate executor+committee cost, budget percentage, and turn pressure
   as compact composer chips while daemon runs stream updates.
+- **VS Code composer metric dock cleanup** now avoids rendering an empty
+  run-metrics container for sessions without live HUD values and removes the
+  stale webview comment that still described token/cost HUD as omitted.
 - **Provider argument autocomplete** now exposes the supported provider ids
   for `/provider <claude-api|openai-api|openrouter-api|openai-oauth>` through
   the shared slash catalog, TUI picker, daemon JSON catalog, and VS Code
