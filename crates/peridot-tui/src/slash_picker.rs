@@ -555,6 +555,14 @@ pub(crate) fn finite_argument_options_from_hint(hint: Option<&str>) -> Vec<&str>
         .collect()
 }
 
+pub(crate) fn accepted_command_text(name: &str, arg_hint: Option<&str>) -> String {
+    if arg_hint.is_some() {
+        format!("{name} ")
+    } else {
+        name.to_string()
+    }
+}
+
 /// Returns the active finite-argument picker, if the input is inside one.
 #[cfg(test)]
 fn slash_argument_context(query: &str) -> Option<SlashArgumentContext> {

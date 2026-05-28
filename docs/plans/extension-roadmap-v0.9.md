@@ -933,6 +933,20 @@ shared daemon, TUI, and VS Code extension surfaces.
   `/session switch|close|delete|rename` commands when session ids are
   available, while `/session save|list|count` remain directly runnable.
 
+### E76. Free-Form Slash Acceptance Cleanup
+
+- **Status**: landed.
+- **Goal**: stop autocomplete acceptance from copying human-readable
+  placeholder hints into the actual composer input.
+- **Where**: TUI slash picker acceptance path and VS Code webview slash
+  autocomplete acceptance helper.
+- **Result**: accepting a command with a free-form argument hint now
+  leaves an editable trailing space instead of inserting placeholders
+  such as `<task>`, `<path>`, or `<objective>`. The picker still displays
+  the hint as documentation, finite option commands still open their
+  option picker, and no-argument commands still accept to the command name
+  exactly.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

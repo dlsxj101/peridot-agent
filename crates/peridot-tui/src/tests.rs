@@ -1785,7 +1785,17 @@ fn tab_autocompletes_slash_command_prefix() {
         );
     }
     handle_key_event(&mut state, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
-    assert_eq!(state.input, "/goal <objective>");
+    assert_eq!(state.input, "/goal ");
+
+    state.clear_input();
+    for character in "/fork".chars() {
+        handle_key_event(
+            &mut state,
+            KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE),
+        );
+    }
+    handle_key_event(&mut state, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    assert_eq!(state.input, "/fork ");
 
     state.clear_input();
     for character in "/compa".chars() {

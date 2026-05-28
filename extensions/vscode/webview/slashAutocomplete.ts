@@ -62,6 +62,10 @@ export function slashExactSelectionIsRunnable(
   return input.trim() === command.name && (!command.argHint || command.argHint.startsWith('['));
 }
 
+export function acceptedSlashCommandText(command: SlashCommandSpec): string {
+  return command.argHint ? `${command.name} ` : command.name;
+}
+
 export function slashArgumentContext(
   input: string,
   slashCommands: SlashCommandSpec[],

@@ -49,6 +49,10 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
   `/session new|switch|close|delete|rename` with a trailing argument slot
   in both TUI and VS Code, while `/session save|list|count` remain
   directly runnable.
+- **Free-form slash command acceptance** now leaves editable argument
+  slots instead of inserting placeholder text such as `<task>` or
+  `<objective>` into the composer when accepting commands like `/fork`,
+  `/teammate`, `/attach`, or `/goal`.
 - **Provider argument autocomplete** now exposes the supported provider ids
   for `/provider <claude-api|openai-api|openrouter-api|openai-oauth>` through
   the shared slash catalog, TUI picker, daemon JSON catalog, and VS Code

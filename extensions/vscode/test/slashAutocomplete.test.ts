@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import type { SlashCommandSpec } from '../src/types';
 import {
+  acceptedSlashCommandText,
   filteredSlashCommands,
   slashArgumentContext,
   slashArgumentOptions,
@@ -14,6 +15,16 @@ const commands: SlashCommandSpec[] = [
   {
     name: '/plan',
     description: 'switch to plan mode',
+  },
+  {
+    name: '/goal',
+    description: 'start goal mode',
+    argHint: '<objective>',
+  },
+  {
+    name: '/fork',
+    description: 'spawn fork',
+    argHint: '<task>',
   },
   {
     name: '/session new',
@@ -147,7 +158,7 @@ test('filteredSlashCommands includes dynamic skill slash commands', () => {
 test('filteredSlashCommands includes status alias commands', () => {
   const matches = filteredSlashCommands('/sta', commands);
 
-  assert.deepEqual(matches.map((command) => command.name), ['/status']);
+  assert.deepEqual(matches.map((command) => command.name), ['/status', '/goal']);
 });
 
 test('filteredSlashCommands includes context alias and context top', () => {
@@ -169,6 +180,19 @@ test('slashArgumentOptions drops placeholder-only hint arms', () => {
   assert.ok(sessionSwitch);
 
   assert.deepEqual(slashArgumentOptions(sessionSwitch), []);
+});
+
+test('acceptedSlashCommandText leaves editable slots instead of placeholders', () => {
+  const goal = commands.find((command) => command.name === '/goal');
+  const fork = commands.find((command) => command.name === '/fork');
+  const plan = commands.find((command) => command.name === '/plan');
+  assert.ok(goal);
+  assert.ok(fork);
+  assert.ok(plan);
+
+  assert.equal(acceptedSlashCommandText(goal), '/goal ');
+  assert.equal(acceptedSlashCommandText(fork), '/fork ');
+  assert.equal(acceptedSlashCommandText(plan), '/plan');
 });
 
 test('slashArgumentContext filters finite options and closes after exact option', () => {

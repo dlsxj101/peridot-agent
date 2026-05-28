@@ -1702,15 +1702,7 @@ impl TuiState {
             return;
         };
         self.input =
-            if !crate::slash_picker::finite_argument_options_from_hint(spec.arg_hint.as_deref())
-                .is_empty()
-            {
-                format!("{} ", spec.name)
-            } else if let Some(arg) = spec.arg_hint.as_deref() {
-                format!("{} {arg}", spec.name)
-            } else {
-                spec.name.to_string()
-            };
+            crate::slash_picker::accepted_command_text(&spec.name, spec.arg_hint.as_deref());
         self.input_cursor = self.input.chars().count();
         self.refresh_input_pickers();
     }

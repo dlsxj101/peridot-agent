@@ -30,6 +30,9 @@
 - Session subcommand continuation autocomplete now accepts partial
   subcommands such as `/session sw` into `/session switch ` so users can
   immediately type or autocomplete the target session.
+- Accepting free-form slash commands now leaves an editable argument slot
+  instead of copying placeholder text such as `<task>` or `<objective>`
+  into the composer.
 - Provider argument autocomplete now fills supported provider ids for
   `/provider <claude-api|openai-api|openrouter-api|openai-oauth>` from the
   shared daemon slash catalog.

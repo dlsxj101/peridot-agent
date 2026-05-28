@@ -25,8 +25,8 @@ import {
 } from './composerHistory';
 import {
   filteredSlashCommands as filterSlashCommands,
+  acceptedSlashCommandText,
   slashArgumentContext as resolveSlashArgumentContext,
-  slashArgumentOptions as slashOptionsForCommand,
   slashExactSelectionIsRunnable as isSlashExactSelectionRunnable,
   slashPickerItemCount as countSlashPickerItems,
   type SlashArgumentContext,
@@ -3579,14 +3579,8 @@ function acceptSlashSelection(textarea: HTMLTextAreaElement, picker: HTMLElement
   const matches = filteredSlashCommands(textarea.value);
   const command = matches[slashPickerSelected];
   if (!command) return;
-  const hasFiniteArgumentOptions = slashArgumentOptions(command).length > 0;
-  textarea.value =
-    hasFiniteArgumentOptions
-      ? `${command.name} `
-      : command.argHint
-        ? `${command.name} ${command.argHint}`
-        : command.name;
-  if (hasFiniteArgumentOptions) slashPickerSelected = 0;
+  if (command.argHint) slashPickerSelected = 0;
+  textarea.value = acceptedSlashCommandText(command);
   textarea.selectionStart = textarea.value.length;
   textarea.selectionEnd = textarea.value.length;
   composerDraft = textarea.value;
@@ -3616,10 +3610,6 @@ function slashArgumentContext(input: string): SlashArgumentContext | undefined {
     state?.context.modelSuggestions ?? [],
     state?.context.branchSnapshots ?? [],
   );
-}
-
-function slashArgumentOptions(command: SlashCommandSpec): string[] {
-  return slashOptionsForCommand(command);
 }
 
 function modeSelect(opts: RunOptions): HTMLSelectElement {
