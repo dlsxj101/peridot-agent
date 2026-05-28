@@ -962,6 +962,20 @@ shared daemon, TUI, and VS Code extension surfaces.
   and keeps `off` hidden to avoid noise, while TUI and VS Code tests
   cover `/committee off|planner|full` autocomplete choices.
 
+### E78. Committee Event Transcript Parity
+
+- **Status**: landed.
+- **Goal**: make VS Code show the same committee planner/reviewer progress
+  events that already appear in the TUI transcript.
+- **Where**: shared daemon `AgentRunEvent` stream, TUI runtime event
+  rendering, VS Code sidebar transcript conversion, and VS Code unit
+  tests.
+- **Result**: `planner_plan_ready` now renders as a committee planner
+  transcript row in VS Code, and `reviewer_verdict` renders turn-scoped
+  approve/request/block rows. Reviewer blocks use an error transcript role
+  so duplicate-diff and hard-stop review guards are visible instead of
+  collapsing to an opaque event-kind label.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

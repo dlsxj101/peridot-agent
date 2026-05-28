@@ -56,6 +56,10 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **Committee mode status parity** now carries `committee_mode` through
   daemon status and VS Code slash state updates, so editor status pills
   can reflect `/committee planner|full` just like the TUI status bar.
+- **Committee event transcript parity** now renders planner plan-ready and
+  reviewer verdict daemon events in the VS Code transcript, matching the
+  TUI's committee progress visibility and surfacing reviewer blocks as
+  error rows.
 - **Provider argument autocomplete** now exposes the supported provider ids
   for `/provider <claude-api|openai-api|openrouter-api|openai-oauth>` through
   the shared slash catalog, TUI picker, daemon JSON catalog, and VS Code

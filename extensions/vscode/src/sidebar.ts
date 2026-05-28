@@ -26,6 +26,7 @@ import {
 } from './types';
 import { localSlashAction } from './localSlashAction';
 import { staleDaemonBackedSessionIds } from './sessionReconcile';
+import { committeeTranscriptItemForEvent } from './agentEventTranscript';
 
 export type {
   ApprovalResponse,
@@ -1958,6 +1959,9 @@ function transcriptItemForEvent(
   kind: string,
   event: Record<string, unknown>,
 ): TranscriptItem | undefined {
+  const committeeItem = committeeTranscriptItemForEvent(kind, event);
+  if (committeeItem) return committeeItem;
+
   switch (kind) {
     case 'started':
       return { role: 'status', text: 'Daemon started' };

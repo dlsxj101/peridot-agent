@@ -35,6 +35,10 @@
   into the composer.
 - `/committee planner|full` now updates VS Code session status context
   and renders a committee mode pill, matching the TUI status surface.
+- Committee planner and reviewer daemon events now render in the VS Code
+  transcript: planner plans appear as committee progress rows, reviewer
+  verdicts include the executor turn and comments, and reviewer blocks use
+  error styling.
 - Provider argument autocomplete now fills supported provider ids for
   `/provider <claude-api|openai-api|openrouter-api|openai-oauth>` from the
   shared daemon slash catalog.
