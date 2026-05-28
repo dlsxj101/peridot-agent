@@ -257,6 +257,12 @@
         "icon": "$(server-environment)"
       },
       {
+        "command": "peridot.addMcpServer",
+        "title": "Peridot: Add MCP Server",
+        "category": "Peridot",
+        "icon": "$(add)"
+      },
+      {
         "command": "peridot.testMcpServer",
         "title": "Peridot: Test MCP Server",
         "category": "Peridot",
@@ -487,6 +493,11 @@
           "command": "peridot.showMcpServers",
           "when": "view == peridot.chatView",
           "group": "navigation@5.0008"
+        },
+        {
+          "command": "peridot.addMcpServer",
+          "when": "view == peridot.chatView",
+          "group": "navigation@5.00085"
         },
         {
           "command": "peridot.testMcpServer",

@@ -75,6 +75,8 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **VS Code MCP server list GUI** now exposes `/mcp list` from the command
   palette and sidebar title bar, rendering configured server rows through the
   existing structured command-result renderer.
+- **VS Code MCP server add GUI** now exposes `/mcp add <name> <transport>
+  <target>` through guided name, transport, and command/URL prompts.
 - **VS Code MCP server test GUI** now exposes `/mcp test <name>` from the
   command palette and sidebar title bar with a configured-server picker.
 - **VS Code MCP server remove GUI** now exposes `/mcp remove <name>` with a

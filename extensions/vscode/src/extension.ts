@@ -43,7 +43,13 @@ import {
   sessionPruneSlashCommand,
   sessionPruneStatusChoices,
 } from './sessionPruneCommand';
-import { mcpRemoveSlashCommand, mcpServerChoices, mcpTestSlashCommand } from './mcpCommand';
+import {
+  mcpAddSlashCommand,
+  mcpRemoveSlashCommand,
+  mcpServerChoices,
+  mcpTestSlashCommand,
+  type McpTransport,
+} from './mcpCommand';
 import { SettingsPanelManager } from './settingsPanel';
 import { StatusCache } from './statusCache';
 import { isTerminalAgentEvent } from './agentEventLifecycle';
@@ -209,6 +215,7 @@ export function activate(context: vscode.ExtensionContext) {
     showContextTop: async (): Promise<void> => showContextTop(output, sidebar),
     showWorkingTreeDiff: async (): Promise<void> => showWorkingTreeDiff(output, sidebar),
     showMcpServers: async (): Promise<void> => showMcpServers(output, sidebar),
+    addMcpServer: async (): Promise<void> => addMcpServer(output, sidebar),
     testMcpServer: async (): Promise<void> => testMcpServer(output, sidebar),
     removeMcpServer: async (): Promise<void> => removeMcpServer(output, sidebar),
     addSessionNote: async (): Promise<void> => addSessionNote(output, sidebar),
@@ -452,6 +459,12 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand('peridot.showMcpServers', async () => {
       await showMcpServers(output, sidebar);
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('peridot.addMcpServer', async () => {
+      await addMcpServer(output, sidebar);
     }),
   );
 
@@ -1628,6 +1641,95 @@ async function showMcpServers(
     output.appendLine(`[peridot] mcp list failed: ${message}`);
     sidebar.appendError(message);
     await vscode.window.showErrorMessage(`Peridot MCP server list failed: ${message}`);
+  }
+}
+
+async function addMcpServer(
+  output: vscode.OutputChannel,
+  sidebar: PeridotSidebarProvider,
+): Promise<void> {
+  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!folder) {
+    const message = 'Open a workspace folder before adding MCP servers.';
+    sidebar.setWorkspaceProblem(message);
+    await vscode.window.showWarningMessage(message);
+    return;
+  }
+  const existingNames = new Set(sidebar.currentMcpServers().map((server) => server.name));
+  const name = await vscode.window.showInputBox({
+    title: 'Peridot: Add MCP Server',
+    prompt: 'Enter a unique MCP server name.',
+    placeHolder: 'filesystem',
+    ignoreFocusOut: true,
+    validateInput: (value) => {
+      const trimmed = value.trim();
+      if (!trimmed) return 'MCP server name is required.';
+      if (/\s/.test(trimmed)) return 'MCP server name cannot contain whitespace.';
+      if (existingNames.has(trimmed)) return 'An MCP server with this name already exists.';
+      return undefined;
+    },
+  });
+  if (!name) return;
+  const transport = await vscode.window.showQuickPick(
+    [
+      {
+        label: 'stdio',
+        description: 'Run a local command that speaks MCP over stdio',
+        transport: 'stdio' as McpTransport,
+      },
+      {
+        label: 'http',
+        description: 'Connect to an HTTP/SSE MCP endpoint',
+        transport: 'http' as McpTransport,
+      },
+    ],
+    {
+      title: 'Peridot: Add MCP Server',
+      placeHolder: 'Choose the MCP transport',
+      ignoreFocusOut: true,
+    },
+  );
+  if (!transport) return;
+  const target = await vscode.window.showInputBox({
+    title: 'Peridot: Add MCP Server',
+    prompt:
+      transport.transport === 'stdio'
+        ? 'Enter the command and args to start the MCP server.'
+        : 'Enter the MCP server URL.',
+    placeHolder:
+      transport.transport === 'stdio'
+        ? 'npx -y @modelcontextprotocol/server-filesystem .'
+        : 'https://example.com/mcp',
+    ignoreFocusOut: true,
+    validateInput: (value) => {
+      const trimmed = value.trim();
+      if (!trimmed) return 'MCP server target is required.';
+      if (/[\r\n]/.test(trimmed)) return 'MCP server target must be a single line.';
+      if (transport.transport === 'http' && !/^https?:\/\//i.test(trimmed)) {
+        return 'HTTP MCP server URL must start with http:// or https://.';
+      }
+      return undefined;
+    },
+  });
+  if (!target) return;
+  let command: string;
+  try {
+    command = mcpAddSlashCommand(name, transport.transport, target);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    await vscode.window.showErrorMessage(`Peridot MCP server add failed: ${message}`);
+    return;
+  }
+  await vscode.commands.executeCommand('peridot.chatView.focus');
+  try {
+    const result = await runSlashCommand(command, output, sidebar, sidebar.currentRunOptions());
+    sidebar.appendCommandResult(result);
+    await refreshStatus(output, sidebar, { force: true });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    output.appendLine(`[peridot] mcp add failed: ${message}`);
+    sidebar.appendError(message);
+    await vscode.window.showErrorMessage(`Peridot MCP server add failed: ${message}`);
   }
 }
 

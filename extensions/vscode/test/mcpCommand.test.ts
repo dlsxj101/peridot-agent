@@ -1,7 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { mcpRemoveSlashCommand, mcpServerChoices, mcpTestSlashCommand } from '../src/mcpCommand';
+import {
+  mcpAddSlashCommand,
+  mcpRemoveSlashCommand,
+  mcpServerChoices,
+  mcpTestSlashCommand,
+} from '../src/mcpCommand';
 
 test('mcpServerChoices lists configured servers without duplicates', () => {
   assert.deepEqual(
@@ -28,4 +33,18 @@ test('mcpRemoveSlashCommand builds parser-compatible remove commands', () => {
   assert.equal(mcpRemoveSlashCommand(' filesystem '), '/mcp remove filesystem');
   assert.throws(() => mcpRemoveSlashCommand('   '), /MCP server name/);
   assert.throws(() => mcpRemoveSlashCommand('bad name'), /whitespace/);
+});
+
+test('mcpAddSlashCommand builds parser-compatible add commands', () => {
+  assert.equal(
+    mcpAddSlashCommand(' local ', 'stdio', ' npx -y @modelcontextprotocol/server-filesystem . '),
+    '/mcp add local stdio npx -y @modelcontextprotocol/server-filesystem .',
+  );
+  assert.equal(
+    mcpAddSlashCommand('remote', 'http', ' https://example.com/mcp '),
+    '/mcp add remote http https://example.com/mcp',
+  );
+  assert.throws(() => mcpAddSlashCommand('bad name', 'stdio', 'node server.js'), /whitespace/);
+  assert.throws(() => mcpAddSlashCommand('local', 'stdio', '   '), /target/);
+  assert.throws(() => mcpAddSlashCommand('local', 'stdio', 'node\nserver.js'), /single line/);
 });

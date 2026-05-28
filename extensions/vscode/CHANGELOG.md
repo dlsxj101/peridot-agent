@@ -72,6 +72,8 @@
 - `Peridot: Show MCP Servers` now exposes `/mcp list` from the command
   palette and sidebar title bar, rendering configured server names,
   transports, and details through the existing command-result block.
+- `Peridot: Add MCP Server` now exposes `/mcp add <name> <transport>
+  <target>` through guided name, transport, and command/URL prompts.
 - `Peridot: Test MCP Server` now exposes `/mcp test <name>` from the
   command palette and sidebar title bar with a configured-server picker.
 - `Peridot: Remove MCP Server` now exposes `/mcp remove <name>` with a

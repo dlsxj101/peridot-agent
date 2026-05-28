@@ -6,6 +6,8 @@ export interface McpServerChoice {
   description?: string;
 }
 
+export type McpTransport = 'stdio' | 'http';
+
 export function mcpServerChoices(servers: McpServerSummary[]): McpServerChoice[] {
   const choices: McpServerChoice[] = [];
   const seen = new Set<string>();
@@ -29,6 +31,17 @@ export function mcpTestSlashCommand(name: string): string {
 
 export function mcpRemoveSlashCommand(name: string): string {
   return `/mcp remove ${mcpServerNameArg(name)}`;
+}
+
+export function mcpAddSlashCommand(name: string, transport: McpTransport, target: string): string {
+  const targetArg = target.trim();
+  if (!targetArg) {
+    throw new Error('MCP server target is required.');
+  }
+  if (/[\r\n]/.test(targetArg)) {
+    throw new Error('MCP server target must be a single line.');
+  }
+  return `/mcp add ${mcpServerNameArg(name)} ${transport} ${targetArg}`;
 }
 
 function mcpServerNameArg(name: string): string {

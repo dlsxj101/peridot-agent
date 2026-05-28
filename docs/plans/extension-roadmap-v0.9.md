@@ -1549,6 +1549,19 @@ shared daemon, TUI, and VS Code extension surfaces.
   restart-required note, and refreshes status so server-name autocomplete
   matches the updated config.
 
+### E122. VS Code MCP Server Add GUI
+
+- **Status**: landed.
+- **Goal**: expose MCP server registration from the editor without requiring
+  manual `/mcp add <name> <transport> <target>`.
+- **Where**: VS Code command contributions, sidebar title-bar action, guided
+  name/transport/target prompts, README, and changelog docs.
+- **Result**: `Peridot: Add MCP Server` validates a unique whitespace-free
+  server name, limits transport to `stdio` or `http`, validates the command or
+  URL target, runs `/mcp add` through the daemon command path, renders the
+  daemon's restart-required note, and refreshes status so server-name
+  autocomplete sees the new config entry.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.
