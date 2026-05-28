@@ -58,6 +58,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **`/session import <dir> [--id <id>] [--force]` slash parity** lets both
   TUI and VS Code users restore portable persisted session directories
   through the shared session command path.
+- **VS Code session import affordance** now exposes the same import path
+  from the command palette and sidebar title bar with folder picking,
+  optional id selection, and overwrite control.
 - **Skill-name argument autocomplete** now works in both TUI and VS Code
   for skill management commands such as `/skills show <name>` and
   `/skills use <name>`, while `/skills restore <name>` completes archived

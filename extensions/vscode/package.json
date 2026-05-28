@@ -239,6 +239,12 @@
         "icon": "$(export)"
       },
       {
+        "command": "peridot.importSessionArtifacts",
+        "title": "Peridot: Import Session Artifacts",
+        "category": "Peridot",
+        "icon": "$(cloud-download)"
+      },
+      {
         "command": "peridot.prStatus",
         "title": "Peridot: Show GitHub PR Status",
         "category": "Peridot",
@@ -334,6 +340,11 @@
           "command": "peridot.exportSessionArtifacts",
           "when": "view == peridot.chatView",
           "group": "navigation@5.5"
+        },
+        {
+          "command": "peridot.importSessionArtifacts",
+          "when": "view == peridot.chatView",
+          "group": "navigation@5.6"
         },
         {
           "command": "peridot.prStatus",

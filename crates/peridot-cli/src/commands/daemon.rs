@@ -4973,6 +4973,7 @@ async fn handle_command_session_import(
         "severity": "info",
         "command": raw_command,
         "id": result.id,
+        "session_id": result.id,
         "source": result.source,
         "destination": result.destination,
         "files": result.files,
@@ -6837,6 +6838,7 @@ mod tests {
 
         assert_eq!(result["kind"], "session_import");
         assert_eq!(result["id"], "imported");
+        assert_eq!(result["session_id"], "imported");
         assert_eq!(result["total"], 1);
         assert_eq!(result["items"][0]["label"], "transcript.ndjson");
         assert!(

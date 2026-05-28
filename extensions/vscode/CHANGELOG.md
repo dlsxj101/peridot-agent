@@ -50,6 +50,9 @@
 - `/session import <dir> [--id <id>] [--force]` now runs through the
   daemon command path, so editor users can restore portable persisted
   session directories without switching to the terminal.
+- Session import is now available from the command palette and sidebar title
+  bar with a folder picker, optional imported id, and explicit overwrite
+  choice.
 - `/notes clear` now runs through the daemon command path and clears
   operator notes for the active session, with autocomplete alongside
   `/notes last`.

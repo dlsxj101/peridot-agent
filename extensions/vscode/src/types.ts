@@ -117,6 +117,7 @@ export interface CommandResultView {
   message?: string;
   severity?: 'info' | 'error';
   command?: string;
+  id?: string;
   action?: string;
   task?: string;
   label?: string;
@@ -135,6 +136,8 @@ export interface CommandResultView {
   attachment?: AttachmentView;
   attachments?: AttachmentView[];
   artifacts?: ExportedArtifactView[];
+  files?: string[];
+  source?: string;
   destination?: string;
   removed?: AttachmentView[];
   removed_count?: number;
@@ -451,6 +454,7 @@ export type OutboundMessage =
   | { type: 'attachFile' }
   | { type: 'detachAttachment'; path: string }
   | { type: 'exportSessionArtifacts' }
+  | { type: 'importSessionArtifacts' }
   | { type: 'showPrStatus' }
   | { type: 'shipChanges' }
   | { type: 'mergePr' }

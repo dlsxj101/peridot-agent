@@ -73,6 +73,7 @@ export interface SidebarHandlers {
   detachAttachment: (path: string) => Promise<void>;
   showAttachments: () => Promise<void>;
   exportSessionArtifacts: () => Promise<void>;
+  importSessionArtifacts: () => Promise<void>;
   showPrStatus: () => Promise<void>;
   shipChanges: () => Promise<void>;
   mergePr: () => Promise<void>;
@@ -1062,6 +1063,9 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       case 'exportSessionArtifacts':
         await this.handlers.exportSessionArtifacts();
         return;
+      case 'importSessionArtifacts':
+        await this.handlers.importSessionArtifacts();
+        return;
       case 'showPrStatus':
         await this.handlers.showPrStatus();
         return;
@@ -1369,7 +1373,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       });
       return;
     }
-    if (result.kind === 'session_save') {
+    if (result.kind === 'session_save' || result.kind === 'session_import') {
       this.reconcileSessionSaveResult(result);
       return;
     }

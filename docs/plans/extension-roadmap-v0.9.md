@@ -1343,6 +1343,21 @@ shared daemon, TUI, and VS Code extension surfaces.
   files in TUI, returns a structured `session_import` result in VS Code,
   and completes the optional `--id` / `--force` flags in both composers.
 
+### E106. VS Code Session Import Affordance
+
+- **Status**: landed.
+- **Goal**: make restored session artifacts discoverable from the GUI, not
+  only from the slash composer.
+- **Where**: VS Code command contributions, sidebar title-bar actions,
+  session import command construction, daemon import result metadata, and
+  command-result rendering.
+- **Result**: `Peridot: Import Session Artifacts` and the sidebar import
+  button open a folder picker, prompt for an optional imported session id,
+  ask whether to overwrite an existing id, run the shared
+  `/session import <dir>` daemon path, refresh the session list, and render
+  a session import card with source, destination, copied files, and
+  destination open/copy actions.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

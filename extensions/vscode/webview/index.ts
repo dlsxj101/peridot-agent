@@ -823,6 +823,7 @@ function renderHeader(s: SidebarState): HTMLElement {
   right.append(iconButton('search-archive', 'Search Archived Skills', () => vscode.postMessage({ type: 'searchArchivedSkills' })));
   right.append(iconButton('attach', 'Attach File', () => vscode.postMessage({ type: 'attachFile' })));
   right.append(iconButton('export', 'Export Session Artifacts', () => vscode.postMessage({ type: 'exportSessionArtifacts' })));
+  right.append(iconButton('import', 'Import Session Artifacts', () => vscode.postMessage({ type: 'importSessionArtifacts' })));
   right.append(iconButton('pr', 'GitHub PR Status', () => vscode.postMessage({ type: 'showPrStatus' })));
   right.append(iconButton('ship', 'Ship Changes to PR', () => vscode.postMessage({ type: 'shipChanges' })));
   right.append(iconButton('merge', 'Merge GitHub PR', () => vscode.postMessage({ type: 'mergePr' })));
@@ -1060,6 +1061,8 @@ function iconSvg(kind: string): string {
       return `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5.2 8.7l3.9-3.9a2.4 2.4 0 0 1 3.4 3.4l-5.1 5.1a3.6 3.6 0 0 1-5.1-5.1l5.5-5.5"/><path d="M6.3 9.8l4.2-4.2"/></svg>`;
     case 'export':
       return `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5v4h10v-4"/><path d="M8 2.5v7"/><path d="M5.2 5.6L8 2.8l2.8 2.8"/></svg>`;
+    case 'import':
+      return `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5v4h10v-4"/><path d="M8 2.5v7"/><path d="M5.2 6.4 8 9.2l2.8-2.8"/></svg>`;
     case 'pr':
       return `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="4" cy="4" r="1.6"/><circle cx="12" cy="12" r="1.6"/><path d="M4 5.8V12"/><path d="M12 10.2V8.8A4.8 4.8 0 0 0 7.2 4H6"/></svg>`;
     case 'ship':
@@ -2575,6 +2578,7 @@ function renderCommandBlock(item: TranscriptItem): HTMLElement {
   if (result?.kind === 'attachments') return renderAttachmentInventoryBlock(item);
   if (result?.kind === 'detach') return renderDetachBlock(item);
   if (result?.kind === 'session_export') return renderSessionExportBlock(item);
+  if (result?.kind === 'session_import') return renderSessionImportBlock(item);
   if (result?.kind === 'note' || result?.kind === 'notes' || result?.kind === 'notes_clear') {
     return renderNotesBlock(item);
   }
@@ -2830,6 +2834,53 @@ function renderSessionExportBlock(item: TranscriptItem): HTMLElement {
         typeof artifact.count === 'number' ? `${artifact.count} entries` : '',
       ].filter(Boolean);
       if (meta.length > 0) top.append(el('span', 'attachment-meta', meta.join(' · ')));
+      main.append(top);
+      row.append(main);
+      list.append(row);
+    });
+    wrap.append(list);
+  }
+  return wrap;
+}
+
+function renderSessionImportBlock(item: TranscriptItem): HTMLElement {
+  const result = item.commandResult;
+  const files = Array.isArray(result?.files)
+    ? result.files.filter((file): file is string => typeof file === 'string')
+    : [];
+  const source = typeof result?.source === 'string' ? result.source : undefined;
+  const destination = typeof result?.destination === 'string' ? result.destination : undefined;
+  const sessionId = typeof result?.id === 'string' ? result.id : result?.session_id;
+  const wrap = el('section', 'command-block attachment-block');
+  const header = el('div', 'attachment-header');
+  const title = el('div', 'attachment-title');
+  title.append(el('span', 'command-title', result?.title ?? 'Session Artifact Import'));
+  const chips = el('div', 'attachment-chips');
+  chips.append(el('span', 'command-chip', `${files.length || result?.total || 0} files`));
+  if (sessionId) chips.append(el('span', 'command-chip', sessionId));
+  title.append(chips);
+  header.append(title);
+  if (destination) {
+    const actions = el('div', 'attachment-actions');
+    actions.append(iconButton('open', `Open ${destination}`, () => {
+      vscode.postMessage({ type: 'openPath', path: destination });
+    }));
+    actions.append(iconButton('copy', `Copy ${destination}`, () => {
+      vscode.postMessage({ type: 'copyText', text: destination });
+    }));
+    header.append(actions);
+  }
+  wrap.append(header);
+  if (result?.message) wrap.append(el('div', 'command-message', result.message));
+  if (source) wrap.append(el('div', 'attachment-path-row', `from ${source}`));
+  if (destination) wrap.append(el('div', 'attachment-path-row', `to ${destination}`));
+  if (files.length > 0) {
+    const list = el('div', 'attachment-list');
+    files.forEach((file) => {
+      const row = el('div', 'attachment-inventory-row');
+      const main = el('div', 'attachment-row-main');
+      const top = el('div', 'attachment-path-row');
+      top.append(el('span', 'attachment-path', file));
       main.append(top);
       row.append(main);
       list.append(row);
