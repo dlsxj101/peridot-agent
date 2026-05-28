@@ -162,6 +162,9 @@
 - Session export cards now distinguish generated artifact files from full-copy
   session entries and list copied session files when a full export payload is
   rendered.
+- Session export command results now include full-copy files as generic
+  `full_copy` item rows, keeping extension-side command cards and daemon
+  slash results aligned for clients that inspect `items`.
 - Image attachments now render bounded inline previews in the VS Code/Cursor
   attachment cards while keeping the daemon/model context as the existing
   placeholder metadata.

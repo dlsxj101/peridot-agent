@@ -77,6 +77,7 @@ test('sessionExportCommandResult preserves destination and artifacts for export 
     [
       ['Session', 's-1', 'session'],
       ['Destination', '/tmp/peridot-session-s-1', 'directory'],
+      ['tui_state.json', 'full copy', 'full_copy'],
       ['attachments.json', 'attachments · 1 entries', 'artifact'],
       ['timeline.json', 'timeline · 3 entries', 'artifact'],
     ],

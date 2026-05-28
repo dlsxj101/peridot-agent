@@ -5131,17 +5131,24 @@ fn export_session_id(
         false,
     )
     .map_err(|err| err.to_string())?;
-    let items: Vec<Value> = report
-        .artifacts
+    let mut items: Vec<Value> = report
+        .files
         .iter()
-        .map(|artifact| {
+        .map(|file| {
             serde_json::json!({
-                "source": "artifact",
-                "label": artifact.path,
-                "detail": format!("{} entries · {}", artifact.count, artifact.class),
+                "source": "full_copy",
+                "label": file,
+                "detail": "full copy",
             })
         })
         .collect();
+    items.extend(report.artifacts.iter().map(|artifact| {
+        serde_json::json!({
+            "source": "artifact",
+            "label": artifact.path,
+            "detail": format!("{} entries · {}", artifact.count, artifact.class),
+        })
+    }));
     Ok(serde_json::json!({
         "kind": "session_export",
         "title": "Session Artifact Export",
@@ -8439,7 +8446,7 @@ url = "https://example.com/mcp"
 
         let _ = dispatch_line(
             &state,
-            r#"{"jsonrpc":"2.0","id":48,"method":"session.command","params":{"session_id":"session-export","command":"/export attachments notes timeline"}}"#,
+            r#"{"jsonrpc":"2.0","id":48,"method":"session.command","params":{"session_id":"session-export","command":"/export full attachments notes timeline"}}"#,
         )
         .await
         .unwrap();
@@ -8455,12 +8462,21 @@ url = "https://example.com/mcp"
         assert_eq!(response["result"]["kind"], "session_export");
         assert_eq!(
             response["result"]["artifact_classes"],
-            serde_json::json!(["attachments", "notes", "timeline"])
+            serde_json::json!(["full", "attachments", "notes", "timeline"])
         );
         let destination = response["result"]["destination"].as_str().unwrap();
+        assert!(Path::new(destination).join("context.bin").is_file());
+        assert!(Path::new(destination).join("transcript.ndjson").is_file());
         assert!(Path::new(destination).join("attachments.json").is_file());
         assert!(Path::new(destination).join("notes.ndjson").is_file());
         assert!(Path::new(destination).join("timeline.json").is_file());
+        assert_eq!(
+            response["result"]["files"],
+            serde_json::json!(["context.bin", "notes.ndjson", "transcript.ndjson"])
+        );
+        assert_eq!(response["result"]["items"][0]["source"], "full_copy");
+        assert_eq!(response["result"]["items"][0]["label"], "context.bin");
+        assert_eq!(response["result"]["items"][0]["detail"], "full copy");
         assert_eq!(response["result"]["artifacts"][0]["count"], 1);
 
         let _ = std::fs::remove_dir_all(root);

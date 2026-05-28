@@ -74,6 +74,11 @@ export function sessionExportCommandResult(
     items: [
       { label: 'Session', detail: sessionId, source: 'session' },
       { label: 'Destination', detail: destination, source: 'directory' },
+      ...(files ?? []).map((file) => ({
+        label: file,
+        detail: 'full copy',
+        source: 'full_copy',
+      })),
       ...artifacts.map((artifact) => ({
         label: artifact.path ?? 'artifact',
         detail: `${artifact.class ?? 'artifact'} · ${artifact.count ?? 0} entries`,

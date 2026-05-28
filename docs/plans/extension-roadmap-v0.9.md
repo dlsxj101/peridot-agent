@@ -2001,6 +2001,19 @@ shared daemon, TUI, and VS Code extension surfaces.
   generated artifact rows unchanged. Operators can verify what a full export
   copied without leaving the TUI or opening the destination directory.
 
+### E157. Session Export Full-Copy Command Rows
+
+- **Status**: landed.
+- **Goal**: make daemon and editor command-result `items` carry the same
+  full-copy file list that dedicated export views already render.
+- **Where**: daemon `/export` and `/session export` JSON-RPC results, VS
+  Code export command-result construction, changelogs, and regression tests.
+- **Result**: full-copy session files now appear as `source: "full_copy"`
+  rows with `detail: "full copy"` before generated artifact rows. Dedicated
+  export cards still use the backwards-compatible top-level `files` metadata,
+  while generic command-result renderers and downstream JSON consumers can
+  inspect copied files without special-casing `session_export`.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.
