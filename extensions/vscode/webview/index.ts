@@ -826,6 +826,7 @@ function renderHeader(s: SidebarState): HTMLElement {
   right.append(iconButton('context-top', 'Show Context Top', () => vscode.postMessage({ type: 'showContextTop' })));
   right.append(iconButton('working-diff', 'Show Working Tree Diff', () => vscode.postMessage({ type: 'showWorkingTreeDiff' })));
   right.append(iconButton('mcp', 'Show MCP Servers', () => vscode.postMessage({ type: 'showMcpServers' })));
+  right.append(iconButton('mcp-test', 'Test MCP Server', () => vscode.postMessage({ type: 'testMcpServer' })));
   right.append(iconButton('note-add', 'Add Session Note', () => vscode.postMessage({ type: 'addSessionNote' })));
   right.append(iconButton('note-list', 'Show Session Notes', () => vscode.postMessage({ type: 'showSessionNotes' })));
   right.append(iconButton('note-clear', 'Clear Session Notes', () => vscode.postMessage({ type: 'clearSessionNotes' })));
@@ -1087,6 +1088,8 @@ function iconSvg(kind: string): string {
       return `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 3.5h8"/><path d="M4 12.5h8"/><path d="M6 6.5h4"/><path d="M8 4v5"/><path d="M6 10.5h4"/></svg>`;
     case 'mcp':
       return `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="2.5" width="10" height="4" rx="1.2"/><rect x="3" y="9.5" width="10" height="4" rx="1.2"/><path d="M6 6.5v3"/><path d="M10 6.5v3"/><path d="M5.2 4.5h.1M5.2 11.5h.1"/></svg>`;
+    case 'mcp-test':
+      return `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="2.5" width="10" height="4" rx="1.2"/><rect x="3" y="9.5" width="10" height="4" rx="1.2"/><path d="M8 6.5v3"/><path d="M5.5 11.5l1.4 1.4 3.6-3.6"/></svg>`;
     case 'note-add':
       return `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3.2 2.8h7.6l2 2v8.4h-9.6z"/><path d="M10.8 2.8v2h2"/><path d="M5.5 8.4h5"/><path d="M8 5.9v5"/></svg>`;
     case 'note-list':

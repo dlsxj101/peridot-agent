@@ -461,6 +461,7 @@ export type OutboundMessage =
   | { type: 'showContextTop' }
   | { type: 'showWorkingTreeDiff' }
   | { type: 'showMcpServers' }
+  | { type: 'testMcpServer' }
   | { type: 'addSessionNote' }
   | { type: 'showSessionNotes' }
   | { type: 'clearSessionNotes' }

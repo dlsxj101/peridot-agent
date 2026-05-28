@@ -43,6 +43,7 @@ import {
   sessionPruneSlashCommand,
   sessionPruneStatusChoices,
 } from './sessionPruneCommand';
+import { mcpServerChoices, mcpTestSlashCommand } from './mcpCommand';
 import { SettingsPanelManager } from './settingsPanel';
 import { StatusCache } from './statusCache';
 import { isTerminalAgentEvent } from './agentEventLifecycle';
@@ -53,7 +54,12 @@ import {
   workspaceFindFilePatterns,
   workspaceFuzzyFindFilePatterns,
 } from './workspacePath';
-import type { CommandResultView, DaemonSessionSummary, SlashCommandSpec } from './types';
+import type {
+  CommandResultView,
+  DaemonSessionSummary,
+  McpServerSummary,
+  SlashCommandSpec,
+} from './types';
 import {
   PeridotSidebarProvider,
   type ApprovalResponse,
@@ -203,6 +209,7 @@ export function activate(context: vscode.ExtensionContext) {
     showContextTop: async (): Promise<void> => showContextTop(output, sidebar),
     showWorkingTreeDiff: async (): Promise<void> => showWorkingTreeDiff(output, sidebar),
     showMcpServers: async (): Promise<void> => showMcpServers(output, sidebar),
+    testMcpServer: async (): Promise<void> => testMcpServer(output, sidebar),
     addSessionNote: async (): Promise<void> => addSessionNote(output, sidebar),
     showSessionNotes: async (): Promise<void> => showSessionNotes(output, sidebar),
     clearSessionNotes: async (): Promise<void> => clearSessionNotes(output, sidebar),
@@ -444,6 +451,12 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand('peridot.showMcpServers', async () => {
       await showMcpServers(output, sidebar);
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('peridot.testMcpServer', async () => {
+      await testMcpServer(output, sidebar);
     }),
   );
 
@@ -1609,6 +1622,78 @@ async function showMcpServers(
     sidebar.appendError(message);
     await vscode.window.showErrorMessage(`Peridot MCP server list failed: ${message}`);
   }
+}
+
+async function testMcpServer(
+  output: vscode.OutputChannel,
+  sidebar: PeridotSidebarProvider,
+): Promise<void> {
+  const server = await pickMcpServer(output, sidebar, {
+    title: 'Peridot: Test MCP Server',
+    placeHolder: 'Choose a configured MCP server to test',
+  });
+  if (!server) return;
+  let command: string;
+  try {
+    command = mcpTestSlashCommand(server.name);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    await vscode.window.showErrorMessage(`Peridot MCP server test failed: ${message}`);
+    return;
+  }
+  await vscode.commands.executeCommand('peridot.chatView.focus');
+  try {
+    const result = await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: `Peridot: testing MCP server ${server.name}`,
+        cancellable: false,
+      },
+      async () => runSlashCommand(command, output, sidebar, sidebar.currentRunOptions()),
+    );
+    sidebar.appendCommandResult(result);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    output.appendLine(`[peridot] mcp test failed: ${message}`);
+    sidebar.appendError(message);
+    await vscode.window.showErrorMessage(`Peridot MCP server test failed: ${message}`);
+  }
+}
+
+async function pickMcpServer(
+  output: vscode.OutputChannel,
+  sidebar: PeridotSidebarProvider,
+  options: { title: string; placeHolder: string },
+): Promise<McpServerSummary | undefined> {
+  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!folder) {
+    const message = 'Open a workspace folder before selecting MCP servers.';
+    sidebar.setWorkspaceProblem(message);
+    await vscode.window.showWarningMessage(message);
+    return undefined;
+  }
+  let choices = mcpServerChoices(sidebar.currentMcpServers() ?? []);
+  if (choices.length === 0) {
+    await refreshStatus(output, sidebar, { force: true });
+    choices = mcpServerChoices(sidebar.currentMcpServers() ?? []);
+  }
+  if (choices.length === 0) {
+    await vscode.window.showWarningMessage('No MCP servers are configured for this workspace.');
+    return undefined;
+  }
+  if (choices.length === 1) return { name: choices[0].name };
+  return vscode.window.showQuickPick(
+    choices.map((choice) => ({
+      label: choice.label,
+      description: choice.description,
+      name: choice.name,
+    })),
+    {
+      title: options.title,
+      placeHolder: options.placeHolder,
+      ignoreFocusOut: true,
+    },
+  );
 }
 
 async function addSessionNote(

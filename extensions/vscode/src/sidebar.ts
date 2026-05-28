@@ -76,6 +76,7 @@ export interface SidebarHandlers {
   showContextTop: () => Promise<void>;
   showWorkingTreeDiff: () => Promise<void>;
   showMcpServers: () => Promise<void>;
+  testMcpServer: () => Promise<void>;
   addSessionNote: () => Promise<void>;
   showSessionNotes: () => Promise<void>;
   clearSessionNotes: () => Promise<void>;
@@ -499,6 +500,10 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
 
   public currentDaemonSessionId(): string | undefined {
     return this.state.sessionId;
+  }
+
+  public currentMcpServers(): SidebarContext['mcpServers'] {
+    return [...(this.state.context.mcpServers ?? [])];
   }
 
   public currentClientSessionId(): string | undefined {
@@ -1091,6 +1096,9 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         return;
       case 'showMcpServers':
         await this.handlers.showMcpServers();
+        return;
+      case 'testMcpServer':
+        await this.handlers.testMcpServer();
         return;
       case 'addSessionNote':
         await this.handlers.addSessionNote();

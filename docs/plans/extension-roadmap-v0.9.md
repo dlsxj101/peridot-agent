@@ -1524,6 +1524,18 @@ shared daemon, TUI, and VS Code extension surfaces.
   command path and renders configured server names, transports, and details
   in the existing structured command-result rows.
 
+### E120. VS Code MCP Server Test GUI
+
+- **Status**: landed.
+- **Goal**: expose MCP connectivity checks from the editor without requiring
+  manual `/mcp test <name>`.
+- **Where**: VS Code command contributions, sidebar title-bar action,
+  configured-server picker, README, and changelog docs.
+- **Result**: `Peridot: Test MCP Server` uses the workspace MCP server
+  inventory to prompt for a target, runs `/mcp test <name>` through the daemon
+  command path, and renders the reachable/tool-count result in the existing
+  structured command-result block.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.
