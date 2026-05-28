@@ -1268,6 +1268,19 @@ shared daemon, TUI, and VS Code extension surfaces.
   whether notes were cleared, and VS Code receives a structured
   `notes_clear` command result rendered in the existing notes block.
 
+### E101. Session List Status Filter Slash Parity
+
+- **Status**: landed.
+- **Goal**: make the existing CLI lifecycle filter available from the
+  interactive composers so operators can narrow session lists without
+  switching surfaces.
+- **Where**: shared slash parser/catalog, TUI session command queue, daemon
+  `session.command`, and VS Code slash autocomplete.
+- **Result**: `/session list --status idle|running|suspended|done|failed`
+  filters persisted sessions in both TUI and VS Code. The daemon returns the
+  filtered `sessions`, `items`, `total`, and `status_filter` fields, and both
+  composers complete the finite lifecycle values.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

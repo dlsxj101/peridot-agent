@@ -1211,6 +1211,10 @@ pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
                 state.push_transcript(format!("sessions:\n{summary}"));
             }
         }
+        SlashCommand::SessionListStatus(status) => {
+            state.push_transcript(format!("sessions: loading {status} sessions..."));
+            state.push_pending_session_command(SessionCommandEvent::SessionListStatus(status));
+        }
         SlashCommand::SessionCount => {
             state.push_transcript("session count: loading lifecycle totals...");
             state.push_pending_session_command(SessionCommandEvent::SessionCount);

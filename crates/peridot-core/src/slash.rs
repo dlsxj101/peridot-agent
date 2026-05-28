@@ -126,6 +126,8 @@ pub enum SlashCommand {
     },
     /// List all known sessions in the transcript.
     SessionList,
+    /// List persisted sessions matching one lifecycle state.
+    SessionListStatus(String),
     /// Show persisted session lifecycle counts.
     SessionCount,
     /// Search persisted session transcripts.
@@ -487,6 +489,9 @@ pub fn parse_slash_command(input: &str) -> Option<SlashCommand> {
         }
         "session" if rest == "save" => Some(SlashCommand::SessionSave),
         "session" if rest == "list" => Some(SlashCommand::SessionList),
+        "session" if rest.starts_with("list ") => {
+            parse_session_list_status(rest.strip_prefix("list ").unwrap_or("").trim())
+        }
         "session" if rest == "count" => Some(SlashCommand::SessionCount),
         "session" if rest == "search" || rest.starts_with("search ") => {
             let query = rest.strip_prefix("search").unwrap_or("").trim();
@@ -755,6 +760,19 @@ fn parse_export_artifacts(rest: &str) -> Option<Vec<ExportArtifact>> {
         }
     }
     Some(artifacts)
+}
+
+fn parse_session_list_status(rest: &str) -> Option<SlashCommand> {
+    let status = rest
+        .strip_prefix("--status ")
+        .or_else(|| rest.strip_prefix("status "))
+        .map(str::trim)?;
+    match status {
+        "idle" | "running" | "suspended" | "done" | "failed" => {
+            Some(SlashCommand::SessionListStatus(status.to_string()))
+        }
+        _ => None,
+    }
 }
 
 fn parse_skill_use(request: &str) -> Option<SlashCommand> {
@@ -1063,6 +1081,15 @@ mod tests {
             parse_slash_command("/session count"),
             Some(SlashCommand::SessionCount)
         );
+        assert_eq!(
+            parse_slash_command("/session list --status done"),
+            Some(SlashCommand::SessionListStatus("done".to_string()))
+        );
+        assert_eq!(
+            parse_slash_command("/session list status failed"),
+            Some(SlashCommand::SessionListStatus("failed".to_string()))
+        );
+        assert_eq!(parse_slash_command("/session list --status bogus"), None);
         assert_eq!(
             parse_slash_command("/session search parser failure"),
             Some(SlashCommand::SessionSearch("parser failure".to_string()))

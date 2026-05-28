@@ -408,7 +408,7 @@ pub fn slash_command_catalog() -> &'static [SlashCommandSpec] {
         SlashCommandSpec {
             name: "/session list",
             description: "list all sessions",
-            arg_hint: None,
+            arg_hint: Some("[--status <state>]"),
             category: "session",
         },
         SlashCommandSpec {
@@ -580,10 +580,15 @@ pub(crate) fn finite_argument_options_from_hint(hint: Option<&str>) -> Vec<&str>
 }
 
 pub(crate) fn accepted_command_text(name: &str, arg_hint: Option<&str>) -> String {
-    if arg_hint.is_some() {
-        format!("{name} ")
-    } else {
-        name.to_string()
+    match arg_hint.map(str::trim) {
+        Some(hint)
+            if hint.starts_with('[')
+                && finite_argument_options_from_hint(Some(hint)).is_empty() =>
+        {
+            name.to_string()
+        }
+        Some(_) => format!("{name} "),
+        None => name.to_string(),
     }
 }
 
@@ -624,6 +629,9 @@ pub(crate) fn slash_argument_context_with_dynamic(
         return Some(context);
     }
     if let Some(context) = skills_search_argument_context(query) {
+        return Some(context);
+    }
+    if let Some(context) = session_list_status_argument_context(query) {
         return Some(context);
     }
     if let Some(context) = session_target_argument_context(query, sessions) {
@@ -977,6 +985,70 @@ fn session_subcommand_argument_context(query: &str) -> Option<SlashArgumentConte
         command_name: command_name.to_string(),
         options,
         append_space: true,
+    })
+}
+
+const SESSION_STATUS_OPTIONS: &[&str] = &["idle", "running", "suspended", "done", "failed"];
+
+fn session_list_status_argument_context(query: &str) -> Option<SlashArgumentContext> {
+    let command_name = "/session list";
+    if query != command_name && !query.starts_with(&format!("{command_name} ")) {
+        return None;
+    }
+    let rest = query[command_name.len()..].trim_start();
+    if rest.is_empty() {
+        return None;
+    }
+    let has_trailing_space = query.chars().last().is_some_and(char::is_whitespace);
+    let mut parts: Vec<&str> = rest.split_whitespace().collect();
+    let prefix = if has_trailing_space {
+        ""
+    } else {
+        parts.pop().unwrap_or("")
+    };
+    if parts.is_empty() {
+        let needle = prefix.to_ascii_lowercase();
+        let options: Vec<String> = ["--status", "status"]
+            .into_iter()
+            .filter(|option| needle.is_empty() || option.starts_with(&needle))
+            .map(str::to_string)
+            .collect();
+        if options.is_empty() {
+            return None;
+        }
+        return Some(SlashArgumentContext {
+            command_name: command_name.to_string(),
+            options,
+            append_space: true,
+        });
+    }
+    if parts.len() != 1 {
+        return None;
+    }
+    let flag = parts[0].to_ascii_lowercase();
+    if !matches!(flag.as_str(), "--status" | "status") {
+        return None;
+    }
+    let needle = prefix.to_ascii_lowercase();
+    if !needle.is_empty()
+        && SESSION_STATUS_OPTIONS
+            .iter()
+            .any(|option| option.eq_ignore_ascii_case(&needle))
+    {
+        return None;
+    }
+    let options: Vec<String> = SESSION_STATUS_OPTIONS
+        .iter()
+        .filter(|option| needle.is_empty() || option.starts_with(&needle))
+        .map(|option| (*option).to_string())
+        .collect();
+    if options.is_empty() {
+        return None;
+    }
+    Some(SlashArgumentContext {
+        command_name: format!("{command_name} {}", parts[0]),
+        options,
+        append_space: false,
     })
 }
 
@@ -1504,6 +1576,23 @@ mod tests {
     }
 
     #[test]
+    fn accepted_command_text_preserves_bare_optional_complex_commands() {
+        assert_eq!(
+            accepted_command_text("/session list", Some("[--status <state>]")),
+            "/session list"
+        );
+        assert_eq!(
+            accepted_command_text("/fast", Some("[on|off|toggle]")),
+            "/fast "
+        );
+        assert_eq!(
+            accepted_command_text("/goal", Some("<objective>")),
+            "/goal "
+        );
+        assert_eq!(accepted_command_text("/plan", None), "/plan");
+    }
+
+    #[test]
     fn skill_name_argument_context_filters_dynamic_skills() {
         let skills = vec![
             SkillSlashSuggestion {
@@ -1747,6 +1836,47 @@ mod tests {
         );
         assert!(
             slash_argument_context_with_dynamic("/session save", &[], &[], &[], &[], &[]).is_none()
+        );
+    }
+
+    #[test]
+    fn session_list_status_argument_context_filters_lifecycle_states() {
+        let context =
+            slash_argument_context_with_dynamic("/session list --", &[], &[], &[], &[], &[])
+                .expect("session list status flag");
+        assert_eq!(context.command_name, "/session list");
+        assert_eq!(context.options, vec!["--status"]);
+        assert!(context.append_space);
+
+        let context = slash_argument_context_with_dynamic(
+            "/session list --status d",
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+        )
+        .expect("session list done status");
+        assert_eq!(context.command_name, "/session list --status");
+        assert_eq!(context.options, vec!["done"]);
+        assert!(!context.append_space);
+
+        let context =
+            slash_argument_context_with_dynamic("/session list status f", &[], &[], &[], &[], &[])
+                .expect("session list failed status");
+        assert_eq!(context.command_name, "/session list status");
+        assert_eq!(context.options, vec!["failed"]);
+
+        assert!(
+            slash_argument_context_with_dynamic(
+                "/session list --status done",
+                &[],
+                &[],
+                &[],
+                &[],
+                &[],
+            )
+            .is_none()
         );
     }
 

@@ -42,6 +42,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **`/notes clear` slash parity** lets both TUI and VS Code users remove
   all operator notes from the active session through the shared notes
   lifecycle path.
+- **`/session list --status <state>` slash parity** lets both TUI and VS
+  Code users filter persisted sessions by `idle|running|suspended|done|failed`
+  without leaving the interactive composer.
 - **Skill-name argument autocomplete** now works in both TUI and VS Code
   for skill management commands such as `/skills show <name>` and
   `/skills use <name>`, while `/skills restore <name>` completes archived

@@ -1424,6 +1424,37 @@ fn apply_session_command(
                 summary.failed
             ));
         }
+        SessionCommandEvent::SessionListStatus(status) => {
+            let store = MemoryStore::new(project_template.join(".peridot/memory.db"));
+            let target = status.trim().to_ascii_lowercase();
+            let rows: Vec<String> = store
+                .list_session_records()
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|record| session_lifecycle_label(record.status) == target)
+                .map(|record| {
+                    let title = record
+                        .last_task
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|task| !task.is_empty())
+                        .unwrap_or(record.summary.trim());
+                    format!(
+                        "  {}\t{}\ttokens={}\tcost=${:.4}\tturns={}",
+                        record.id,
+                        title,
+                        record.total_tokens,
+                        record.total_cost_usd,
+                        record.turns_used
+                    )
+                })
+                .collect();
+            if rows.is_empty() {
+                state.push_transcript(format!("sessions ({target}): <none>"));
+            } else {
+                state.push_transcript(format!("sessions ({target}):\n{}", rows.join("\n")));
+            }
+        }
         SessionCommandEvent::SessionSearch(query) => {
             match commands::search_session_transcript_hits(project_template, &query, None, Some(50))
             {
@@ -1760,6 +1791,16 @@ fn apply_session_command(
         }
     }
     warn_on_shared_workspace_collisions(state, router, project_template);
+}
+
+fn session_lifecycle_label(status: SessionLifecycle) -> &'static str {
+    match status {
+        SessionLifecycle::Idle => "idle",
+        SessionLifecycle::Running => "running",
+        SessionLifecycle::Suspended => "suspended",
+        SessionLifecycle::Done => "done",
+        SessionLifecycle::Failed => "failed",
+    }
 }
 
 fn context_snapshot_path(project_root: &Path, session_id: &str) -> PathBuf {

@@ -1838,7 +1838,10 @@ async fn execute_session_command(
         SlashCommand::Export(artifacts) => {
             handle_command_export(state, session_id, raw_command, &artifacts)
         }
-        SlashCommand::SessionList => handle_command_session_list(state, raw_command).await,
+        SlashCommand::SessionList => handle_command_session_list(state, raw_command, None).await,
+        SlashCommand::SessionListStatus(status) => {
+            handle_command_session_list(state, raw_command, Some(&status)).await
+        }
         SlashCommand::SessionCount => handle_command_session_count(state, raw_command),
         SlashCommand::SessionSearch(query) => {
             handle_command_session_search(state, raw_command, &query)
@@ -2040,9 +2043,23 @@ async fn handle_command_session_new(
 async fn handle_command_session_list(
     state: &DaemonState,
     raw_command: &str,
+    status_filter: Option<&str>,
 ) -> Result<Value, String> {
     let result = session_list_result(state).await;
-    let sessions = result["sessions"].as_array().cloned().unwrap_or_default();
+    let target_status = status_filter.map(|status| status.trim().to_ascii_lowercase());
+    let sessions: Vec<Value> = result["sessions"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|session| {
+            target_status.as_ref().is_none_or(|target| {
+                session["status"]
+                    .as_str()
+                    .is_some_and(|status| status == target)
+            })
+        })
+        .collect();
     let items: Vec<Value> = sessions
         .iter()
         .map(|session| {
@@ -2067,13 +2084,23 @@ async fn handle_command_session_list(
     Ok(serde_json::json!({
         "kind": "session_list",
         "title": "Sessions",
-        "message": if items.is_empty() { "sessions: <none>".to_string() } else { format!("sessions: {} total", items.len()) },
+        "message": session_list_message(items.len(), target_status.as_deref()),
         "severity": "info",
         "command": raw_command,
         "items": items,
         "sessions": sessions,
+        "status_filter": target_status,
         "total": items.len(),
     }))
+}
+
+fn session_list_message(total: usize, status_filter: Option<&str>) -> String {
+    match (total, status_filter) {
+        (0, Some(status)) => format!("sessions ({status}): <none>"),
+        (_, Some(status)) => format!("sessions ({status}): {total} total"),
+        (0, None) => "sessions: <none>".to_string(),
+        (_, None) => format!("sessions: {total} total"),
+    }
 }
 
 fn handle_command_session_count(state: &DaemonState, raw_command: &str) -> Result<Value, String> {
@@ -6292,6 +6319,51 @@ mod tests {
         assert_eq!(result["done"], 2);
         assert_eq!(result["failed"], 1);
         assert_eq!(result["items"].as_array().unwrap().len(), 5);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn session_command_list_filters_by_status() {
+        let root = test_project("session-command-list-status");
+        let store = MemoryStore::new(root.join(".peridot/memory.db"));
+        for (id, status) in [
+            ("done-one", SessionLifecycle::Done),
+            ("done-two", SessionLifecycle::Done),
+            ("failed-one", SessionLifecycle::Failed),
+        ] {
+            let mut record = SessionRecord::new(id, &root);
+            record.status = status;
+            record.summary = format!("{id} summary");
+            store.save_session_record(&record).unwrap();
+        }
+        let (tx, _rx) = mpsc::unbounded_channel::<String>();
+        let state = DaemonState::new(
+            root.clone(),
+            PeridotConfig::default(),
+            test_options(None),
+            tx,
+        );
+
+        let result = execute_session_command(
+            &state,
+            None,
+            "/session list --status done",
+            SlashCommand::SessionListStatus("done".to_string()),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result["kind"], "session_list");
+        assert_eq!(result["status_filter"], "done");
+        assert_eq!(result["total"], 2);
+        assert_eq!(result["message"], "sessions (done): 2 total");
+        let sessions = result["sessions"].as_array().unwrap();
+        assert!(sessions.iter().all(|session| session["status"] == "done"));
+        let ids: Vec<_> = sessions
+            .iter()
+            .map(|session| session["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, vec!["done-one", "done-two"]);
         let _ = std::fs::remove_dir_all(root);
     }
 

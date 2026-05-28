@@ -882,6 +882,8 @@ pub enum SessionCommandEvent {
     },
     /// `/session count` — show persisted lifecycle counts.
     SessionCount,
+    /// `/session list --status <state>` — show persisted sessions matching one lifecycle state.
+    SessionListStatus(String),
     /// `/session search <query>` — search persisted transcripts.
     SessionSearch(String),
     /// `/session show <id|title>` — show persisted session details.

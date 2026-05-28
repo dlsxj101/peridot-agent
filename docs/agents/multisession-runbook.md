@@ -85,6 +85,17 @@ Remaining scoped polish: none currently tracked in this runbook.
   the child with an empty context (silent no-op), matching the previous
   behaviour for that edge case.
 
+### M40 — `/session list --status` interactive parity (landed)
+- `/session list --status idle|running|suspended|done|failed` now works in
+  TUI and daemon-backed VS Code sessions, matching the existing CLI lifecycle
+  filter.
+- TUI renders the filtered persisted records in the transcript. VS Code gets
+  structured `session_list` results with `status_filter`, filtered `sessions`,
+  `items`, and `total` so the generic command result view can render them.
+- TUI and VS Code autocomplete both offer `--status` / `status` and then the
+  finite lifecycle state values, while bare `/session list` stays directly
+  runnable.
+
 ### M39 — Stale worktree reconciliation (landed)
 - TUI startup and daemon `peridot.status` both call the shared worktree
   reconciler before reporting session state.

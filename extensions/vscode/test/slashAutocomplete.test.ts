@@ -78,6 +78,7 @@ const commands: SlashCommandSpec[] = [
   {
     name: '/session list',
     description: 'list sessions',
+    argHint: '[--status <state>]',
   },
   {
     name: '/session count',
@@ -215,13 +216,16 @@ test('acceptedSlashCommandText leaves editable slots instead of placeholders', (
   const goal = commands.find((command) => command.name === '/goal');
   const fork = commands.find((command) => command.name === '/fork');
   const plan = commands.find((command) => command.name === '/plan');
+  const sessionList = commands.find((command) => command.name === '/session list');
   assert.ok(goal);
   assert.ok(fork);
   assert.ok(plan);
+  assert.ok(sessionList);
 
   assert.equal(acceptedSlashCommandText(goal), '/goal ');
   assert.equal(acceptedSlashCommandText(fork), '/fork ');
   assert.equal(acceptedSlashCommandText(plan), '/plan');
+  assert.equal(acceptedSlashCommandText(sessionList), '/session list');
 });
 
 test('slashArgumentContext filters finite options and closes after exact option', () => {
@@ -365,6 +369,23 @@ test('slashArgumentContext leaves argument room after session subcommands', () =
     ['/session save', '/session search', '/session show', '/session switch'],
   );
   assert.equal(slashArgumentContext('/session save', commands), undefined);
+});
+
+test('slashArgumentContext filters session list status values', () => {
+  const flag = slashArgumentContext('/session list --', commands);
+  assert.equal(flag?.command.name, '/session list');
+  assert.deepEqual(flag?.options, ['--status']);
+  assert.equal(flag?.appendSpace, true);
+
+  const done = slashArgumentContext('/session list --status d', commands);
+  assert.equal(done?.command.name, '/session list --status');
+  assert.deepEqual(done?.options, ['done']);
+
+  const failed = slashArgumentContext('/session list status f', commands);
+  assert.equal(failed?.command.name, '/session list status');
+  assert.deepEqual(failed?.options, ['failed']);
+
+  assert.equal(slashArgumentContext('/session list --status done', commands), undefined);
 });
 
 test('slashArgumentContext filters mcp server arguments', () => {

@@ -63,7 +63,10 @@ export function slashExactSelectionIsRunnable(
 }
 
 export function acceptedSlashCommandText(command: SlashCommandSpec): string {
-  return command.argHint ? `${command.name} ` : command.name;
+  const hint = command.argHint?.trim();
+  if (!hint) return command.name;
+  if (hint.startsWith('[') && slashArgumentOptions(command).length === 0) return command.name;
+  return `${command.name} `;
 }
 
 export function slashArgumentContext(
@@ -84,6 +87,8 @@ export function slashArgumentContext(
   if (skillSubcommandContext) return skillSubcommandContext;
   const skillSearchContext = skillsSearchArgumentContext(query);
   if (skillSearchContext) return skillSearchContext;
+  const sessionListStatusContext = sessionListStatusArgumentContext(query);
+  if (sessionListStatusContext) return sessionListStatusContext;
   const sessionContext = sessionTargetArgumentContext(query, sessionTargets);
   if (sessionContext) return sessionContext;
   const sessionSubcommandContext = sessionSubcommandArgumentContext(query);
@@ -412,6 +417,47 @@ function sessionSubcommandArgumentContext(query: string): SlashArgumentContext |
     },
     options,
     appendSpace: true,
+  };
+}
+
+const SESSION_STATUS_OPTIONS = ['idle', 'running', 'suspended', 'done', 'failed'];
+
+function sessionListStatusArgumentContext(query: string): SlashArgumentContext | undefined {
+  const commandName = '/session list';
+  if (query !== commandName && !query.startsWith(`${commandName} `)) return undefined;
+  const rest = query.slice(commandName.length).trimStart();
+  if (rest.length === 0) return undefined;
+  const hasTrailingSpace = /\s$/.test(query);
+  const parts = rest.split(/\s+/).filter((part) => part.length > 0);
+  const prefix = hasTrailingSpace ? '' : (parts.pop() ?? '');
+  if (parts.length === 0) {
+    const needle = prefix.toLowerCase();
+    const options = ['--status', 'status'].filter((option) => needle.length === 0 || option.startsWith(needle));
+    if (options.length === 0) return undefined;
+    return {
+      command: {
+        name: commandName,
+        description: 'session list filter',
+        category: 'session',
+      },
+      options,
+      appendSpace: true,
+    };
+  }
+  if (parts.length !== 1) return undefined;
+  const flag = parts[0].toLowerCase();
+  if (flag !== '--status' && flag !== 'status') return undefined;
+  const needle = prefix.toLowerCase();
+  if (needle && SESSION_STATUS_OPTIONS.some((option) => option === needle)) return undefined;
+  const options = SESSION_STATUS_OPTIONS.filter((option) => needle.length === 0 || option.startsWith(needle));
+  if (options.length === 0) return undefined;
+  return {
+    command: {
+      name: `${commandName} ${parts[0]}`,
+      description: 'session status',
+      category: 'session',
+    },
+    options,
   };
 }
 

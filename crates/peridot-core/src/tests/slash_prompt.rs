@@ -39,6 +39,10 @@ fn parses_goal_slash_commands() {
         Some(SlashCommand::SessionSave)
     );
     assert_eq!(
+        parse_slash_command("/session list --status done"),
+        Some(SlashCommand::SessionListStatus("done".to_string()))
+    );
+    assert_eq!(
         parse_slash_command("/session search parser failure"),
         Some(SlashCommand::SessionSearch("parser failure".to_string()))
     );

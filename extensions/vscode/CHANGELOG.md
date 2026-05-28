@@ -35,6 +35,9 @@
   result block as other session utilities.
 - `/session resume <id|title>` now runs through the daemon command path and
   starts a continuation task from the selected persisted session summary.
+- `/session list --status <state>` now runs through the daemon command path
+  and filters persisted sessions by lifecycle state, with autocomplete for
+  the allowed status values.
 - `/notes clear` now runs through the daemon command path and clears
   operator notes for the active session, with autocomplete alongside
   `/notes last`.
