@@ -22,6 +22,10 @@ Security behavior is product behavior. Implement it deterministically where poss
 - Every tool must declare permission level, read-only status, concurrency safety, and whether it modifies state.
 - Plan Mode may only use read-only planning and inspection tools.
 - Permission mode chooses confirmation behavior; it does not override hard security boundaries.
+- `shell_readonly` denials must not automatically fall back to `shell_exec`.
+  Return a recovery hint instead so the model can choose an allowlisted
+  read-only inspection command or explicitly enter the normal shell approval
+  path when shell semantics are required.
 
 ## Hooks
 - Run built-in security checks before user hooks.

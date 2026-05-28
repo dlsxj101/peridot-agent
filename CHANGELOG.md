@@ -118,6 +118,12 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **VS Code ask-user waiting state** now marks `agent_ask_user` pauses as
   `Waiting for user response` and only resolves the prompt after the daemon
   accepts the submitted `interaction.respond` answer.
+- **Recovery events are debug-only in chat surfaces** now keeps internal
+  recovery directives out of TUI and VS Code transcripts while preserving
+  daemon/CLI output and TUI activity context for debugging.
+- **Read-only shell allowlist denials** now include a recovery hint that
+  points the model toward dedicated read-only tools or the normal
+  `shell_exec` approval flow when shell semantics are actually required.
 - **Provider argument autocomplete** now exposes the supported provider ids
   for `/provider <claude-api|openai-api|openrouter-api|openai-oauth>` through
   the shared slash catalog, TUI picker, daemon JSON catalog, and VS Code

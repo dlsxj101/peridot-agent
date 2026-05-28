@@ -801,6 +801,18 @@ async fn shell_readonly_allows_search_and_rejects_writes() {
         .await
         .unwrap_err();
     assert!(matches!(err, PeriError::PermissionDenied(_)));
+
+    let err = ShellReadOnlyTool
+        .execute(serde_json::json!({"command": "stat notes.txt"}), &ctx)
+        .await
+        .unwrap_err();
+    let PeriError::PermissionDenied(message) = err else {
+        panic!("expected readonly permission denial");
+    };
+    assert!(message.contains("inspection allowlist: stat notes.txt"));
+    assert!(message.contains("dedicated read-only tool"));
+    assert!(message.contains("retry with shell_exec"));
+    assert!(message.contains("permission approval flow"));
     fs::remove_dir_all(&root).ok();
 }
 

@@ -123,6 +123,30 @@ fn records_tool_and_verification_activity() {
 }
 
 #[test]
+fn recovery_event_stays_out_of_main_transcript() {
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+
+    state.apply_runtime_event(TuiRuntimeEvent::Recovery {
+        message: "try a different read-only command".to_string(),
+    });
+
+    assert!(
+        state
+            .transcript
+            .iter()
+            .all(|entry| !entry.text.contains("recovery"))
+    );
+    assert!(state.activities.iter().any(|activity| {
+        activity.label == "recovery" && activity.status == "try a different read-only command"
+    }));
+    assert_eq!(state.side_panel.stats.errors, 1);
+}
+
+#[test]
 fn tool_result_preview_reaches_main_transcript() {
     let mut state = TuiState::new(HeaderState::new(
         ExecutionMode::Execute,

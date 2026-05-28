@@ -145,6 +145,15 @@ test('agentTranscriptItemForEvent ignores unrelated events', () => {
   assert.equal(agentTranscriptItemForEvent('assistant_delta', { delta: 'hello' }), undefined);
 });
 
+test('agentTranscriptItemForEvent keeps recovery out of transcript', () => {
+  assert.equal(
+    agentTranscriptItemForEvent('recovery', {
+      message: 'Recovery directive: try a different read-only command',
+    }),
+    undefined,
+  );
+});
+
 test('shouldSuppressAgentEventFallback treats additive future events as no-op', () => {
   assert.equal(shouldSuppressAgentEventFallback('new_future_event'), true);
   assert.equal(shouldSuppressAgentEventFallback(''), false);

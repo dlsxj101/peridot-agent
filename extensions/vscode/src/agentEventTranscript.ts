@@ -56,6 +56,8 @@ export function agentTranscriptItemForEvent(
         text: `hook:${name} - ${category}: ${outcome}`,
       };
     }
+    case 'recovery':
+      return undefined;
     default:
       return undefined;
   }

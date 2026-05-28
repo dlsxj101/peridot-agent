@@ -2241,7 +2241,6 @@ impl TuiState {
             }
             TuiRuntimeEvent::Recovery { message } => {
                 self.side_panel.stats.errors += 1;
-                self.push_transcript_entry(TranscriptKind::Notice, format!("recovery: {message}"));
                 self.push_activity(ActivityKind::Verification, "recovery", message);
             }
             TuiRuntimeEvent::PhaseChanged { from, to, reason } => {

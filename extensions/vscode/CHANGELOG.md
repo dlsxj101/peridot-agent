@@ -88,6 +88,8 @@
 - `agent_ask_user` pauses now move VS Code status to `Waiting for user
   response`, and stale or rejected responses no longer replace the prompt
   with `User response sent`.
+- Recovery daemon events now stay in the VS Code Output channel instead of
+  rendering as sidebar transcript rows.
 - Provider argument autocomplete now fills supported provider ids for
   `/provider <claude-api|openai-api|openrouter-api|openai-oauth>` from the
   shared daemon slash catalog.

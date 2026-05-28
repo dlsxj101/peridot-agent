@@ -293,7 +293,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       this.appendToolStarted(event);
     } else if (kind === 'tool_finished') {
       this.appendToolFinished(event);
-    } else if (kind === 'error' || kind === 'recovery') {
+    } else if (kind === 'error') {
       const markedFailed = this.markLatestPendingToolFailed(stringField(event, 'message'));
       const item = transcriptItemForEvent(kind, event);
       if (item) {
@@ -301,11 +301,14 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       } else if (markedFailed) {
         this.publish();
       }
+    } else if (kind === 'recovery') {
+      // Recovery events are still written to the VS Code Output channel by
+      // the notification handler. Keep them out of the user transcript.
+      this.publish();
     } else if (kind === 'phase_changed') {
       const to = stringField(event, 'to') ?? 'unknown';
       // Phase transitions are high-volume internal state-machine signals.
-      // Keep the header chip current, but do not add them to the transcript;
-      // user-visible recovery/tool events already carry the actionable detail.
+      // Keep the header chip current, but do not add them to the transcript.
       this.state.phase = displayPhaseLabel(to);
       this.publish();
     } else if (kind === 'context_compacted') {
@@ -2100,7 +2103,7 @@ function transcriptItemForEvent(
     case 'error':
       return { role: 'error', text: stringField(event, 'message') };
     case 'recovery':
-      return recoveryTranscriptItem(stringField(event, 'message'));
+      return undefined;
     case 'interrupted':
       return { role: 'status', text: 'Interrupted', detail: stringField(event, 'stage') };
     default:
@@ -2236,18 +2239,6 @@ function shortDigest(value: string | undefined): string | undefined {
 function compactLabel(value: unknown): string {
   const text = json(value);
   return text.length > 120 ? `${text.slice(0, 117)}...` : text;
-}
-
-function recoveryTranscriptItem(message: string): TranscriptItem | undefined {
-  const normalized = message.trim();
-  if (!normalized) return undefined;
-  if (normalized === 'stuck detector requested a new strategy') {
-    return { role: 'status', text: 'Trying another strategy' };
-  }
-  if (normalized.startsWith('Recovery failed')) {
-    return { role: 'error', text: normalized };
-  }
-  return { role: 'status', text: 'Recovery', detail: normalized };
 }
 
 function questionForAskUser(request: unknown): string {

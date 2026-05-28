@@ -447,7 +447,10 @@ fn enforce_readonly_shell_policy(command: &str) -> PeriResult<()> {
         }
         if !is_allowed_readonly_segment(trimmed) {
             return Err(PeriError::PermissionDenied(format!(
-                "read-only shell command is not on the inspection allowlist: {trimmed}"
+                "read-only shell command is not on the inspection allowlist: {trimmed}. \
+                 Use a dedicated read-only tool or an allowlisted inspection command; \
+                 if this shell form is required, retry with shell_exec so the normal \
+                 permission approval flow applies."
             )));
         }
     }
