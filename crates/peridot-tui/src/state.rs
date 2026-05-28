@@ -317,6 +317,9 @@ pub enum TuiRuntimeEvent {
         /// Parameters the tool was about to execute with.
         #[serde(default)]
         parameters: serde_json::Value,
+        /// Optional stable tool risk-class label.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        risk_class: Option<String>,
     },
     /// `agent_ask_user` needs a real user answer. The TUI opens its
     /// ask-user panel for `request`; once the operator confirms, the CLI
@@ -2132,6 +2135,7 @@ impl TuiState {
         tool_name: impl Into<String>,
         reason: impl Into<String>,
         parameters: serde_json::Value,
+        risk_class: Option<String>,
     ) {
         let tool_name = tool_name.into();
         let reason = reason.into();
@@ -2145,6 +2149,7 @@ impl TuiState {
         self.approval = Some(
             ApprovalPanel::new(tool_name, reason)
                 .with_parameters(parameters)
+                .with_risk_class(risk_class)
                 .with_diff_preview(diff),
         );
     }
@@ -2216,8 +2221,9 @@ impl TuiState {
                 tool_name,
                 reason,
                 parameters,
+                risk_class,
             } => {
-                self.open_approval(tool_name, reason, parameters);
+                self.open_approval(tool_name, reason, parameters, risk_class);
             }
             TuiRuntimeEvent::BranchPickerTurns { turns } => {
                 if let Some(picker) = self.branch_picker.as_mut() {

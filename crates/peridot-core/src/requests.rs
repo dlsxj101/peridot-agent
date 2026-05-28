@@ -83,6 +83,9 @@ pub enum AgentRunEvent {
         /// Parameters the tool was about to execute with.
         #[serde(default)]
         parameters: serde_json::Value,
+        /// Stable label for the tool's [`peridot_common::RiskClass`].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        risk_class: Option<String>,
     },
     /// Usage totals changed.
     UsageUpdated {

@@ -893,10 +893,12 @@ impl HarnessAgent {
                         }
                         let _ = std::fs::write(path, &bytes);
                     }
+                    let risk_class = risk_class_label_for(&self.tools, &tool_name);
                     events(AgentRunEvent::ApprovalRequested {
                         tool_name,
                         reason: reason.clone(),
                         parameters: tool_parameters,
+                        risk_class,
                     });
                     return Err(err);
                 }

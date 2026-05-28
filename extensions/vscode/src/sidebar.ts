@@ -636,7 +636,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
     }
     // `risk_class` is optional on the wire — older daemons (pre-#7) omit it.
     // The webview chip renderer treats `undefined` as "no chip".
-    const riskClass = stringField(event, 'risk_class') || undefined;
+    const riskClass = pickString(event, 'risk_class');
     if (name === 'agent_ask_user') {
       this.append({
         role: 'tool',
@@ -730,6 +730,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
     const toolName = stringField(event, 'tool_name');
     const reason = pickString(event, 'reason') ?? 'Approval required';
     const parameters = event.parameters;
+    const riskClass = pickString(event, 'risk_class') ?? this.riskClassFromPendingTool(toolName);
     this.markToolWaitingForApproval(toolName);
     if (this.hasPendingApproval(toolName, reason, parameters)) {
       if (!this.state.pendingApproval) {
@@ -746,6 +747,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       reason,
       parameters,
       approvalSessionId: sessionId,
+      riskClass,
     };
     const path = pickString(parameters, 'path');
     if (path) {
@@ -768,7 +770,15 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       tool_name: item.toolName,
       reason: 'Approval required',
       parameters: item.toolParameters ?? {},
+      risk_class: item.riskClass,
     };
+  }
+
+  private riskClassFromPendingTool(toolName: string): string | undefined {
+    return [...this.state.transcript]
+      .reverse()
+      .find((entry) => entry.role === 'tool' && entry.pending && (entry.toolName === toolName || !entry.toolName))
+      ?.riskClass;
   }
 
   private markToolWaitingForApproval(toolName: string): void {

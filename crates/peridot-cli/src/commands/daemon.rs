@@ -189,6 +189,8 @@ struct ApprovalRequestSnapshot {
     reason: String,
     #[serde(default)]
     parameters: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    risk_class: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -1317,12 +1319,14 @@ async fn run_session_task(
                 tool_name,
                 reason,
                 parameters,
+                risk_class,
             } = &event
             {
                 *approval_snapshot_for_events.lock().unwrap() = Some(ApprovalRequestSnapshot {
                     tool_name: tool_name.clone(),
                     reason: reason.clone(),
                     parameters: parameters.clone(),
+                    risk_class: risk_class.clone(),
                 });
             }
             usage_for_events.lock().unwrap().record_event(&event);
@@ -7883,6 +7887,7 @@ mod tests {
             tool_name: "file_patch".to_string(),
             reason: "file_patch requires explicit user approval".to_string(),
             parameters: serde_json::json!({"path":"src/lib.rs","old_text":"a","new_text":"b"}),
+            risk_class: Some("local_write".to_string()),
         };
         let params = serde_json::json!({
             "session_id": session_id,
@@ -7896,6 +7901,7 @@ mod tests {
 
         let overridden = approval_snapshot_from_response(&snapshot, params).unwrap();
         assert_eq!(overridden.parameters["new_text"], "partial");
+        assert_eq!(overridden.risk_class.as_deref(), Some("local_write"));
         assert!(rewrite_pending_resume_parameters(
             &state,
             session_id,

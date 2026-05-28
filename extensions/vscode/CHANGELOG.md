@@ -73,6 +73,8 @@
   status line.
 - Session title rename drafts now preserve empty input across sidebar refreshes,
   avoiding title text being restored over slow edits or deletions.
+- Approval prompts now show the same risk-class chip as tool cards, and
+  unknown future risk labels are sanitized into a stable fallback CSS class.
 - Live usage and budget updates now render as compact composer chips for
   executor tokens, aggregate executor+committee cost, budget percentage, and
   turn pressure.

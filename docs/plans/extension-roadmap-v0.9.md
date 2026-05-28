@@ -1112,6 +1112,21 @@ shared daemon, TUI, and VS Code extension surfaces.
   preserve empty in-progress input across refreshes, and `nl -ba` remains
   covered for long nested Java paths.
 
+### E89. Approval Risk-Class Parity
+
+- **Status**: landed.
+- **Goal**: keep the tool risk signal visible at the moment an operator
+  approves or denies a gated action, not only on the earlier tool card.
+- **Where**: shared `AgentRunEvent::ApprovalRequested`, daemon
+  `approval_waiting` snapshots, TUI runtime approval panel, VS Code
+  sidebar approval state, and VS Code webview risk-chip rendering.
+- **Result**: approval-required events now carry an additive optional
+  `risk_class` field. Daemon resume snapshots preserve it, the TUI
+  approval panel renders it as `Risk: <class>`, and VS Code approval
+  prompts show the same compact chip used by tool summaries. Older events
+  without the field still deserialize, and unknown future labels render
+  with a sanitized fallback chip class.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

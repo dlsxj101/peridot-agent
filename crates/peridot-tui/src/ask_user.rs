@@ -84,6 +84,9 @@ pub struct ApprovalPanel {
     /// Parameters the tool was about to run with (rendered as a JSON preview).
     #[serde(default)]
     pub tool_params: serde_json::Value,
+    /// Optional stable risk-class label for the gated tool.
+    #[serde(default)]
+    pub risk_class: Option<String>,
     /// Optional pre-computed diff preview (file_patch / file_write).
     #[serde(default)]
     pub diff_preview: Option<String>,
@@ -137,6 +140,7 @@ impl ApprovalPanel {
             reason: reason.into(),
             selected_index: 0,
             tool_params: serde_json::Value::Null,
+            risk_class: None,
             diff_preview: None,
             hunks: Vec::new(),
             hunk_accepted: Vec::new(),
@@ -161,6 +165,12 @@ impl ApprovalPanel {
             }
         }
         self.tool_params = parameters;
+        self
+    }
+
+    /// Attaches an optional risk-class label.
+    pub fn with_risk_class(mut self, risk_class: Option<String>) -> Self {
+        self.risk_class = risk_class;
         self
     }
 

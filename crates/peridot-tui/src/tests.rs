@@ -1572,11 +1572,13 @@ fn approval_panel_offers_scopes_and_returns_scope() {
             "old_text": "fn old() {}\n",
             "new_text": "fn old() { 1 }\n"
         }),
+        risk_class: Some("local_write".to_string()),
     });
 
     let panel = state.approval.as_ref().expect("approval panel");
     assert_eq!(panel.choices().len(), 5);
     let panel_text = render_approval_panel(panel);
+    assert!(panel_text.contains("Risk: local write"));
     assert!(panel_text.contains("Approve once"));
     assert!(panel_text.contains("Approve for session"));
     assert!(panel_text.contains("Approve command"));
@@ -1626,6 +1628,7 @@ fn approval_panel_tab_toggles_focused_hunk_and_arrow_keys_move_focus() {
             "old_text": "a\nb\nc\nd\ne\n",
             "new_text": "a\nB\nc\nd\nE\n"
         }),
+        risk_class: Some("local_write".to_string()),
     });
 
     // Two hunks expected; focus starts at hunk 0, both accepted by default.
@@ -1698,6 +1701,7 @@ fn approval_panel_returns_no_synthesised_parameters_when_all_hunks_accepted() {
             "old_text": "a\nb\n",
             "new_text": "a\nB\n"
         }),
+        risk_class: Some("local_write".to_string()),
     });
 
     let outcome = handle_key_event(
@@ -1735,6 +1739,7 @@ fn approval_panel_synthesises_partial_patch_when_hunk_rejected() {
             "old_text": "a\nb\nc\nd\ne\n",
             "new_text": "a\nB\nc\nd\nE\n"
         }),
+        risk_class: Some("local_write".to_string()),
     });
 
     let panel = state
@@ -2634,6 +2639,7 @@ fn approval_runtime_event_opens_panel_and_records_decision() {
         tool_name: "shell_exec".to_string(),
         reason: "dependency installation requires explicit user approval".to_string(),
         parameters: serde_json::json!({"command": "apt-get install"}),
+        risk_class: Some("destructive".to_string()),
     });
 
     assert_eq!(state.agent_run_status, AgentRunStatus::WaitingApproval);
@@ -3037,6 +3043,7 @@ fn record_background_event_updates_directory_stats_and_attention() {
             tool_name: "shell_exec".to_string(),
             reason: "destructive shell command".to_string(),
             parameters: serde_json::json!({"command": "rm -rf /tmp/cache"}),
+            risk_class: Some("destructive".to_string()),
         },
     );
 

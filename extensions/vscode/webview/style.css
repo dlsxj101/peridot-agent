@@ -1644,6 +1644,7 @@ textarea {
 .risk-chip-external_network { background: #d4a017; }
 .risk-chip-destructive     { background: #c0392b; }
 .risk-chip-secret_adjacent { background: #e67e22; }
+.risk-chip-unknown         { background: var(--peri-fg-muted); }
 
 .tool-summary-snippet {
   flex: 1 1 auto;

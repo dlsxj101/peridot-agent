@@ -589,11 +589,12 @@ async fn safe_shell_exec_requires_approval_for_read_only_command() {
     assert!(events.iter().any(|event| {
         matches!(
             event,
-            AgentRunEvent::ApprovalRequested { tool_name, reason, parameters }
+            AgentRunEvent::ApprovalRequested { tool_name, reason, parameters, risk_class }
                 if tool_name == "shell_exec"
                     && reason == "shell_exec requires explicit user approval"
                     && parameters.get("command").and_then(serde_json::Value::as_str)
                         == Some("printf ok")
+                    && risk_class.as_deref() == Some("destructive")
         )
     }));
     std::fs::remove_dir_all(root).unwrap();

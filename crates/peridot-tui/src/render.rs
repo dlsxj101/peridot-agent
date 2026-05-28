@@ -2202,6 +2202,9 @@ pub(super) fn render_approval_panel(panel: &ApprovalPanel) -> String {
         format!("Tool: {}", panel.tool_name),
         format!("Reason: {}", panel.reason),
     ];
+    if let Some(risk_class) = panel.risk_class.as_deref() {
+        sections.push(format!("Risk: {}", risk_class.replace('_', " ")));
+    }
 
     if !panel.tool_params.is_null() {
         let pretty = serde_json::to_string_pretty(&panel.tool_params)

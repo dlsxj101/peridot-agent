@@ -3975,10 +3975,12 @@ fn tui_runtime_event_from_agent(event: AgentRunEvent) -> TuiRuntimeEvent {
             tool_name,
             reason,
             parameters,
+            risk_class,
         } => TuiRuntimeEvent::ApprovalRequested {
             tool_name,
             reason,
             parameters,
+            risk_class,
         },
         AgentRunEvent::UsageUpdated { usage } => {
             let prompt_tokens =

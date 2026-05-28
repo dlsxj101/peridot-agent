@@ -62,6 +62,7 @@ pub fn fixture_state(scenario: TestScenario) -> TuiState {
                     "old_text": "fn old() {}\n",
                     "new_text": "fn old() { 1 }\n"
                 }),
+                risk_class: Some("local_write".to_string()),
             });
         }
         TestScenario::AskUser => {

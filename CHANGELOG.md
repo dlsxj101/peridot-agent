@@ -96,6 +96,10 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **VS Code session rename drafts** now preserve empty in-progress input
   during sidebar refreshes, preventing slow typing or deletion from being
   overwritten by the previous title.
+- **Approval risk-class parity** now carries optional `risk_class` through
+  approval-required events, daemon waiting snapshots, the TUI approval
+  panel, and the VS Code approval prompt so operators see the same risk
+  signal at the actual approve/deny decision point.
 - **Read-only shell inspection** now allows `nl` so numbered file reads such
   as `nl -ba path/to/File.java` run without a false permission denial.
 - **VS Code live usage budget dock** now renders executor tokens,

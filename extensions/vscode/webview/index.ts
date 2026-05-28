@@ -32,6 +32,7 @@ import {
   type SlashArgumentContext,
 } from './slashAutocomplete';
 import { runMetricChips } from './runMetrics';
+import { riskChipView } from './riskChip';
 import { el, formatTokens, highlightLite, isRecord, json } from './util';
 
 declare function acquireVsCodeApi(): {
@@ -1469,6 +1470,7 @@ function transcriptItemSignature(item: TranscriptItem): string {
     pending: item.pending,
     toolParameters: item.toolParameters,
     toolResultSummary: item.toolResultSummary,
+    riskClass: item.riskClass,
     compaction: item.compaction,
   });
 }
@@ -1984,27 +1986,6 @@ function linkifyFilePaths(root: HTMLElement): void {
   }
 }
 
-/** Short chip label for a tool risk class. Keeps the chip narrow even on
- *  cramped sidebars; the hover tooltip on the chip shows the full label. */
-function riskChipLabel(riskClass: string): string {
-  switch (riskClass) {
-    case 'read_only':
-      return 'R';
-    case 'local_write':
-      return 'W';
-    case 'build_or_test':
-      return 'B';
-    case 'external_network':
-      return 'N';
-    case 'destructive':
-      return '!';
-    case 'secret_adjacent':
-      return 'S';
-    default:
-      return '?';
-  }
-}
-
 function toolSnippetText(item: TranscriptItem): string | undefined {
   if (item.path) return item.path;
   if (!item.toolParameters || typeof item.toolParameters !== 'object') return undefined;
@@ -2061,10 +2042,10 @@ function renderToolStack(
   // user can tell at a glance "this is a destructive shell call" vs "this
   // is just a read." Class strings match the Rust `RiskClass::label()`
   // values; missing means the daemon didn't send one and we render no chip.
-  const riskClass = latest.riskClass;
-  if (riskClass) {
-    const chip = el('span', `risk-chip risk-chip-${riskClass}`, riskChipLabel(riskClass));
-    chip.title = `Risk class: ${riskClass.replace(/_/g, ' ')}`;
+  const risk = riskChipView(latest.riskClass);
+  if (risk) {
+    const chip = el('span', risk.className, risk.label);
+    chip.title = risk.title;
     summary.append(chip);
   }
   const snippet = toolSnippetText(latest);
@@ -2311,6 +2292,12 @@ function renderAskUserBubble(item: TranscriptItem): HTMLElement {
 
 function renderApprovalBubble(item: TranscriptItem): HTMLElement {
   const wrap = renderPromptPanel('approval', 'Approval requested', item.toolName || item.text);
+  const risk = riskChipView(item.riskClass);
+  if (risk) {
+    const chip = el('span', risk.className, risk.label);
+    chip.title = risk.title;
+    wrap.querySelector('.prompt-header')?.append(chip);
+  }
   if (item.reason) wrap.append(el('div', 'prompt-reason', item.reason));
 
   if (typeof item.before === 'string' || typeof item.after === 'string') {
