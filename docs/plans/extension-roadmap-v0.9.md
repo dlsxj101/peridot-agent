@@ -1449,6 +1449,19 @@ shared daemon, TUI, and VS Code extension surfaces.
   the resume summary, and starts the returned continuation task through the
   normal session runner.
 
+### E114. VS Code Session Rename/Delete GUI
+
+- **Status**: landed.
+- **Goal**: make individual persisted session lifecycle edits available
+  from the editor without typing `/session rename` or `/session delete`.
+- **Where**: VS Code command contributions, sidebar title-bar actions,
+  session target command construction, README, and changelog docs.
+- **Result**: `Peridot: Rename Session` fetches persisted sessions, prompts
+  for the target and new title, runs `/session rename <id> <title>`, and
+  refreshes the session list. `Peridot: Delete Session` fetches persisted
+  sessions, asks for explicit confirmation, runs `/session delete <id>`,
+  finishes any cancelled live run, and refreshes the session list.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

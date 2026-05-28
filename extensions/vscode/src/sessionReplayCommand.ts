@@ -27,10 +27,13 @@ export function sessionReplaySlashCommand(target: string, last?: number): string
   if (!id) {
     throw new Error('Session id is required.');
   }
+  if (/\s/.test(id)) {
+    throw new Error('Session id cannot contain whitespace.');
+  }
   if (last !== undefined && (!Number.isInteger(last) || last <= 0)) {
     throw new Error('--last must be a positive integer.');
   }
-  const args = ['/session replay', shellQuote(id)];
+  const args = ['/session replay', id];
   if (last !== undefined) {
     args.push('--last', String(last));
   }
@@ -56,8 +59,4 @@ function sessionDescription(session: DaemonSessionSummary): string | undefined {
     (part): part is string => typeof part === 'string' && part.trim().length > 0,
   );
   return parts.length > 0 ? parts.join(' · ') : undefined;
-}
-
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, "'\\''")}'`;
 }

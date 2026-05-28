@@ -27,23 +27,38 @@ export function sessionTargetChoices(sessions: DaemonSessionSummary[]): SessionT
 }
 
 export function sessionShowSlashCommand(target: string): string {
-  return `/session show ${quotedSessionTarget(target)}`;
+  return `/session show ${sessionTargetArg(target)}`;
 }
 
 export function sessionLocateSlashCommand(target: string): string {
-  return `/session locate ${quotedSessionTarget(target)}`;
+  return `/session locate ${sessionTargetArg(target)}`;
 }
 
 export function sessionResumeSlashCommand(target: string): string {
-  return `/session resume ${quotedSessionTarget(target)}`;
+  return `/session resume ${sessionTargetArg(target)}`;
 }
 
-function quotedSessionTarget(target: string): string {
+export function sessionDeleteSlashCommand(target: string): string {
+  return `/session delete ${sessionTargetArg(target)}`;
+}
+
+export function sessionRenameSlashCommand(target: string, title: string): string {
+  const nextTitle = title.trim().replace(/\s+/g, ' ');
+  if (!nextTitle) {
+    throw new Error('Session title is required.');
+  }
+  return `/session rename ${sessionTargetArg(target)} ${nextTitle}`;
+}
+
+function sessionTargetArg(target: string): string {
   const id = target.trim();
   if (!id) {
     throw new Error('Session id is required.');
   }
-  return shellQuote(id);
+  if (/\s/.test(id)) {
+    throw new Error('Session id cannot contain whitespace.');
+  }
+  return id;
 }
 
 function sessionTitle(session: DaemonSessionSummary): string | undefined {
@@ -55,8 +70,4 @@ function sessionDescription(session: DaemonSessionSummary): string | undefined {
     (part): part is string => typeof part === 'string' && part.trim().length > 0,
   );
   return parts.length > 0 ? parts.join(' · ') : undefined;
-}
-
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, "'\\''")}'`;
 }

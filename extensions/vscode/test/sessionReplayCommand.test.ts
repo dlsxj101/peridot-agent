@@ -21,8 +21,9 @@ test('sessionReplayChoices lists persisted sessions without duplicates', () => {
   );
 });
 
-test('sessionReplaySlashCommand quotes target and appends last limit', () => {
-  assert.equal(sessionReplaySlashCommand("release prep's run", 12), "/session replay 'release prep'\\''s run' --last 12");
+test('sessionReplaySlashCommand builds parser-compatible target and last limit', () => {
+  assert.equal(sessionReplaySlashCommand('s-1', 12), '/session replay s-1 --last 12');
+  assert.throws(() => sessionReplaySlashCommand('bad id'), /whitespace/);
 });
 
 test('parseReplayLastInput accepts blank or positive integers only', () => {

@@ -51,6 +51,10 @@
 - `Peridot: Resume Session` now exposes `/session resume <id>` from the
   command palette and sidebar title bar, then starts the returned
   continuation task through the normal session runner.
+- `Peridot: Rename Session` and `Peridot: Delete Session` now expose
+  individual persisted session lifecycle edits from the command palette and
+  sidebar title bar. Delete asks for explicit confirmation before running
+  `/session delete <id>`.
 - `/session prune [--status <state>] [--older-than-days N] [--dry-run]`
   now runs through the daemon command path and returns a structured prune
   result so editor users can preview or remove stale persisted sessions.

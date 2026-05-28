@@ -461,6 +461,8 @@ export type OutboundMessage =
   | { type: 'showPersistedSessionDetails' }
   | { type: 'locatePersistedSessionDirectory' }
   | { type: 'resumePersistedSession' }
+  | { type: 'renamePersistedSession' }
+  | { type: 'deletePersistedSession' }
   | { type: 'showSessions' }
   | { type: 'searchSessions' }
   | { type: 'pruneSessions' }

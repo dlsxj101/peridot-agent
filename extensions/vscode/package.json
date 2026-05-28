@@ -257,6 +257,18 @@
         "icon": "$(debug-continue)"
       },
       {
+        "command": "peridot.renamePersistedSession",
+        "title": "Peridot: Rename Session",
+        "category": "Peridot",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "peridot.deletePersistedSession",
+        "title": "Peridot: Delete Session",
+        "category": "Peridot",
+        "icon": "$(trash)"
+      },
+      {
         "command": "peridot.showSessions",
         "title": "Peridot: Show Sessions",
         "category": "Peridot",
@@ -403,6 +415,16 @@
           "command": "peridot.resumePersistedSession",
           "when": "view == peridot.chatView",
           "group": "navigation@5.18"
+        },
+        {
+          "command": "peridot.renamePersistedSession",
+          "when": "view == peridot.chatView",
+          "group": "navigation@5.19"
+        },
+        {
+          "command": "peridot.deletePersistedSession",
+          "when": "view == peridot.chatView",
+          "group": "navigation@5.195"
         },
         {
           "command": "peridot.showSessions",

@@ -826,6 +826,8 @@ function renderHeader(s: SidebarState): HTMLElement {
   right.append(iconButton('session-detail', 'Show Session Details', () => vscode.postMessage({ type: 'showPersistedSessionDetails' })));
   right.append(iconButton('session-locate', 'Locate Session Directory', () => vscode.postMessage({ type: 'locatePersistedSessionDirectory' })));
   right.append(iconButton('session-resume', 'Resume Session', () => vscode.postMessage({ type: 'resumePersistedSession' })));
+  right.append(iconButton('session-rename', 'Rename Session', () => vscode.postMessage({ type: 'renamePersistedSession' })));
+  right.append(iconButton('session-delete', 'Delete Session', () => vscode.postMessage({ type: 'deletePersistedSession' })));
   right.append(iconButton('sessions', 'Show Sessions', () => vscode.postMessage({ type: 'showSessions' })));
   right.append(iconButton('session-search', 'Search Sessions', () => vscode.postMessage({ type: 'searchSessions' })));
   right.append(iconButton('trash', 'Prune Sessions', () => vscode.postMessage({ type: 'pruneSessions' })));
@@ -1075,6 +1077,10 @@ function iconSvg(kind: string): string {
       return `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 14s4.5-4.2 4.5-7.2A4.5 4.5 0 0 0 3.5 6.8C3.5 9.8 8 14 8 14z"/><circle cx="8" cy="6.8" r="1.6"/></svg>`;
     case 'session-resume':
       return `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8a5 5 0 1 0 1.5-3.6"/><path d="M3 2.5v3.2h3.2"/><path d="M7 5.4 10.6 8 7 10.6z"/></svg>`;
+    case 'session-rename':
+      return `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="3" width="11" height="10" rx="1.5"/><path d="M5 6h5"/><path d="M5 9h3"/><path d="M9.5 11.5 13 8l1 1-3.5 3.5-1.5.5z"/></svg>`;
+    case 'session-delete':
+      return `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="3" width="11" height="10" rx="1.5"/><path d="M5 6h6"/><path d="M6 9l4 4M10 9l-4 4"/></svg>`;
     case 'sessions':
       return `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="3" width="11" height="2.8" rx="1"/><rect x="2.5" y="6.6" width="11" height="2.8" rx="1"/><rect x="2.5" y="10.2" width="11" height="2.8" rx="1"/></svg>`;
     case 'session-search':

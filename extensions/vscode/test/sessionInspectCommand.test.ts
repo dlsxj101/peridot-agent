@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 
 import {
   sessionCountSlashCommand,
+  sessionDeleteSlashCommand,
   sessionLocateSlashCommand,
+  sessionRenameSlashCommand,
   sessionResumeSlashCommand,
   sessionShowSlashCommand,
   sessionTargetChoices,
@@ -27,14 +29,19 @@ test('sessionTargetChoices lists persisted sessions without duplicates', () => {
   );
 });
 
-test('session show and locate commands quote targets', () => {
-  assert.equal(sessionShowSlashCommand("release prep's run"), "/session show 'release prep'\\''s run'");
-  assert.equal(sessionLocateSlashCommand(' release prep '), "/session locate 'release prep'");
-  assert.equal(sessionResumeSlashCommand('release prep'), "/session resume 'release prep'");
+test('session target commands build parser-compatible id commands', () => {
+  assert.equal(sessionShowSlashCommand(' s-1 '), '/session show s-1');
+  assert.equal(sessionLocateSlashCommand('s-1'), '/session locate s-1');
+  assert.equal(sessionResumeSlashCommand('s-1'), '/session resume s-1');
+  assert.equal(sessionDeleteSlashCommand('s-1'), '/session delete s-1');
+  assert.equal(sessionRenameSlashCommand('s-1', ' release   prep '), '/session rename s-1 release prep');
 });
 
 test('session target commands reject empty targets', () => {
   assert.throws(() => sessionShowSlashCommand('   '), /Session id/);
   assert.throws(() => sessionLocateSlashCommand('   '), /Session id/);
   assert.throws(() => sessionResumeSlashCommand('   '), /Session id/);
+  assert.throws(() => sessionDeleteSlashCommand('   '), /Session id/);
+  assert.throws(() => sessionRenameSlashCommand('s-1', '   '), /Session title/);
+  assert.throws(() => sessionShowSlashCommand('bad id'), /whitespace/);
 });
