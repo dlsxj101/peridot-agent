@@ -214,6 +214,7 @@ Remaining scoped polish: none currently tracked in this runbook.
 ### M13 — Cross-session transcript search (landed)
 - `peridot session search <query> [--session <id>] [--limit N]` walks every persisted session under `<sessions_root>` (or just the one named by `--session`), loads its transcript via the M10 helper, and prints every entry whose text contains the substring (case-insensitive).
 - Text output lists each hit as `<session>[<index>] <kind> <text>`; JSON output returns `{ "query", "total", "hits": [...] }` so downstream tooling can paginate or filter further. `--limit` short-circuits the walk after N matches to keep large workspaces responsive.
+- `/session search <query>` exposes the same backend to interactive clients. TUI queues a session command and prints the first 50 hits in the transcript; VS Code receives a structured `session_search` daemon result so the extension can render the hits without duplicating search logic.
 
 ### M12 — Session list/show carry SessionRecord (landed)
 - `peridot session list` now joins each `SessionSummary` with the matching `SessionRecord` written by M3's throttled persistence path. Text output appends `status / tokens / cost / turns`; JSON output nests the full record under each entry. Sessions without a record fall back to the previous summary-only view, so behaviour stays backwards compatible.

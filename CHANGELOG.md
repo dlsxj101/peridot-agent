@@ -49,6 +49,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
   `/session new|switch|close|delete|rename` with a trailing argument slot
   in both TUI and VS Code, while `/session save|list|count` remain
   directly runnable.
+- **`/session search <query>` slash parity** now exposes cross-session
+  transcript search in both the TUI and VS Code daemon command path, using
+  the existing persisted session search backend with structured result rows.
 - **Free-form slash command acceptance** now leaves editable argument
   slots instead of inserting placeholder text such as `<task>` or
   `<objective>` into the composer when accepting commands like `/fork`,

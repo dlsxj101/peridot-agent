@@ -1423,6 +1423,34 @@ fn apply_session_command(
                 summary.failed
             ));
         }
+        SessionCommandEvent::SessionSearch(query) => {
+            match commands::search_session_transcript_hits(project_template, &query, None, Some(50))
+            {
+                Ok(result) if result.hits.is_empty() => {
+                    state.push_transcript(format!("session search: no matches for '{query}'"));
+                }
+                Ok(result) => {
+                    let rows = result
+                        .hits
+                        .iter()
+                        .map(|hit| {
+                            format!("  {}[{}] {} {}", hit.session, hit.index, hit.kind, hit.text)
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    let suffix = if result.truncated {
+                        "\n  ... truncated at 50 match(es)"
+                    } else {
+                        ""
+                    };
+                    state.push_transcript(format!(
+                        "session search: {} match(es) for '{}'\n{rows}{suffix}",
+                        result.total, result.query
+                    ));
+                }
+                Err(err) => state.push_error(format!("session search: {err}")),
+            }
+        }
         SessionCommandEvent::Fork(task) => {
             let new_id = format!("fork-{}-{}", std::process::id(), unix_timestamp());
             let title = task.clone();

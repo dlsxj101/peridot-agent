@@ -882,6 +882,8 @@ pub enum SessionCommandEvent {
     },
     /// `/session count` — show persisted lifecycle counts.
     SessionCount,
+    /// `/session search <query>` — search persisted transcripts.
+    SessionSearch(String),
     /// `/fork <task>` — spawn a single-turn Fork subagent inline.
     Fork(String),
     /// `/teammate <task>` — spawn a worktree-isolated Teammate subagent.

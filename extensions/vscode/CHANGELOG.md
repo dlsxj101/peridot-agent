@@ -30,6 +30,9 @@
 - Session subcommand continuation autocomplete now accepts partial
   subcommands such as `/session sw` into `/session switch ` so users can
   immediately type or autocomplete the target session.
+- `/session search <query>` now runs through the daemon command path and
+  renders structured cross-session transcript hits in the same command
+  result block as other session utilities.
 - Accepting free-form slash commands now leaves an editable argument slot
   instead of copying placeholder text such as `<task>` or `<objective>`
   into the composer.

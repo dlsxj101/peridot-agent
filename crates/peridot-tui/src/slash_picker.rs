@@ -418,6 +418,12 @@ pub fn slash_command_catalog() -> &'static [SlashCommandSpec] {
             category: "session",
         },
         SlashCommandSpec {
+            name: "/session search",
+            description: "search persisted session transcripts",
+            arg_hint: Some("<query>"),
+            category: "session",
+        },
+        SlashCommandSpec {
             name: "/autofix",
             description: "toggle or configure the auto-fix loop (on|off|<max>)",
             arg_hint: Some("[on|off|<N>]"),
@@ -913,7 +919,7 @@ fn session_target_argument_context(
 }
 
 fn session_subcommand_argument_context(query: &str) -> Option<SlashArgumentContext> {
-    const CONTINUATION_OPTIONS: &[&str] = &["new", "switch", "close", "delete", "rename"];
+    const CONTINUATION_OPTIONS: &[&str] = &["new", "switch", "close", "delete", "rename", "search"];
     const TERMINAL_OPTIONS: &[&str] = &["save", "list", "count"];
     let command_name = "/session";
     if !query.starts_with(&format!("{command_name} ")) {
@@ -1612,13 +1618,22 @@ mod tests {
         assert_eq!(context.options, vec!["rename"]);
         assert!(context.append_space);
 
+        let context = slash_argument_context_with_dynamic("/session se", &[], &[], &[], &[], &[])
+            .expect("session search option");
+        assert_eq!(context.options, vec!["search"]);
+        assert!(context.append_space);
+
         assert!(
             slash_argument_context_with_dynamic("/session rename ", &[], &[], &[], &[], &[])
                 .is_none()
         );
         assert!(
+            slash_argument_context_with_dynamic("/session search ", &[], &[], &[], &[], &[])
+                .is_none()
+        );
+        assert!(
             slash_argument_context_with_dynamic("/session s", &[], &[], &[], &[], &[]).is_none(),
-            "ambiguous save/switch prefixes fall back to command suggestions"
+            "ambiguous save/search/switch prefixes fall back to command suggestions"
         );
         assert!(
             slash_argument_context_with_dynamic("/session save", &[], &[], &[], &[], &[]).is_none()

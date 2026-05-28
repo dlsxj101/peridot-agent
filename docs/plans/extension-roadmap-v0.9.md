@@ -1206,6 +1206,18 @@ shared daemon, TUI, and VS Code extension surfaces.
   VS Code Output channel, while unknown additive events remain logged with
   JSON payloads for debugging without leaking into chat.
 
+### E96. Session Transcript Search Slash Parity
+
+- **Status**: landed.
+- **Goal**: let editor users search persisted session transcripts without
+  leaving the chat surface, matching the existing CLI utility.
+- **Where**: shared slash parser, TUI session command queue, daemon
+  `session.command`, and the persisted transcript search helper.
+- **Result**: `/session search <query>` now searches persisted sessions in
+  both TUI and VS Code. The daemon returns a structured `session_search`
+  result with hit rows, while TUI prints the same capped result set into the
+  transcript.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

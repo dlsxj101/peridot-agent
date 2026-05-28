@@ -1,5 +1,21 @@
 use super::*;
 
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+pub(crate) struct SessionSearchHit {
+    pub(crate) session: String,
+    pub(crate) index: usize,
+    pub(crate) kind: String,
+    pub(crate) text: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+pub(crate) struct SessionSearchResult {
+    pub(crate) query: String,
+    pub(crate) total: usize,
+    pub(crate) hits: Vec<SessionSearchHit>,
+    pub(crate) truncated: bool,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct RewindContextResult {
     pub(crate) restored_prompt: String,
@@ -972,6 +988,55 @@ mod tests {
         fs::remove_dir_all(&root).ok();
     }
 
+    #[test]
+    fn session_search_returns_transcript_hits_with_limit() {
+        let root = temp_root("search");
+        let sessions_root = root.join(".peridot").join("sessions");
+        let mut first = peridot_tui::TuiState::new(peridot_tui::HeaderState::new(
+            peridot_common::ExecutionMode::Execute,
+            peridot_common::PermissionMode::Auto,
+            "mock",
+        ));
+        first.push_transcript_entry(peridot_tui::TranscriptKind::User, "parser failure");
+        first.push_transcript_entry(peridot_tui::TranscriptKind::Assistant, "fixed parser");
+        peridot_memory::save_session_blob(
+            &sessions_root,
+            "session-a",
+            "tui_state.json",
+            &serde_json::to_vec(&first).unwrap(),
+        )
+        .unwrap();
+        let mut second = peridot_tui::TuiState::new(peridot_tui::HeaderState::new(
+            peridot_common::ExecutionMode::Execute,
+            peridot_common::PermissionMode::Auto,
+            "mock",
+        ));
+        second.push_transcript_entry(peridot_tui::TranscriptKind::User, "unrelated");
+        peridot_memory::save_session_blob(
+            &sessions_root,
+            "session-b",
+            "tui_state.json",
+            &serde_json::to_vec(&second).unwrap(),
+        )
+        .unwrap();
+
+        let result = search_session_transcript_hits(&root, "parser", None, Some(1)).unwrap();
+
+        assert_eq!(result.query, "parser");
+        assert_eq!(result.total, 1);
+        assert!(result.truncated);
+        assert_eq!(
+            result.hits,
+            vec![SessionSearchHit {
+                session: "session-a".to_string(),
+                index: 0,
+                kind: "user".to_string(),
+                text: "parser failure".to_string(),
+            }]
+        );
+        fs::remove_dir_all(&root).ok();
+    }
+
     fn transcript_entry(
         kind: peridot_tui::TranscriptKind,
         text: &str,
@@ -1572,12 +1637,39 @@ fn search_session_transcripts(
     limit: Option<usize>,
     output: OutputFormat,
 ) -> Result<()> {
+    let result = search_session_transcript_hits(project_root, query, only_session, limit)?;
+    match output {
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        }
+        OutputFormat::Text => {
+            if result.hits.is_empty() {
+                println!("no matches for '{query}'");
+            } else {
+                for hit in &result.hits {
+                    println!("{}[{}] {} {}", hit.session, hit.index, hit.kind, hit.text);
+                }
+                if result.truncated {
+                    println!("... truncated at {} match(es)", result.hits.len());
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn search_session_transcript_hits(
+    project_root: &Path,
+    query: &str,
+    only_session: Option<&str>,
+    limit: Option<usize>,
+) -> Result<SessionSearchResult> {
     if query.is_empty() {
         anyhow::bail!("search query must not be empty");
     }
     let needle = query.to_ascii_lowercase();
     let sessions_root = project_root.join(".peridot").join("sessions");
-    let session_ids: Vec<String> = match only_session {
+    let mut session_ids: Vec<String> = match only_session {
         Some(id) => vec![id.to_string()],
         None => match std::fs::read_dir(&sessions_root) {
             Ok(entries) => entries
@@ -1588,54 +1680,35 @@ fn search_session_transcripts(
             Err(_) => Vec::new(),
         },
     };
-    let mut hits: Vec<serde_json::Value> = Vec::new();
+    session_ids.sort();
     let cap = limit.unwrap_or(usize::MAX);
+    let mut hits = Vec::new();
+    let mut truncated = false;
     'outer: for id in session_ids {
         let Ok(entries) = load_session_transcript(project_root, &id) else {
             continue;
         };
         for (index, entry) in entries.iter().enumerate() {
             if entry.text.to_ascii_lowercase().contains(&needle) {
-                hits.push(serde_json::json!({
-                    "session": id,
-                    "index": index,
-                    "kind": format!("{:?}", entry.kind).to_ascii_lowercase(),
-                    "text": entry.text,
-                }));
                 if hits.len() >= cap {
+                    truncated = true;
                     break 'outer;
                 }
+                hits.push(SessionSearchHit {
+                    session: id.clone(),
+                    index,
+                    kind: format!("{:?}", entry.kind).to_ascii_lowercase(),
+                    text: entry.text.clone(),
+                });
             }
         }
     }
-    match output {
-        OutputFormat::Json => {
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&serde_json::json!({
-                    "query": query,
-                    "total": hits.len(),
-                    "hits": hits,
-                }))?
-            );
-        }
-        OutputFormat::Text => {
-            if hits.is_empty() {
-                println!("no matches for '{query}'");
-            } else {
-                for hit in &hits {
-                    println!(
-                        "{}[{}] {} {}",
-                        hit["session"].as_str().unwrap_or("?"),
-                        hit["index"].as_u64().unwrap_or_default(),
-                        hit["kind"].as_str().unwrap_or("?"),
-                        hit["text"].as_str().unwrap_or(""),
-                    );
-                }
-            }
-        }
-    }
-    Ok(())
+    Ok(SessionSearchResult {
+        query: query.to_string(),
+        total: hits.len(),
+        hits,
+        truncated,
+    })
 }
 
 fn tail_session_transcript(

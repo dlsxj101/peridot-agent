@@ -37,7 +37,7 @@ use crate::checkpoints::restore_latest_checkpoint;
 use crate::commands::{
     AuthProvider, append_session_note, move_auto_skill_to_archive, read_managed_env_var,
     read_session_notes, read_stored_api_key, read_stored_openai_oauth_credentials,
-    restore_archived_skill, session_count_summary,
+    restore_archived_skill, search_session_transcript_hits, session_count_summary,
 };
 use crate::run_loop::{AgentTaskOptions, MessageBusHookup, run_task_with_events};
 use crate::session_router::{RouterMessageBus, SessionHandle, SessionRouter, WorkspaceIsolation};
@@ -1838,6 +1838,9 @@ async fn execute_session_command(
         }
         SlashCommand::SessionList => handle_command_session_list(state, raw_command).await,
         SlashCommand::SessionCount => handle_command_session_count(state, raw_command),
+        SlashCommand::SessionSearch(query) => {
+            handle_command_session_search(state, raw_command, &query)
+        }
         SlashCommand::SessionDelete(target) => {
             handle_command_session_delete(state, raw_command, &target).await
         }
@@ -2130,6 +2133,44 @@ async fn handle_command_clear(
             { "label": "deleted persisted data", "detail": deleted.to_string() },
             { "label": "cancelled live run", "detail": cancelled.to_string() },
         ],
+    }))
+}
+
+fn handle_command_session_search(
+    state: &DaemonState,
+    raw_command: &str,
+    query: &str,
+) -> Result<Value, String> {
+    let result = search_session_transcript_hits(&state.project_root, query, None, Some(50))
+        .map_err(|err| format!("session search failed: {err}"))?;
+    let items: Vec<Value> = result
+        .hits
+        .iter()
+        .map(|hit| {
+            serde_json::json!({
+                "label": format!("{}[{}] {}", hit.session, hit.index, hit.kind),
+                "detail": hit.text,
+                "source": hit.kind,
+                "session_id": hit.session,
+                "text": hit.text,
+            })
+        })
+        .collect();
+    Ok(serde_json::json!({
+        "kind": "session_search",
+        "title": "Session Search",
+        "message": if items.is_empty() {
+            format!("session search: no matches for '{}'", result.query)
+        } else {
+            format!("session search: {} match(es) for '{}'", result.total, result.query)
+        },
+        "severity": "info",
+        "command": raw_command,
+        "query": result.query,
+        "items": items,
+        "hits": result.hits,
+        "total": result.total,
+        "truncated": result.truncated,
     }))
 }
 
@@ -6029,6 +6070,55 @@ mod tests {
         assert_eq!(result["done"], 2);
         assert_eq!(result["failed"], 1);
         assert_eq!(result["items"].as_array().unwrap().len(), 5);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn session_command_search_returns_structured_hits() {
+        let root = test_project("session-command-search");
+        let sessions_root = root.join(".peridot").join("sessions");
+        let mut tui = peridot_tui::TuiState::new(peridot_tui::HeaderState::new(
+            ExecutionMode::Execute,
+            PermissionMode::Auto,
+            "mock",
+        ));
+        tui.push_transcript_entry(peridot_tui::TranscriptKind::User, "parser panic");
+        tui.push_transcript_entry(
+            peridot_tui::TranscriptKind::Assistant,
+            "patched parser panic",
+        );
+        peridot_memory::save_session_blob(
+            &sessions_root,
+            "search-session",
+            "tui_state.json",
+            &serde_json::to_vec(&tui).unwrap(),
+        )
+        .unwrap();
+        let (tx, _rx) = mpsc::unbounded_channel::<String>();
+        let state = DaemonState::new(
+            root.clone(),
+            PeridotConfig::default(),
+            test_options(None),
+            tx,
+        );
+
+        let result = execute_session_command(
+            &state,
+            None,
+            "/session search parser",
+            SlashCommand::SessionSearch("parser".into()),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result["kind"], "session_search");
+        assert_eq!(result["query"], "parser");
+        assert_eq!(result["total"], 2);
+        assert_eq!(result["truncated"], false);
+        assert_eq!(result["items"][0]["session_id"], "search-session");
+        assert_eq!(result["items"][0]["label"], "search-session[0] user");
+        assert_eq!(result["items"][0]["detail"], "parser panic");
+        assert_eq!(result["hits"][1]["index"], 1);
         let _ = std::fs::remove_dir_all(root);
     }
 
