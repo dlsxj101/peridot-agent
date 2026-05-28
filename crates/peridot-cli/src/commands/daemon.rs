@@ -674,6 +674,9 @@ async fn handle_status(state: &DaemonState, id: Value) -> Result<()> {
     let model_suggestions =
         configured_model_suggestions(config, Some(state.run_template.model.as_str()));
     let branch_snapshots = branch_snapshot_names(state.project_root.as_ref());
+    let code_map = crate::commands::code_map_status(state.project_root.as_ref())
+        .ok()
+        .map(|status| code_map_status_summary(&status));
     let mcp: Vec<Value> = config
         .mcp
         .iter()
@@ -700,6 +703,7 @@ async fn handle_status(state: &DaemonState, id: Value) -> Result<()> {
             "committee_mode": config.committee.mode.to_string(),
             "auth": auth,
             "mcp": mcp,
+            "code_map": code_map,
             "worktree_cleanup": worktree_cleanup,
         }),
     )
@@ -4679,6 +4683,7 @@ fn code_map_status_result(raw_command: &str, status: &crate::commands::CodeMapSt
         "message": message,
         "severity": if status.stale { "warning" } else { "info" },
         "command": raw_command,
+        "code_map": code_map_status_summary(status),
         "index_exists": status.index_exists,
         "stale": status.stale,
         "generated_at_unix": status.generated_at_unix,
@@ -4694,6 +4699,19 @@ fn code_map_status_result(raw_command: &str, status: &crate::commands::CodeMapSt
             { "label": "symbols", "detail": status.symbol_count.to_string() },
             { "label": "TODOs", "detail": status.todo_count.to_string() },
         ],
+    })
+}
+
+fn code_map_status_summary(status: &crate::commands::CodeMapStatus) -> Value {
+    serde_json::json!({
+        "index_exists": status.index_exists,
+        "stale": status.stale,
+        "generated_at_unix": status.generated_at_unix,
+        "newest_source_mtime_unix": status.newest_source_mtime_unix,
+        "source_files": status.source_files,
+        "walked_files": status.walked_files,
+        "symbol_count": status.symbol_count,
+        "todo_count": status.todo_count,
     })
 }
 
@@ -5838,6 +5856,9 @@ mod tests {
         assert_eq!(out[0]["result"]["auth"]["provider"], "claude-api");
         assert_eq!(out[0]["result"]["auth"]["method"], "api_key");
         assert!(out[0]["result"]["mcp"].as_array().is_some());
+        assert!(out[0]["result"]["code_map"].is_object());
+        assert!(out[0]["result"]["code_map"]["index_exists"].is_boolean());
+        assert!(out[0]["result"]["code_map"]["stale"].is_boolean());
         assert!(out[0]["result"]["worktree_cleanup"].is_object());
     }
 

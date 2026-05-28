@@ -8,7 +8,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { addAttachmentPreviewUris } from './attachmentPreview';
-import { markCodeMapStale } from './codeMapContext';
+import { codeMapFromStatusResult, markCodeMapStale } from './codeMapContext';
 import { formatAgentEventForOutput } from './agentEventOutput';
 import { decodeInlineImageAttachment } from './inlineImageAttachment';
 import {
@@ -131,6 +131,7 @@ interface DaemonStatusResult {
     source?: string;
   };
   mcp?: Array<{ name?: string; transport?: string }>;
+  code_map?: unknown;
   worktree_cleanup?: WorktreeCleanupResult;
 }
 
@@ -3829,6 +3830,7 @@ async function refreshStatus(
       authMethod: result.auth?.method,
       authSource: result.auth?.source,
       mcpServers: normalizeMcpServers(result.mcp),
+      codeMap: codeMapFromStatusResult(result.code_map) ?? sidebar.currentContext().codeMap,
       modelSuggestions: normalizeStringList(result.model_suggestions),
       branchSnapshots: normalizeStringList(result.branch_snapshots),
       workspaceFiles: await workspaceMentionFiles(folder, output),

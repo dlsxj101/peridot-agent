@@ -122,6 +122,8 @@
 - `/codemap`, `/codemap status`, and `/todos` results now update a sidebar
   code-map freshness pill, and workspace file changes mark that pill stale
   until the next indexed command refreshes it.
+- Status refreshes now consume the daemon's code-map freshness snapshot, so
+  the code-map pill can appear before the user runs a codemap command.
 - Image attachments now render bounded inline previews in the VS Code/Cursor
   attachment cards while keeping the daemon/model context as the existing
   placeholder metadata.

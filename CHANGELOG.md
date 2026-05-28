@@ -130,6 +130,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **TUI code-map status panel** now mirrors `/codemap`, `/codemap status`, and
   `/todos` index freshness in the side panel with symbol/TODO counts and
   refresh timestamps.
+- **Daemon status code-map snapshot** now includes code-map freshness in
+  `peridot.status`, letting VS Code/Cursor show the code-map pill immediately
+  after a normal status refresh.
 - **`/session prune` slash parity** lets both TUI and VS Code users prune
   persisted sessions with `--status`, `--older-than-days`, and `--dry-run`
   filters through the shared session command path.

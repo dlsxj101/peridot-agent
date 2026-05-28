@@ -1782,6 +1782,18 @@ shared daemon, TUI, and VS Code extension surfaces.
   fresh/stale/missing state, symbol/TODO counts, indexed/source file counts,
   and refresh timestamp metadata.
 
+### E140. Status Code-Map Snapshot
+
+- **Status**: landed.
+- **Goal**: make code-map freshness visible during normal editor status
+  refreshes, not only after a `/codemap` command result.
+- **Where**: daemon `peridot.status`, VS Code status normalization, and
+  code-map context unit tests.
+- **Result**: `peridot.status` now includes an additive `code_map` snapshot
+  with fresh/stale/missing state and counts. VS Code folds that snapshot into
+  the sidebar context strip so the code-map pill can appear on startup or
+  manual refresh before any codemap command is run.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

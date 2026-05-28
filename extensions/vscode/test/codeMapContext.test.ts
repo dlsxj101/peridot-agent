@@ -1,7 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { codeMapFromCommandResult, markCodeMapStale } from '../src/codeMapContext';
+import {
+  codeMapFromCommandResult,
+  codeMapFromStatusResult,
+  markCodeMapStale,
+} from '../src/codeMapContext';
 import { codeMapContextPill } from '../webview/codeMapContext';
 
 test('codeMapFromCommandResult stores codemap status snapshots', () => {
@@ -29,6 +33,32 @@ test('codeMapFromCommandResult stores codemap status snapshots', () => {
       reason: undefined,
     },
   );
+});
+
+test('codeMapFromStatusResult stores daemon status snapshots', () => {
+  assert.deepEqual(
+    codeMapFromStatusResult({
+      index_exists: false,
+      stale: false,
+      source_files: 0,
+      walked_files: 0,
+      symbol_count: 0,
+      todo_count: 0,
+      generated_at_unix: null,
+    }),
+    {
+      indexExists: false,
+      stale: false,
+      sourceFiles: 0,
+      walkedFiles: 0,
+      symbolCount: 0,
+      todoCount: 0,
+      generatedAtUnix: undefined,
+      newestSourceMtimeUnix: undefined,
+      reason: undefined,
+    },
+  );
+  assert.equal(codeMapFromStatusResult(undefined), undefined);
 });
 
 test('codeMapFromCommandResult updates from codemap and todos command results', () => {
