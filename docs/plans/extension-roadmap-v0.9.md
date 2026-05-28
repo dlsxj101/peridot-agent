@@ -1329,6 +1329,20 @@ shared daemon, TUI, and VS Code extension surfaces.
   structured result, and both composers complete target sessions plus
   remaining artifact classes.
 
+### E105. Persisted Session Import Slash Parity
+
+- **Status**: landed.
+- **Goal**: let operators restore portable persisted session directories
+  from the same TUI and editor surfaces that can export them.
+- **Where**: shared slash parser/catalog, reusable session import helper,
+  TUI session command queue, daemon `session.command`, and VS Code slash
+  autocomplete.
+- **Result**: `/session import <dir> [--id <id>] [--force]` copies a
+  portable session directory into `.peridot/sessions`, updates persisted
+  session summaries when transcript data is available, reports the copied
+  files in TUI, returns a structured `session_import` result in VS Code,
+  and completes the optional `--id` / `--force` flags in both composers.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

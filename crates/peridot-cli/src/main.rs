@@ -1596,6 +1596,24 @@ fn apply_session_command(
             let id = resolve_session_id(state, &target).unwrap_or(target);
             handle_session_export_for_id(state, project_template, &id, &artifacts);
         }
+        SessionCommandEvent::SessionImport { from, id, force } => {
+            let store = MemoryStore::new(project_template.join(".peridot/memory.db"));
+            match commands::import_session_artifacts(
+                &store,
+                project_template,
+                &PathBuf::from(&from),
+                id.as_deref(),
+                force,
+            ) {
+                Ok(result) => {
+                    state
+                        .sessions
+                        .push(SessionDirectoryItem::new(&result.id, "imported session"));
+                    state.push_transcript(render_session_import_text(&result));
+                }
+                Err(err) => state.push_error(format!("session import: {err}")),
+            }
+        }
         SessionCommandEvent::Fork(task) => {
             let new_id = format!("fork-{}-{}", std::process::id(), unix_timestamp());
             let title = task.clone();
@@ -3141,6 +3159,20 @@ fn render_session_export_text(report: &commands::SessionExportReport) -> String 
             "\n{}  {} entries  {}",
             artifact.path, artifact.count, artifact.class
         ));
+    }
+    body
+}
+
+fn render_session_import_text(result: &commands::SessionImportResult) -> String {
+    let mut body = format!(
+        "session import: imported {} from {} into {} ({} entries)",
+        result.id,
+        result.source,
+        result.destination,
+        result.files.len()
+    );
+    for file in &result.files {
+        body.push_str(&format!("\n  - {file}"));
     }
     body
 }

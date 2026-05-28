@@ -460,6 +460,12 @@ pub fn slash_command_catalog() -> &'static [SlashCommandSpec] {
             category: "session",
         },
         SlashCommandSpec {
+            name: "/session import",
+            description: "import a portable persisted session directory",
+            arg_hint: Some("<dir> [--id <id>] [--force]"),
+            category: "session",
+        },
+        SlashCommandSpec {
             name: "/autofix",
             description: "toggle or configure the auto-fix loop (on|off|<max>)",
             arg_hint: Some("[on|off|<N>]"),
@@ -659,6 +665,9 @@ pub(crate) fn slash_argument_context_with_dynamic(
         return Some(context);
     }
     if let Some(context) = session_export_argument_context(query) {
+        return Some(context);
+    }
+    if let Some(context) = session_import_argument_context(query) {
         return Some(context);
     }
     if let Some(context) = session_target_argument_context(query, sessions) {
@@ -1073,10 +1082,50 @@ fn session_export_argument_context(query: &str) -> Option<SlashArgumentContext> 
     })
 }
 
+fn session_import_argument_context(query: &str) -> Option<SlashArgumentContext> {
+    let command_name = "/session import";
+    if !query.starts_with(&format!("{command_name} ")) {
+        return None;
+    }
+    let rest = query[command_name.len()..].trim_start();
+    if rest.is_empty() || !rest.contains(char::is_whitespace) {
+        return None;
+    }
+    let has_trailing_space = query.chars().last().is_some_and(char::is_whitespace);
+    let mut parts: Vec<&str> = rest.split_whitespace().collect();
+    let prefix = if has_trailing_space {
+        ""
+    } else {
+        parts.pop().unwrap_or("")
+    };
+    if parts.is_empty() {
+        return None;
+    }
+    if matches!(parts.last(), Some(&"--id") | Some(&"id")) {
+        return None;
+    }
+    let used: std::collections::BTreeSet<&str> = parts.iter().copied().collect();
+    let needle = prefix.to_ascii_lowercase();
+    let options: Vec<String> = ["--id", "--force"]
+        .into_iter()
+        .filter(|option| !used.contains(option))
+        .filter(|option| needle.is_empty() || option.starts_with(&needle))
+        .map(str::to_string)
+        .collect();
+    if options.is_empty() {
+        return None;
+    }
+    Some(SlashArgumentContext {
+        command_name: command_name.to_string(),
+        options,
+        append_space: true,
+    })
+}
+
 fn session_subcommand_argument_context(query: &str) -> Option<SlashArgumentContext> {
     const CONTINUATION_OPTIONS: &[&str] = &[
         "new", "switch", "close", "delete", "rename", "search", "show", "locate", "resume",
-        "replay", "export",
+        "replay", "export", "import",
     ];
     const TERMINAL_OPTIONS: &[&str] = &["save", "list", "count"];
     let command_name = "/session";
@@ -2050,6 +2099,11 @@ mod tests {
         assert_eq!(context.options, vec!["export"]);
         assert!(context.append_space);
 
+        let context = slash_argument_context_with_dynamic("/session imp", &[], &[], &[], &[], &[])
+            .expect("session import option");
+        assert_eq!(context.options, vec!["import"]);
+        assert!(context.append_space);
+
         assert!(
             slash_argument_context_with_dynamic("/session rename ", &[], &[], &[], &[], &[])
                 .is_none()
@@ -2076,6 +2130,10 @@ mod tests {
         );
         assert!(
             slash_argument_context_with_dynamic("/session export ", &[], &[], &[], &[], &[])
+                .is_none()
+        );
+        assert!(
+            slash_argument_context_with_dynamic("/session import ", &[], &[], &[], &[], &[])
                 .is_none()
         );
         assert!(
@@ -2233,6 +2291,46 @@ mod tests {
         assert!(
             slash_argument_context_with_dynamic(
                 "/session export s-1 attachments bad",
+                &[],
+                &[],
+                &[],
+                &[],
+                &[],
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn session_import_argument_context_filters_flags() {
+        let context = slash_argument_context_with_dynamic(
+            "/session import ./export ",
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+        )
+        .expect("session import flags");
+        assert_eq!(context.command_name, "/session import");
+        assert_eq!(context.options, vec!["--id", "--force"]);
+        assert!(context.append_space);
+
+        let context = slash_argument_context_with_dynamic(
+            "/session import ./export --",
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+        )
+        .expect("session import flag prefix");
+        assert_eq!(context.options, vec!["--id", "--force"]);
+        assert!(context.append_space);
+
+        assert!(
+            slash_argument_context_with_dynamic(
+                "/session import ./export --id ",
                 &[],
                 &[],
                 &[],

@@ -161,6 +161,15 @@ pub enum SlashCommand {
         /// Artifact classes to export. Empty means full copy.
         artifacts: Vec<ExportArtifact>,
     },
+    /// Import a portable persisted session directory.
+    SessionImport {
+        /// Source directory to copy into `.peridot/sessions`.
+        from: String,
+        /// Optional imported session id override.
+        id: Option<String>,
+        /// Overwrite an existing persisted session with the same id.
+        force: bool,
+    },
     /// Override the default model used when spawning sub-agents. `reset`
     /// clears the override so future spawns inherit the caller's main model.
     SubagentModel(SubagentModelChange),
@@ -562,6 +571,9 @@ pub fn parse_slash_command(input: &str) -> Option<SlashCommand> {
         "session" if rest == "export" || rest.starts_with("export ") => {
             parse_session_export(rest.strip_prefix("export").unwrap_or("").trim())
         }
+        "session" if rest == "import" || rest.starts_with("import ") => {
+            parse_session_import(rest.strip_prefix("import").unwrap_or("").trim())
+        }
         "session" if rest.starts_with("new") => {
             let task = rest.strip_prefix("new").unwrap_or("").trim();
             Some(SlashCommand::SessionNew(if task.is_empty() {
@@ -899,6 +911,49 @@ fn parse_session_export(rest: &str) -> Option<SlashCommand> {
         return None;
     }
     Some(SlashCommand::SessionExport { target, artifacts })
+}
+
+fn parse_session_import(rest: &str) -> Option<SlashCommand> {
+    if rest.is_empty() {
+        return None;
+    }
+    let mut from_parts = Vec::new();
+    let mut id = None;
+    let mut force = false;
+    let mut parts = rest.split_whitespace().peekable();
+    while let Some(part) = parts.next() {
+        match part {
+            "--id" | "id" => {
+                let value = parts.next()?;
+                if value.starts_with('-') || id.is_some() {
+                    return None;
+                }
+                id = Some(value.to_string());
+            }
+            value if value.starts_with("--id=") => {
+                let value = value.strip_prefix("--id=").unwrap_or("");
+                if value.is_empty() || id.is_some() {
+                    return None;
+                }
+                id = Some(value.to_string());
+            }
+            "--force" | "force" => {
+                force = true;
+            }
+            value if value.starts_with('-') => return None,
+            value => {
+                if id.is_some() || force {
+                    return None;
+                }
+                from_parts.push(value);
+            }
+        }
+    }
+    let from = from_parts.join(" ").trim().to_string();
+    if from.is_empty() {
+        return None;
+    }
+    Some(SlashCommand::SessionImport { from, id, force })
 }
 
 fn parse_skill_use(request: &str) -> Option<SlashCommand> {
@@ -1291,6 +1346,24 @@ mod tests {
             })
         );
         assert_eq!(parse_slash_command("/session export"), None);
+        assert_eq!(
+            parse_slash_command("/session import /tmp/session --id restored --force"),
+            Some(SlashCommand::SessionImport {
+                from: "/tmp/session".to_string(),
+                id: Some("restored".to_string()),
+                force: true,
+            })
+        );
+        assert_eq!(
+            parse_slash_command("/session import ./exported-session force"),
+            Some(SlashCommand::SessionImport {
+                from: "./exported-session".to_string(),
+                id: None,
+                force: true,
+            })
+        );
+        assert_eq!(parse_slash_command("/session import"), None);
+        assert_eq!(parse_slash_command("/session import ./dir --id"), None);
         assert_eq!(
             parse_slash_command("/session delete s1"),
             Some(SlashCommand::SessionDelete("s1".to_string()))

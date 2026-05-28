@@ -915,6 +915,15 @@ pub enum SessionCommandEvent {
         /// Artifact classes to export. Empty means full copy.
         artifacts: Vec<peridot_core::ExportArtifact>,
     },
+    /// `/session import <dir> [--id <id>] [--force]` — import a persisted session directory.
+    SessionImport {
+        /// Source directory to import.
+        from: String,
+        /// Optional imported session id override.
+        id: Option<String>,
+        /// Overwrite an existing persisted session with the same id.
+        force: bool,
+    },
     /// `/fork <task>` — spawn a single-turn Fork subagent inline.
     Fork(String),
     /// `/teammate <task>` — spawn a worktree-isolated Teammate subagent.

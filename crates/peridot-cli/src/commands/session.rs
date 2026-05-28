@@ -42,6 +42,14 @@ pub(crate) struct SessionPruneResult {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+pub(crate) struct SessionImportResult {
+    pub(crate) id: String,
+    pub(crate) source: String,
+    pub(crate) destination: String,
+    pub(crate) files: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
 pub(crate) struct SessionResumeResult {
     pub(crate) id: String,
     pub(crate) summary: String,
@@ -819,6 +827,18 @@ fn import_session(
     force: bool,
     output: OutputFormat,
 ) -> Result<()> {
+    let result = import_session_artifacts(store, project_root, from, id_override, force)?;
+    print_import_result(&result, output)?;
+    Ok(())
+}
+
+pub(crate) fn import_session_artifacts(
+    store: &MemoryStore,
+    project_root: &Path,
+    from: &Path,
+    id_override: Option<&str>,
+    force: bool,
+) -> Result<SessionImportResult> {
     if !from.is_dir() {
         anyhow::bail!("source {} is not a directory", from.display());
     }
@@ -883,26 +903,28 @@ fn import_session(
             summary: summary_text,
         });
     }
+    Ok(SessionImportResult {
+        id: derived_id,
+        source: from.display().to_string(),
+        destination: destination.display().to_string(),
+        files: copied,
+    })
+}
+
+fn print_import_result(result: &SessionImportResult, output: OutputFormat) -> Result<()> {
     match output {
         OutputFormat::Json => {
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&serde_json::json!({
-                    "id": derived_id,
-                    "source": from.display().to_string(),
-                    "destination": destination.display().to_string(),
-                    "files": copied,
-                }))?
-            );
+            println!("{}", serde_json::to_string_pretty(result)?);
         }
         OutputFormat::Text => {
             println!(
-                "imported session {derived_id} from {} into {} ({} entries)",
-                from.display(),
-                destination.display(),
-                copied.len()
+                "imported session {} from {} into {} ({} entries)",
+                result.id,
+                result.source,
+                result.destination,
+                result.files.len()
             );
-            for name in &copied {
+            for name in &result.files {
                 println!("  - {name}");
             }
         }

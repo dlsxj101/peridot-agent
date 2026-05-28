@@ -95,6 +95,8 @@ export function slashArgumentContext(
   if (sessionReplayContext) return sessionReplayContext;
   const sessionExportContext = sessionExportArgumentContext(query);
   if (sessionExportContext) return sessionExportContext;
+  const sessionImportContext = sessionImportArgumentContext(query);
+  if (sessionImportContext) return sessionImportContext;
   const sessionContext = sessionTargetArgumentContext(query, sessionTargets);
   if (sessionContext) return sessionContext;
   const sessionSubcommandContext = sessionSubcommandArgumentContext(query);
@@ -408,6 +410,7 @@ function sessionSubcommandArgumentContext(query: string): SlashArgumentContext |
     'resume',
     'replay',
     'export',
+    'import',
   ];
   const terminalOptions = ['save', 'list', 'count'];
   const hasTrailingSpace = /\s$/.test(query);
@@ -484,6 +487,33 @@ function sessionExportArgumentContext(query: string): SlashArgumentContext | und
     command: {
       name: parts.length === 1 ? commandName : `${commandName} ${parts.join(' ')}`,
       description: 'session export artifact',
+      category: 'session',
+    },
+    options,
+    appendSpace: true,
+  };
+}
+
+function sessionImportArgumentContext(query: string): SlashArgumentContext | undefined {
+  const commandName = '/session import';
+  if (!query.startsWith(`${commandName} `)) return undefined;
+  const rest = query.slice(commandName.length).trimStart();
+  if (rest.length === 0 || !/\s/.test(rest)) return undefined;
+  const hasTrailingSpace = /\s$/.test(query);
+  const parts = rest.split(/\s+/).filter((part) => part.length > 0);
+  const prefix = hasTrailingSpace ? '' : (parts.pop() ?? '');
+  if (parts.length === 0) return undefined;
+  if (parts[parts.length - 1] === '--id' || parts[parts.length - 1] === 'id') return undefined;
+  const used = new Set(parts);
+  const needle = prefix.toLowerCase();
+  const options = ['--id', '--force']
+    .filter((option) => !used.has(option))
+    .filter((option) => needle.length === 0 || option.startsWith(needle));
+  if (options.length === 0) return undefined;
+  return {
+    command: {
+      name: commandName,
+      description: 'session import flag',
       category: 'session',
     },
     options,

@@ -47,6 +47,9 @@
 - `/session export <id|title> [attachments|notes|timeline|full]` now runs
   through the daemon command path, so editor users can export artifacts
   from any persisted session instead of only the active session.
+- `/session import <dir> [--id <id>] [--force]` now runs through the
+  daemon command path, so editor users can restore portable persisted
+  session directories without switching to the terminal.
 - `/notes clear` now runs through the daemon command path and clears
   operator notes for the active session, with autocomplete alongside
   `/notes last`.

@@ -101,6 +101,7 @@ impl AgentState {
             | SlashCommand::SessionResume(_)
             | SlashCommand::SessionReplay { .. }
             | SlashCommand::SessionExport { .. }
+            | SlashCommand::SessionImport { .. }
             | SlashCommand::SubagentModel(_)
             | SlashCommand::Reasoning(_)
             | SlashCommand::Fast(_)

@@ -81,6 +81,14 @@ fn parses_goal_slash_commands() {
         })
     );
     assert_eq!(
+        parse_slash_command("/session import ./export --id s2"),
+        Some(SlashCommand::SessionImport {
+            from: "./export".to_string(),
+            id: Some("s2".to_string()),
+            force: false,
+        })
+    );
+    assert_eq!(
         parse_slash_command("/fast on"),
         Some(SlashCommand::Fast(Some(true)))
     );

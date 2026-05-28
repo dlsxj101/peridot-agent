@@ -1262,6 +1262,14 @@ pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
                 artifacts,
             });
         }
+        SlashCommand::SessionImport { from, id, force } => {
+            state.push_transcript(format!("session import: importing {from}..."));
+            state.push_pending_session_command(SessionCommandEvent::SessionImport {
+                from,
+                id,
+                force,
+            });
+        }
         SlashCommand::SubagentModel(change) => match change {
             peridot_core::SubagentModelChange::Set(name) => {
                 let from = previous_subagent_model

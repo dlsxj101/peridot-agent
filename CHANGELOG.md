@@ -55,6 +55,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **`/session export <id|title> [attachments|notes|timeline|full]` slash
   parity** lets both TUI and VS Code users export artifacts from any
   persisted session, not only the active one.
+- **`/session import <dir> [--id <id>] [--force]` slash parity** lets both
+  TUI and VS Code users restore portable persisted session directories
+  through the shared session command path.
 - **Skill-name argument autocomplete** now works in both TUI and VS Code
   for skill management commands such as `/skills show <name>` and
   `/skills use <name>`, while `/skills restore <name>` completes archived

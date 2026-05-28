@@ -82,6 +82,11 @@ const commands: SlashCommandSpec[] = [
     argHint: '<id|title> [attachments|notes|timeline|full]',
   },
   {
+    name: '/session import',
+    description: 'import session',
+    argHint: '<dir> [--id <id>] [--force]',
+  },
+  {
     name: '/session save',
     description: 'save session',
   },
@@ -399,10 +404,16 @@ test('slashArgumentContext leaves argument room after session subcommands', () =
   assert.deepEqual(sessionExport?.options, ['export']);
   assert.equal(sessionExport?.appendSpace, true);
 
+  const sessionImport = slashArgumentContext('/session imp', commands);
+  assert.equal(sessionImport?.command.name, '/session');
+  assert.deepEqual(sessionImport?.options, ['import']);
+  assert.equal(sessionImport?.appendSpace, true);
+
   assert.equal(slashArgumentContext('/session rename ', commands), undefined);
   assert.equal(slashArgumentContext('/session resume ', commands), undefined);
   assert.equal(slashArgumentContext('/session replay ', commands), undefined);
   assert.equal(slashArgumentContext('/session export ', commands), undefined);
+  assert.equal(slashArgumentContext('/session import ', commands), undefined);
   assert.equal(slashArgumentContext('/session s', commands), undefined);
   assert.deepEqual(
     filteredSlashCommands('/session s', commands).map((command) => command.name),
@@ -473,6 +484,20 @@ test('slashArgumentContext filters session export artifacts', () => {
   assert.equal(next?.appendSpace, true);
 
   assert.equal(slashArgumentContext('/session export s-1 attachments bad', commands), undefined);
+});
+
+test('slashArgumentContext filters session import flags', () => {
+  const flags = slashArgumentContext('/session import ./export ', commands);
+  assert.equal(flags?.command.name, '/session import');
+  assert.deepEqual(flags?.options, ['--id', '--force']);
+  assert.equal(flags?.appendSpace, true);
+
+  const prefix = slashArgumentContext('/session import ./export --', commands);
+  assert.equal(prefix?.command.name, '/session import');
+  assert.deepEqual(prefix?.options, ['--id', '--force']);
+  assert.equal(prefix?.appendSpace, true);
+
+  assert.equal(slashArgumentContext('/session import ./export --id ', commands), undefined);
 });
 
 test('slashArgumentContext filters mcp server arguments', () => {

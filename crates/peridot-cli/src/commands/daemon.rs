@@ -1875,6 +1875,9 @@ async fn execute_session_command(
         SlashCommand::SessionExport { target, artifacts } => {
             handle_command_session_export(state, raw_command, &target, &artifacts).await
         }
+        SlashCommand::SessionImport { from, id, force } => {
+            handle_command_session_import(state, raw_command, &from, id.as_deref(), force).await
+        }
         SlashCommand::SessionDelete(target) => {
             handle_command_session_delete(state, raw_command, &target).await
         }
@@ -4936,6 +4939,48 @@ async fn handle_command_session_export(
     export_session_id(state, &session_id, raw_command, artifacts, Some(target))
 }
 
+async fn handle_command_session_import(
+    state: &DaemonState,
+    raw_command: &str,
+    from: &str,
+    id: Option<&str>,
+    force: bool,
+) -> Result<Value, String> {
+    let store = MemoryStore::new(state.project_root.join(".peridot/memory.db"));
+    let result = crate::commands::import_session_artifacts(
+        &store,
+        &state.project_root,
+        &PathBuf::from(from),
+        id,
+        force,
+    )
+    .map_err(|err| err.to_string())?;
+    emit_session_list_changed(state).await;
+    let items: Vec<Value> = result
+        .files
+        .iter()
+        .map(|file| {
+            serde_json::json!({
+                "source": "file",
+                "label": file,
+            })
+        })
+        .collect();
+    Ok(serde_json::json!({
+        "kind": "session_import",
+        "title": "Session Import",
+        "message": format!("session import: imported {} from {} into {}", result.id, result.source, result.destination),
+        "severity": "info",
+        "command": raw_command,
+        "id": result.id,
+        "source": result.source,
+        "destination": result.destination,
+        "files": result.files,
+        "items": items,
+        "total": items.len(),
+    }))
+}
+
 fn export_session_id(
     state: &DaemonState,
     session_id: &str,
@@ -6756,6 +6801,48 @@ mod tests {
         let destination = result["destination"].as_str().unwrap();
         assert!(Path::new(destination).join("notes.ndjson").is_file());
         assert_eq!(result["artifacts"][0]["count"], 1);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn session_command_import_returns_structured_result() {
+        let root = test_project("session-command-import");
+        let source = root.join("portable-session");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(
+            source.join("transcript.ndjson"),
+            "{\"kind\":\"user\",\"text\":\"task\"}\n",
+        )
+        .unwrap();
+        let (tx, _rx) = mpsc::unbounded_channel::<String>();
+        let state = DaemonState::new(
+            root.clone(),
+            PeridotConfig::default(),
+            test_options(None),
+            tx,
+        );
+
+        let result = execute_session_command(
+            &state,
+            None,
+            "/session import portable-session --id imported",
+            SlashCommand::SessionImport {
+                from: source.display().to_string(),
+                id: Some("imported".into()),
+                force: false,
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result["kind"], "session_import");
+        assert_eq!(result["id"], "imported");
+        assert_eq!(result["total"], 1);
+        assert_eq!(result["items"][0]["label"], "transcript.ndjson");
+        assert!(
+            root.join(".peridot/sessions/imported/transcript.ndjson")
+                .is_file()
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 
