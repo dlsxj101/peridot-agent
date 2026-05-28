@@ -108,6 +108,10 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
   mode, reasoning effort, provider, model, and committee mode from the
   command palette, routing each choice through the shared slash command
   path instead of maintaining editor-only state.
+- **VS Code `@file` composer mentions** now mirror the TUI's file picker:
+  the extension indexes workspace-relative paths, suggests matches while the
+  cursor is inside an `@token`, and inserts `@path/to/file` without inlining
+  file contents.
 - **`/session prune` slash parity** lets both TUI and VS Code users prune
   persisted sessions with `--status`, `--older-than-days`, and `--dry-run`
   filters through the shared session command path.

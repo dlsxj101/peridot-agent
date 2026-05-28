@@ -3730,6 +3730,7 @@ async function refreshStatus(
       mcpServers: normalizeMcpServers(result.mcp),
       modelSuggestions: normalizeStringList(result.model_suggestions),
       branchSnapshots: normalizeStringList(result.branch_snapshots),
+      workspaceFiles: await workspaceMentionFiles(folder, output),
       status: cleanupProblem ? 'Needs attention' : activeRunCount() > 0 ? 'Running' : 'Idle',
       problem: cleanupProblem,
       running: activeRunCount() > 0,
@@ -3739,10 +3740,36 @@ async function refreshStatus(
     output.appendLine(`[peridot] status failed: ${message}`);
     sidebar.setContext({
       workspace: folder,
+      workspaceFiles: await workspaceMentionFiles(folder, output),
       status: activeRunCount() > 0 ? 'Running' : 'Needs attention',
       problem: message,
       running: activeRunCount() > 0,
     });
+  }
+}
+
+async function workspaceMentionFiles(
+  folder: string,
+  output: vscode.OutputChannel,
+): Promise<string[]> {
+  try {
+    const root = path.resolve(folder);
+    const uris = await vscode.workspace.findFiles(
+      '**/*',
+      '{**/.git/**,**/target/**,**/node_modules/**,**/.peridot/**,**/.idea/**,**/.vscode/**}',
+      5000,
+    );
+    return [...new Set(
+      uris
+        .map((uri) => path.relative(root, uri.fsPath).replace(/\\/g, '/'))
+        .filter((relative) => relative.length > 0 && !relative.startsWith('..'))
+        .filter((relative) => !relative.split('/').some((part) => part.startsWith('.')))
+        .sort((a, b) => a.localeCompare(b)),
+    )];
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    output.appendLine(`[peridot] workspace file mention index failed: ${message}`);
+    return [];
   }
 }
 

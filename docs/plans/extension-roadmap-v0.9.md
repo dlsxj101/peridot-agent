@@ -1659,6 +1659,21 @@ shared daemon, TUI, and VS Code extension surfaces.
   daemon slash path as the composer. The resulting state delta updates the
   sidebar context and future run options exactly like manual slash input.
 
+### E130. VS Code `@file` Composer Mentions
+
+- **Status**: landed.
+- **Goal**: bring the TUI's `@file` auto-mention ergonomics to the VS
+  Code/Cursor composer so editor users can point the model at files without
+  typing long paths manually.
+- **Where**: VS Code workspace file indexing, sidebar context state, webview
+  composer picker handling, and file-mention unit tests.
+- **Result**: status refreshes now pass a capped workspace-relative file
+  index to the webview. While the composer cursor is inside a word-boundary
+  `@token`, the picker suggests file paths using the same basename-first
+  fuzzy priorities as the TUI. Tab or click replaces the active token with
+  `@path/to/file `, and Enter still submits normally. Mentions stay as
+  literal navigation hints; file contents are not inlined automatically.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

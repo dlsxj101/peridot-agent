@@ -292,6 +292,7 @@ export interface SidebarContext {
   mcpServers?: McpServerSummary[];
   modelSuggestions?: string[];
   branchSnapshots?: string[];
+  workspaceFiles?: string[];
 }
 
 export interface AgentsSummary {

@@ -31,6 +31,11 @@ import {
   slashPickerItemCount as countSlashPickerItems,
   type SlashArgumentContext,
 } from './slashAutocomplete';
+import {
+  acceptFileMention,
+  fileMentionContext as resolveFileMentionContext,
+  type FileMentionContext,
+} from './fileMention';
 import { runMetricChips } from './runMetrics';
 import { riskChipView } from './riskChip';
 import { mcpContextPill } from './mcpContext';
@@ -3528,11 +3533,17 @@ function renderComposer(s: SidebarState): HTMLElement {
     autoresize(textarea);
     updateSlashPicker(textarea, slashPicker);
   });
+  textarea.addEventListener('click', () => updateSlashPicker(textarea, slashPicker));
+  textarea.addEventListener('keyup', (event) => {
+    if (['ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown'].includes(event.key)) {
+      updateSlashPicker(textarea, slashPicker);
+    }
+  });
   textarea.addEventListener('keydown', (event) => {
     if (isSlashPickerOpen(slashPicker)) {
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault();
-        const itemCount = slashPickerItemCount(textarea.value);
+        const itemCount = composerPickerItemCount(textarea);
         if (itemCount > 0) {
           slashPickerSelected = Math.max(
             0,
@@ -3547,7 +3558,7 @@ function renderComposer(s: SidebarState): HTMLElement {
       }
       if (event.key === 'Tab') {
         event.preventDefault();
-        acceptSlashSelection(textarea, slashPicker);
+        acceptComposerPickerSelection(textarea, slashPicker);
         return;
       }
       if (event.key === 'Escape') {
@@ -3587,8 +3598,12 @@ function renderComposer(s: SidebarState): HTMLElement {
     }
     if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
       event.preventDefault();
-      if (isSlashPickerOpen(slashPicker) && !slashExactSelectionIsRunnable(textarea.value)) {
-        acceptSlashSelection(textarea, slashPicker);
+      if (
+        isSlashPickerOpen(slashPicker) &&
+        !currentFileMentionContext(textarea) &&
+        !slashExactSelectionIsRunnable(textarea.value)
+      ) {
+        acceptComposerPickerSelection(textarea, slashPicker);
         return;
       }
       handleSubmit();
@@ -3708,7 +3723,19 @@ function slashPickerItemCount(input: string): number {
   );
 }
 
+function composerPickerItemCount(textarea: HTMLTextAreaElement): number {
+  const fileContext = currentFileMentionContext(textarea);
+  if (fileContext) return fileContext.options.length;
+  return slashPickerItemCount(textarea.value);
+}
+
 function updateSlashPicker(textarea: HTMLTextAreaElement, picker: HTMLElement): void {
+  const fileContext = currentFileMentionContext(textarea);
+  if (fileContext) {
+    renderFileMentionOptions(textarea, picker, fileContext);
+    return;
+  }
+
   const argumentContext = slashArgumentContext(textarea.value);
   if (argumentContext) {
     renderSlashArgumentOptions(textarea, picker, argumentContext);
@@ -3737,7 +3764,7 @@ function updateSlashPicker(textarea: HTMLTextAreaElement, picker: HTMLElement): 
     row.addEventListener('mousedown', (event) => {
       event.preventDefault();
       slashPickerSelected = index;
-      acceptSlashSelection(textarea, picker);
+      acceptComposerPickerSelection(textarea, picker);
     });
     const label = command.argHint ? `${command.name} ${command.argHint}` : command.name;
     row.append(el('span', 'slash-name', label));
@@ -3771,10 +3798,43 @@ function renderSlashArgumentOptions(
     row.addEventListener('mousedown', (event) => {
       event.preventDefault();
       slashPickerSelected = index;
-      acceptSlashSelection(textarea, picker);
+      acceptComposerPickerSelection(textarea, picker);
     });
     row.append(el('span', 'slash-name', option));
     row.append(el('span', 'slash-description', context.command.name));
+    picker.append(row);
+  });
+}
+
+function renderFileMentionOptions(
+  textarea: HTMLTextAreaElement,
+  picker: HTMLElement,
+  context: FileMentionContext,
+): void {
+  if (context.options.length === 0) {
+    slashPickerSelected = 0;
+    picker.classList.add('hidden');
+    picker.replaceChildren();
+    return;
+  }
+  slashPickerSelected = Math.min(slashPickerSelected, context.options.length - 1);
+  picker.classList.remove('hidden');
+  picker.replaceChildren();
+  const start = Math.min(
+    Math.max(0, slashPickerSelected - 5),
+    Math.max(0, context.options.length - 6),
+  );
+  context.options.slice(start, start + 6).forEach((option, offset) => {
+    const index = start + offset;
+    const row = el('button', `slash-option${index === slashPickerSelected ? ' selected' : ''}`);
+    row.type = 'button';
+    row.addEventListener('mousedown', (event) => {
+      event.preventDefault();
+      slashPickerSelected = index;
+      acceptComposerPickerSelection(textarea, picker);
+    });
+    row.append(el('span', 'slash-name', `@${option}`));
+    row.append(el('span', 'slash-description', '@file'));
     picker.append(row);
   });
 }
@@ -3783,7 +3843,23 @@ function isSlashPickerOpen(picker: HTMLElement): boolean {
   return !picker.classList.contains('hidden');
 }
 
-function acceptSlashSelection(textarea: HTMLTextAreaElement, picker: HTMLElement): void {
+function acceptComposerPickerSelection(textarea: HTMLTextAreaElement, picker: HTMLElement): void {
+  const fileContext = currentFileMentionContext(textarea);
+  if (fileContext) {
+    textarea.value = acceptFileMention(textarea.value, fileContext, slashPickerSelected);
+    const option = fileContext.options[Math.min(slashPickerSelected, fileContext.options.length - 1)];
+    const nextCursor = option ? fileContext.tokenStart + option.length + 2 : textarea.value.length;
+    textarea.selectionStart = nextCursor;
+    textarea.selectionEnd = nextCursor;
+    composerDraft = textarea.value;
+    composerDrafts.set(lastComposerSessionKey, composerDraft);
+    persistComposerWebviewState();
+    autoresize(textarea);
+    updateSlashPicker(textarea, picker);
+    textarea.focus();
+    return;
+  }
+
   const argumentContext = slashArgumentContext(textarea.value);
   if (argumentContext) {
     const optionIndex = Math.min(slashPickerSelected, argumentContext.options.length - 1);
@@ -3811,6 +3887,16 @@ function acceptSlashSelection(textarea: HTMLTextAreaElement, picker: HTMLElement
   autoresize(textarea);
   updateSlashPicker(textarea, picker);
   textarea.focus();
+}
+
+function currentFileMentionContext(textarea: HTMLTextAreaElement): FileMentionContext | undefined {
+  if (textarea.value.startsWith('/')) return undefined;
+  if (textarea.selectionStart !== textarea.selectionEnd) return undefined;
+  return resolveFileMentionContext(
+    textarea.value,
+    textarea.selectionStart,
+    state?.context.workspaceFiles ?? [],
+  );
 }
 
 function slashExactSelectionIsRunnable(input: string): boolean {

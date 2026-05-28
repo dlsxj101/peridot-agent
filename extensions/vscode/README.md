@@ -128,6 +128,9 @@ Sending while a task is in flight queues the message; the queue UI lets
 you edit, remove, or clear individual entries before they auto-run.
 Follow-up prompts continue the active session until you run `/clear` or
 open a new session from the dropdown.
+Typing `@` at a token boundary opens a workspace file picker. Tab or click
+inserts the selected `@path/to/file` mention as a navigation hint for the
+model; the extension does not inline file contents automatically.
 
 ## Configuration
 
