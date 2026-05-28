@@ -460,6 +460,7 @@ export type OutboundMessage =
   | { type: 'showTodos' }
   | { type: 'showContextTop' }
   | { type: 'showWorkingTreeDiff' }
+  | { type: 'showMcpServers' }
   | { type: 'addSessionNote' }
   | { type: 'showSessionNotes' }
   | { type: 'clearSessionNotes' }

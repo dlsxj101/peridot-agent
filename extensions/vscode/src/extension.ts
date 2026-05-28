@@ -202,6 +202,7 @@ export function activate(context: vscode.ExtensionContext) {
     showTodos: async (): Promise<void> => showWorkspaceTodos(output, sidebar),
     showContextTop: async (): Promise<void> => showContextTop(output, sidebar),
     showWorkingTreeDiff: async (): Promise<void> => showWorkingTreeDiff(output, sidebar),
+    showMcpServers: async (): Promise<void> => showMcpServers(output, sidebar),
     addSessionNote: async (): Promise<void> => addSessionNote(output, sidebar),
     showSessionNotes: async (): Promise<void> => showSessionNotes(output, sidebar),
     clearSessionNotes: async (): Promise<void> => clearSessionNotes(output, sidebar),
@@ -437,6 +438,12 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand('peridot.showWorkingTreeDiff', async () => {
       await showWorkingTreeDiff(output, sidebar);
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('peridot.showMcpServers', async () => {
+      await showMcpServers(output, sidebar);
     }),
   );
 
@@ -1578,6 +1585,29 @@ async function showWorkingTreeDiff(
     output.appendLine(`[peridot] diff failed: ${message}`);
     sidebar.appendError(message);
     await vscode.window.showErrorMessage(`Peridot diff failed: ${message}`);
+  }
+}
+
+async function showMcpServers(
+  output: vscode.OutputChannel,
+  sidebar: PeridotSidebarProvider,
+): Promise<void> {
+  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!folder) {
+    const message = 'Open a workspace folder before showing MCP servers.';
+    sidebar.setWorkspaceProblem(message);
+    await vscode.window.showWarningMessage(message);
+    return;
+  }
+  await vscode.commands.executeCommand('peridot.chatView.focus');
+  try {
+    const result = await runSlashCommand('/mcp list', output, sidebar, sidebar.currentRunOptions());
+    sidebar.appendCommandResult(result);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    output.appendLine(`[peridot] mcp list failed: ${message}`);
+    sidebar.appendError(message);
+    await vscode.window.showErrorMessage(`Peridot MCP server list failed: ${message}`);
   }
 }
 

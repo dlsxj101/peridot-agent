@@ -1513,6 +1513,17 @@ shared daemon, TUI, and VS Code extension surfaces.
   context entries. `Peridot: Show Working Tree Diff` runs `/diff` and
   renders the current Git working tree diff in the sidebar transcript.
 
+### E119. VS Code MCP Server List GUI
+
+- **Status**: landed.
+- **Goal**: expose configured MCP server inventory from the editor without
+  requiring manual `/mcp list`.
+- **Where**: VS Code command contributions, sidebar title-bar action, README,
+  and changelog docs.
+- **Result**: `Peridot: Show MCP Servers` runs `/mcp list` through the daemon
+  command path and renders configured server names, transports, and details
+  in the existing structured command-result rows.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.
