@@ -48,6 +48,9 @@
 - AGENTS.md hot-reload daemon events now update a VS Code context-strip
   `AGENTS <rule-count>` pill with source paths, matching the TUI
   instruction-summary side panel.
+- Session save daemon events now render as resume-ready VS Code transcript
+  rows, and session save failures render as error rows instead of opaque
+  event-kind labels.
 - Provider argument autocomplete now fills supported provider ids for
   `/provider <claude-api|openai-api|openrouter-api|openai-oauth>` from the
   shared daemon slash catalog.

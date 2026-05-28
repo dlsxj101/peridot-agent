@@ -1017,6 +1017,18 @@ shared daemon, TUI, and VS Code extension surfaces.
   so an operator can see mid-run instruction reloads without reading an
   opaque event row.
 
+### E82. Session Save Event Transcript Parity
+
+- **Status**: landed.
+- **Goal**: make VS Code render daemon session persistence events with the
+  same operator-facing meaning as the TUI transcript.
+- **Where**: shared daemon `AgentRunEvent::SessionSaved` /
+  `SessionSaveFailed`, TUI runtime transcript handling, VS Code transcript
+  conversion, and VS Code unit tests.
+- **Result**: `session_saved` now renders as a resume-ready session line,
+  and `session_save_failed` renders as an error row with the failure
+  message. Both events avoid the opaque event-kind fallback in VS Code.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

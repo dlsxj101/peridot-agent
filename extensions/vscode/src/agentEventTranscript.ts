@@ -32,6 +32,21 @@ export function agentTranscriptItemForEvent(
         text: `autofix: ${toolName} ${status} (attempt ${attempt}/${max})`,
       };
     }
+    case 'session_saved': {
+      const sessionId = textField(event, 'session_id')?.trim() || 'unknown';
+      return {
+        role: 'status',
+        text: `session: saved ${sessionId} - resume with: peridot session resume ${sessionId}`,
+      };
+    }
+    case 'session_save_failed': {
+      const sessionId = textField(event, 'session_id')?.trim() || 'unknown';
+      const message = textField(event, 'message')?.trim() || 'unknown error';
+      return {
+        role: 'error',
+        text: `session: failed to save ${sessionId}: ${message}`,
+      };
+    }
     default:
       return undefined;
   }

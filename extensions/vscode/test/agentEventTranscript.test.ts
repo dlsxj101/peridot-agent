@@ -85,6 +85,31 @@ test('agentTranscriptItemForEvent renders successful autofix attempts', () => {
   );
 });
 
+test('agentTranscriptItemForEvent renders session saved events', () => {
+  assert.deepEqual(
+    agentTranscriptItemForEvent('session_saved', {
+      session_id: 'session-123',
+    }),
+    {
+      role: 'status',
+      text: 'session: saved session-123 - resume with: peridot session resume session-123',
+    },
+  );
+});
+
+test('agentTranscriptItemForEvent renders session save failures as errors', () => {
+  assert.deepEqual(
+    agentTranscriptItemForEvent('session_save_failed', {
+      session_id: 'session-123',
+      message: 'disk full',
+    }),
+    {
+      role: 'error',
+      text: 'session: failed to save session-123: disk full',
+    },
+  );
+});
+
 test('agentTranscriptItemForEvent ignores unrelated events', () => {
   assert.equal(agentTranscriptItemForEvent('assistant_delta', { delta: 'hello' }), undefined);
 });

@@ -71,6 +71,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **AGENTS.md hot-reload status parity** now consumes `agents_md_loaded`
   daemon events in VS Code as an `AGENTS <rule-count>` context-strip pill
   with source paths, matching the TUI side-panel instruction summary.
+- **Session save event transcript parity** now renders `session_saved` and
+  `session_save_failed` daemon events in VS Code as meaningful transcript
+  rows instead of opaque event-kind labels.
 - **Provider argument autocomplete** now exposes the supported provider ids
   for `/provider <claude-api|openai-api|openrouter-api|openai-oauth>` through
   the shared slash catalog, TUI picker, daemon JSON catalog, and VS Code
