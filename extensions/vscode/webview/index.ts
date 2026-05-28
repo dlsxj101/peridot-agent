@@ -822,6 +822,9 @@ function renderHeader(s: SidebarState): HTMLElement {
   right.append(iconButton('search', 'Search Skills', () => vscode.postMessage({ type: 'searchSkills' })));
   right.append(iconButton('search-archive', 'Search Archived Skills', () => vscode.postMessage({ type: 'searchArchivedSkills' })));
   right.append(iconButton('attach', 'Attach File', () => vscode.postMessage({ type: 'attachFile' })));
+  right.append(iconButton('session-count', 'Show Session Count', () => vscode.postMessage({ type: 'showSessionCount' })));
+  right.append(iconButton('session-detail', 'Show Session Details', () => vscode.postMessage({ type: 'showPersistedSessionDetails' })));
+  right.append(iconButton('session-locate', 'Locate Session Directory', () => vscode.postMessage({ type: 'locatePersistedSessionDirectory' })));
   right.append(iconButton('sessions', 'Show Sessions', () => vscode.postMessage({ type: 'showSessions' })));
   right.append(iconButton('session-search', 'Search Sessions', () => vscode.postMessage({ type: 'searchSessions' })));
   right.append(iconButton('trash', 'Prune Sessions', () => vscode.postMessage({ type: 'pruneSessions' })));
@@ -1063,6 +1066,12 @@ function iconSvg(kind: string): string {
       return `<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4.5h11v9h-11z"/><path d="M1.8 2.5h12.4v2h-12.4z"/><path d="M8 11V7"/><path d="M5.8 9.2 8 7l2.2 2.2"/></svg>`;
     case 'attach':
       return `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5.2 8.7l3.9-3.9a2.4 2.4 0 0 1 3.4 3.4l-5.1 5.1a3.6 3.6 0 0 1-5.1-5.1l5.5-5.5"/><path d="M6.3 9.8l4.2-4.2"/></svg>`;
+    case 'session-count':
+      return `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="3" width="11" height="10" rx="1.5"/><path d="M5 6h6"/><path d="M5 8.5h6"/><path d="M5 11h3"/></svg>`;
+    case 'session-detail':
+      return `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="3" width="11" height="10" rx="1.5"/><path d="M5 6h6"/><path d="M5 8.5h4"/><circle cx="11" cy="11" r="1"/></svg>`;
+    case 'session-locate':
+      return `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 14s4.5-4.2 4.5-7.2A4.5 4.5 0 0 0 3.5 6.8C3.5 9.8 8 14 8 14z"/><circle cx="8" cy="6.8" r="1.6"/></svg>`;
     case 'sessions':
       return `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="3" width="11" height="2.8" rx="1"/><rect x="2.5" y="6.6" width="11" height="2.8" rx="1"/><rect x="2.5" y="10.2" width="11" height="2.8" rx="1"/></svg>`;
     case 'session-search':
@@ -2589,6 +2598,7 @@ function renderCommandBlock(item: TranscriptItem): HTMLElement {
   if (result?.kind === 'detach') return renderDetachBlock(item);
   if (result?.kind === 'session_export') return renderSessionExportBlock(item);
   if (result?.kind === 'session_import') return renderSessionImportBlock(item);
+  if (result?.kind === 'session_locate') return renderSessionLocateBlock(item);
   if (result?.kind === 'note' || result?.kind === 'notes' || result?.kind === 'notes_clear') {
     return renderNotesBlock(item);
   }
@@ -2897,6 +2907,36 @@ function renderSessionImportBlock(item: TranscriptItem): HTMLElement {
     });
     wrap.append(list);
   }
+  return wrap;
+}
+
+function renderSessionLocateBlock(item: TranscriptItem): HTMLElement {
+  const result = item.commandResult;
+  const sessionId = typeof result?.session_id === 'string' ? result.session_id : undefined;
+  const directory = typeof result?.path === 'string' ? result.path : undefined;
+  const exists = result?.exists === true;
+  const wrap = el('section', `command-block attachment-block ${result?.severity === 'error' ? 'error' : ''}`);
+  const header = el('div', 'attachment-header');
+  const title = el('div', 'attachment-title');
+  title.append(el('span', 'command-title', result?.title ?? 'Session Locate'));
+  const chips = el('div', 'attachment-chips');
+  if (sessionId) chips.append(el('span', 'command-chip', sessionId));
+  chips.append(el('span', 'command-chip', exists ? 'present' : 'not present'));
+  title.append(chips);
+  header.append(title);
+  if (directory) {
+    const actions = el('div', 'attachment-actions');
+    actions.append(iconButton('open', `Open ${directory}`, () => {
+      vscode.postMessage({ type: 'openPath', path: directory });
+    }));
+    actions.append(iconButton('copy', `Copy ${directory}`, () => {
+      vscode.postMessage({ type: 'copyText', text: directory });
+    }));
+    header.append(actions);
+  }
+  wrap.append(header);
+  if (result?.message) wrap.append(el('div', 'command-message', result.message));
+  if (directory) wrap.append(el('div', 'attachment-path-row', directory));
   return wrap;
 }
 

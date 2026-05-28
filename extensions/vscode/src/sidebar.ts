@@ -72,6 +72,9 @@ export interface SidebarHandlers {
   attachFile: () => Promise<void>;
   detachAttachment: (path: string) => Promise<void>;
   showAttachments: () => Promise<void>;
+  showSessionCount: () => Promise<void>;
+  showPersistedSessionDetails: () => Promise<void>;
+  locatePersistedSessionDirectory: () => Promise<void>;
   showSessions: () => Promise<void>;
   searchSessions: () => Promise<void>;
   pruneSessions: () => Promise<void>;
@@ -1063,6 +1066,15 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         return;
       case 'detachAttachment':
         await this.handlers.detachAttachment(message.path);
+        return;
+      case 'showSessionCount':
+        await this.handlers.showSessionCount();
+        return;
+      case 'showPersistedSessionDetails':
+        await this.handlers.showPersistedSessionDetails();
+        return;
+      case 'locatePersistedSessionDirectory':
+        await this.handlers.locatePersistedSessionDirectory();
         return;
       case 'showSessions':
         await this.handlers.showSessions();

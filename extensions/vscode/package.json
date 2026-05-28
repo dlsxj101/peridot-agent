@@ -233,6 +233,24 @@
         "icon": "$(references)"
       },
       {
+        "command": "peridot.showSessionCount",
+        "title": "Peridot: Show Session Count",
+        "category": "Peridot",
+        "icon": "$(graph)"
+      },
+      {
+        "command": "peridot.showPersistedSessionDetails",
+        "title": "Peridot: Show Session Details",
+        "category": "Peridot",
+        "icon": "$(inspect)"
+      },
+      {
+        "command": "peridot.locatePersistedSessionDirectory",
+        "title": "Peridot: Locate Session Directory",
+        "category": "Peridot",
+        "icon": "$(location)"
+      },
+      {
         "command": "peridot.showSessions",
         "title": "Peridot: Show Sessions",
         "category": "Peridot",
@@ -359,6 +377,21 @@
           "command": "peridot.attachFile",
           "when": "view == peridot.chatView",
           "group": "navigation@5"
+        },
+        {
+          "command": "peridot.showSessionCount",
+          "when": "view == peridot.chatView",
+          "group": "navigation@5.05"
+        },
+        {
+          "command": "peridot.showPersistedSessionDetails",
+          "when": "view == peridot.chatView",
+          "group": "navigation@5.1"
+        },
+        {
+          "command": "peridot.locatePersistedSessionDirectory",
+          "when": "view == peridot.chatView",
+          "group": "navigation@5.15"
         },
         {
           "command": "peridot.showSessions",

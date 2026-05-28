@@ -44,6 +44,10 @@
 - `Peridot: Search Sessions` now exposes persisted transcript search from
   the command palette and sidebar title bar, using the shared
   `/session search <query>` daemon command.
+- `Peridot: Show Session Count`, `Peridot: Show Session Details`, and
+  `Peridot: Locate Session Directory` now expose `/session count`,
+  `/session show <id>`, and `/session locate <id>` from the command palette
+  and sidebar title bar, with persisted-session picking for target commands.
 - `/session prune [--status <state>] [--older-than-days N] [--dry-run]`
   now runs through the daemon command path and returns a structured prune
   result so editor users can preview or remove stale persisted sessions.

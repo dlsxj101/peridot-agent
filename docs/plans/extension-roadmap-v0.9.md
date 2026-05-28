@@ -1424,6 +1424,19 @@ shared daemon, TUI, and VS Code extension surfaces.
   and render persisted transcript matches in the existing command-result
   transcript block.
 
+### E112. VS Code Session Inspect GUI
+
+- **Status**: landed.
+- **Goal**: expose the remaining read-only persisted session inspection
+  utilities from the editor without requiring manual slash commands.
+- **Where**: VS Code command contributions, sidebar title-bar actions,
+  session target command construction, README, and changelog docs.
+- **Result**: `Peridot: Show Session Count`, `Peridot: Show Session
+  Details`, and `Peridot: Locate Session Directory` run the shared
+  `/session count`, `/session show <id>`, and `/session locate <id>` daemon
+  paths. Targeted commands fetch persisted sessions, prompt for the target,
+  and render the existing structured session result blocks.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

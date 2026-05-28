@@ -12,6 +12,12 @@ import { resetBinaryCache, resolvePeridotBinary } from './peridotBin';
 import { peridotChildEnv } from './processEnv';
 import { sessionExportChoices, sessionExportDirectoryName } from './sessionExportCommand';
 import { sessionImportSlashCommand } from './sessionImportCommand';
+import {
+  sessionCountSlashCommand,
+  sessionLocateSlashCommand,
+  sessionShowSlashCommand,
+  sessionTargetChoices,
+} from './sessionInspectCommand';
 import { sessionListSlashCommand, sessionListStatusChoices } from './sessionListCommand';
 import { sessionSearchSlashCommand } from './sessionSearchCommand';
 import {
@@ -180,6 +186,11 @@ export function activate(context: vscode.ExtensionContext) {
     detachAttachment: async (path: string): Promise<void> =>
       detachAttachmentFromSession(path, output, sidebar),
     showAttachments: async (): Promise<void> => showSessionAttachments(output, sidebar),
+    showSessionCount: async (): Promise<void> => showSessionCount(output, sidebar),
+    showPersistedSessionDetails: async (): Promise<void> =>
+      showPersistedSessionDetails(output, sidebar),
+    locatePersistedSessionDirectory: async (): Promise<void> =>
+      locatePersistedSessionDirectory(output, sidebar),
     showSessions: async (): Promise<void> => showSessions(output, sidebar),
     searchSessions: async (): Promise<void> => searchSessions(output, sidebar),
     pruneSessions: async (): Promise<void> => pruneSessions(output, sidebar),
@@ -383,6 +394,24 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand('peridot.showAttachments', async () => {
       await showSessionAttachments(output, sidebar);
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('peridot.showSessionCount', async () => {
+      await showSessionCount(output, sidebar);
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('peridot.showPersistedSessionDetails', async () => {
+      await showPersistedSessionDetails(output, sidebar);
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('peridot.locatePersistedSessionDirectory', async () => {
+      await locatePersistedSessionDirectory(output, sidebar);
     }),
   );
 
@@ -1427,6 +1456,138 @@ async function showSessions(
     output.appendLine(`[peridot] session list failed: ${message}`);
     sidebar.appendError(message);
     await vscode.window.showErrorMessage(`Peridot session list failed: ${message}`);
+  }
+}
+
+async function showSessionCount(
+  output: vscode.OutputChannel,
+  sidebar: PeridotSidebarProvider,
+): Promise<void> {
+  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!folder) {
+    const message = 'Open a workspace folder before counting Peridot sessions.';
+    sidebar.setWorkspaceProblem(message);
+    await vscode.window.showWarningMessage(message);
+    return;
+  }
+  const command = sessionCountSlashCommand();
+  await vscode.commands.executeCommand('peridot.chatView.focus');
+  try {
+    output.appendLine(`[peridot] counting sessions: ${command}`);
+    const result = await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: 'Peridot: counting sessions',
+        cancellable: false,
+      },
+      async () => runSlashCommand(command, output, sidebar, sidebar.currentRunOptions()),
+    );
+    sidebar.appendCommandResult(result);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    output.appendLine(`[peridot] session count failed: ${message}`);
+    sidebar.appendError(message);
+    await vscode.window.showErrorMessage(`Peridot session count failed: ${message}`);
+  }
+}
+
+async function showPersistedSessionDetails(
+  output: vscode.OutputChannel,
+  sidebar: PeridotSidebarProvider,
+): Promise<void> {
+  await inspectPersistedSession(
+    output,
+    sidebar,
+    'Peridot: Show Session Details',
+    'Choose a persisted session to inspect',
+    'showing session details',
+    sessionShowSlashCommand,
+  );
+}
+
+async function locatePersistedSessionDirectory(
+  output: vscode.OutputChannel,
+  sidebar: PeridotSidebarProvider,
+): Promise<void> {
+  await inspectPersistedSession(
+    output,
+    sidebar,
+    'Peridot: Locate Session Directory',
+    'Choose a persisted session to locate',
+    'locating session directory',
+    sessionLocateSlashCommand,
+  );
+}
+
+async function inspectPersistedSession(
+  output: vscode.OutputChannel,
+  sidebar: PeridotSidebarProvider,
+  title: string,
+  placeHolder: string,
+  progressLabel: string,
+  buildCommand: (target: string) => string,
+): Promise<void> {
+  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!folder) {
+    const message = 'Open a workspace folder before inspecting Peridot sessions.';
+    sidebar.setWorkspaceProblem(message);
+    await vscode.window.showWarningMessage(message);
+    return;
+  }
+  let sessions: DaemonSessionSummary[] = [];
+  try {
+    sessions = normalizeDaemonSessions(await fetchSessionList(folder, output));
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    output.appendLine(`[peridot] session list fetch before inspect failed: ${message}`);
+  }
+  const choices = sessionTargetChoices(sessions);
+  if (choices.length === 0) {
+    await vscode.window.showWarningMessage('Save or import a Peridot session before inspecting sessions.');
+    return;
+  }
+  const target =
+    choices.length === 1
+      ? choices[0]
+      : await vscode.window.showQuickPick(
+          choices.map((choice) => ({
+            label: choice.label,
+            description: choice.description,
+            detail: choice.id,
+            id: choice.id,
+          })),
+          {
+            title,
+            placeHolder,
+            ignoreFocusOut: true,
+          },
+        );
+  if (!target) return;
+  let command: string;
+  try {
+    command = buildCommand(target.id);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    await vscode.window.showErrorMessage(`${title} failed: ${message}`);
+    return;
+  }
+  await vscode.commands.executeCommand('peridot.chatView.focus');
+  try {
+    output.appendLine(`[peridot] ${progressLabel}: ${target.id}`);
+    const result = await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: `${title}: ${progressLabel}`,
+        cancellable: false,
+      },
+      async () => runSlashCommand(command, output, sidebar, sidebar.currentRunOptions()),
+    );
+    sidebar.appendCommandResult(result);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    output.appendLine(`[peridot] ${progressLabel} failed: ${message}`);
+    sidebar.appendError(message);
+    await vscode.window.showErrorMessage(`${title} failed: ${message}`);
   }
 }
 

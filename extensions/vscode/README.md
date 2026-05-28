@@ -37,6 +37,9 @@ native tool calling, and 2-Tier context management.
 | `Peridot: Search Archived Skills` | Prompts for a query and runs `/skills archived <query>` against archived stored skills. |
 | `Peridot: Attach File to Session` | Picks a workspace file, runs `/attach <path>`, and renders a compact attachment block with open/copy actions. |
 | `Peridot: Show Session Attachments` | Runs `/attachments` and renders files already loaded into the current session context, with open/copy/detach actions. |
+| `Peridot: Show Session Count` | Runs `/session count` and renders the persisted lifecycle totals. |
+| `Peridot: Show Session Details` | Picks a persisted session and runs `/session show <id>` to render lifecycle, workspace, usage, and notes metadata. |
+| `Peridot: Locate Session Directory` | Picks a persisted session and runs `/session locate <id>` to render its `.peridot/sessions/<id>` directory. |
 | `Peridot: Show Sessions` | Runs `/session list`, optionally filtered by lifecycle status, and refreshes local session cards only for full inventory results. |
 | `Peridot: Search Sessions` | Prompts for a query, runs `/session search <query>`, and renders persisted transcript hits. |
 | `Peridot: Prune Sessions` | Previews `/session prune` with status and age filters, then asks for confirmation before removing matching persisted sessions. |

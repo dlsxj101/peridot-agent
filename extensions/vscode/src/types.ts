@@ -139,6 +139,8 @@ export interface CommandResultView {
   files?: string[];
   source?: string;
   destination?: string;
+  path?: string;
+  exists?: boolean;
   removed?: AttachmentView[];
   removed_count?: number;
   removedCount?: number;
@@ -455,6 +457,9 @@ export type OutboundMessage =
   | { type: 'restoreSkill'; name: string }
   | { type: 'attachFile' }
   | { type: 'detachAttachment'; path: string }
+  | { type: 'showSessionCount' }
+  | { type: 'showPersistedSessionDetails' }
+  | { type: 'locatePersistedSessionDirectory' }
   | { type: 'showSessions' }
   | { type: 'searchSessions' }
   | { type: 'pruneSessions' }
