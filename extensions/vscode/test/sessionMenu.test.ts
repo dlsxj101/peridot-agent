@@ -47,3 +47,19 @@ test('sessionMenuSubtitle keeps running sessions explicit', () => {
     'In progress · $0.0042 · 900 tok · 1 turn',
   );
 });
+
+test('sessionMenuSubtitle includes persisted session context', () => {
+  assert.equal(
+    sessionMenuSubtitle({
+      id: 's4',
+      title: 'Release',
+      status: 'done',
+      running: false,
+      active: false,
+      notes_count: 2,
+      last_note: 'ship checkpoint',
+      attachment_paths: ['docs/release.md', 'src/main.rs'],
+    }),
+    'done · Notes 2: ship checkpoint · Attachments 2',
+  );
+});

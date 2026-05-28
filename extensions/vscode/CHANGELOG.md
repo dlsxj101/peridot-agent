@@ -173,6 +173,8 @@
   close, rename, and delete now show the same persisted usage totals.
 - Session QuickPick rows now include persisted note and attachment summaries
   in their detail text while keeping the session id visible.
+- The sidebar session switcher now includes persisted Notes and Attachments
+  summaries in each session subtitle when available.
 - Image attachments now render bounded inline previews in the VS Code/Cursor
   attachment cards while keeping the daemon/model context as the existing
   placeholder metadata.

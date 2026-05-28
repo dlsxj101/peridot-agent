@@ -1982,6 +1982,10 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         total_tokens: sessionSummaryTokens(session),
         total_cost_usd: sessionSummaryCostUsd(session),
         turns_used: sessionSummaryTurnsUsed(session),
+        notes_count: session.noteSummary?.count,
+        last_note: session.noteSummary?.latest,
+        attachment_count: session.attachmentPaths?.length,
+        attachment_paths: session.attachmentPaths,
       }),
     );
   }

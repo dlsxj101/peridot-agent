@@ -406,6 +406,10 @@ export interface ChatSessionSummary {
   total_tokens?: number;
   total_cost_usd?: number;
   turns_used?: number;
+  notes_count?: number;
+  last_note?: string | null;
+  attachment_count?: number;
+  attachment_paths?: string[];
 }
 
 export interface DaemonSessionSummary {

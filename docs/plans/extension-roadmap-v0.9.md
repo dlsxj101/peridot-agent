@@ -2076,6 +2076,19 @@ shared daemon, TUI, and VS Code extension surfaces.
   can distinguish similar sessions without switching or running `/session
   show`.
 
+### E163. VS Code Session Menu Context Subtitles
+
+- **Status**: landed.
+- **Goal**: keep the sidebar session switcher as informative as the command
+  palette session pickers after persisted Notes and Attachments summaries
+  became available.
+- **Where**: VS Code chat-session summary projection, session-menu subtitle
+  helper, changelogs, and unit tests.
+- **Result**: webview session switcher rows now carry additive
+  `notes_count`, `last_note`, `attachment_count`, and `attachment_paths`
+  fields and render Notes / Attachments summaries beside status and usage
+  totals.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.
