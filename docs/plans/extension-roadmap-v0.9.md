@@ -1769,6 +1769,19 @@ shared daemon, TUI, and VS Code extension surfaces.
   create/change/delete events mark the pill stale until the next indexed
   command refreshes `.peridot/codemap.json`.
 
+### E139. TUI Code-Map Freshness Panel
+
+- **Status**: landed.
+- **Goal**: keep the terminal side panel aligned with the editor code-map
+  freshness surface so operators can see whether the persisted index is fresh
+  without re-reading transcript output.
+- **Where**: TUI side-panel state, localized side-panel labels, code-map slash
+  handlers, and TUI render tests.
+- **Result**: `/codemap`, `/codemap status`, `/codemap find|locate|outline|refs`,
+  and `/todos` update a persisted code-map summary in the side panel with
+  fresh/stale/missing state, symbol/TODO counts, indexed/source file counts,
+  and refresh timestamp metadata.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

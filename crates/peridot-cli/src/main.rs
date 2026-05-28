@@ -42,8 +42,8 @@ use peridot_project::ProjectScanner;
 use peridot_tools::hooks::{HookRunner, HookVariables, lifecycle_hook_variables};
 use peridot_tools::{AskUserPort, ToolRegistry, register_builtin_tools, register_mcp_tools};
 use peridot_tui::{
-    ApprovalDecision, ApprovalGrant, ApprovalScope, HeaderState, SessionCommandEvent,
-    SessionDirectoryItem, SkillSlashSuggestion, TuiRuntimeEvent, TuiState,
+    ApprovalDecision, ApprovalGrant, ApprovalScope, CodeMapSummary, HeaderState,
+    SessionCommandEvent, SessionDirectoryItem, SkillSlashSuggestion, TuiRuntimeEvent, TuiState,
     run_interactive_with_events,
 };
 
@@ -2879,6 +2879,7 @@ fn handle_scan_todos(state: &mut TuiState, project_root: &Path) {
         state.push_error("todos: failed to load workspace code map index");
         return;
     };
+    state.side_panel.code_map = Some(code_map_summary_from_load(&load));
     let report = commands::todo_code_map_report(&load.index);
     if report.todos.is_empty() {
         state.push_transcript(format!(
@@ -2920,6 +2921,7 @@ fn handle_code_map(state: &mut TuiState, project_root: &Path, refresh: bool) {
         state.push_error("codemap: failed to load workspace code map index");
         return;
     };
+    state.side_panel.code_map = Some(code_map_summary_from_index(&index, refresh));
     let report = &index.report;
     if report.symbols.is_empty() && report.todos.is_empty() {
         state.push_transcript(format!(
@@ -2933,7 +2935,10 @@ fn handle_code_map(state: &mut TuiState, project_root: &Path, refresh: bool) {
 
 fn handle_code_map_status(state: &mut TuiState, project_root: &Path) {
     match commands::code_map_status(project_root) {
-        Ok(status) => state.push_transcript(render_code_map_status_text(&status)),
+        Ok(status) => {
+            state.side_panel.code_map = Some(code_map_summary_from_status(&status));
+            state.push_transcript(render_code_map_status_text(&status));
+        }
         Err(_) => state.push_error("codemap: failed to check workspace code map status"),
     }
 }
@@ -2948,6 +2953,7 @@ fn handle_code_map_find(state: &mut TuiState, project_root: &Path, query: &str) 
         state.push_error("codemap: failed to load workspace code map index");
         return;
     };
+    state.side_panel.code_map = Some(code_map_summary_from_index(&index, false));
     let report = commands::search_code_map_index(&index, query);
     if report.symbols.is_empty() && report.todos.is_empty() {
         state.push_transcript(format!(
@@ -2973,6 +2979,7 @@ fn handle_code_map_locate(state: &mut TuiState, project_root: &Path, query: &str
         state.push_error("codemap: failed to load workspace code map index");
         return;
     };
+    state.side_panel.code_map = Some(code_map_summary_from_index(&index, false));
     let report = commands::locate_code_map_symbols(&index, query);
     if report.symbols.is_empty() {
         state.push_transcript(format!(
@@ -2998,6 +3005,7 @@ fn handle_code_map_outline(state: &mut TuiState, project_root: &Path, path: &str
         state.push_error("codemap: failed to load workspace code map index");
         return;
     };
+    state.side_panel.code_map = Some(code_map_summary_from_index(&index, false));
     let report = commands::outline_code_map_file(&index, path);
     if report.symbols.is_empty() {
         state.push_transcript(format!(
@@ -3023,6 +3031,7 @@ fn handle_code_map_refs(state: &mut TuiState, project_root: &Path, query: &str) 
         state.push_error("codemap: failed to load workspace code map index");
         return;
     };
+    state.side_panel.code_map = Some(code_map_summary_from_index(&index, false));
     let report = commands::find_code_map_references(project_root, &index, query, 80);
     if report.references.is_empty() {
         state.push_transcript(format!(
@@ -3036,6 +3045,38 @@ fn handle_code_map_refs(state: &mut TuiState, project_root: &Path, query: &str) 
         index.generated_at_unix,
         Some(query),
     ));
+}
+
+fn code_map_summary_from_load(load: &commands::CodeMapIndexLoad) -> CodeMapSummary {
+    code_map_summary_from_index(&load.index, load.refreshed)
+}
+
+fn code_map_summary_from_index(index: &commands::CodeMapIndex, refreshed: bool) -> CodeMapSummary {
+    CodeMapSummary {
+        index_exists: true,
+        stale: false,
+        source_files: index.report.walked_files,
+        walked_files: index.report.walked_files,
+        symbol_count: index.report.symbols.len(),
+        todo_count: index.report.todos.len(),
+        generated_at_unix: Some(index.generated_at_unix),
+        newest_source_mtime_unix: None,
+        refreshed,
+    }
+}
+
+fn code_map_summary_from_status(status: &commands::CodeMapStatus) -> CodeMapSummary {
+    CodeMapSummary {
+        index_exists: status.index_exists,
+        stale: status.stale,
+        source_files: status.source_files,
+        walked_files: status.walked_files,
+        symbol_count: status.symbol_count,
+        todo_count: status.todo_count,
+        generated_at_unix: status.generated_at_unix,
+        newest_source_mtime_unix: status.newest_source_mtime_unix,
+        refreshed: false,
+    }
 }
 
 fn handle_attach(state: &mut TuiState, project_root: &Path, path: &str) {

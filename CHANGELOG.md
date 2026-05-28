@@ -127,6 +127,9 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 - **VS Code code-map status context** now folds `/codemap`, `/codemap status`,
   and `/todos` results into a sidebar pill, then marks it stale when the
   workspace file watcher sees source changes.
+- **TUI code-map status panel** now mirrors `/codemap`, `/codemap status`, and
+  `/todos` index freshness in the side panel with symbol/TODO counts and
+  refresh timestamps.
 - **`/session prune` slash parity** lets both TUI and VS Code users prune
   persisted sessions with `--status`, `--older-than-days`, and `--dry-run`
   filters through the shared session command path.

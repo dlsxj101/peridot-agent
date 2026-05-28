@@ -153,6 +153,30 @@ pub struct AgentsSummary {
     pub paths: Vec<String>,
 }
 
+/// Persisted workspace code-map freshness shown in the side panel.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CodeMapSummary {
+    /// Whether `.peridot/codemap.json` exists.
+    pub index_exists: bool,
+    /// Whether source files are newer than the index.
+    pub stale: bool,
+    /// Number of source files considered by the freshness check.
+    pub source_files: usize,
+    /// Number of files walked by the persisted index.
+    pub walked_files: usize,
+    /// Number of indexed symbols.
+    pub symbol_count: usize,
+    /// Number of indexed TODO/FIXME/HACK markers.
+    pub todo_count: usize,
+    /// Index creation timestamp, when available.
+    pub generated_at_unix: Option<u64>,
+    /// Newest source mtime observed by the freshness check, when available.
+    pub newest_source_mtime_unix: Option<u64>,
+    /// Whether the last command had to refresh the persisted index.
+    #[serde(default)]
+    pub refreshed: bool,
+}
+
 /// Budget and turn guardrail gauge shown in the side panel.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct BudgetGauge {
@@ -176,6 +200,9 @@ pub struct SidePanelState {
     /// Active MCP server summaries.
     #[serde(default)]
     pub mcp_status: Vec<McpServerSummary>,
+    /// Persisted code-map freshness summary.
+    #[serde(default)]
+    pub code_map: Option<CodeMapSummary>,
     /// AGENTS.md rule summary loaded at session start.
     #[serde(default)]
     pub agents_md: AgentsSummary,

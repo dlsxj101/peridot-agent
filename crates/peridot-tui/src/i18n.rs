@@ -45,6 +45,14 @@ pub enum PhraseKey {
     McpConnected,
     /// TUI side-panel MCP disconnected marker.
     McpDisconnected,
+    /// TUI side-panel code-map block title.
+    CodeMapPanelTitle,
+    /// TUI side-panel code-map fresh marker.
+    CodeMapFresh,
+    /// TUI side-panel code-map stale marker.
+    CodeMapStale,
+    /// TUI side-panel code-map missing marker.
+    CodeMapMissing,
 }
 
 /// Looks up the rendered phrase for `key` in `locale`.
@@ -84,6 +92,14 @@ pub fn tr(key: PhraseKey, locale: Locale) -> &'static str {
         (PhraseKey::McpConnected, Locale::Ko) => "연결됨",
         (PhraseKey::McpDisconnected, Locale::En) => "disconnected",
         (PhraseKey::McpDisconnected, Locale::Ko) => "연결 안 됨",
+        (PhraseKey::CodeMapPanelTitle, Locale::En) => "Code map",
+        (PhraseKey::CodeMapPanelTitle, Locale::Ko) => "코드맵",
+        (PhraseKey::CodeMapFresh, Locale::En) => "fresh",
+        (PhraseKey::CodeMapFresh, Locale::Ko) => "최신",
+        (PhraseKey::CodeMapStale, Locale::En) => "stale",
+        (PhraseKey::CodeMapStale, Locale::Ko) => "오래됨",
+        (PhraseKey::CodeMapMissing, Locale::En) => "missing",
+        (PhraseKey::CodeMapMissing, Locale::Ko) => "없음",
     }
 }
 

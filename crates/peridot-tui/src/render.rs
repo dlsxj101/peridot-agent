@@ -319,6 +319,45 @@ fn render_mcp_block(state: &TuiState) -> String {
     format!("{}\n\n", lines.join("\n"))
 }
 
+fn render_code_map_block(state: &TuiState) -> String {
+    let Some(summary) = state.side_panel.code_map.as_ref() else {
+        return String::new();
+    };
+    let locale = state.config.language;
+    let freshness = if !summary.index_exists {
+        tr(PhraseKey::CodeMapMissing, locale)
+    } else if summary.stale {
+        tr(PhraseKey::CodeMapStale, locale)
+    } else {
+        tr(PhraseKey::CodeMapFresh, locale)
+    };
+    let mut lines = vec![
+        tr(PhraseKey::CodeMapPanelTitle, locale).to_string(),
+        format!(
+            "{} · {} sym · {} TODOs",
+            freshness, summary.symbol_count, summary.todo_count
+        ),
+        format!(
+            "{} indexed file(s) · {} source file(s)",
+            summary.walked_files, summary.source_files
+        ),
+    ];
+    if let Some(generated_at) = summary.generated_at_unix {
+        let suffix = if summary.refreshed {
+            " (refreshed)"
+        } else {
+            ""
+        };
+        lines.push(format!("indexed at {generated_at}{suffix}"));
+    }
+    if summary.stale
+        && let Some(newest) = summary.newest_source_mtime_unix
+    {
+        lines.push(format!("newest source {newest}"));
+    }
+    format!("{}\n\n", lines.join("\n"))
+}
+
 /// Renders the side-panel Goal block as plain text (joined later into the
 /// side panel string). When no goal is active the block collapses to an
 /// empty string so the panel doesn't carry a "Goal" header for nothing.
@@ -1319,6 +1358,9 @@ pub fn render_text_snapshot(state: &TuiState) -> String {
         if !state.side_panel.mcp_status.is_empty() {
             let _ = write!(output, "{}", render_mcp_block(state));
         }
+        if state.side_panel.code_map.is_some() {
+            let _ = write!(output, "{}", render_code_map_block(state));
+        }
         if state.agent_run_status != AgentRunStatus::Idle {
             let _ = writeln!(
                 output,
@@ -1752,10 +1794,11 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
             format!("id: {}\n", short_session_id(&state.current_session_id))
         };
         let mcp_block = render_mcp_block(state);
+        let code_map_block = render_code_map_block(state);
         let committee_block = render_committee_block(state);
         let request_context_block = render_request_context_block(state);
         let side = format!(
-            "{goal}Plan {done}/{}\n{}\n\nSession\n{session_id_line}agent: {}\nsteps: {}\nerrors: {}\nelapsed: {}s\n\n{}{}{}{}",
+            "{goal}Plan {done}/{}\n{}\n\nSession\n{session_id_line}agent: {}\nsteps: {}\nerrors: {}\nelapsed: {}s\n\n{}{}{}{}{}",
             state.side_panel.plan.len(),
             plan,
             agent_run_status_label(&state.agent_run_status),
@@ -1764,6 +1807,7 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
             state.side_panel.stats.elapsed_seconds,
             request_context_block,
             mcp_block,
+            code_map_block,
             committee_block,
             render_subagent_monitor(&state.subagents),
         );

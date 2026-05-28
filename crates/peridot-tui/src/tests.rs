@@ -1563,6 +1563,23 @@ fn cross_crate_events_update_side_panel_state() {
     assert!(snapshot.contains("MCP"));
     assert!(snapshot.contains("- fs [stdio]: 4 tools, connected"));
 
+    state.side_panel.code_map = Some(CodeMapSummary {
+        index_exists: true,
+        stale: false,
+        source_files: 9,
+        walked_files: 8,
+        symbol_count: 5,
+        todo_count: 2,
+        generated_at_unix: Some(42),
+        newest_source_mtime_unix: None,
+        refreshed: true,
+    });
+    let snapshot = render_text_snapshot(&state);
+    assert!(snapshot.contains("Code map"));
+    assert!(snapshot.contains("fresh · 5 sym · 2 TODOs"));
+    assert!(snapshot.contains("8 indexed file(s) · 9 source file(s)"));
+    assert!(snapshot.contains("indexed at 42 (refreshed)"));
+
     state.apply_runtime_event(TuiRuntimeEvent::AgentsMdLoaded {
         rule_count: 12,
         paths: vec!["AGENTS.md".to_string()],
