@@ -5272,16 +5272,25 @@ async fn handle_command_mcp_test(
         .await
         .map_err(|err| format!("mcp test '{name}': {err}"))?
         .len();
+    let items = mcp_command_items_with_probe(&config, Some((name, true, Some(count))));
     Ok(serde_json::json!({
         "kind": "mcp",
         "title": "MCP",
         "message": format!("mcp: '{name}' reachable - {count} tool(s) exposed"),
         "severity": "info",
         "command": raw_command,
+        "items": items,
     }))
 }
 
 fn mcp_command_items(config: &PeridotConfig) -> Vec<Value> {
+    mcp_command_items_with_probe(config, None)
+}
+
+fn mcp_command_items_with_probe(
+    config: &PeridotConfig,
+    probe: Option<(&str, bool, Option<usize>)>,
+) -> Vec<Value> {
     config
         .mcp
         .iter()
@@ -5297,11 +5306,21 @@ fn mcp_command_items(config: &PeridotConfig) -> Vec<Value> {
                 }
                 McpTransport::Http => entry.url.clone().unwrap_or_default(),
             };
-            serde_json::json!({
+            let mut item = serde_json::json!({
                 "label": entry.name,
                 "detail": detail,
                 "transport": entry.transport.to_string(),
-            })
+            });
+            if let Some((probe_name, connected, tool_count)) = probe
+                && entry.name == probe_name
+                && let Value::Object(map) = &mut item
+            {
+                map.insert("connected".to_string(), Value::Bool(connected));
+                if let Some(tool_count) = tool_count {
+                    map.insert("tool_count".to_string(), serde_json::json!(tool_count));
+                }
+            }
+            item
         })
         .collect()
 }
@@ -5911,6 +5930,32 @@ url = "https://example.com/mcp"
         assert_eq!(removed_items.len(), 1);
         assert_eq!(removed_items[0]["label"], "local");
         shutdown_sessions(&state).await;
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn mcp_probe_result_items_include_connectivity_metadata() {
+        let root = test_project("mcp-probe-result");
+        std::fs::create_dir_all(root.join(".peridot")).unwrap();
+        let path = root.join(".peridot/config.toml");
+        std::fs::write(
+            &path,
+            r#"
+[[mcp]]
+name = "github"
+transport = "http"
+url = "https://example.com/mcp"
+"#,
+        )
+        .unwrap();
+        let config = read_project_config(&path).unwrap();
+
+        let items = mcp_command_items_with_probe(&config, Some(("github", true, Some(4))));
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["label"], "github");
+        assert_eq!(items[0]["tool_count"], 4);
+        assert_eq!(items[0]["connected"], true);
         let _ = std::fs::remove_dir_all(root);
     }
 

@@ -169,6 +169,14 @@ url = "https://example.com/mcp"
             .collect::<Vec<_>>(),
         vec!["local"]
     );
+
+    super::mark_tui_mcp_probe_result(&mut state, "local", true, 7);
+    assert_eq!(state.side_panel.mcp_status[0].tool_count, 7);
+    assert!(state.side_panel.mcp_status[0].connected);
+
+    super::mark_tui_mcp_probe_result(&mut state, "local", false, 0);
+    assert_eq!(state.side_panel.mcp_status[0].tool_count, 0);
+    assert!(!state.side_panel.mcp_status[0].connected);
     fs::remove_dir_all(root).unwrap();
 }
 

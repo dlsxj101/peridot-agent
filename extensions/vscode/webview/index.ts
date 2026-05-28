@@ -2688,6 +2688,14 @@ function renderCommandBlock(item: TranscriptItem): HTMLElement {
         typeof row.line === 'number' ? `:${row.line}` : '',
         typeof row.tokens === 'number' ? `${formatTokens(row.tokens)}` : '',
         row.transport,
+        typeof (row.tool_count ?? row.toolCount) === 'number'
+          ? `${row.tool_count ?? row.toolCount} tool(s)`
+          : '',
+        typeof row.connected === 'boolean'
+          ? row.connected
+            ? 'connected'
+            : 'disconnected'
+          : '',
         typeof row.turn_id === 'number' ? `turn ${row.turn_id}` : '',
       ].filter(Boolean);
       if (meta.length > 0) line.append(el('span', 'command-row-meta', meta.join(' · ')));

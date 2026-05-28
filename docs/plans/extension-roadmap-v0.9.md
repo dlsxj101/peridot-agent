@@ -1578,6 +1578,20 @@ shared daemon, TUI, and VS Code extension surfaces.
   config now also force a status refresh, keeping `/mcp test|remove`
   autocomplete aligned with the latest config.
 
+### E124. MCP Test Connectivity Metadata
+
+- **Status**: landed.
+- **Goal**: preserve the useful connectivity signal from `/mcp test <name>`
+  instead of reducing it to a transient text-only success message.
+- **Where**: TUI MCP test handler, daemon `session.command` MCP test result,
+  VS Code command-result row typing/rendering, and command-result tests.
+- **Result**: TUI `/mcp test <name>` refreshes the side-panel MCP inventory
+  from config, then marks the tested server connected with its exposed tool
+  count on success or disconnected on probe failure. Daemon-backed
+  `/mcp test <name>` returns a structured row for the tested server carrying
+  `connected` and `tool_count`, and VS Code command rows render those values
+  alongside transport metadata.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

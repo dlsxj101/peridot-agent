@@ -3702,6 +3702,7 @@ fn handle_mcp_test(
             return;
         }
     };
+    state.side_panel.mcp_status = mcp_tui_summaries(&config);
     let Some(entry) = config.mcp.iter().find(|m| m.name == name).cloned() else {
         state.push_error(format!("mcp test: no server named '{name}'"));
         return;
@@ -3712,9 +3713,25 @@ fn handle_mcp_test(
     });
     match probe {
         Ok(count) => {
+            mark_tui_mcp_probe_result(state, name, true, count);
             state.push_transcript(format!("mcp: '{name}' reachable — {count} tool(s) exposed"))
         }
-        Err(err) => state.push_error(format!("mcp test '{name}': {err}")),
+        Err(err) => {
+            mark_tui_mcp_probe_result(state, name, false, 0);
+            state.push_error(format!("mcp test '{name}': {err}"));
+        }
+    }
+}
+
+fn mark_tui_mcp_probe_result(state: &mut TuiState, name: &str, connected: bool, count: usize) {
+    if let Some(server) = state
+        .side_panel
+        .mcp_status
+        .iter_mut()
+        .find(|server| server.name == name)
+    {
+        server.connected = connected;
+        server.tool_count = count.min(u32::MAX as usize) as u32;
     }
 }
 

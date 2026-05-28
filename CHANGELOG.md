@@ -87,6 +87,10 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
   `.peridot/config.toml`. Daemon-backed `/mcp add` and `/mcp remove` also
   return refreshed inventory rows, and VS Code composer slashes force a status
   refresh so MCP autocomplete stays current.
+- **MCP test connectivity metadata** now keeps `/mcp test <name>` results
+  structured: TUI marks the tested server connected/disconnected with the
+  exposed tool count, and VS Code command rows can render `connected` plus
+  `tool_count` returned by the daemon.
 - **`/session prune` slash parity** lets both TUI and VS Code users prune
   persisted sessions with `--status`, `--older-than-days`, and `--dry-run`
   filters through the shared session command path.

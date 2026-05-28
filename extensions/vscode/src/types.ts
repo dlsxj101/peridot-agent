@@ -69,6 +69,9 @@ export interface CommandResultItem {
   text?: string;
   scope?: string;
   transport?: string;
+  tool_count?: number;
+  toolCount?: number;
+  connected?: boolean;
   media_type?: string;
   mediaType?: string;
   inlined?: boolean;
