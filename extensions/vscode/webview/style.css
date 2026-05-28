@@ -2672,11 +2672,81 @@ textarea {
   padding: 0;
   border: 0;
   color: var(--peri-fg-muted);
-  margin-left: auto;
 }
 
 .context-dock:empty {
   display: none;
+}
+
+.composer-docks {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  min-width: 0;
+}
+
+.composer-docks:empty {
+  display: none;
+}
+
+.run-metrics-dock {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.run-metrics-dock:empty {
+  display: none;
+}
+
+.run-metric-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  max-width: 118px;
+  height: 24px;
+  padding: 0 7px;
+  border: 1px solid var(--peri-border);
+  border-radius: var(--peri-radius-tight);
+  background: color-mix(in srgb, var(--peri-bg-elev) 88%, transparent);
+  color: var(--peri-fg-soft);
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.run-metric-label {
+  color: var(--peri-fg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.run-metric-value {
+  color: var(--peri-fg);
+  font-family: var(--vscode-editor-font-family, ui-monospace, monospace);
+  font-variant-numeric: tabular-nums;
+}
+
+.run-metric-chip.metric-warn {
+  border-color: color-mix(in srgb, var(--peri-warn) 44%, var(--peri-border));
+}
+
+.run-metric-chip.metric-warn .run-metric-value {
+  color: var(--peri-warn);
+}
+
+.run-metric-chip.metric-critical {
+  border-color: color-mix(in srgb, var(--peri-error) 52%, var(--peri-border));
+}
+
+.run-metric-chip.metric-critical .run-metric-value {
+  color: var(--peri-error);
+}
+
+.run-metric-chip.metric-muted {
+  color: var(--peri-fg-muted);
 }
 
 .context-donut {

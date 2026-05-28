@@ -1082,6 +1082,19 @@ shared daemon, TUI, and VS Code extension surfaces.
   the composer; rename inputs select only once when editing starts; and
   `nl -ba` is accepted as a read-only inspection command.
 
+### E87. VS Code Live Usage Budget Dock
+
+- **Status**: landed.
+- **Goal**: surface the same live cost/token/budget pressure that the TUI
+  status metrics already expose, without requiring `/cost` after a run.
+- **Where**: VS Code daemon event HUD state, webview composer controls,
+  and webview unit tests.
+- **Result**: `usage_updated`, `budget_updated`, and committee role usage
+  now render as compact composer metric chips for executor tokens,
+  aggregate executor+committee cost, budget percentage, and turn budget.
+  Budget and turn chips switch to warning/critical tones near their
+  configured limits.
+
 ## Notes
 
 - Keep attachment state session-local. Do not introduce hosted state.

@@ -65,6 +65,9 @@
 - Completed run duration now lands in the transcript instead of staying pinned
   above the composer, and session title rename inputs no longer re-select text
   on every sidebar refresh.
+- Live usage and budget updates now render as compact composer chips for
+  executor tokens, aggregate executor+committee cost, budget percentage, and
+  turn pressure.
 - Provider argument autocomplete now fills supported provider ids for
   `/provider <claude-api|openai-api|openrouter-api|openai-oauth>` from the
   shared daemon slash catalog.

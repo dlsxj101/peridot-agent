@@ -31,6 +31,7 @@ import {
   slashPickerItemCount as countSlashPickerItems,
   type SlashArgumentContext,
 } from './slashAutocomplete';
+import { runMetricChips } from './runMetrics';
 import { el, formatTokens, highlightLite, isRecord, json } from './util';
 
 declare function acquireVsCodeApi(): {
@@ -1180,6 +1181,25 @@ function renderContextDock(s: SidebarState): HTMLElement {
   }
   donut.append(tooltip);
   dock.append(donut);
+  return dock;
+}
+
+function renderComposerDocks(s: SidebarState): HTMLElement {
+  const wrap = el('div', 'composer-docks');
+  wrap.append(renderRunMetricsDock(s));
+  wrap.append(renderContextDock(s));
+  return wrap;
+}
+
+function renderRunMetricsDock(s: SidebarState): HTMLElement {
+  const dock = el('div', 'run-metrics-dock');
+  for (const chip of runMetricChips(s.hud)) {
+    const node = el('span', `run-metric-chip metric-${chip.tone}`);
+    node.title = chip.title;
+    node.append(el('span', 'run-metric-label', chip.label));
+    node.append(el('span', 'run-metric-value', chip.value));
+    dock.append(node);
+  }
   return dock;
 }
 
@@ -3319,7 +3339,7 @@ function renderComposer(s: SidebarState): HTMLElement {
   optionsRow.append(modeSelect(s.runOptions));
   optionsRow.append(permissionSelect(s.runOptions));
   optionsRow.append(modelControl(s));
-  optionsRow.append(renderContextDock(s));
+  optionsRow.append(renderComposerDocks(s));
   wrap.append(optionsRow);
 
   const slashPicker = el('div', 'slash-picker hidden');
