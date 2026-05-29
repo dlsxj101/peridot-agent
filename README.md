@@ -4,7 +4,25 @@ Peridot Agent is a Rust CLI/TUI autonomous coding agent with multi-session orche
 
 ## Status
 
-Current version: **0.8.13**
+Current version: **0.8.14**
+
+### What's new in v0.8.14
+
+- **VS Code surface parity.** The extension now exposes the session,
+  branch, runtime, MCP, notes, TODO, context, diff, replay, import, and
+  export workflows that were previously TUI/CLI-first.
+- **Shared slash metadata and autocomplete.** TUI and VS Code now share
+  surface-aware slash catalogs plus structured argument options for
+  sessions, skills, providers, models, MCP servers, code-map paths, and
+  attachments.
+- **Persistent session context visibility.** Notes, attachments,
+  usage/cost, code-map freshness, and MCP status now hydrate back into
+  TUI and VS Code session pickers, menus, side panels, and export/import
+  cards.
+- **Cleaner extension transcript.** Recovery events stay in the VS Code
+  Output channel instead of the chat transcript, completed run duration
+  lands with the assistant conversation, and Cursor path-link handling is
+  more tolerant of workspace-relative paths.
 
 ### What's new in v0.8.13
 

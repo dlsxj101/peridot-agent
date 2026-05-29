@@ -14,6 +14,8 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 
 ## Unreleased
 
+## [0.8.14 / extension 0.5.21] — 2026-05-29
+
 ### Added — surface-aware slash catalog
 
 - **Slash command catalog surface metadata** now marks which clients a

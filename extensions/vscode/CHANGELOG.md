@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## [0.5.21] — 2026-05-29
+
 ### Added — surface-aware slash autocomplete
 
 - Slash catalog entries may now carry client surface metadata. The VS

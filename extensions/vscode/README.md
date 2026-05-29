@@ -4,10 +4,9 @@ VS Code panel for [Peridot Agent](https://github.com/dlsxj101/peridot-agent) —
 a Rust CLI/TUI autonomous coding agent with multi-LLM committee mode,
 native tool calling, and 2-Tier context management.
 
-> **Status**: v0.5.20 adds a bottom run-timing footer with a live
-> Peridot gem loader, moves assistant copy actions into message
-> footers, and restores the `agent_ask_user` `Other` free-form answer
-> path in the sidebar. The sidebar
+> **Status**: v0.5.21 brings the latest session, branch, runtime, MCP,
+> notes, TODO, context, diff, replay, import/export, autocomplete, and
+> session-context surfaces into the VS Code/Cursor extension. The sidebar
 > includes onboarding, queued prompts, persistent chat sessions,
 > Markdown answers, single-line tool activity (with risk-class chip
 > colouring), approval/diff cards, usage/budget HUD, an inline plan
@@ -154,14 +153,14 @@ Install the decoded VSIX directly on the remote host:
 
 ```bash
 cd extensions/vscode
-bash scripts/install-cursor-remote.sh 0.5.20
+bash scripts/install-cursor-remote.sh 0.5.21
 ```
 
 Or run the same workaround without a checkout:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/dlsxj101/peridot-agent/main/extensions/vscode/scripts/install-cursor-remote.sh \
-  | bash -s -- 0.5.20
+  | bash -s -- 0.5.21
 ```
 
 The script downloads the Marketplace VSIX with `curl --compressed`,
@@ -211,8 +210,8 @@ Rust CLI `v*` releases. Before publishing, update
 `extensions/vscode/package.json`, then push a matching tag:
 
 ```bash
-git tag vsce/v0.5.20
-git push origin vsce/v0.5.20
+git tag vsce/v0.5.21
+git push origin vsce/v0.5.21
 ```
 
 The release workflow verifies that the tag matches the extension package
@@ -228,6 +227,11 @@ workflow requires `VSCE_PAT` and `OVSX_PAT` repository secrets.
   budget / context, inline plan panel, inline unified-diff cards,
   pre-approval diff preview for `file_write` / `file_patch`, and
   cached / reused-daemon status reads.
+- **v0.5.21** — ✅ VS Code/Cursor parity for persisted-session
+  management, branch workflows, runtime controls, MCP management,
+  notes, TODOs, context/diff, replay, import/export, shared slash
+  autocomplete, session usage/context metadata, and quieter recovery
+  output.
 - **v0.5.20** — ✅ `agent_ask_user` single-select and multi-select
   prompts include an `Other` free-form answer in the sidebar; long
   tasks show live and final elapsed time in a bottom footer.
