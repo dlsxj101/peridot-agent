@@ -181,7 +181,10 @@ jobs:
       - name: Install
         run: npm ci || npm install
 
-      - name: Package platform .vsix (runs prepublish tests)
+      - name: Test extension
+        run: npm test
+
+      - name: Package platform .vsix (runs prepublish build)
         run: npx vsce package --target ${{ matrix.vsce-target }} --no-dependencies
 
       - name: Publish to VS Code Marketplace
@@ -296,7 +299,10 @@ jobs:
       - name: Install
         run: npm ci || npm install
 
-      - name: Package universal .vsix (runs prepublish tests)
+      - name: Test extension
+        run: npm test
+
+      - name: Package universal .vsix (runs prepublish build)
         run: npx vsce package --no-dependencies
 
       - name: Publish universal to VS Code Marketplace

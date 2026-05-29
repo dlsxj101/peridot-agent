@@ -782,8 +782,8 @@
     "compile": "npm run typecheck && npm run build",
     "watch": "node esbuild.config.mjs --watch",
     "bundle-binary": "node scripts/bundle-binary.mjs",
-    "package": "vsce package --no-dependencies",
-    "vscode:prepublish": "npm test && npm run build:prod"
+    "package": "npm test && vsce package --no-dependencies",
+    "vscode:prepublish": "npm run build:prod"
   },
   "dependencies": {
     "@formkit/auto-animate": "^0.8.2",
