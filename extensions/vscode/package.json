@@ -776,7 +776,7 @@
   "scripts": {
     "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.webview.json",
     "test": "npm run typecheck && npm run test:unit",
-    "test:unit": "node -e \"require('fs').rmSync('out-test',{recursive:true,force:true})\" && tsc -p tsconfig.test.json && node --test out-test/test",
+    "test:unit": "node -e \"require('fs').rmSync('out-test',{recursive:true,force:true})\" && tsc -p tsconfig.test.json && node scripts/run-unit-tests.mjs",
     "build": "node esbuild.config.mjs",
     "build:prod": "node esbuild.config.mjs --production",
     "compile": "npm run typecheck && npm run build",
