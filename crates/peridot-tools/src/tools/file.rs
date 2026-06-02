@@ -977,6 +977,31 @@ fn outline_file(project_root: &Path, path: &Path, limit: usize) -> PeriResult<Ve
         .extension()
         .and_then(|value| value.to_str())
         .unwrap_or("");
+    // Rust files get a real tree-sitter parse (Beyond-v1 feature F1) instead
+    // of the line-based heuristic: accurate kinds, impl/trait association, and
+    // multi-line-aware start positions. Other languages keep the heuristic
+    // until their grammars are wired in.
+    if extension == "rs" {
+        let lines: Vec<&str> = content.lines().collect();
+        let mut symbols = Vec::new();
+        for symbol in peridot_symbols::outline_rust(&content) {
+            if symbols.len() >= limit {
+                break;
+            }
+            let signature = lines
+                .get(symbol.start_line.saturating_sub(1))
+                .map(|line| line.trim().to_string())
+                .unwrap_or_default();
+            symbols.push(SymbolEntry {
+                path: relative.clone(),
+                line: symbol.start_line,
+                kind: symbol.kind.label().to_string(),
+                name: symbol.name,
+                signature,
+            });
+        }
+        return Ok(symbols);
+    }
     let mut symbols = Vec::new();
     for (line_idx, line) in content.lines().enumerate() {
         if let Some((kind, name)) = detect_symbol(line, extension) {

@@ -36,7 +36,7 @@ bash -n install.sh
 
 ## Workspace Map
 
-14 narrow crates (`crates/`):
+15 narrow crates (`crates/`):
 
 | Crate | Responsibility |
 |-------|----------------|
@@ -50,6 +50,7 @@ bash -n install.sh
 | `peridot-agents` | Sub-agent runners |
 | `peridot-memory` | SQLite session/skill store + curator |
 | `peridot-project` | Project scanner, code map |
+| `peridot-symbols` | Tree-sitter semantic symbol extraction (F1) |
 | `peridot-mcp` | MCP client (stdio + HTTP) |
 | `peridot-git` | Git automation / worktrees |
 | `peridot-tui` | Ratatui UI, slash picker, rendering, i18n |

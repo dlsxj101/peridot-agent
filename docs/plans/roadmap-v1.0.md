@@ -171,21 +171,31 @@ treat them as separate milestones, not a single release.
 
 ### F1. LSP / Tree-sitter symbol index
 
-- **Status**: planned (spec §21.5.1, deferred to v2).
+- **Status**: in progress (first increment landed 2026-06-02).
 - **Goal**: replace grep/glob text search with semantic
   `symbol_definition` / `symbol_references` / `symbol_outline` tools so
   the model attaches exact defs/usages instead of whole grep dumps.
-- **Where**: new `peridot-lsp` (or `peridot-symbols`) crate, tool
-  registry in `peridot-tools`, codemap cache in `peridot-project`.
-- **Notes**: the persisted `.peridot/codemap.json` and the
-  `/codemap locate|outline|refs` slashes are already the pragmatic
-  text-based stand-in (E24–E28); this upgrades them to real semantic
-  indexing (tree-sitter grammars or multi-LSP clients) with incremental
-  refresh via the `notify` crate. Highest context-savings payoff.
+- **Where**: new `peridot-symbols` crate, tool registry in
+  `peridot-tools`, codemap cache in `peridot-project`.
+- **Done so far**: new `peridot-symbols` crate parses Rust with
+  `tree-sitter-rust` and returns structured `Symbol`s (kind, name,
+  1-based line range, impl/trait `container`) behind a `LanguageSymbols`
+  trait so other languages plug in later. `file_outline` /
+  `workspace_symbols` / `symbol_search` now use the tree-sitter parse for
+  `.rs` files (accurate kinds, impl-method association, multi-line-aware
+  positions) and keep the line-based heuristic for other languages. The
+  existing tool tests pass unchanged against the new parser; the crate
+  has its own unit tests. Behavior-preserving: fmt/clippy clean, full
+  suite green.
+- **Remaining**: `symbol_definition` / `symbol_references` as dedicated
+  semantic tools; more language grammars (TS, Go, Python) via the trait;
+  incremental refresh (notify crate) and a semantic codemap cache;
+  optionally real LSP clients. Highest context-savings payoff.
 
 ### F2. Multimodal image input (vision routing)
 
 - **Status**: partial (attach UX landed; vision routing planned).
+  Design doc: [`f2-multimodal-vision.md`](f2-multimodal-vision.md).
 - **Goal**: actually send attached images to a vision-capable model
   instead of recording placeholder metadata.
 - **Where**: `peridot-llm` provider adapters (Anthropic vision, OpenAI
@@ -193,27 +203,32 @@ treat them as separate milestones, not a single release.
 - **Notes**: the attach pipeline (`/attach`, VS Code paste/drop,
   `.peridot/attachments/`) is done. Remaining work is the vision model
   adapter + a text-only fallback (OCR) and routing rules so non-vision
-  models degrade gracefully.
+  models degrade gracefully. See the design doc for the content-part
+  model, provider shapes, and milestones.
 
 ### F3. Voice input
 
 - **Status**: planned (spec §21.5.10, deferred to v2).
+  Design doc: [`f3-voice-input.md`](f3-voice-input.md).
 - **Goal**: dictate prompts via audio capture → transcription.
 - **Where**: new optional crate (audio capture via `cpal`,
   transcription via local whisper.cpp or OpenAI Whisper API, VAD).
 - **Notes**: lowest priority of the feature track; isolate behind a
-  feature flag so the core CLI stays dependency-light.
+  feature flag so the core CLI stays dependency-light. See the design
+  doc for the `Transcriber` trait, backends, and TUI push-to-talk plan.
 
 ### F4. Web UI / browser client
 
 - **Status**: planned (spec §21.5.10, deferred to v2).
+  Design doc: [`f4-web-ui.md`](f4-web-ui.md).
 - **Goal**: a browser front-end over the existing daemon RPC.
 - **Where**: extends the `peridot daemon` JSON-RPC surface to
   HTTP/WebSocket; separate full-stack project (auth, multi-user, session
   isolation).
 - **Notes**: largest effort (4–8 weeks). The daemon RPC contract built
   for the VS Code extension is the foundation; this reuses it over a web
-  transport.
+  transport. See the design doc for the WS↔RPC bridge, auth/isolation,
+  and the shared-rendering plan with the VS Code webview.
 
 ---
 

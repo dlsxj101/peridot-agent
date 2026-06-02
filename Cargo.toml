@@ -11,6 +11,7 @@ members = [
     "crates/peridot-mcp",
     "crates/peridot-memory",
     "crates/peridot-project",
+    "crates/peridot-symbols",
     "crates/peridot-tools",
     "crates/peridot-tui",
     "crates/peridot-verify",
