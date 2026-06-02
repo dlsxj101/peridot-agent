@@ -1,6 +1,9 @@
+use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::{LazyLock, Mutex};
+use std::time::SystemTime;
 
 use async_trait::async_trait;
 use peridot_common::{PeriError, PeriResult, PermissionLevel, ToolGroup, ToolResult};
@@ -11,6 +14,59 @@ use crate::path::{ensure_within_project, required_str, workspace_path};
 use crate::{Tool, ToolContext};
 
 const MAX_SYMBOL_FILE_BYTES: u64 = 1_000_000;
+
+/// Cap on the number of files held in the per-file outline cache. When
+/// exceeded the cache is cleared wholesale — crude but bounded, and the entries
+/// rebuild lazily on the next query.
+const OUTLINE_CACHE_MAX_FILES: usize = 8_192;
+
+/// A cached per-file symbol outline, valid while the file's mod/size are
+/// unchanged. Incremental semantic code map (feature F1): repeated
+/// `workspace_symbols` / `symbol_search` / `symbol_definition` queries reuse
+/// parsed results and only re-parse files that actually changed.
+struct OutlineCacheEntry {
+    mtime: Option<SystemTime>,
+    size: u64,
+    /// The full outline (no result limit), keyed below by absolute path.
+    symbols: Vec<SymbolEntry>,
+}
+
+static OUTLINE_CACHE: LazyLock<Mutex<HashMap<PathBuf, OutlineCacheEntry>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Returns the cached full outline for `path` when the cache entry's mtime and
+/// size still match `metadata`.
+fn outline_cache_get(
+    path: &Path,
+    mtime: Option<SystemTime>,
+    size: u64,
+) -> Option<Vec<SymbolEntry>> {
+    let cache = OUTLINE_CACHE.lock().ok()?;
+    let entry = cache.get(path)?;
+    if entry.size == size && entry.mtime == mtime {
+        Some(entry.symbols.clone())
+    } else {
+        None
+    }
+}
+
+/// Stores the full outline for `path` under its current mtime/size.
+fn outline_cache_put(path: &Path, mtime: Option<SystemTime>, size: u64, symbols: Vec<SymbolEntry>) {
+    let Ok(mut cache) = OUTLINE_CACHE.lock() else {
+        return;
+    };
+    if cache.len() >= OUTLINE_CACHE_MAX_FILES && !cache.contains_key(path) {
+        cache.clear();
+    }
+    cache.insert(
+        path.to_path_buf(),
+        OutlineCacheEntry {
+            mtime,
+            size,
+            symbols,
+        },
+    );
+}
 
 /// Built-in evidence ledger reader.
 #[derive(Clone, Debug)]
@@ -1194,6 +1250,25 @@ fn outline_file(project_root: &Path, path: &Path, limit: usize) -> PeriResult<Ve
     if metadata.len() > MAX_SYMBOL_FILE_BYTES {
         return Ok(Vec::new());
     }
+    let mtime = metadata.modified().ok();
+    let size = metadata.len();
+    // Reuse the cached outline when the file is unchanged; otherwise parse and
+    // cache the full outline. The result `limit` is applied on return so the
+    // cache is independent of any single query's cap.
+    let full = match outline_cache_get(path, mtime, size) {
+        Some(cached) => cached,
+        None => {
+            let built = build_outline_full(project_root, path)?;
+            outline_cache_put(path, mtime, size, built.clone());
+            built
+        }
+    };
+    Ok(full.into_iter().take(limit).collect())
+}
+
+/// Parses a file's complete symbol outline (no result limit). Tree-sitter
+/// languages get a real parse; others fall back to the line heuristic.
+fn build_outline_full(project_root: &Path, path: &Path) -> PeriResult<Vec<SymbolEntry>> {
     let content = read_text_file(path)?.content;
     let relative = path
         .strip_prefix(project_root)
@@ -1204,18 +1279,13 @@ fn outline_file(project_root: &Path, path: &Path, limit: usize) -> PeriResult<Ve
         .extension()
         .and_then(|value| value.to_str())
         .unwrap_or("");
-    // Languages with a tree-sitter grammar (Rust, TypeScript/JS, Python) get a
-    // real parse (Beyond-v1 feature F1) instead of the line-based heuristic:
+    // Languages with a tree-sitter grammar get a real parse (feature F1):
     // accurate kinds, class/impl association, and multi-line-aware start
-    // positions. Other languages keep the heuristic until their grammars are
-    // wired in.
+    // positions. Other languages keep the line-based heuristic.
     if let Some(parsed) = peridot_symbols::outline_for_extension(extension, &content) {
         let lines: Vec<&str> = content.lines().collect();
         let mut symbols = Vec::new();
         for symbol in parsed {
-            if symbols.len() >= limit {
-                break;
-            }
             let signature = lines
                 .get(symbol.start_line.saturating_sub(1))
                 .map(|line| line.trim().to_string())
@@ -1242,9 +1312,6 @@ fn outline_file(project_root: &Path, path: &Path, limit: usize) -> PeriResult<Ve
                 container: None,
                 signature: line.trim().to_string(),
             });
-            if symbols.len() >= limit {
-                break;
-            }
         }
     }
     Ok(symbols)

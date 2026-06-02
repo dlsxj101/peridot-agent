@@ -313,6 +313,38 @@ async fn file_outline_parses_typescript_and_python() {
 }
 
 #[tokio::test]
+async fn file_outline_cache_reparses_changed_files() {
+    let root =
+        std::env::temp_dir().join(format!("peridot-tools-outlinecache-{}", std::process::id()));
+    fs::create_dir_all(root.join("src")).unwrap();
+    let file = root.join("src/lib.rs");
+    fs::write(&file, "pub fn alpha() {}\n").unwrap();
+    let ctx = ToolContext::new(&root, PermissionMode::Auto);
+
+    let first = FileOutlineTool
+        .execute(serde_json::json!({"path": "src/lib.rs"}), &ctx)
+        .await
+        .unwrap();
+    let first = first.output.as_array().unwrap();
+    assert!(first.iter().any(|s| s["name"] == "alpha"), "{first:?}");
+
+    // Rewrite with different content (and size, so the cache key changes even
+    // if mtime resolution is coarse): the new symbol must show up.
+    fs::write(&file, "pub fn alpha() {}\npub fn beta() {}\n").unwrap();
+    let second = FileOutlineTool
+        .execute(serde_json::json!({"path": "src/lib.rs"}), &ctx)
+        .await
+        .unwrap();
+    let second = second.output.as_array().unwrap();
+    assert!(
+        second.iter().any(|s| s["name"] == "beta"),
+        "cache should re-parse a changed file: {second:?}"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
 async fn symbol_definition_and_references_locate_rust_symbols() {
     let root = std::env::temp_dir().join(format!("peridot-tools-symdefs-{}", std::process::id()));
     fs::create_dir_all(root.join("src")).unwrap();
