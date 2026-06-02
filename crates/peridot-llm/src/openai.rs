@@ -352,10 +352,34 @@ pub(crate) fn openai_chat_payload(request: &CompletionRequest) -> Value {
                 }
             }
             MessageRole::User => {
-                messages.push(json!({
-                    "role": "user",
-                    "content": message.content,
-                }));
+                if message.images.is_empty() {
+                    messages.push(json!({
+                        "role": "user",
+                        "content": message.content,
+                    }));
+                } else {
+                    // Multimodal turn: text part (if any) then image_url parts
+                    // carrying base64 data URLs.
+                    let mut parts: Vec<Value> = Vec::new();
+                    if !message.content.is_empty() {
+                        parts.push(json!({"type": "text", "text": message.content}));
+                    }
+                    for image in &message.images {
+                        parts.push(json!({
+                            "type": "image_url",
+                            "image_url": {
+                                "url": format!(
+                                    "data:{};base64,{}",
+                                    image.media_type, image.data
+                                ),
+                            },
+                        }));
+                    }
+                    messages.push(json!({
+                        "role": "user",
+                        "content": parts,
+                    }));
+                }
             }
         }
     }

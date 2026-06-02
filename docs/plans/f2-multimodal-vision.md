@@ -17,8 +17,21 @@ text-only models.
 - ✅ Attach pipeline: `/attach`, `/attachments`, `/detach`, VS Code
   paste/drop, `.peridot/attachments/` storage, session-local inventory.
 - ✅ Images are recorded as attachment metadata (path + placeholder),
-  surfaced as cards, but **not** sent to the model as image content.
-- The LLM layer (`peridot-llm`) sends text-only message content today.
+  surfaced as cards.
+- ✅ **LLM layer (landed, first increment)**: `peridot-llm` carries images.
+  `LlmMessage` has an additive `images: Vec<ImageContent>` field (empty on
+  the text-only path, so every existing call site is unchanged) and a
+  `user_with_images` builder. The Anthropic (`image`/`base64` block),
+  OpenAI Chat (`image_url` data-URL part), and OpenAI Codex/Responses
+  (`input_image` part) adapters all serialize images. A
+  `model_supports_vision(model)` capability gate distinguishes vision
+  models from text-only ones (conservative: unknown → false). Unit-tested
+  on all three wire formats + the capability table.
+- ❌ **Not yet wired end-to-end**: attached images are still recorded as
+  text placeholders in `ContextManager::to_messages`; nothing yet reads
+  the image bytes, base64-encodes them, and emits `user_with_images`. That
+  resolver + the vision-model routing + OCR fallback are the remaining
+  milestones below.
 
 ## Architecture
 
@@ -76,14 +89,21 @@ Keep a `From<String>` so existing text-only call sites are unchanged
 
 ## Milestones
 
-1. Content-part model + serialization, text path unchanged (tests:
-   round-trip, existing text calls unaffected).
-2. Anthropic vision adapter + capability gate (mock-provider test with an
-   image part).
-3. OpenAI vision adapter.
-4. Attachment→image-part resolver with size cap/downscale.
-5. OCR fallback behind a feature flag + trait.
-6. Config knobs + surface indicators.
+1. ✅ Image content model + serialization, text path unchanged (`images`
+   field + `user_with_images`; tests assert text calls unaffected).
+2. ✅ Anthropic vision adapter + capability gate (`model_supports_vision`).
+3. ✅ OpenAI Chat + Codex/Responses vision adapters.
+4. ⬜ Attachment→image-part resolver with size cap/downscale, wired into
+   request assembly and gated by `model_supports_vision`.
+5. ⬜ OCR fallback behind a feature flag + trait (text-only models).
+6. ⬜ Config knobs + surface indicators.
+
+The remaining work is the resolver (milestone 4): in the request-build
+path, parse image-attachment plan reminders, read the bytes (size cap +
+downscale), base64-encode, and replace the placeholder user turn with a
+`user_with_images` message — only when `model_supports_vision(active)` is
+true; otherwise fall back to OCR text (milestone 5) or the existing
+placeholder.
 
 ## Risks / decisions
 

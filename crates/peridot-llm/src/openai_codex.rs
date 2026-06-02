@@ -254,11 +254,21 @@ pub(crate) fn openai_codex_payload(request: &CompletionRequest) -> Value {
     for message in &request.messages {
         match message.role {
             MessageRole::System => {}
-            MessageRole::User => input.push(json!({
-                "type": "message",
-                "role": "user",
-                "content": [{"type": "input_text", "text": message.content}],
-            })),
+            MessageRole::User => {
+                let mut content = vec![json!({"type": "input_text", "text": message.content})];
+                // Responses API image parts (multimodal input).
+                for image in &message.images {
+                    content.push(json!({
+                        "type": "input_image",
+                        "image_url": format!("data:{};base64,{}", image.media_type, image.data),
+                    }));
+                }
+                input.push(json!({
+                    "type": "message",
+                    "role": "user",
+                    "content": content,
+                }));
+            }
             MessageRole::Assistant => {
                 if !message.content.is_empty() {
                     input.push(json!({

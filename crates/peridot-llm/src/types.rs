@@ -24,6 +24,19 @@ pub enum MessageRole {
     Tool,
 }
 
+/// A base64-encoded image attached to a user message (multimodal input).
+///
+/// Providers serialize this into their native image block: Anthropic
+/// `{type:"image", source:{type:"base64", media_type, data}}`; OpenAI
+/// `{type:"image_url", image_url:{url:"data:<media_type>;base64,<data>"}}`.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ImageContent {
+    /// IANA media type, e.g. `image/png`, `image/jpeg`, `image/webp`, `image/gif`.
+    pub media_type: String,
+    /// Base64-encoded image bytes (no data-URL prefix).
+    pub data: String,
+}
+
 /// A chat message in Peridot's provider-neutral format.
 ///
 /// Carries native tool-calling metadata so providers can emit the structured wire
@@ -46,6 +59,12 @@ pub struct LlmMessage {
     /// `Tool` role messages; pairs with one of the assistant's `tool_calls` ids.
     #[serde(default)]
     pub tool_call_id: Option<String>,
+    /// Images attached to a `User` message (multimodal input). Empty for the
+    /// text-only path, which keeps every existing call site unchanged.
+    /// Providers emit these as native image blocks only when the active model
+    /// is vision-capable (see [`crate::models::model_supports_vision`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<ImageContent>,
 }
 
 impl LlmMessage {
@@ -56,6 +75,20 @@ impl LlmMessage {
             content: content.into(),
             tool_calls: Vec::new(),
             tool_call_id: None,
+            images: Vec::new(),
+        }
+    }
+
+    /// Builds a user message carrying one or more images alongside optional
+    /// text (multimodal input). Providers emit the images as native image
+    /// blocks when the model is vision-capable.
+    pub fn user_with_images(content: impl Into<String>, images: Vec<ImageContent>) -> Self {
+        Self {
+            role: MessageRole::User,
+            content: content.into(),
+            tool_calls: Vec::new(),
+            tool_call_id: None,
+            images,
         }
     }
 
@@ -70,6 +103,7 @@ impl LlmMessage {
             content: content.into(),
             tool_calls,
             tool_call_id: None,
+            images: Vec::new(),
         }
     }
 
@@ -80,6 +114,7 @@ impl LlmMessage {
             content: content.into(),
             tool_calls: Vec::new(),
             tool_call_id: Some(tool_call_id.into()),
+            images: Vec::new(),
         }
     }
 }

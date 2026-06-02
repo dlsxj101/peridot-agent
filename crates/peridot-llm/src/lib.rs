@@ -10,13 +10,13 @@ mod transport;
 mod types;
 
 pub use anthropic::ClaudeProvider;
-pub use models::context_window_tokens;
+pub use models::{context_window_tokens, model_supports_vision};
 pub use openai::OpenAiProvider;
 pub use openai_codex::OpenAiCodexProvider;
 pub use provider::{LlmProvider, PricingTable};
 pub use types::{
-    AuthMethod, CompletionRequest, CompletionResponse, CompletionStreamChunk, LlmMessage,
-    MessageRole, ToolChoice, ToolDefinition, ToolInvocation, Usage,
+    AuthMethod, CompletionRequest, CompletionResponse, CompletionStreamChunk, ImageContent,
+    LlmMessage, MessageRole, ToolChoice, ToolDefinition, ToolInvocation, Usage,
 };
 
 #[cfg(test)]
@@ -332,6 +332,68 @@ mod tests {
         assert_eq!(payload["messages"][0]["content"], "system");
         assert_eq!(payload["messages"][1]["role"], "user");
         assert!(payload.get("tools").is_none());
+    }
+
+    fn image_message() -> LlmMessage {
+        LlmMessage::user_with_images(
+            "describe this",
+            vec![ImageContent {
+                media_type: "image/png".to_string(),
+                data: "QUJD".to_string(),
+            }],
+        )
+    }
+
+    #[test]
+    fn anthropic_payload_serializes_image_blocks() {
+        let payload = anthropic_payload(&request(vec![image_message()]));
+        let content = payload["messages"][0]["content"].as_array().unwrap();
+        // Image block first, then text block.
+        assert_eq!(content[0]["type"], "image");
+        assert_eq!(content[0]["source"]["type"], "base64");
+        assert_eq!(content[0]["source"]["media_type"], "image/png");
+        assert_eq!(content[0]["source"]["data"], "QUJD");
+        assert_eq!(content[1]["type"], "text");
+        assert_eq!(content[1]["text"], "describe this");
+    }
+
+    #[test]
+    fn openai_payload_serializes_image_url_parts() {
+        let payload = openai_chat_payload(&request(vec![image_message()]));
+        let user = payload["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|message| message["role"] == "user")
+            .unwrap();
+        let content = user["content"].as_array().unwrap();
+        // Text part first, then the image_url data URL.
+        assert_eq!(content[0]["type"], "text");
+        assert_eq!(content[1]["type"], "image_url");
+        assert_eq!(content[1]["image_url"]["url"], "data:image/png;base64,QUJD");
+    }
+
+    #[test]
+    fn codex_payload_serializes_input_image_parts() {
+        let payload = openai_codex_payload(&request(vec![image_message()]));
+        let message = payload["input"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| item["role"] == "user")
+            .unwrap();
+        let content = message["content"].as_array().unwrap();
+        assert_eq!(content[0]["type"], "input_text");
+        assert_eq!(content[1]["type"], "input_image");
+        assert_eq!(content[1]["image_url"], "data:image/png;base64,QUJD");
+    }
+
+    #[test]
+    fn text_only_user_message_stays_a_plain_string() {
+        // Backward compatibility: no images → content remains a string.
+        let payload =
+            anthropic_payload(&request(vec![LlmMessage::new(MessageRole::User, "hello")]));
+        assert_eq!(payload["messages"][0]["content"], "hello");
     }
 
     #[test]

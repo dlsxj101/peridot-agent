@@ -354,10 +354,39 @@ pub(crate) fn anthropic_payload_with_cache(
                     }))
                 }
             }
-            MessageRole::User => Some(json!({
-                "role": "user",
-                "content": message.content,
-            })),
+            MessageRole::User => {
+                if message.images.is_empty() {
+                    return Some(json!({
+                        "role": "user",
+                        "content": message.content,
+                    }));
+                }
+                // Multimodal turn: image blocks first, then the text block.
+                let mut blocks: Vec<Value> = message
+                    .images
+                    .iter()
+                    .map(|image| {
+                        json!({
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": image.media_type,
+                                "data": image.data,
+                            },
+                        })
+                    })
+                    .collect();
+                if !message.content.is_empty() {
+                    blocks.push(json!({
+                        "type": "text",
+                        "text": message.content,
+                    }));
+                }
+                Some(json!({
+                    "role": "user",
+                    "content": blocks,
+                }))
+            }
         })
         .collect::<Vec<_>>();
 

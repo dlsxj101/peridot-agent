@@ -199,17 +199,22 @@ treat them as separate milestones, not a single release.
 
 ### F2. Multimodal image input (vision routing)
 
-- **Status**: partial (attach UX landed; vision routing planned).
-  Design doc: [`f2-multimodal-vision.md`](f2-multimodal-vision.md).
+- **Status**: in progress (attach UX + LLM vision layer landed; resolver
+  wiring planned). Design doc:
+  [`f2-multimodal-vision.md`](f2-multimodal-vision.md).
 - **Goal**: actually send attached images to a vision-capable model
   instead of recording placeholder metadata.
-- **Where**: `peridot-llm` provider adapters (Anthropic vision, OpenAI
-  vision), `peridot-context` attachment payloads.
-- **Notes**: the attach pipeline (`/attach`, VS Code paste/drop,
-  `.peridot/attachments/`) is done. Remaining work is the vision model
-  adapter + a text-only fallback (OCR) and routing rules so non-vision
-  models degrade gracefully. See the design doc for the content-part
-  model, provider shapes, and milestones.
+- **Where**: `peridot-llm` provider adapters (Anthropic / OpenAI Chat /
+  OpenAI Codex), `peridot-context` / request assembly for the resolver.
+- **Done so far**: `LlmMessage` carries an additive `images` field +
+  `user_with_images` builder (text path unchanged); all three provider
+  adapters serialize images into their native blocks; a
+  `model_supports_vision(model)` capability gate (conservative default).
+  Unit-tested on every wire format and the capability table.
+- **Remaining**: the attachment→image resolver at request-build time
+  (read bytes, size cap/downscale, base64, gate on
+  `model_supports_vision`), vision-model routing, and an OCR text-only
+  fallback. See the design doc milestones 4–6.
 
 ### F3. Voice input
 

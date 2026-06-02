@@ -88,6 +88,55 @@ pub fn context_window_tokens(model: &str) -> Option<usize> {
     None
 }
 
+/// Returns whether `model` accepts image input (multimodal). Conservative:
+/// unknown models return `false` so we never attach images to a model we
+/// can't confirm supports them. Used by the vision-routing path (feature F2)
+/// to decide between inlining image blocks and a text-only fallback.
+///
+/// The match is prefix/substring based so versioned aliases like
+/// `gpt-4o-2024-08-06` resolve correctly.
+pub fn model_supports_vision(model: &str) -> bool {
+    let lower = model.to_ascii_lowercase();
+    // Anthropic: Claude 3 and every later family accept images.
+    if lower.contains("claude-opus")
+        || lower.contains("claude-sonnet")
+        || lower.contains("claude-haiku")
+        || lower.starts_with("claude-3")
+    {
+        return true;
+    }
+    // OpenAI: 4o / 4.1 / 5 / 4-turbo are multimodal; base gpt-4 and
+    // gpt-3.5 are text-only.
+    if lower.starts_with("gpt-4o")
+        || lower.starts_with("gpt-4.1")
+        || lower.starts_with("gpt-5")
+        || lower.starts_with("gpt-4-turbo")
+    {
+        return true;
+    }
+    // o-series reasoning models accept images, except text-only o1-mini.
+    if lower.starts_with("o1-mini") {
+        return false;
+    }
+    if lower.starts_with("o1") || lower.starts_with("o3") || lower.starts_with("o4") {
+        return true;
+    }
+    // Gemini: all current models are multimodal.
+    if lower.contains("gemini") {
+        return true;
+    }
+    // Llama 4 is natively multimodal.
+    if lower.contains("llama-4") {
+        return true;
+    }
+    // Grok 4 and the explicit vision variants.
+    if lower.contains("grok-4") || lower.contains("grok-2-vision") || lower.contains("grok-vision")
+    {
+        return true;
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -127,5 +176,30 @@ mod tests {
     #[test]
     fn case_insensitive_match() {
         assert_eq!(context_window_tokens("Claude-Sonnet-4-6"), Some(200_000));
+    }
+
+    #[test]
+    fn vision_capable_models() {
+        assert!(model_supports_vision("claude-opus-4-8"));
+        assert!(model_supports_vision("claude-3-haiku-20240307"));
+        assert!(model_supports_vision("gpt-4o-2024-08-06"));
+        assert!(model_supports_vision("gpt-4.1-mini"));
+        assert!(model_supports_vision("gpt-5"));
+        assert!(model_supports_vision("o3"));
+        assert!(model_supports_vision("gemini-2.5-pro"));
+        assert!(model_supports_vision("llama-4-scout"));
+    }
+
+    #[test]
+    fn text_only_models_reject_vision() {
+        assert!(!model_supports_vision("gpt-4")); // base gpt-4, not turbo/4o
+        assert!(!model_supports_vision("gpt-3.5-turbo"));
+        assert!(!model_supports_vision("o1-mini"));
+        assert!(!model_supports_vision("totally-fictional-model"));
+    }
+
+    #[test]
+    fn vision_match_is_case_insensitive() {
+        assert!(model_supports_vision("GPT-4o"));
     }
 }
