@@ -151,6 +151,19 @@ pub struct HarnessAgent {
     cached_tool_definitions: Vec<ToolDefinition>,
 }
 
+/// Strips image blocks from outgoing messages when the active model is not
+/// vision-capable (feature F2). Text-only providers reject requests that carry
+/// image content, so we drop the images and let the user turn fall back to its
+/// text placeholder. A no-op for vision-capable models.
+fn enforce_vision_capability(messages: &mut [LlmMessage], model: &str) {
+    if peridot_llm::model_supports_vision(model) {
+        return;
+    }
+    for message in messages.iter_mut() {
+        message.images.clear();
+    }
+}
+
 impl HarnessAgent {
     /// Creates a harness agent from state and dependencies.
     pub fn new(state: AgentState, context: ContextManager, tools: ToolRegistry) -> Self {
@@ -591,7 +604,11 @@ impl HarnessAgent {
         });
         let tool_definitions = self.cached_tool_definitions.clone();
         let system_prompt = system_prompt_for_role(self.state.mode, self.role).to_string();
-        let messages = self.context.to_messages();
+        let mut messages = self.context.to_messages();
+        // Vision routing (feature F2): a text-only model must not receive image
+        // blocks (the provider would reject the request). The user turn keeps
+        // its text placeholder, so the attachment degrades to a textual mention.
+        enforce_vision_capability(&mut messages, &request.model);
         // Emit the effective next-request footprint, not just the stored
         // context-manager estimate. Provider latency is driven by the full
         // assembled request: system prompt, messages, tool schemas and the
@@ -2490,6 +2507,26 @@ fn normalize_shell_command_for_approval(command: &str) -> String {
 #[cfg(test)]
 mod helpers_tests {
     use super::*;
+
+    #[test]
+    fn enforce_vision_capability_strips_images_for_text_only_models() {
+        use peridot_llm::{ImageContent, MessageRole};
+        let image = ImageContent {
+            media_type: "image/png".to_string(),
+            data: "QUJD".to_string(),
+        };
+        let mut messages = vec![LlmMessage::user_with_images("look", vec![image.clone()])];
+
+        // Vision-capable model: images preserved.
+        enforce_vision_capability(&mut messages, "claude-opus-4-8");
+        assert_eq!(messages[0].images.len(), 1);
+
+        // Text-only model: images stripped, text kept.
+        enforce_vision_capability(&mut messages, "gpt-3.5-turbo");
+        assert!(messages[0].images.is_empty());
+        assert_eq!(messages[0].content, "look");
+        assert_eq!(messages[0].role, MessageRole::User);
+    }
 
     #[test]
     fn transition_phase_emits_event_on_change() {

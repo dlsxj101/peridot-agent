@@ -1983,9 +1983,10 @@ fn append_plan_reminder_to_context(
     project_root: &Path,
     session_id: &str,
     content: String,
+    images: Vec<peridot_llm::ImageContent>,
 ) -> Result<(), String> {
     let mut entries = read_context_snapshot(project_root, session_id).unwrap_or_default();
-    entries.push(ContextEntry::trusted(ContextSource::PlanReminder, content));
+    entries.push(ContextEntry::trusted(ContextSource::PlanReminder, content).with_images(images));
     write_context_snapshot(project_root, session_id, &entries)
 }
 
@@ -2317,6 +2318,7 @@ fn handle_skill_load(state: &mut TuiState, project_root: &Path, name: &str, args
         project_root,
         &session_id,
         skill_plan_reminder(&skill, args),
+        Vec::new(),
     ) {
         state.push_error(format!("skill `{name}`: failed to update context: {err}"));
         return;
@@ -3122,8 +3124,13 @@ fn handle_attach(state: &mut TuiState, project_root: &Path, path: &str) {
                 return;
             }
             let reminder = commands::attachment_plan_reminder(&attachment);
-            match append_plan_reminder_to_context(project_root, &state.current_session_id, reminder)
-            {
+            let images = commands::attachment_image_content(&attachment);
+            match append_plan_reminder_to_context(
+                project_root,
+                &state.current_session_id,
+                reminder,
+                images,
+            ) {
                 Ok(()) => {
                     state.add_attachment_path(attachment.path.clone());
                     state.push_transcript(format!(

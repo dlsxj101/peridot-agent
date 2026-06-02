@@ -9,7 +9,8 @@ use std::{collections::HashSet, fs};
 
 use peridot_common::{PeriError, PeriResult, ReasoningEffort};
 use peridot_llm::{
-    CompletionRequest, LlmMessage, LlmProvider, MessageRole, ToolChoice, ToolInvocation,
+    CompletionRequest, ImageContent, LlmMessage, LlmProvider, MessageRole, ToolChoice,
+    ToolInvocation,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -83,6 +84,13 @@ pub struct ContextEntry {
     /// `.peridot/evidence/`.
     #[serde(default)]
     pub evidence_refs: Vec<EvidenceRef>,
+    /// Images carried by this entry (multimodal input, feature F2). Populated
+    /// for image attachments; empty for the text-only path. When non-empty and
+    /// the entry renders as a `User` message, [`ContextManager::to_messages`]
+    /// emits a `user_with_images` message so a vision-capable model receives
+    /// the image blocks. The core loop strips these for text-only models.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<ImageContent>,
 }
 
 impl ContextEntry {
@@ -98,6 +106,7 @@ impl ContextEntry {
             parent_turn_id: None,
             pinned: false,
             evidence_refs: Vec::new(),
+            images: Vec::new(),
         }
     }
 
@@ -113,6 +122,7 @@ impl ContextEntry {
             parent_turn_id: None,
             pinned: false,
             evidence_refs: Vec::new(),
+            images: Vec::new(),
         }
     }
 
@@ -132,7 +142,14 @@ impl ContextEntry {
             parent_turn_id: None,
             pinned: false,
             evidence_refs: Vec::new(),
+            images: Vec::new(),
         }
+    }
+
+    /// Attaches images to this entry (multimodal attachment, feature F2).
+    pub fn with_images(mut self, images: Vec<ImageContent>) -> Self {
+        self.images = images;
+        self
     }
 
     /// Attaches a `tool_call_id` to this entry. Used after creating an untrusted
@@ -1132,6 +1149,12 @@ Use this as intent and evidence index, not as proof. Re-read exact files or call
                     entry.content.clone()
                 };
                 append_evidence_footer(&mut content, &entry.evidence_refs);
+                // Image attachments render as a multimodal user turn so a
+                // vision-capable model receives the image blocks. The core
+                // loop strips these for text-only models (feature F2).
+                if !entry.images.is_empty() && role == MessageRole::User {
+                    return LlmMessage::user_with_images(content, entry.images.clone());
+                }
                 LlmMessage::new(role, content)
             })
             .collect::<Vec<_>>();
@@ -1552,13 +1575,17 @@ fn source_name(source: &ContextSource) -> &'static str {
 fn merge_consecutive_roles(messages: &mut Vec<LlmMessage>) {
     let mut merged: Vec<LlmMessage> = Vec::new();
     for message in messages.drain(..) {
+        // Messages carrying tool metadata or image blocks are kept discrete:
+        // merging concatenates `content` only and would silently drop images.
         let carries_tool_metadata =
             !message.tool_calls.is_empty() || message.tool_call_id.is_some();
         if !carries_tool_metadata
+            && message.images.is_empty()
             && let Some(last) = merged.last_mut()
             && last.role == message.role
             && last.tool_calls.is_empty()
             && last.tool_call_id.is_none()
+            && last.images.is_empty()
         {
             last.content.push_str("\n\n");
             last.content.push_str(&message.content);
@@ -1671,6 +1698,30 @@ mod tests {
         assert_eq!(manager.entries()[0].content, "hello");
         assert_eq!(manager.entries()[1].content, "world");
         assert!(manager.estimated_tokens() >= 2);
+    }
+
+    #[test]
+    fn image_attachment_entry_becomes_a_multimodal_user_message() {
+        let image = ImageContent {
+            media_type: "image/png".to_string(),
+            data: "QUJD".to_string(),
+        };
+        let mut manager = ContextManager::new();
+        manager.append(
+            ContextEntry::trusted(ContextSource::PlanReminder, "[attachment] screen.png")
+                .with_images(vec![image.clone()]),
+        );
+        manager.append(ContextEntry::trusted(ContextSource::User, "what is this?"));
+
+        let messages = manager.to_messages();
+        // The image entry stays a discrete user message carrying the image
+        // (not merged into the following user turn, which would drop it).
+        let image_message = messages
+            .iter()
+            .find(|message| !message.images.is_empty())
+            .expect("image-carrying message");
+        assert_eq!(image_message.role, MessageRole::User);
+        assert_eq!(image_message.images, vec![image]);
     }
 
     #[test]

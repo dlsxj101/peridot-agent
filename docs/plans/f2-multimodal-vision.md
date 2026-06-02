@@ -18,20 +18,27 @@ text-only models.
   paste/drop, `.peridot/attachments/` storage, session-local inventory.
 - ✅ Images are recorded as attachment metadata (path + placeholder),
   surfaced as cards.
-- ✅ **LLM layer (landed, first increment)**: `peridot-llm` carries images.
-  `LlmMessage` has an additive `images: Vec<ImageContent>` field (empty on
-  the text-only path, so every existing call site is unchanged) and a
-  `user_with_images` builder. The Anthropic (`image`/`base64` block),
-  OpenAI Chat (`image_url` data-URL part), and OpenAI Codex/Responses
-  (`input_image` part) adapters all serialize images. A
-  `model_supports_vision(model)` capability gate distinguishes vision
-  models from text-only ones (conservative: unknown → false). Unit-tested
-  on all three wire formats + the capability table.
-- ❌ **Not yet wired end-to-end**: attached images are still recorded as
-  text placeholders in `ContextManager::to_messages`; nothing yet reads
-  the image bytes, base64-encodes them, and emits `user_with_images`. That
-  resolver + the vision-model routing + OCR fallback are the remaining
-  milestones below.
+- ✅ **LLM layer**: `peridot-llm` carries images. `LlmMessage` has an
+  additive `images: Vec<ImageContent>` field (empty on the text-only path,
+  so every existing call site is unchanged) and a `user_with_images`
+  builder. The Anthropic (`image`/`base64` block), OpenAI Chat
+  (`image_url` data-URL part), and OpenAI Codex/Responses (`input_image`
+  part) adapters all serialize images. A `model_supports_vision(model)`
+  capability gate distinguishes vision models from text-only ones
+  (conservative: unknown → false). Unit-tested on all three wire formats +
+  the capability table.
+- ✅ **End-to-end wiring (landed)**: `/attach` (TUI and daemon/VS Code
+  surfaces) now base64-encodes an attached image (up to `MAX_IMAGE_BYTES`
+  = 5 MB; larger stays placeholder-only) and stores it on the
+  `ContextEntry.images` field. `ContextManager::to_messages` emits a
+  `user_with_images` turn for image-carrying entries (and the role-merge
+  pass keeps them discrete so images aren't dropped). The core loop calls
+  `enforce_vision_capability`, stripping image blocks when the active model
+  is text-only so the request stays valid (the user turn keeps its text
+  placeholder). Tested at each layer.
+- ❌ **Remaining**: image downscaling (only a hard size cap today), an OCR
+  text fallback for text-only models (milestone 5), and config knobs +
+  surface indicators (milestone 6).
 
 ## Architecture
 
@@ -93,17 +100,19 @@ Keep a `From<String>` so existing text-only call sites are unchanged
    field + `user_with_images`; tests assert text calls unaffected).
 2. ✅ Anthropic vision adapter + capability gate (`model_supports_vision`).
 3. ✅ OpenAI Chat + Codex/Responses vision adapters.
-4. ⬜ Attachment→image-part resolver with size cap/downscale, wired into
-   request assembly and gated by `model_supports_vision`.
-5. ⬜ OCR fallback behind a feature flag + trait (text-only models).
-6. ⬜ Config knobs + surface indicators.
+4. ✅ Attachment→image resolver wired into the context/request path
+   (base64 at attach time with a 5 MB cap; `user_with_images` from
+   `to_messages`; `enforce_vision_capability` gate in the core loop).
+5. ⬜ Image downscaling + an OCR text fallback for text-only models
+   (behind a feature flag + trait).
+6. ⬜ Config knobs (`[vision] enabled`, `max_image_bytes`, model override)
+   + surface indicators ("image sent" vs "placeholder").
 
-The remaining work is the resolver (milestone 4): in the request-build
-path, parse image-attachment plan reminders, read the bytes (size cap +
-downscale), base64-encode, and replace the placeholder user turn with a
-`user_with_images` message — only when `model_supports_vision(active)` is
-true; otherwise fall back to OCR text (milestone 5) or the existing
-placeholder.
+Milestone 4 chose to carry the image bytes on `ContextEntry.images`
+(encoded once at attach time) rather than re-reading files during request
+assembly: it keeps file I/O at the attach surface (which already has the
+workspace root) and out of the hot request path, and the gate
+(`model_supports_vision`) lives in the core loop where the model is known.
 
 ## Risks / decisions
 

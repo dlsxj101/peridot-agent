@@ -322,6 +322,7 @@ Nine SPEC-consistency issues from the v0.5.1 audit are now resolved (see [CHANGE
 - Bounded agent loop with deterministic mock provider support, Goal Checker, budget guardrails, parse-failure recovery, and intent clarification flow (`agent_ask_user`).
 - Project scanner for Rust, Node, Python, Go, Make, AGENTS metadata, and git state.
 - Semantic symbol extraction (`peridot-symbols`, tree-sitter) for Rust, TypeScript/JavaScript/JSX, and Python, backing `file_outline` / `workspace_symbols` / `symbol_search` / `symbol_definition` / `symbol_references`; other languages use the line-based heuristic.
+- Multimodal image input: `/attach`-ed images are sent to vision-capable models (base64, ≤5 MB) and automatically stripped to a text placeholder for text-only models.
 - SQLite-backed session summary store with session save/resume.
 - Multi-session runtime: `SessionRouter`, `CancelToken`, workspace isolation, `/fork`, `/teammate`, `/worktree` subagent spawning.
 - LLM-generated session titles after first response (main model, no reasoning overhead).

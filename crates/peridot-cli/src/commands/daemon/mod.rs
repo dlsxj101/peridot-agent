@@ -1895,6 +1895,7 @@ async fn execute_session_command(
                     state,
                     session_id,
                     skill_plan_reminder(&skill, &args),
+                    Vec::new(),
                 )?;
             }
             Ok(serde_json::json!({
@@ -2205,9 +2206,10 @@ fn append_plan_reminder_to_context(
     state: &DaemonState,
     session_id: &str,
     content: String,
+    images: Vec<peridot_llm::ImageContent>,
 ) -> Result<(), String> {
     let mut entries = read_context_snapshot(state, session_id).unwrap_or_default();
-    entries.push(ContextEntry::trusted(ContextSource::PlanReminder, content));
+    entries.push(ContextEntry::trusted(ContextSource::PlanReminder, content).with_images(images));
     write_context_snapshot(state, session_id, &entries)
 }
 

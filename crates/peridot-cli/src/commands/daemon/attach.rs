@@ -38,6 +38,7 @@ pub(super) fn handle_command_attach(
         state,
         &session_id,
         crate::commands::attachment_plan_reminder(&attachment),
+        crate::commands::attachment_image_content(&attachment),
     )?;
     Ok(serde_json::json!({
         "kind": "attach",

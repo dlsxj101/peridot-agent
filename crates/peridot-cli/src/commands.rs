@@ -49,8 +49,8 @@ mod verify;
 pub(crate) use agents::run_agents_command;
 use agents::{agents_draft, find_agents_instruction};
 pub(crate) use attach::{
-    AttachmentArtifact, attachment_plan_reminder, attachments_from_context,
-    detach_attachments_from_context, load_text_attachment,
+    AttachmentArtifact, attachment_image_content, attachment_plan_reminder,
+    attachments_from_context, detach_attachments_from_context, load_text_attachment,
 };
 use auth::unix_timestamp;
 pub(crate) use auth::{

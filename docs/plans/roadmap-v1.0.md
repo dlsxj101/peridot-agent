@@ -203,22 +203,24 @@ treat them as separate milestones, not a single release.
 
 ### F2. Multimodal image input (vision routing)
 
-- **Status**: in progress (attach UX + LLM vision layer landed; resolver
-  wiring planned). Design doc:
+- **Status**: in progress (attach UX + LLM vision layer + end-to-end
+  resolver landed; downscale/OCR/config remain). Design doc:
   [`f2-multimodal-vision.md`](f2-multimodal-vision.md).
 - **Goal**: actually send attached images to a vision-capable model
   instead of recording placeholder metadata.
-- **Where**: `peridot-llm` provider adapters (Anthropic / OpenAI Chat /
-  OpenAI Codex), `peridot-context` / request assembly for the resolver.
+- **Where**: `peridot-llm` provider adapters, `peridot-context`
+  (`ContextEntry.images` + `to_messages`), `peridot-cli` attach,
+  `peridot-core` vision gate.
 - **Done so far**: `LlmMessage` carries an additive `images` field +
-  `user_with_images` builder (text path unchanged); all three provider
-  adapters serialize images into their native blocks; a
-  `model_supports_vision(model)` capability gate (conservative default).
-  Unit-tested on every wire format and the capability table.
-- **Remaining**: the attachment→image resolver at request-build time
-  (read bytes, size cap/downscale, base64, gate on
-  `model_supports_vision`), vision-model routing, and an OCR text-only
-  fallback. See the design doc milestones 4–6.
+  `user_with_images` builder; all three provider adapters serialize images
+  into their native blocks; `model_supports_vision(model)` capability gate.
+  **End-to-end**: `/attach` base64-encodes images (≤5 MB) onto
+  `ContextEntry.images`; `to_messages` emits `user_with_images` (role-merge
+  keeps them discrete); the core loop strips images for text-only models
+  via `enforce_vision_capability`. Tested at each layer.
+- **Remaining**: image downscaling (only a hard cap today), an OCR
+  text-only fallback, and config knobs + surface indicators. See the
+  design doc milestones 5–6.
 
 ### F3. Voice input
 

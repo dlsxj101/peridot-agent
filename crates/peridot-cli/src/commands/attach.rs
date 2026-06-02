@@ -1,6 +1,13 @@
 use std::path::{Path, PathBuf};
 
+use base64::Engine as _;
 use peridot_context::{ContextEntry, ContextSource};
+use peridot_llm::ImageContent;
+
+/// Largest image inlined as base64 for vision input. Images above this stay
+/// placeholder-only (the model sees the textual mention, not the pixels).
+/// Sized for the smaller provider ceiling (Anthropic ~5 MB per image).
+pub(crate) const MAX_IMAGE_BYTES: usize = 5 * 1024 * 1024;
 
 /// Text attachment loaded from a workspace-local file.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -9,6 +16,9 @@ pub(crate) struct TextAttachment {
     pub(crate) bytes: usize,
     pub(crate) media_type: Option<String>,
     pub(crate) content: Option<String>,
+    /// Base64-encoded image bytes for vision input, when the file is an image
+    /// within [`MAX_IMAGE_BYTES`]. `None` for text or oversized images.
+    pub(crate) image_base64: Option<String>,
 }
 
 /// Attachment metadata reconstructed from a session context snapshot.
@@ -52,19 +62,29 @@ pub(crate) fn load_text_attachment(
             max_bytes
         ));
     }
-    if byte_len > max_bytes {
+    // Images: inline as base64 for vision input when within the image cap;
+    // otherwise keep a placeholder. (The `max_bytes` text limit does not gate
+    // images — `MAX_IMAGE_BYTES` does.)
+    if let Some(media_type) = media_type {
+        let image_base64 = if byte_len <= MAX_IMAGE_BYTES {
+            let bytes = std::fs::read(&canonical)
+                .map_err(|err| format!("attach: failed to read {}: {err}", canonical.display()))?;
+            Some(base64::engine::general_purpose::STANDARD.encode(&bytes))
+        } else {
+            None
+        };
         return Ok(TextAttachment {
             path: display_relative(&root, &canonical),
             bytes: byte_len,
-            media_type,
+            media_type: Some(media_type),
             content: None,
+            image_base64,
         });
     }
     let bytes = std::fs::read(&canonical)
         .map_err(|err| format!("attach: failed to read {}: {err}", canonical.display()))?;
     let content = match String::from_utf8(bytes) {
         Ok(content) => Some(content),
-        Err(_) if media_type.is_some() => None,
         Err(_) => {
             return Err("attach: only UTF-8 text or image files are supported for now".to_string());
         }
@@ -72,9 +92,22 @@ pub(crate) fn load_text_attachment(
     Ok(TextAttachment {
         path: display_relative(&root, &canonical),
         bytes: byte_len,
-        media_type,
+        media_type: None,
         content,
+        image_base64: None,
     })
+}
+
+/// Image content to attach to the context entry for vision input — empty for
+/// text attachments or images too large to inline.
+pub(crate) fn attachment_image_content(attachment: &TextAttachment) -> Vec<ImageContent> {
+    match (&attachment.media_type, &attachment.image_base64) {
+        (Some(media_type), Some(data)) => vec![ImageContent {
+            media_type: media_type.clone(),
+            data: data.clone(),
+        }],
+        _ => Vec::new(),
+    }
 }
 
 pub(crate) fn attachment_plan_reminder(attachment: &TextAttachment) -> String {
@@ -236,6 +269,25 @@ mod tests {
         assert_eq!(attachment.media_type.as_deref(), Some("image/png"));
         assert!(attachment.content.is_none());
         assert!(attachment_plan_reminder(&attachment).contains("image attachment placeholder"));
+        // The image is inlined as base64 for vision input (feature F2).
+        assert!(attachment.image_base64.is_some());
+        let images = attachment_image_content(&attachment);
+        assert_eq!(images.len(), 1);
+        assert_eq!(images[0].media_type, "image/png");
+        // base64 of the 4 PNG-magic bytes.
+        assert_eq!(images[0].data, "iVBORw==");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn oversized_image_stays_placeholder_only() {
+        let root = temp_project("bigimage");
+        let big = vec![0u8; MAX_IMAGE_BYTES + 1];
+        std::fs::write(root.join("huge.png"), &big).unwrap();
+        let attachment = load_text_attachment(&root, "huge.png", 1024).unwrap();
+        assert_eq!(attachment.media_type.as_deref(), Some("image/png"));
+        assert!(attachment.image_base64.is_none());
+        assert!(attachment_image_content(&attachment).is_empty());
         let _ = std::fs::remove_dir_all(root);
     }
 
