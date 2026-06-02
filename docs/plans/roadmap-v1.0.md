@@ -202,11 +202,15 @@ treat them as separate milestones, not a single release.
   `symbol_references` result is tagged `definition` or `usage` (the
   dispatch entry point cross-references occurrences against the file
   outline). `Reference` carries an `is_definition` flag.
+- **Incremental cache (first increment)**: `workspace_symbols` /
+  `symbol_search` / `symbol_definition` cache each file's parsed outline by
+  absolute path + (mtime, size), re-parsing only changed files instead of
+  the whole tree per query. In-process, bounded, invalidates on change.
 - **Remaining**: more language grammars (Kotlin, Swift, Haskell, Elixir)
   via the same dispatcher; full scope resolution (shadowing / which binding
-  a usage resolves to) beyond name-token matching; incremental refresh
-  (notify crate) and a semantic codemap cache; optionally real LSP
-  clients. Highest context-savings payoff.
+  a usage resolves to) beyond name-token matching; on-disk persistence of
+  the outline cache + a notify-based file watcher for live invalidation;
+  optionally real LSP clients. Highest context-savings payoff.
 
 ### F2. Multimodal image input (vision routing)
 
