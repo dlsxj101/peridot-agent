@@ -47,6 +47,7 @@ import { noteContextPill } from './noteContext';
 import { sessionContextSummary, sessionContextSummaryChips } from './sessionContextSummary';
 import { sessionExportSummary } from './sessionExportSummary';
 import { el, formatTokens, highlightLite, isRecord, json } from './util';
+import { countTranscriptMatches, transcriptItemMatchesQuery } from './transcriptSearch';
 
 declare function acquireVsCodeApi(): {
   postMessage(msg: OutboundMessage): void;
@@ -85,6 +86,10 @@ let lastTranscriptCount = 0;
 // without bound. `transcriptExpanded` is the per-session opt-in to render all.
 const TRANSCRIPT_RENDER_CAP = 250;
 let transcriptExpanded = false;
+// In-panel transcript search: when active, a bar above the transcript filters
+// rendered items to those matching the (case-insensitive) query.
+let transcriptSearchActive = false;
+let transcriptSearchQuery = '';
 let lastComposerRunning: boolean | undefined;
 let editingSessionId: string | undefined;
 let editingSessionDraft: string | undefined;
@@ -710,6 +715,9 @@ function updateSession(wrap: HTMLElement, s: SidebarState): void {
   if (s.hud.plan && s.hud.plan.steps.length > 0) {
     children.push(sessionSlot('todo', renderTodoProgress(s.hud.plan, s.running)));
   }
+  if (transcriptSearchActive) {
+    children.push(sessionSlot('transcript-search', renderTranscriptSearch(s)));
+  }
   children.push(sessionSlot('transcript', transcript));
   children.push(sessionSlot('queue', renderQueue(s)));
   if (s.branchPicker) children.push(sessionSlot('branch-picker', renderBranchPicker(s)));
@@ -834,6 +842,13 @@ function renderHeader(s: SidebarState): HTMLElement {
   right.append(iconButton('codemap', 'Workspace Code Map', () => vscode.postMessage({ type: 'showCodeMap' })));
   right.append(iconButton('info', 'Workspace Code Map Status', () => vscode.postMessage({ type: 'showCodeMapStatus' })));
   right.append(iconButton('search', 'Search Workspace Code Map', () => vscode.postMessage({ type: 'searchCodeMap' })));
+  right.append(
+    iconButton('find', 'Find in conversation', () => {
+      transcriptSearchActive = !transcriptSearchActive;
+      if (!transcriptSearchActive) transcriptSearchQuery = '';
+      if (state) render(state);
+    }),
+  );
   right.append(iconButton('list-tree', 'Outline Current File', () => vscode.postMessage({ type: 'outlineCurrentFile' })));
   right.append(iconButton('references', 'Find Symbol References', () => vscode.postMessage({ type: 'findSymbolReferences' })));
   right.append(iconButton('skills', 'Show Skills', () => vscode.postMessage({ type: 'showSkills' })));
@@ -1089,6 +1104,8 @@ function iconSvg(kind: string): string {
       return `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3.5h10"/><path d="M3 8h10"/><path d="M3 12.5h10"/><path d="M5.5 2.2v2.6"/><path d="M9.5 6.7v2.6"/><path d="M6.8 11.2v2.6"/></svg>`;
     case 'search':
       return `<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="7" cy="7" r="4.2"/><path d="M10.2 10.2 14 14"/></svg>`;
+    case 'find':
+      return `<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="6.6" cy="6.6" r="3.8"/><path d="M9.5 9.5 14 14"/><path d="M4.8 6.6h3.6"/></svg>`;
     case 'search-archive':
       return `<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4.5h7.4v6.8h-7.4z"/><path d="M1.8 2.5h8.8v2h-8.8z"/><path d="M4.7 7.3h3"/><circle cx="11" cy="11" r="2.1"/><path d="M12.5 12.5 14 14"/></svg>`;
     case 'pin':
@@ -1396,6 +1413,50 @@ interface TranscriptScrollPlan {
   previousScrollTop: number;
 }
 
+/** The search bar shown above the transcript when find-in-conversation is
+ *  active. Filters rendered messages to those matching the query and reports
+ *  the match count. The input keeps a stable id so render()'s focus-restore
+ *  re-focuses it after each keystroke re-render. */
+function renderTranscriptSearch(s: SidebarState): HTMLElement {
+  const bar = el('div', 'transcript-search');
+  const input = el('input', 'transcript-search-input');
+  input.type = 'text';
+  input.id = 'transcript-search-input';
+  input.placeholder = 'Find in conversation';
+  input.value = transcriptSearchQuery;
+  input.setAttribute('aria-label', 'Find in conversation');
+  input.addEventListener('input', () => {
+    transcriptSearchQuery = input.value;
+    if (state) render(state);
+  });
+  input.addEventListener('keydown', (event: KeyboardEvent) => {
+    if (event.key === 'Escape') {
+      transcriptSearchActive = false;
+      transcriptSearchQuery = '';
+      if (state) render(state);
+    }
+  });
+  bar.append(input);
+
+  const query = transcriptSearchQuery.trim();
+  if (query.length > 0) {
+    const count = countTranscriptMatches(s.transcript, query);
+    bar.append(el('span', 'transcript-search-count', `${count} match${count === 1 ? '' : 'es'}`));
+  }
+
+  const close = el('button', 'transcript-search-close', '✕');
+  close.type = 'button';
+  close.title = 'Close search';
+  close.setAttribute('aria-label', 'Close search');
+  close.addEventListener('click', () => {
+    transcriptSearchActive = false;
+    transcriptSearchQuery = '';
+    if (state) render(state);
+  });
+  bar.append(close);
+  return bar;
+}
+
 /** The "show earlier messages" affordance shown at the top of a virtualized
  *  transcript. Clicking it renders the full history for this session. */
 function renderEarlierToggle(hiddenCount: number): HTMLElement {
@@ -1423,7 +1484,11 @@ function renderTranscriptInto(wrap: HTMLElement, s: SidebarState): TranscriptScr
   const transcriptKey = s.activeChatId ?? s.sessionId ?? 'draft';
   const sameTranscript = transcriptKey === lastTranscriptAnimationKey;
   // Switching to a different conversation collapses back to the capped window.
-  if (!sameTranscript) transcriptExpanded = false;
+  if (!sameTranscript) {
+    transcriptExpanded = false;
+    transcriptSearchActive = false;
+    transcriptSearchQuery = '';
+  }
   const activePrompt = latestPendingPrompt(s);
   const pendingToolIndexes = pendingToolIndexSet(s.transcript);
   const scrollMode = transcriptScrollMode(lastRenderedState, s);
@@ -1464,9 +1529,12 @@ function renderTranscriptInto(wrap: HTMLElement, s: SidebarState): TranscriptScr
     }
     return keyedTranscriptNode(key, build(), signature);
   };
-  // Virtualize: render only the most recent window unless the user expanded.
+  // Active search filters across the whole history, so bypass the window.
+  const searching = transcriptSearchActive && transcriptSearchQuery.trim().length > 0;
+  // Virtualize: render only the most recent window unless the user expanded
+  // (or a search is filtering the full history).
   const windowStart =
-    transcriptExpanded || s.transcript.length <= TRANSCRIPT_RENDER_CAP
+    transcriptExpanded || searching || s.transcript.length <= TRANSCRIPT_RENDER_CAP
       ? 0
       : s.transcript.length - TRANSCRIPT_RENDER_CAP;
   if (windowStart > 0) {
@@ -1488,6 +1556,10 @@ function renderTranscriptInto(wrap: HTMLElement, s: SidebarState): TranscriptScr
       }
       const stackEnd = index - 1;
       index -= 1;
+      // While searching, drop a tool stack unless one of its tools matches.
+      if (searching && !tools.some((tool) => transcriptItemMatchesQuery(tool, transcriptSearchQuery))) {
+        continue;
+      }
       nextNodes.push(
         reuseOrBuild(toolStackKey(transcriptKey, stackStart), toolStackSignature(tools), () =>
           decorateTranscriptEntry(
@@ -1498,6 +1570,7 @@ function renderTranscriptInto(wrap: HTMLElement, s: SidebarState): TranscriptScr
         ),
       );
     } else {
+      if (searching && !transcriptItemMatchesQuery(item, transcriptSearchQuery)) continue;
       const itemIndex = index;
       nextNodes.push(
         reuseOrBuild(

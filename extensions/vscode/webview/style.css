@@ -3194,3 +3194,37 @@ textarea {
   color: var(--vscode-textLink-foreground);
   border-color: var(--vscode-focusBorder);
 }
+
+/* In-panel transcript search bar (find in conversation). */
+.transcript-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--peri-border);
+  background: var(--peri-bg-elev);
+}
+.transcript-search-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 4px 8px;
+  border: 1px solid var(--peri-border-strong);
+  border-radius: var(--peri-radius-tight);
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  font: inherit;
+}
+.transcript-search-count {
+  flex: 0 0 auto;
+  color: var(--peri-fg-muted);
+  font-size: 11px;
+}
+.transcript-search-close {
+  flex: 0 0 auto;
+  border: none;
+  background: transparent;
+  color: var(--peri-fg-muted);
+  cursor: pointer;
+  padding: 2px 4px;
+}
+.transcript-search-close:hover { color: var(--peri-fg); }
