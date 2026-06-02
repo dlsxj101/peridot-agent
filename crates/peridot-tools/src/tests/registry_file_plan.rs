@@ -1,7 +1,8 @@
 use crate::tools::plan::PlanFile;
 use crate::{
     FileOutlineTool, FilePatchTool, FileReadTool, FileWriteTool, PlanCreateTool, PlanUpdateTool,
-    RipgrepSearchTool, SymbolSearchTool, Tool, ToolContext, ToolRegistry, WorkspaceSymbolsTool,
+    RipgrepSearchTool, SymbolDefinitionTool, SymbolReferencesTool, SymbolSearchTool, Tool,
+    ToolContext, ToolRegistry, WorkspaceSymbolsTool,
 };
 use async_trait::async_trait;
 use peridot_common::{
@@ -57,6 +58,8 @@ fn builtin_registry_includes_semantic_code_tools() {
     assert!(registry.get("file_outline").is_some());
     assert!(registry.get("ripgrep_search").is_some());
     assert!(registry.get("symbol_search").is_some());
+    assert!(registry.get("symbol_definition").is_some());
+    assert!(registry.get("symbol_references").is_some());
     assert!(registry.get("workspace_symbols").is_some());
     assert!(
         !registry
@@ -254,6 +257,42 @@ async fn semantic_code_tools_outline_and_search_workspace_symbols() {
     assert!(matches.iter().all(|symbol| symbol["path"] == "src/lib.rs"));
     assert!(matches.iter().any(|symbol| symbol["kind"] == "struct"));
     assert!(matches.iter().any(|symbol| symbol["kind"] == "impl"));
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn symbol_definition_and_references_locate_rust_symbols() {
+    let root = std::env::temp_dir().join(format!("peridot-tools-symdefs-{}", std::process::id()));
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("src/lib.rs"),
+        "pub fn target() {}\nfn caller() {\n    // target in a comment\n    target();\n}\n",
+    )
+    .unwrap();
+    let ctx = ToolContext::new(&root, PermissionMode::Auto);
+
+    let defs = SymbolDefinitionTool
+        .execute(serde_json::json!({"name": "target"}), &ctx)
+        .await
+        .unwrap();
+    let defs = defs.output.as_array().unwrap();
+    assert_eq!(defs.len(), 1);
+    assert_eq!(defs[0]["name"], "target");
+    assert_eq!(defs[0]["kind"], "fn");
+    assert_eq!(defs[0]["line"], 1);
+
+    let refs = SymbolReferencesTool
+        .execute(serde_json::json!({"name": "target"}), &ctx)
+        .await
+        .unwrap();
+    let refs = refs.output.as_array().unwrap();
+    // Definition (line 1) and the call (line 4); the comment occurrence on
+    // line 3 is excluded by the AST-aware Rust scan.
+    assert_eq!(refs.len(), 2, "{refs:?}");
+    assert!(refs.iter().all(|r| r["path"] == "src/lib.rs"));
+    assert_eq!(refs[0]["line"], 1);
+    assert_eq!(refs[1]["line"], 4);
 
     fs::remove_dir_all(root).unwrap();
 }

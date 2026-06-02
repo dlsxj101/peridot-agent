@@ -81,6 +81,20 @@ impl Symbol {
     }
 }
 
+/// A single token-level occurrence of an identifier in source.
+///
+/// Produced by [`LanguageSymbols::references`]: an AST-aware scan that only
+/// matches real identifier tokens, so occurrences inside comments and string
+/// literals are excluded — the key improvement over a textual grep. Includes
+/// the definition site itself.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Reference {
+    /// 1-based line of the occurrence.
+    pub line: usize,
+    /// 1-based column (character offset within the line) of the occurrence.
+    pub column: usize,
+}
+
 /// A per-language symbol extractor. Implementations are stateless and cheap to
 /// construct; parser setup happens per call so they stay `Send + Sync`.
 pub trait LanguageSymbols {
@@ -98,6 +112,11 @@ pub trait LanguageSymbols {
             .filter(|s| s.name == name)
             .collect()
     }
+
+    /// All identifier-token occurrences of `name`, in source order. AST-aware:
+    /// occurrences inside comments and string literals are skipped. The
+    /// definition site is included.
+    fn references(&self, source: &str, name: &str) -> Vec<Reference>;
 }
 
 /// Rust symbol extraction backed by `tree-sitter-rust`.
@@ -149,6 +168,54 @@ impl LanguageSymbols for RustSymbols {
         let mut symbols = Vec::new();
         collect_rust(tree.root_node(), source, None, &mut symbols);
         symbols
+    }
+
+    fn references(&self, source: &str, name: &str) -> Vec<Reference> {
+        let mut parser = tree_sitter::Parser::new();
+        let language: tree_sitter::Language = tree_sitter_rust::LANGUAGE.into();
+        if parser.set_language(&language).is_err() {
+            return Vec::new();
+        }
+        let Some(tree) = parser.parse(source, None) else {
+            return Vec::new();
+        };
+
+        let mut refs = Vec::new();
+        collect_rust_references(tree.root_node(), source, name, &mut refs);
+        refs
+    }
+}
+
+/// Leaf node kinds that count as identifier usages for reference search.
+fn is_rust_identifier_kind(kind: &str) -> bool {
+    matches!(
+        kind,
+        "identifier" | "type_identifier" | "field_identifier" | "shorthand_field_identifier"
+    )
+}
+
+/// Depth-first walk recording every identifier-token whose text equals `name`.
+fn collect_rust_references(
+    node: tree_sitter::Node,
+    source: &str,
+    name: &str,
+    out: &mut Vec<Reference>,
+) {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.child_count() == 0 {
+            if is_rust_identifier_kind(child.kind())
+                && child.utf8_text(source.as_bytes()) == Ok(name)
+            {
+                let pos = child.start_position();
+                out.push(Reference {
+                    line: pos.row + 1,
+                    column: pos.column + 1,
+                });
+            }
+        } else {
+            collect_rust_references(child, source, name, out);
+        }
     }
 }
 
@@ -208,6 +275,11 @@ fn collect_rust(
 /// Convenience wrapper: outline a Rust source string.
 pub fn outline_rust(source: &str) -> Vec<Symbol> {
     RustSymbols.outline(source)
+}
+
+/// Convenience wrapper: find identifier-token references to `name` in Rust source.
+pub fn references_rust(source: &str, name: &str) -> Vec<Reference> {
+    RustSymbols.references(source, name)
 }
 
 #[cfg(test)]
@@ -322,6 +394,47 @@ mod inner {
             symbols.iter().any(|s| s.name == "good"),
             "valid item should survive a later parse error: {symbols:?}"
         );
+    }
+
+    #[test]
+    fn references_find_all_identifier_occurrences() {
+        let source = "\
+fn target() {}
+fn caller() {
+    target();
+    let x = target;
+}
+";
+        let refs = references_rust(source, "target");
+        // definition + two usages
+        assert_eq!(refs.len(), 3, "{refs:?}");
+        assert_eq!(refs[0].line, 1); // definition
+        assert_eq!(refs[1].line, 3); // call
+        assert_eq!(refs[2].line, 4); // value position
+    }
+
+    #[test]
+    fn references_skip_comments_and_strings() {
+        let source = "\
+fn needle() {}
+fn other() {
+    // needle in a comment
+    let s = \"needle in a string\";
+    needle();
+}
+";
+        let refs = references_rust(source, "needle");
+        // Only the definition (line 1) and the real call (line 5); the
+        // comment and string occurrences are not identifier tokens.
+        assert_eq!(refs.len(), 2, "{refs:?}");
+        assert_eq!(refs[0].line, 1);
+        assert_eq!(refs[1].line, 5);
+        assert!(refs[1].column >= 1);
+    }
+
+    #[test]
+    fn references_empty_for_unknown_name() {
+        assert!(references_rust("fn a() {}", "zzz").is_empty());
     }
 
     #[test]

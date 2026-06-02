@@ -14,7 +14,8 @@ pub use agent::{
 };
 pub use file::{
     EvidenceReadTool, FileListTool, FileOutlineTool, FilePatchTool, FileReadTool, FileSearchTool,
-    FileWriteTool, RipgrepSearchTool, SymbolSearchTool, WorkspaceSymbolsTool,
+    FileWriteTool, RipgrepSearchTool, SymbolDefinitionTool, SymbolReferencesTool, SymbolSearchTool,
+    WorkspaceSymbolsTool,
 };
 pub use git::{
     GhPrCreateTool, GhPrMergeTool, GhPrStatusTool, GitBranchTool, GitCommitTool, GitDiffTool,
@@ -42,6 +43,8 @@ pub fn register_builtin_tools(registry: &mut ToolRegistry) -> PeriResult<()> {
     registry.register(FileListTool)?;
     registry.register(FileOutlineTool)?;
     registry.register(SymbolSearchTool)?;
+    registry.register(SymbolDefinitionTool)?;
+    registry.register(SymbolReferencesTool)?;
     registry.register(WorkspaceSymbolsTool)?;
     registry.register(PlanCreateTool)?;
     registry.register(PlanUpdateTool)?;

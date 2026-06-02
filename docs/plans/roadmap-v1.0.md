@@ -179,18 +179,23 @@ treat them as separate milestones, not a single release.
   `peridot-tools`, codemap cache in `peridot-project`.
 - **Done so far**: new `peridot-symbols` crate parses Rust with
   `tree-sitter-rust` and returns structured `Symbol`s (kind, name,
-  1-based line range, impl/trait `container`) behind a `LanguageSymbols`
-  trait so other languages plug in later. `file_outline` /
-  `workspace_symbols` / `symbol_search` now use the tree-sitter parse for
-  `.rs` files (accurate kinds, impl-method association, multi-line-aware
-  positions) and keep the line-based heuristic for other languages. The
-  existing tool tests pass unchanged against the new parser; the crate
-  has its own unit tests. Behavior-preserving: fmt/clippy clean, full
+  1-based line range, impl/trait `container`) plus identifier-token
+  `Reference`s, behind a `LanguageSymbols` trait so other languages plug
+  in later. `file_outline` / `workspace_symbols` / `symbol_search` use the
+  tree-sitter parse for `.rs` files (accurate kinds, impl-method
+  association, multi-line-aware positions) and keep the line-based
+  heuristic for other languages. Dedicated `symbol_definition` (exact-name
+  defs) and `symbol_references` (AST-aware usages for Rust — skips
+  comments/strings; word-boundary textual fallback for other languages)
+  tools are registered and recommended in the grounding prompt. Existing
+  tool tests pass unchanged against the new parser; the crate and tools
+  have their own unit tests. Behavior-preserving: fmt/clippy clean, full
   suite green.
-- **Remaining**: `symbol_definition` / `symbol_references` as dedicated
-  semantic tools; more language grammars (TS, Go, Python) via the trait;
-  incremental refresh (notify crate) and a semantic codemap cache;
-  optionally real LSP clients. Highest context-savings payoff.
+- **Remaining**: more language grammars (TS, Go, Python) via the trait;
+  scope-aware references (distinguish the definition from usages, resolve
+  shadowing) instead of name-token matching; incremental refresh (notify
+  crate) and a semantic codemap cache; optionally real LSP clients.
+  Highest context-savings payoff.
 
 ### F2. Multimodal image input (vision routing)
 

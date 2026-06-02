@@ -630,6 +630,224 @@ impl Tool for SymbolSearchTool {
     }
 }
 
+/// Built-in symbol definition lookup tool. Returns the definition site(s) of
+/// a symbol by exact name across the workspace — the semantic counterpart to
+/// grepping for `fn name`.
+#[derive(Clone, Debug)]
+pub struct SymbolDefinitionTool;
+
+#[async_trait]
+impl Tool for SymbolDefinitionTool {
+    fn name(&self) -> &str {
+        "symbol_definition"
+    }
+
+    fn group(&self) -> ToolGroup {
+        ToolGroup::File
+    }
+
+    fn description(&self) -> &str {
+        "Find where a symbol is defined (exact name) across the workspace"
+    }
+
+    fn parameters_schema(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Exact symbol name to locate"},
+                "path": {"type": "string", "description": "Optional project-relative directory or file"},
+                "max_results": {"type": "integer", "minimum": 1, "maximum": 200}
+            },
+            "required": ["name"],
+            "additionalProperties": false,
+        })
+    }
+
+    async fn execute(&self, params: Value, ctx: &ToolContext) -> PeriResult<ToolResult> {
+        let name = required_str(&params, "name")?.to_string();
+        let path = scoped_path(ctx, &params)?;
+        let max_results = max_results(&params, 50);
+        let mut symbols = Vec::new();
+        collect_symbols(
+            &ctx.project_root,
+            &path,
+            max_results.saturating_mul(20),
+            &mut symbols,
+        )?;
+        symbols.retain(|symbol| symbol.name == name);
+        symbols.truncate(max_results);
+        Ok(ToolResult::success(
+            format!("found {} definitions of {name}", symbols.len()),
+            serde_json::json!(symbols),
+        ))
+    }
+
+    fn permission_level(&self) -> PermissionLevel {
+        PermissionLevel::Read
+    }
+}
+
+/// Built-in symbol reference lookup tool. Returns identifier-token occurrences
+/// of a name across the workspace. Rust files are scanned AST-aware via
+/// tree-sitter (occurrences in comments/strings excluded); other source files
+/// fall back to a word-boundary textual scan.
+#[derive(Clone, Debug)]
+pub struct SymbolReferencesTool;
+
+#[async_trait]
+impl Tool for SymbolReferencesTool {
+    fn name(&self) -> &str {
+        "symbol_references"
+    }
+
+    fn group(&self) -> ToolGroup {
+        ToolGroup::File
+    }
+
+    fn description(&self) -> &str {
+        "Find references (usages) of a symbol by name across the workspace"
+    }
+
+    fn parameters_schema(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Exact symbol name to find usages of"},
+                "path": {"type": "string", "description": "Optional project-relative directory or file"},
+                "max_results": {"type": "integer", "minimum": 1, "maximum": 1000}
+            },
+            "required": ["name"],
+            "additionalProperties": false,
+        })
+    }
+
+    async fn execute(&self, params: Value, ctx: &ToolContext) -> PeriResult<ToolResult> {
+        let name = required_str(&params, "name")?.to_string();
+        let path = scoped_path(ctx, &params)?;
+        let max_results = max_results(&params, 200);
+        let mut refs = Vec::new();
+        collect_references(&ctx.project_root, &path, &name, max_results, &mut refs)?;
+        Ok(ToolResult::success(
+            format!("found {} references to {name}", refs.len()),
+            serde_json::json!(refs),
+        ))
+    }
+
+    fn permission_level(&self) -> PermissionLevel {
+        PermissionLevel::Read
+    }
+}
+
+/// Recursively collects identifier references to `name` under `path`.
+fn collect_references(
+    project_root: &Path,
+    path: &Path,
+    name: &str,
+    limit: usize,
+    out: &mut Vec<Value>,
+) -> PeriResult<()> {
+    if out.len() >= limit {
+        return Ok(());
+    }
+    if path.is_dir() {
+        if should_skip_symbol_dir(path) {
+            return Ok(());
+        }
+        let mut entries = fs::read_dir(path)
+            .map_err(|err| PeriError::Tool(format!("failed to scan {}: {err}", path.display())))?
+            .flatten()
+            .map(|entry| entry.path())
+            .collect::<Vec<_>>();
+        entries.sort();
+        for entry in entries {
+            collect_references(project_root, &entry, name, limit, out)?;
+            if out.len() >= limit {
+                break;
+            }
+        }
+        return Ok(());
+    }
+    if !is_source_file(path) {
+        return Ok(());
+    }
+    let Ok(metadata) = fs::metadata(path) else {
+        return Ok(());
+    };
+    if metadata.len() > MAX_SYMBOL_FILE_BYTES {
+        return Ok(());
+    }
+    let Ok(content) = fs::read_to_string(path) else {
+        return Ok(());
+    };
+    let relative = path
+        .strip_prefix(project_root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/");
+    let lines: Vec<&str> = content.lines().collect();
+    let is_rust = path.extension().and_then(|value| value.to_str()) == Some("rs");
+
+    if is_rust {
+        for reference in peridot_symbols::references_rust(&content, name) {
+            if out.len() >= limit {
+                break;
+            }
+            let text = lines
+                .get(reference.line.saturating_sub(1))
+                .map(|line| line.trim().to_string())
+                .unwrap_or_default();
+            out.push(serde_json::json!({
+                "path": relative,
+                "line": reference.line,
+                "column": reference.column,
+                "text": text,
+            }));
+        }
+    } else {
+        for (line_idx, line) in lines.iter().enumerate() {
+            for column in word_boundary_matches(line, name) {
+                if out.len() >= limit {
+                    return Ok(());
+                }
+                out.push(serde_json::json!({
+                    "path": relative,
+                    "line": line_idx + 1,
+                    "column": column + 1,
+                    "text": line.trim(),
+                }));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Byte-column offsets where `needle` appears in `line` as a whole word
+/// (neither neighbour is an identifier character). Used as the non-Rust
+/// reference fallback until more grammars are wired in.
+fn word_boundary_matches(line: &str, needle: &str) -> Vec<usize> {
+    if needle.is_empty() {
+        return Vec::new();
+    }
+    let bytes = line.as_bytes();
+    let mut hits = Vec::new();
+    let mut start = 0;
+    while let Some(rel) = line[start..].find(needle) {
+        let at = start + rel;
+        let before_ok = at == 0 || !is_ident_byte(bytes[at - 1]);
+        let after = at + needle.len();
+        let after_ok = after >= bytes.len() || !is_ident_byte(bytes[after]);
+        if before_ok && after_ok {
+            hits.push(at);
+        }
+        start = at + needle.len();
+    }
+    hits
+}
+
+fn is_ident_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_'
+}
+
 fn search_path(path: &Path, pattern: &str, matches: &mut Vec<Value>) -> PeriResult<()> {
     if path.is_dir() {
         let name = path
