@@ -99,7 +99,7 @@ async fn ripgrep_search_finds_workspace_text() {
             .map(|matches| !matches.is_empty())
             .unwrap_or(false)
     );
-    fs::remove_dir_all(root).unwrap();
+    let _ = fs::remove_dir_all(root);
 }
 
 #[tokio::test]
@@ -123,7 +123,7 @@ async fn file_write_and_read_round_trip() {
         .unwrap();
 
     assert_eq!(result.output, Value::String("hello".to_string()));
-    fs::remove_dir_all(root).unwrap();
+    let _ = fs::remove_dir_all(root);
 }
 
 #[tokio::test]
@@ -144,7 +144,7 @@ async fn file_read_decodes_invalid_utf8_lossily() {
         Value::String("fastapi==0.111\n\u{fffd}\n".to_string())
     );
     assert!(result.summary.contains("invalid UTF-8 bytes replaced"));
-    fs::remove_dir_all(root).unwrap();
+    let _ = fs::remove_dir_all(root);
 }
 
 #[cfg(unix)]
@@ -180,7 +180,7 @@ async fn file_write_runs_file_changed_hook() {
 
     let log = fs::read_to_string(root.join("changed.log")).unwrap();
     assert!(log.contains("src/sample.txt"));
-    fs::remove_dir_all(root).unwrap();
+    let _ = fs::remove_dir_all(root);
 }
 
 #[tokio::test]
@@ -206,7 +206,7 @@ async fn file_patch_replaces_one_segment() {
         fs::read_to_string(root.join("sample.txt")).unwrap(),
         "goodbye\nhello\n"
     );
-    fs::remove_dir_all(root).unwrap();
+    let _ = fs::remove_dir_all(root);
 }
 
 #[tokio::test]
@@ -258,7 +258,7 @@ async fn semantic_code_tools_outline_and_search_workspace_symbols() {
     assert!(matches.iter().any(|symbol| symbol["kind"] == "struct"));
     assert!(matches.iter().any(|symbol| symbol["kind"] == "impl"));
 
-    fs::remove_dir_all(root).unwrap();
+    let _ = fs::remove_dir_all(root);
 }
 
 #[tokio::test]
@@ -309,7 +309,7 @@ async fn file_outline_parses_typescript_and_python() {
         "{py:?}"
     );
 
-    fs::remove_dir_all(root).unwrap();
+    let _ = fs::remove_dir_all(root);
 }
 
 #[tokio::test]
@@ -341,7 +341,7 @@ async fn file_outline_cache_reparses_changed_files() {
         "cache should re-parse a changed file: {second:?}"
     );
 
-    fs::remove_dir_all(root).unwrap();
+    let _ = fs::remove_dir_all(root);
 }
 
 #[tokio::test]
@@ -380,7 +380,7 @@ async fn symbol_definition_and_references_locate_rust_symbols() {
     assert_eq!(refs[1]["line"], 4);
     assert_eq!(refs[1]["kind"], "usage");
 
-    fs::remove_dir_all(root).unwrap();
+    let _ = fs::remove_dir_all(root);
 }
 
 #[tokio::test]
@@ -408,7 +408,7 @@ async fn plan_create_writes_markdown_and_json() {
     assert!(markdown.contains("Objective: ship feature"));
     assert!(markdown.contains("1. [ ] write code"));
     assert_eq!(plan.steps[1].text, "run tests");
-    fs::remove_dir_all(root).unwrap();
+    let _ = fs::remove_dir_all(root);
 }
 
 #[tokio::test]
@@ -448,5 +448,5 @@ async fn plan_update_marks_step_and_records_update() {
     assert!(markdown.contains("- code written"));
     assert_eq!(plan.steps[0].status, "done");
     assert_eq!(plan.updates, vec!["code written"]);
-    fs::remove_dir_all(root).unwrap();
+    let _ = fs::remove_dir_all(root);
 }

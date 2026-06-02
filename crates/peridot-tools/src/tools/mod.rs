@@ -14,8 +14,8 @@ pub use agent::{
 };
 pub use file::{
     EvidenceReadTool, FileListTool, FileOutlineTool, FilePatchTool, FileReadTool, FileSearchTool,
-    FileWriteTool, RipgrepSearchTool, SymbolDefinitionTool, SymbolReferencesTool, SymbolSearchTool,
-    WorkspaceSymbolsTool,
+    FileWriteTool, RipgrepSearchTool, SymbolCacheWatcher, SymbolDefinitionTool,
+    SymbolReferencesTool, SymbolSearchTool, WorkspaceSymbolsTool,
 };
 pub use git::{
     GhPrCreateTool, GhPrMergeTool, GhPrStatusTool, GitBranchTool, GitCommitTool, GitDiffTool,

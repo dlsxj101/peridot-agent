@@ -18,8 +18,8 @@ pub use tools::{
     FileReadTool, FileSearchTool, FileWriteTool, GhPrCreateTool, GhPrMergeTool, GhPrStatusTool,
     GitBranchTool, GitCommitTool, GitDiffTool, GitLogTool, GitPushTool, GitStatusTool,
     PlanCreateTool, PlanUpdateTool, RipgrepSearchTool, ShellExecTool, ShellReadOnlyTool,
-    SkillListTool, SkillViewTool, SymbolDefinitionTool, SymbolReferencesTool, SymbolSearchTool,
-    VerifyBuildTool, VerifyLintTool, VerifyTestTool, WebFetchTool, WebSearchTool,
+    SkillListTool, SkillViewTool, SymbolCacheWatcher, SymbolDefinitionTool, SymbolReferencesTool,
+    SymbolSearchTool, VerifyBuildTool, VerifyLintTool, VerifyTestTool, WebFetchTool, WebSearchTool,
     WorkspaceSymbolsTool, register_builtin_tools,
 };
 

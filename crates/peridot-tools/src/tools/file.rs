@@ -176,6 +176,70 @@ fn outline_cache_flush() {
     }
 }
 
+/// Drops cache entries for `paths` (e.g. on a filesystem change) and marks the
+/// cache dirty so the next flush removes them from disk too.
+fn outline_cache_invalidate<I, P>(paths: I)
+where
+    I: IntoIterator<Item = P>,
+    P: AsRef<Path>,
+{
+    let Ok(mut state) = OUTLINE_CACHE.lock() else {
+        return;
+    };
+    let mut changed = false;
+    for path in paths {
+        if state.entries.remove(path.as_ref()).is_some() {
+            changed = true;
+        }
+    }
+    if changed {
+        state.dirty = true;
+    }
+}
+
+/// The paths a filesystem event should invalidate. Create/modify/remove (and
+/// the catch-all `Any`) touch file contents; access-only events don't.
+fn event_invalidation_paths(event: &notify::Event) -> &[PathBuf] {
+    use notify::EventKind;
+    match event.kind {
+        EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_) | EventKind::Any => {
+            &event.paths
+        }
+        _ => &[],
+    }
+}
+
+/// Watches a workspace root and invalidates symbol-cache entries when files
+/// change, so the in-process and on-disk caches don't accumulate stale entries
+/// for renamed/deleted files (feature F1). Correctness does not depend on it —
+/// each query already re-checks mtime/size — so a watcher that fails to start
+/// is non-fatal: the cache simply falls back to query-time staleness checks.
+///
+/// The watcher stops when dropped, so the owner (the daemon) keeps it alive for
+/// the workspace's lifetime.
+pub struct SymbolCacheWatcher {
+    _watcher: notify::RecommendedWatcher,
+}
+
+impl SymbolCacheWatcher {
+    /// Starts watching `root` recursively. Returns `None` if a watcher can't be
+    /// created (the cache still works without it).
+    pub fn new(root: &Path) -> Option<Self> {
+        use notify::Watcher;
+        let mut watcher = notify::recommended_watcher(|result: notify::Result<notify::Event>| {
+            if let Ok(event) = result {
+                let paths = event_invalidation_paths(&event);
+                if !paths.is_empty() {
+                    outline_cache_invalidate(paths.iter());
+                }
+            }
+        })
+        .ok()?;
+        watcher.watch(root, notify::RecursiveMode::Recursive).ok()?;
+        Some(Self { _watcher: watcher })
+    }
+}
+
 /// Built-in evidence ledger reader.
 #[derive(Clone, Debug)]
 pub struct EvidenceReadTool;
@@ -1681,5 +1745,36 @@ mod symbol_cache_tests {
         let missing = std::env::temp_dir().join("peridot-symcache-does-not-exist.json");
         let _ = fs::remove_file(&missing);
         assert!(outline_cache_read_disk(&missing).is_none());
+    }
+
+    #[test]
+    fn invalidate_drops_matching_entries() {
+        // Distinct absolute paths so this can't collide with other tests
+        // sharing the process-global cache.
+        let kept = PathBuf::from(format!("/peridot-test-keep-{}.rs", std::process::id()));
+        let dropped = PathBuf::from(format!("/peridot-test-drop-{}.rs", std::process::id()));
+        outline_cache_put(&kept, Some(1), 10, Vec::new());
+        outline_cache_put(&dropped, Some(1), 10, Vec::new());
+
+        outline_cache_invalidate([dropped.clone()]);
+
+        assert!(outline_cache_get(&kept, Some(1), 10).is_some());
+        assert!(outline_cache_get(&dropped, Some(1), 10).is_none());
+    }
+
+    #[test]
+    fn event_paths_filter_by_kind() {
+        use notify::EventKind;
+        use notify::event::{AccessKind, ModifyKind};
+
+        let path = PathBuf::from("/tmp/x.rs");
+        let modify = notify::Event::new(EventKind::Modify(ModifyKind::Any)).add_path(path.clone());
+        assert_eq!(
+            event_invalidation_paths(&modify),
+            std::slice::from_ref(&path)
+        );
+
+        let access = notify::Event::new(EventKind::Access(AccessKind::Any)).add_path(path);
+        assert!(event_invalidation_paths(&access).is_empty());
     }
 }

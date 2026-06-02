@@ -207,12 +207,16 @@ treat them as separate milestones, not a single release.
   (mtime, size), re-parsing only changed files. The cache is **persisted to
   `.peridot/symbol-cache.json`** (versioned, flushed once per query) and
   reloaded on startup, so a daemon/agent restart warm-starts instead of
-  re-parsing the tree.
+  re-parsing the tree. A `notify`-based `SymbolCacheWatcher` (owned by the
+  daemon for the workspace lifetime) invalidates cache entries on file
+  changes so renamed/deleted files don't linger in the in-process or
+  on-disk cache; it's non-fatal if it can't start (queries still re-check
+  mtime/size).
 - **Remaining**: more language grammars (Kotlin, Swift, Haskell, Elixir)
   via the same dispatcher; full scope resolution (shadowing / which binding
-  a usage resolves to) beyond name-token matching; a `notify`-based file
-  watcher for live cache invalidation (needs a daemon-lifecycle owner);
-  optionally real LSP clients. Highest context-savings payoff.
+  a usage resolves to) beyond name-token matching; optional background
+  pre-warm (re-parse changed files off the query path); optionally real LSP
+  clients. Highest context-savings payoff.
 
 ### F2. Multimodal image input (vision routing)
 

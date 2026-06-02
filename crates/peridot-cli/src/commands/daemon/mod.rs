@@ -67,6 +67,11 @@ struct DaemonState {
     run_config: Arc<PeridotConfig>,
     run_template: Arc<AgentTaskOptions>,
     session_list_subscribed: Arc<AtomicBool>,
+    /// Filesystem watcher that invalidates the symbol-cache on file changes
+    /// (feature F1). Kept alive for the daemon's lifetime via the shared Arc;
+    /// `None` when a watcher couldn't be started (the cache still works,
+    /// falling back to query-time staleness checks).
+    _symbol_cache_watcher: Option<Arc<peridot_tools::SymbolCacheWatcher>>,
 }
 
 impl DaemonState {
@@ -76,6 +81,8 @@ impl DaemonState {
         run_template: AgentTaskOptions,
         out: mpsc::UnboundedSender<String>,
     ) -> Self {
+        let symbol_cache_watcher =
+            peridot_tools::SymbolCacheWatcher::new(&project_root).map(Arc::new);
         Self {
             sessions: Arc::new(Mutex::new(HashMap::new())),
             next_session_id: Arc::new(Mutex::new(1)),
@@ -87,6 +94,7 @@ impl DaemonState {
             run_config: Arc::new(run_config),
             run_template: Arc::new(run_template),
             session_list_subscribed: Arc::new(AtomicBool::new(false)),
+            _symbol_cache_watcher: symbol_cache_watcher,
         }
     }
 

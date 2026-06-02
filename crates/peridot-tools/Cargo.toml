@@ -21,3 +21,8 @@ reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
+
+[dependencies.notify]
+version = "8"
+default-features = false
+features = ["macos_fsevent"]
