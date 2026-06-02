@@ -12,7 +12,6 @@ import {
   HudState,
   InboundMessage,
   InlineImageAttachmentPayload,
-  NoteSummary,
   OutboundMessage,
   PlanSlice,
   PlanStepView,
@@ -26,6 +25,13 @@ import {
   TranscriptItem,
   UsageSlice,
 } from './types';
+import {
+  PersistedTopLevel,
+  StoredChatSession,
+  readPersistedSidebar,
+  sessionPersistHash,
+  writePersistedSidebar,
+} from './sidebarPersistence';
 import { localSlashAction } from './localSlashAction';
 import { staleDaemonBackedSessionIds } from './sessionReconcile';
 import {
@@ -138,44 +144,6 @@ interface DaemonEventParams {
   event?: unknown;
 }
 
-interface StoredChatSession {
-  id: string;
-  title: string;
-  daemonSessionId?: string;
-  status: string;
-  running: boolean;
-  transcript: TranscriptItem[];
-  hud: HudState;
-  runOptions: RunOptions;
-  pendingApproval?: TranscriptItem;
-  runStartedAtMs?: number;
-  lastRunElapsedMs?: number;
-  totalTokens?: number;
-  totalCostUsd?: number;
-  turnsUsed?: number;
-  attachmentPaths?: string[];
-  noteSummary?: NoteSummary;
-  /**
-   * True once the user has manually renamed this session (via the
-   * session-menu rename action or `/session rename`). The async LLM
-   * title-generation path must not overwrite a user-chosen title.
-   */
-  userRenamed?: boolean;
-}
-
-interface PersistedSidebarSnapshot {
-  version: 1;
-  activeChatId?: string;
-  nextSessionOrdinal: number;
-  runOptions: RunOptions;
-  context: SidebarContext;
-  view: SidebarState['view'];
-  landing: SidebarState['landing'];
-  queue: QueuedMessage[];
-  sessions: StoredChatSession[];
-}
-
-const PERSISTENCE_KEY = 'peridot.sidebarState.v1';
 
 export interface PreparedTask {
   clientSessionId: string;
@@ -195,6 +163,9 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
   private streamCoalesceTimer: ReturnType<typeof setTimeout> | undefined;
   private streamCoalescePending = false;
   private persistTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Last-persisted content hash per session id, so a throttled save only
+   *  re-serializes sessions that actually changed (see persistState). */
+  private persistedHashes = new Map<string, string>();
 
   public constructor(
     private readonly extensionUri: vscode.Uri,
@@ -1480,7 +1451,9 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       clearTimeout(this.persistTimer);
       this.persistTimer = undefined;
     }
-    this.persistState();
+    // Decisive flush (session end, etc.): force a full write so the final
+    // state is fully persisted regardless of the content-hash fast path.
+    this.persistState(true);
   }
 
   private async handleSlashCommand(input: string, options: RunOptions): Promise<void> {
@@ -1860,12 +1833,11 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
   }
 
   private restorePersistedState(): void {
-    const snapshot = this.storage.get<PersistedSidebarSnapshot>(PERSISTENCE_KEY);
-    if (!snapshot || snapshot.version !== 1 || !Array.isArray(snapshot.sessions)) {
-      return;
-    }
+    const restored = readPersistedSidebar(this.storage);
+    if (!restored) return;
     this.sessions.clear();
-    for (const raw of snapshot.sessions) {
+    this.persistedHashes.clear();
+    for (const raw of restored.sessions) {
       const session: StoredChatSession = {
         ...raw,
         status: raw.running ? 'Idle' : raw.status,
@@ -1880,31 +1852,43 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         noteSummary: normalizeNoteSummary(raw.noteSummary),
       };
       this.sessions.set(session.id, session);
+      // Seed hashes for the v2 path so the next throttled save doesn't rewrite
+      // unchanged sessions. For a v1 migration leave them unseeded so the first
+      // save rewrites everything into v2 keys *before* the legacy blob is
+      // cleared (no data-loss window).
+      if (!restored.fromLegacy) {
+        this.persistedHashes.set(session.id, sessionPersistHash(session));
+      }
     }
-    this.nextSessionOrdinal = Math.max(1, snapshot.nextSessionOrdinal);
+    this.nextSessionOrdinal = Math.max(1, restored.top.nextSessionOrdinal);
     this.state = {
       ...freshState(),
-      view: snapshot.view ?? 'landing',
-      landing: snapshot.landing ?? 'home',
-      activeChatId: snapshot.activeChatId,
+      view: restored.top.view ?? 'landing',
+      landing: restored.top.landing ?? 'home',
+      activeChatId: restored.top.activeChatId,
       context: {
-        ...(snapshot.context ?? {}),
+        ...(restored.top.context ?? {}),
         status: 'Idle',
         running: false,
         problem: undefined,
         attachmentPaths: [],
         noteSummary: undefined,
       },
-      queue: Array.isArray(snapshot.queue) ? snapshot.queue : [],
-      runOptions: snapshot.runOptions ?? freshState().runOptions,
+      queue: Array.isArray(restored.top.queue) ? restored.top.queue : [],
+      runOptions: restored.top.runOptions ?? freshState().runOptions,
     };
     if (this.state.activeChatId && this.sessions.has(this.state.activeChatId)) {
       this.loadSessionIntoState(this.state.activeChatId, false);
     }
     this.refreshSessionSummaries();
+    // Migrate the legacy blob to v2 immediately so a crash before the first
+    // throttled save can't strand history in the now-unread v1 key.
+    if (restored.fromLegacy) {
+      this.persistState(true);
+    }
   }
 
-  private persistState(): void {
+  private persistState(force = false): void {
     const sessions = Array.from(this.sessions.values()).map(
       (session): StoredChatSession => ({
         ...session,
@@ -1913,8 +1897,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         pendingApproval: session.pendingApproval,
       }),
     );
-    const snapshot: PersistedSidebarSnapshot = {
-      version: 1,
+    const top: PersistedTopLevel = {
       activeChatId: this.state.activeChatId,
       nextSessionOrdinal: this.nextSessionOrdinal,
       runOptions: this.state.runOptions,
@@ -1928,9 +1911,8 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       view: this.state.view,
       landing: this.state.landing,
       queue: this.state.queue,
-      sessions,
     };
-    void this.storage.update(PERSISTENCE_KEY, snapshot);
+    writePersistedSidebar(this.storage, top, sessions, this.persistedHashes, force);
   }
 
   private loadSessionIntoState(id: string | undefined, publish: boolean): void {
