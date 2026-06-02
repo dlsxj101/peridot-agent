@@ -108,14 +108,27 @@ Reviewed at `claude/code-review-roadmap-tx5SA`, workspace `0.8.14`.
 
 ### C3. Carve down the other >500-line modules
 
-- **Status**: planned.
+- **Status**: in progress (first pass landed 2026-06-02); ongoing /
+  opportunistic.
 - **Goal**: chip away at the largest TUI / context / core files behind
   the daemon.
 - **Where**: `peridot-tui/src/{state,render,input}.rs`,
   `peridot-context/src/lib.rs`, `peridot-core/src/agent.rs`.
-- **Plan**: opportunistic, lower priority than C2. Split by responsibility
-  (e.g. `state.rs` → per-domain state structs; `render.rs` → per-panel
-  renderers) only when touching the area for other work, to avoid churn.
+- **Done so far**: `render.rs` (2,474 lines) became a directory module;
+  the side-panel block renderers (request-context / committee / MCP /
+  code-map / attachment / notes / goal, plus the welcome / subagent /
+  theme helpers) moved into `render/sidebar.rs` (~335 lines).
+  `render/mod.rs` keeps `draw`, the status bar, transcript/markdown
+  styling, and layout. Shared helpers reach across via `use super::*`;
+  `render_subagent_monitor` is `pub(crate)` and re-exported under
+  `#[cfg(test)]` so the crate test module's `use super::render::*` still
+  resolves it. Behavior-preserving: fmt/clippy clean and the TUI snapshot
+  tests pass.
+- **Plan for the rest**: stays opportunistic, lower priority than the
+  feature track. Split `state.rs` (per-domain state), the remaining
+  `render` transcript/markdown helpers, `input.rs`, `context/lib.rs`, and
+  `agent.rs` by responsibility **when touching the area for other work**,
+  to avoid churn for its own sake.
 
 ### C4. Audit non-test `unwrap`/`expect` on the daemon path
 
