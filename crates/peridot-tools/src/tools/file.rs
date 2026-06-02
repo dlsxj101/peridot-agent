@@ -1126,6 +1126,11 @@ struct SymbolEntry {
     line: usize,
     kind: String,
     name: String,
+    /// Owning type/class for associated items (e.g. `Scanner` for
+    /// `Scanner::scan`). Omitted for top-level symbols and for the
+    /// line-based heuristic, which has no container information.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    container: Option<String>,
     signature: String,
 }
 
@@ -1219,6 +1224,7 @@ fn outline_file(project_root: &Path, path: &Path, limit: usize) -> PeriResult<Ve
                 line: symbol.start_line,
                 kind: symbol.kind.label().to_string(),
                 name: symbol.name,
+                container: symbol.container,
                 signature,
             });
         }
@@ -1232,6 +1238,7 @@ fn outline_file(project_root: &Path, path: &Path, limit: usize) -> PeriResult<Ve
                 line: line_idx + 1,
                 kind,
                 name,
+                container: None,
                 signature: line.trim().to_string(),
             });
             if symbols.len() >= limit {

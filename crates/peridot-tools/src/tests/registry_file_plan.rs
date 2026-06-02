@@ -289,7 +289,7 @@ async fn file_outline_parses_typescript_and_python() {
     );
     assert!(
         ts.iter()
-            .any(|s| s["name"] == "start" && s["kind"] == "method"),
+            .any(|s| s["name"] == "start" && s["kind"] == "method" && s["container"] == "AppShell"),
         "{ts:?}"
     );
 
