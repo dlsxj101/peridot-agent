@@ -78,17 +78,28 @@ Reviewed at `claude/code-review-roadmap-tx5SA`, workspace `0.8.14`.
 
 ### C2. Split `daemon.rs` into a module tree
 
-- **Status**: planned.
+- **Status**: in progress (first pass landed 2026-06-02).
 - **Goal**: bring the daemon under the spec's "narrow files" rule and
   make RPC handlers reviewable in isolation.
 - **Where**: `crates/peridot-cli/src/commands/daemon.rs` →
-  `commands/daemon/{mod,transport,session,skills,codemap,mcp,settings,notes}.rs`.
-- **Plan**: keep `dispatch_request` as the thin router in `mod.rs`; move
-  each cohesive `handle_*` cluster (session lifecycle, skills inventory,
-  codemap, MCP, settings/notes) into its own submodule. No behavior
-  change — split is mechanical and covered by the existing daemon tests.
-  Do this **before** the feature work below, so new RPC methods land in
-  the right submodule instead of growing the monolith.
+  `commands/daemon/{mod,branch,mcp,skills,codemap,notes,approval,tests}.rs`.
+- **Done so far**: `daemon.rs` (9,312 lines) became a directory module.
+  The 3,400-line test block plus six cohesive clusters — branch, MCP,
+  skills, codemap, notes, and approval/interaction — moved into
+  submodules. `mod.rs` is now ~4,300 lines. `dispatch_request` stays the
+  thin router; submodule handlers are `pub(super)` and reach shared
+  parent helpers through `use super::*` (Rust lets descendants see
+  private ancestor items). Behavior-preserving: `clippy --all-targets
+  -D warnings` is clean and the full daemon test suite passes (the only
+  failing tests are pre-existing git-commit-signing sandbox artifacts).
+- **Remaining**: the session-lifecycle command cluster
+  (`handle_command_session_*`, ~1,000 lines) and the attach/export
+  cluster are still in `mod.rs`. They are more entangled with shared
+  state-mutation helpers (`command_result`, `with_state_delta`,
+  `resolve_session_target_id`, persisted-session helpers), so they need a
+  careful separation of session-exclusive vs shared helpers before
+  moving. Do this **before** the feature work below, so new RPC methods
+  land in the right submodule instead of regrowing the monolith.
 
 ### C3. Carve down the other >500-line modules
 
