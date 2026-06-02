@@ -1411,6 +1411,15 @@ function renderEarlierToggle(hiddenCount: number): HTMLElement {
 
 function renderTranscriptInto(wrap: HTMLElement, s: SidebarState): TranscriptScrollPlan {
   wrap.className = 'transcript';
+  // A chat transcript is an ARIA log: screen readers announce newly added
+  // entries. `aria-relevant="additions text"` keeps virtualization's node
+  // removals (and reordering) from being announced.
+  if (wrap.getAttribute('role') !== 'log') {
+    wrap.setAttribute('role', 'log');
+    wrap.setAttribute('aria-label', 'Conversation transcript');
+    wrap.setAttribute('aria-live', 'polite');
+    wrap.setAttribute('aria-relevant', 'additions text');
+  }
   const transcriptKey = s.activeChatId ?? s.sessionId ?? 'draft';
   const sameTranscript = transcriptKey === lastTranscriptAnimationKey;
   // Switching to a different conversation collapses back to the capped window.
