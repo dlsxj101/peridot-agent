@@ -209,11 +209,47 @@ fn event_invalidation_paths(event: &notify::Event) -> &[PathBuf] {
     }
 }
 
-/// Watches a workspace root and invalidates symbol-cache entries when files
-/// change, so the in-process and on-disk caches don't accumulate stale entries
-/// for renamed/deleted files (feature F1). Correctness does not depend on it —
-/// each query already re-checks mtime/size — so a watcher that fails to start
-/// is non-fatal: the cache simply falls back to query-time staleness checks.
+/// Largest batch of changed paths the watcher will re-parse (pre-warm) in one
+/// event. A bigger batch (e.g. a branch switch touching hundreds of files) is
+/// just invalidated — re-parsing lazily on the next query — so the watcher
+/// thread can't peg the CPU on a bulk change.
+const PREWARM_MAX_PER_BATCH: usize = 16;
+
+/// Re-parses changed source files and refreshes their cache entries so the next
+/// query is warm; falls back to invalidation for deletes, non-source files,
+/// oversized files, and oversized batches.
+fn outline_cache_refresh(root: &Path, paths: &[PathBuf]) {
+    if paths.len() > PREWARM_MAX_PER_BATCH {
+        outline_cache_invalidate(paths.iter());
+        return;
+    }
+    for path in paths {
+        let metadata = fs::metadata(path).ok();
+        let is_warmable = is_source_file(path)
+            && metadata
+                .as_ref()
+                .is_some_and(|md| md.is_file() && md.len() <= MAX_SYMBOL_FILE_BYTES);
+        if !is_warmable {
+            outline_cache_invalidate(std::iter::once(path));
+            continue;
+        }
+        let metadata = metadata.expect("checked is_some above");
+        match build_outline_full(root, path) {
+            Ok(symbols) => {
+                let mtime_ms = mtime_to_millis(metadata.modified().ok());
+                outline_cache_put(path, mtime_ms, metadata.len(), symbols);
+            }
+            Err(_) => outline_cache_invalidate(std::iter::once(path)),
+        }
+    }
+}
+
+/// Watches a workspace root and keeps symbol-cache entries fresh when files
+/// change (feature F1): changed source files are re-parsed in the background
+/// (pre-warm) so the next query is warm, and renamed/deleted files are dropped
+/// so the in-process and on-disk caches don't accumulate stale entries.
+/// Correctness does not depend on it — each query already re-checks mtime/size
+/// — so a watcher that fails to start is non-fatal.
 ///
 /// The watcher stops when dropped, so the owner (the daemon) keeps it alive for
 /// the workspace's lifetime.
@@ -226,15 +262,17 @@ impl SymbolCacheWatcher {
     /// created (the cache still works without it).
     pub fn new(root: &Path) -> Option<Self> {
         use notify::Watcher;
-        let mut watcher = notify::recommended_watcher(|result: notify::Result<notify::Event>| {
-            if let Ok(event) = result {
-                let paths = event_invalidation_paths(&event);
-                if !paths.is_empty() {
-                    outline_cache_invalidate(paths.iter());
+        let watch_root = root.to_path_buf();
+        let mut watcher =
+            notify::recommended_watcher(move |result: notify::Result<notify::Event>| {
+                if let Ok(event) = result {
+                    let paths = event_invalidation_paths(&event);
+                    if !paths.is_empty() {
+                        outline_cache_refresh(&watch_root, paths);
+                    }
                 }
-            }
-        })
-        .ok()?;
+            })
+            .ok()?;
         watcher.watch(root, notify::RecursiveMode::Recursive).ok()?;
         Some(Self { _watcher: watcher })
     }
@@ -1760,6 +1798,37 @@ mod symbol_cache_tests {
 
         assert!(outline_cache_get(&kept, Some(1), 10).is_some());
         assert!(outline_cache_get(&dropped, Some(1), 10).is_none());
+    }
+
+    #[test]
+    fn refresh_prewarms_a_changed_source_file() {
+        let dir = std::env::temp_dir().join(format!("peridot-prewarm-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("warm.rs");
+        fs::write(&file, "pub fn warmed() {}\n").unwrap();
+
+        outline_cache_refresh(&dir, std::slice::from_ref(&file));
+
+        let metadata = fs::metadata(&file).unwrap();
+        let cached = outline_cache_get(
+            &file,
+            mtime_to_millis(metadata.modified().ok()),
+            metadata.len(),
+        );
+        let symbols = cached.expect("pre-warmed entry present without a query");
+        assert!(symbols.iter().any(|s| s.name == "warmed"), "{symbols:?}");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn refresh_of_a_missing_file_invalidates() {
+        let path = PathBuf::from(format!(
+            "/peridot-prewarm-missing-{}.rs",
+            std::process::id()
+        ));
+        outline_cache_put(&path, Some(1), 5, Vec::new());
+        outline_cache_refresh(Path::new("/"), std::slice::from_ref(&path));
+        assert!(outline_cache_get(&path, Some(1), 5).is_none());
     }
 
     #[test]

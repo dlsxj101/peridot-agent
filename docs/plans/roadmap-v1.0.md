@@ -211,11 +211,13 @@ treat them as separate milestones, not a single release.
   daemon for the workspace lifetime) invalidates cache entries on file
   changes so renamed/deleted files don't linger in the in-process or
   on-disk cache; it's non-fatal if it can't start (queries still re-check
-  mtime/size).
+  mtime/size). On a change the watcher **pre-warms** — re-parses the
+  changed source file in the background so the next query is warm — bounded
+  to 16 files per event (bigger batches like a branch switch just
+  invalidate) and skipping non-source/oversized/deleted paths.
 - **Remaining**: more language grammars (Kotlin, Swift, Haskell, Elixir)
   via the same dispatcher; full scope resolution (shadowing / which binding
-  a usage resolves to) beyond name-token matching; optional background
-  pre-warm (re-parse changed files off the query path); optionally real LSP
+  a usage resolves to) beyond name-token matching; optionally real LSP
   clients. Highest context-savings payoff.
 
 ### F2. Multimodal image input (vision routing)
