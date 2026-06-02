@@ -484,3 +484,12 @@ Release publishing also attaches `SHA256SUMS`, a checksum-verifying `install.sh`
 ```bash
 curl -fsSL https://raw.githubusercontent.com/dlsxj101/peridot-agent/main/install.sh | sh
 ```
+
+## Documentation
+
+- [User Guide](docs/user-guide.md) — install, modes, slash commands, sessions, providers, MCP, hooks.
+- [Architecture Spec](PERIDOT_SPEC_v1.md) — product source of truth.
+- [Contributing](CONTRIBUTING.md) — toolchain, workspace map, the fmt/clippy/test gate.
+- [Roadmap v1.0](docs/plans/roadmap-v1.0.md) — current code-health + Beyond-v1 feature plan.
+
+Licensed under the [MIT License](LICENSE).

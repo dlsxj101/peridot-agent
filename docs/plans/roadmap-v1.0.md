@@ -1,0 +1,197 @@
+# Roadmap — v1.0 (Code Health + Beyond-v1 Features)
+
+The v0.6 → v0.9 extension roadmaps are fully landed (E8–E163, all
+`landed`). With the TUI ↔ VS Code slash/RPC parity surface complete, the
+next milestone shifts from breadth (new slash parity items) to **depth**:
+paying down structural debt that has accumulated in the large daemon/TUI
+files, and starting the explicitly-deferred Beyond-v1 features from
+`PERIDOT_SPEC_v1.md` §21.5.
+
+This document is organized into two tracks:
+
+- **Track C — Code Health** (tech debt found in the 2026-06-02 review).
+- **Track F — Features** (spec §21.5 Beyond-v1 items, sequenced).
+
+Each item keeps the existing roadmap shape (`Status` / `Goal` / `Where`)
+so it can be checked off the same way as v0.9.
+
+---
+
+## Code Review Snapshot (2026-06-02)
+
+Reviewed at `claude/code-review-roadmap-tx5SA`, workspace `0.8.14`.
+
+**Healthy:**
+
+- `cargo fmt --all --check` clean.
+- `cargo +1.95 clippy --workspace --all-targets -- -D warnings` and
+  `cargo +1.95 test --workspace` both pass once the correct toolchain is
+  used (see C1).
+- Architecture matches the spec: 14 narrow crates, trait boundaries for
+  providers/tools/subagents, daemon RPC dispatch delegates cleanly
+  (19 method arms → dedicated `handle_*` functions).
+
+**Findings (turned into Track C items):**
+
+1. **Toolchain / MSRV drift (C1).** `Cargo.toml` sets
+   `rust-version = "1.95"`, but `rust-toolchain.toml` pins only
+   `channel = "stable"`. On a host whose `stable` is older than 1.95
+   (the review environment had 1.94.1), every `cargo` invocation fails
+   with `rustc 1.94.1 is not supported`. The pin should be explicit.
+2. **`daemon.rs` monolith (C2).** `crates/peridot-cli/src/commands/daemon.rs`
+   is 9,312 lines (5,882 non-test) with ~70 `handle_*` functions in one
+   file — far past the 500-line warning in `AGENTS.md`. It mixes RPC
+   transport, session lifecycle, skills, codemap, MCP, settings, and
+   notes handling.
+3. **Other oversized modules (C3).** Non-test code over 500 lines:
+   `peridot-tui/src/state.rs` (3,176), `render.rs` (2,474),
+   `input.rs` (1,730); `peridot-context/src/lib.rs` (1,660);
+   `peridot-common/src/lib.rs` (1,512); `peridot-core/src/agent.rs`
+   (1,466); `peridot-cli/src/run_loop.rs` (1,248);
+   `peridot-memory/src/lib.rs` (1,244); `peridot-tools/src/tools/file.rs`
+   (1,188).
+4. **`unwrap`/`expect` in non-test paths (C4).** ~22 real
+   `unwrap()`/`expect()`/`panic!` calls outside test modules in
+   `daemon.rs` alone (the daemon is a long-lived process where a panic
+   takes down every session). Worth an audit + conversion to recoverable
+   errors on the request-handling path.
+5. **Documentation gaps (C5).** Spec §22 still lists user-guide and
+   contributing-guide as open `[ ]`. (License resolved this pass — root
+   `LICENSE` added, matching the extension's MIT.)
+
+---
+
+## Track C — Code Health
+
+### C1. Pin the build toolchain to the MSRV
+
+- **Status**: planned.
+- **Goal**: make a fresh checkout build on any host without a manual
+  `rustup toolchain install`, and stop `stable < 1.95` hosts from failing
+  every cargo command.
+- **Where**: `rust-toolchain.toml`, `.github/workflows/ci.yml`,
+  `CONTRIBUTING.md`.
+- **Plan**: set `rust-toolchain.toml` `channel` to the explicit version
+  that matches `workspace.rust-version` (e.g. `"1.95.0"`) — or keep
+  `stable` but document that the host's stable must be ≥ 1.95 and have CI
+  assert it. Keep `clippy`/`rustfmt` in `components`.
+
+### C2. Split `daemon.rs` into a module tree
+
+- **Status**: planned.
+- **Goal**: bring the daemon under the spec's "narrow files" rule and
+  make RPC handlers reviewable in isolation.
+- **Where**: `crates/peridot-cli/src/commands/daemon.rs` →
+  `commands/daemon/{mod,transport,session,skills,codemap,mcp,settings,notes}.rs`.
+- **Plan**: keep `dispatch_request` as the thin router in `mod.rs`; move
+  each cohesive `handle_*` cluster (session lifecycle, skills inventory,
+  codemap, MCP, settings/notes) into its own submodule. No behavior
+  change — split is mechanical and covered by the existing daemon tests.
+  Do this **before** the feature work below, so new RPC methods land in
+  the right submodule instead of growing the monolith.
+
+### C3. Carve down the other >500-line modules
+
+- **Status**: planned.
+- **Goal**: chip away at the largest TUI / context / core files behind
+  the daemon.
+- **Where**: `peridot-tui/src/{state,render,input}.rs`,
+  `peridot-context/src/lib.rs`, `peridot-core/src/agent.rs`.
+- **Plan**: opportunistic, lower priority than C2. Split by responsibility
+  (e.g. `state.rs` → per-domain state structs; `render.rs` → per-panel
+  renderers) only when touching the area for other work, to avoid churn.
+
+### C4. Audit non-test `unwrap`/`expect` on the daemon path
+
+- **Status**: planned.
+- **Goal**: keep a single malformed request or missing field from
+  panicking the long-lived daemon and killing every concurrent session.
+- **Where**: `crates/peridot-cli/src/commands/daemon.rs` (request
+  handlers), then `run_loop.rs`.
+- **Plan**: convert request-handling `unwrap()`/`expect()` to
+  `emit_error` / `?` propagation. Leave genuinely-infallible cases with a
+  `// SAFETY:`-style comment explaining the invariant.
+
+### C5. Author the user and contributing guides
+
+- **Status**: in progress (this pass).
+- **Goal**: close the two open §22 documentation items.
+- **Where**: `docs/user-guide.md` (new), `CONTRIBUTING.md` (expanded),
+  `PERIDOT_SPEC_v1.md` §22 checkboxes.
+- **Plan**: user guide covers install, first run, modes, slash commands,
+  providers, sessions, MCP, hooks; contributing guide covers the
+  workspace map, the fmt/clippy/test gate, the toolchain requirement
+  (C1), and the spec-as-source-of-truth rule.
+
+---
+
+## Track F — Beyond-v1 Features (spec §21.5)
+
+Sequenced by the spec's own priority recommendation (§21.5.8), minus the
+items already completed during v1 (§21.5.9). Each is a multi-week effort;
+treat them as separate milestones, not a single release.
+
+### F1. LSP / Tree-sitter symbol index
+
+- **Status**: planned (spec §21.5.1, deferred to v2).
+- **Goal**: replace grep/glob text search with semantic
+  `symbol_definition` / `symbol_references` / `symbol_outline` tools so
+  the model attaches exact defs/usages instead of whole grep dumps.
+- **Where**: new `peridot-lsp` (or `peridot-symbols`) crate, tool
+  registry in `peridot-tools`, codemap cache in `peridot-project`.
+- **Notes**: the persisted `.peridot/codemap.json` and the
+  `/codemap locate|outline|refs` slashes are already the pragmatic
+  text-based stand-in (E24–E28); this upgrades them to real semantic
+  indexing (tree-sitter grammars or multi-LSP clients) with incremental
+  refresh via the `notify` crate. Highest context-savings payoff.
+
+### F2. Multimodal image input (vision routing)
+
+- **Status**: partial (attach UX landed; vision routing planned).
+- **Goal**: actually send attached images to a vision-capable model
+  instead of recording placeholder metadata.
+- **Where**: `peridot-llm` provider adapters (Anthropic vision, OpenAI
+  vision), `peridot-context` attachment payloads.
+- **Notes**: the attach pipeline (`/attach`, VS Code paste/drop,
+  `.peridot/attachments/`) is done. Remaining work is the vision model
+  adapter + a text-only fallback (OCR) and routing rules so non-vision
+  models degrade gracefully.
+
+### F3. Voice input
+
+- **Status**: planned (spec §21.5.10, deferred to v2).
+- **Goal**: dictate prompts via audio capture → transcription.
+- **Where**: new optional crate (audio capture via `cpal`,
+  transcription via local whisper.cpp or OpenAI Whisper API, VAD).
+- **Notes**: lowest priority of the feature track; isolate behind a
+  feature flag so the core CLI stays dependency-light.
+
+### F4. Web UI / browser client
+
+- **Status**: planned (spec §21.5.10, deferred to v2).
+- **Goal**: a browser front-end over the existing daemon RPC.
+- **Where**: extends the `peridot daemon` JSON-RPC surface to
+  HTTP/WebSocket; separate full-stack project (auth, multi-user, session
+  isolation).
+- **Notes**: largest effort (4–8 weeks). The daemon RPC contract built
+  for the VS Code extension is the foundation; this reuses it over a web
+  transport.
+
+---
+
+## Suggested Order
+
+1. **C1** (toolchain pin) — unblocks reproducible builds, ~tiny.
+2. **C5** (docs) — in progress this pass.
+3. **C2** (daemon split) — do before adding RPC methods for F-track work.
+4. **F1** (LSP/symbols) — biggest model-efficiency win.
+5. **C4** (unwrap audit) and **C3** (file carving) — opportunistic,
+   alongside whatever area is being touched.
+6. **F2 → F3 → F4** as separate milestones.
+
+## Notes
+
+- Keep routing through the daemon slash/RPC path so TUI and extension
+  behavior stays shared (carried over from the v0.9 notes).
+- Track C items are behavior-preserving; lean on the existing test suite
+  to prove no regression, and keep each split as its own commit.
