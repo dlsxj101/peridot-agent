@@ -417,6 +417,9 @@ pub struct PeridotConfig {
     /// Auto-fix loop settings (verify-after-mutation behaviour).
     #[serde(default)]
     pub auto_fix: AutoFixConfig,
+
+    #[serde(default)]
+    pub vision: VisionConfig,
     /// Cross-surface UI preferences (currently just locale). Decoupled
     /// from `[tui]` so the value can drive both the terminal UI and the
     /// VS Code extension without implying TUI semantics. `language` is
@@ -532,6 +535,36 @@ impl Default for AutoFixConfig {
             max_attempts: default_auto_fix_max_attempts(),
             commands: Vec::new(),
             enabled: true,
+        }
+    }
+}
+
+/// Multimodal vision input behaviour (feature F2). Controls whether attached
+/// images are sent to vision-capable models and how large an image may be
+/// before it stays a text placeholder.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct VisionConfig {
+    /// Whether `/attach`-ed images are sent to vision-capable models. When
+    /// `false`, images are always stripped and the attachment degrades to its
+    /// text placeholder even on a vision model. On by default.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Largest image (in bytes) inlined as base64 for vision input. Larger
+    /// images stay placeholder-only. Defaults to 5 MiB (the smaller provider
+    /// ceiling, Anthropic).
+    #[serde(default = "default_max_image_bytes")]
+    pub max_image_bytes: usize,
+}
+
+fn default_max_image_bytes() -> usize {
+    5 * 1024 * 1024
+}
+
+impl Default for VisionConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            max_image_bytes: default_max_image_bytes(),
         }
     }
 }

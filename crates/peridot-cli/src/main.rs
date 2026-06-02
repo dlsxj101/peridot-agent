@@ -3117,7 +3117,13 @@ fn code_map_summary_from_status(status: &commands::CodeMapStatus) -> CodeMapSumm
 
 fn handle_attach(state: &mut TuiState, project_root: &Path, path: &str) {
     const MAX_ATTACHMENT_BYTES: usize = 64 * 1024;
-    match commands::load_text_attachment(project_root, path, MAX_ATTACHMENT_BYTES) {
+    // The image cap is configurable via `[vision] max_image_bytes`; fall back
+    // to the VisionConfig default when the project config can't be read.
+    let max_image_bytes = read_project_config(&project_root.join(".peridot/config.toml"))
+        .map(|config| config.vision.max_image_bytes)
+        .unwrap_or_else(|_| peridot_common::VisionConfig::default().max_image_bytes);
+    match commands::load_text_attachment(project_root, path, MAX_ATTACHMENT_BYTES, max_image_bytes)
+    {
         Ok(attachment) => {
             if state.current_session_id.is_empty() {
                 state.push_error("attach: no active session".to_string());

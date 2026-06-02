@@ -89,6 +89,7 @@ pub(super) async fn run_task(
     agent.set_auto_verify_after_mutation(config.defaults.auto_verify_after_mutation);
     agent.set_auto_grade_on_done(config.defaults.auto_grade_on_done);
     agent.set_auto_fix_cap(config.auto_fix.max_attempts);
+    agent.set_vision_enabled(config.vision.enabled);
     let summary = run_agent_loop_with_default_observability(
         &mut agent,
         provider.as_ref(),
@@ -375,6 +376,7 @@ where
     agent.set_auto_verify_after_mutation(config.defaults.auto_verify_after_mutation);
     agent.set_auto_grade_on_done(config.defaults.auto_grade_on_done);
     agent.set_auto_fix_cap(config.auto_fix.max_attempts);
+    agent.set_vision_enabled(config.vision.enabled);
     run_planner_preflight_if_enabled(
         &mut agent,
         provider.as_ref(),

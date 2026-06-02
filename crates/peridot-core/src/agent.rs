@@ -149,14 +149,19 @@ pub struct HarnessAgent {
     /// tool's `parameters_schema()` (which often allocates a fresh JSON
     /// tree) on every turn.
     cached_tool_definitions: Vec<ToolDefinition>,
+    /// Whether attached images may be sent to vision-capable models
+    /// (feature F2, `[vision] enabled`). When `false`, images are always
+    /// stripped regardless of model capability. Defaults to `true`.
+    vision_enabled: bool,
 }
 
-/// Strips image blocks from outgoing messages when the active model is not
-/// vision-capable (feature F2). Text-only providers reject requests that carry
-/// image content, so we drop the images and let the user turn fall back to its
-/// text placeholder. A no-op for vision-capable models.
-fn enforce_vision_capability(messages: &mut [LlmMessage], model: &str) {
-    if peridot_llm::model_supports_vision(model) {
+/// Strips image blocks from outgoing messages when images must not be sent:
+/// either vision is disabled by config, or the active model is not
+/// vision-capable (text-only providers reject image content). The user turn
+/// keeps its text placeholder. A no-op when vision is enabled and the model
+/// supports it.
+fn enforce_vision_capability(messages: &mut [LlmMessage], model: &str, vision_enabled: bool) {
+    if vision_enabled && peridot_llm::model_supports_vision(model) {
         return;
     }
     for message in messages.iter_mut() {
@@ -188,7 +193,14 @@ impl HarnessAgent {
             compact_request: None,
             pending_resume_path: None,
             cached_tool_definitions,
+            vision_enabled: true,
         }
+    }
+
+    /// Enables or disables sending attached images to vision-capable models
+    /// (feature F2, `[vision] enabled`). Defaults to enabled.
+    pub fn set_vision_enabled(&mut self, enabled: bool) {
+        self.vision_enabled = enabled;
     }
 
     /// Configures the file Pending tool calls are persisted to when an
@@ -605,10 +617,10 @@ impl HarnessAgent {
         let tool_definitions = self.cached_tool_definitions.clone();
         let system_prompt = system_prompt_for_role(self.state.mode, self.role).to_string();
         let mut messages = self.context.to_messages();
-        // Vision routing (feature F2): a text-only model must not receive image
-        // blocks (the provider would reject the request). The user turn keeps
-        // its text placeholder, so the attachment degrades to a textual mention.
-        enforce_vision_capability(&mut messages, &request.model);
+        // Vision routing (feature F2): a text-only model (or vision disabled by
+        // config) must not receive image blocks. The user turn keeps its text
+        // placeholder, so the attachment degrades to a textual mention.
+        enforce_vision_capability(&mut messages, &request.model, self.vision_enabled);
         // Emit the effective next-request footprint, not just the stored
         // context-manager estimate. Provider latency is driven by the full
         // assembled request: system prompt, messages, tool schemas and the
@@ -2517,12 +2529,17 @@ mod helpers_tests {
         };
         let mut messages = vec![LlmMessage::user_with_images("look", vec![image.clone()])];
 
-        // Vision-capable model: images preserved.
-        enforce_vision_capability(&mut messages, "claude-opus-4-8");
+        // Vision-capable model with vision enabled: images preserved.
+        enforce_vision_capability(&mut messages, "claude-opus-4-8", true);
         assert_eq!(messages[0].images.len(), 1);
 
+        // Vision disabled by config: images stripped even on a vision model.
+        enforce_vision_capability(&mut messages, "claude-opus-4-8", false);
+        assert!(messages[0].images.is_empty());
+
         // Text-only model: images stripped, text kept.
-        enforce_vision_capability(&mut messages, "gpt-3.5-turbo");
+        let mut messages = vec![LlmMessage::user_with_images("look", vec![image])];
+        enforce_vision_capability(&mut messages, "gpt-3.5-turbo", true);
         assert!(messages[0].images.is_empty());
         assert_eq!(messages[0].content, "look");
         assert_eq!(messages[0].role, MessageRole::User);

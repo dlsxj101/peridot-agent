@@ -105,8 +105,9 @@ Keep a `From<String>` so existing text-only call sites are unchanged
    `to_messages`; `enforce_vision_capability` gate in the core loop).
 5. ⬜ Image downscaling + an OCR text fallback for text-only models
    (behind a feature flag + trait).
-6. ⬜ Config knobs (`[vision] enabled`, `max_image_bytes`, model override)
-   + surface indicators ("image sent" vs "placeholder").
+6. 🚧 Config knobs: ✅ `[vision] enabled` (core gate honours it) and
+   `[vision] max_image_bytes` (attach cap, both TUI and daemon surfaces).
+   ⬜ model override + surface indicators ("image sent" vs "placeholder").
 
 Milestone 4 chose to carry the image bytes on `ContextEntry.images`
 (encoded once at attach time) rather than re-reading files during request

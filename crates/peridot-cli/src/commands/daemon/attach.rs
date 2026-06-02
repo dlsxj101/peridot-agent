@@ -19,8 +19,12 @@ pub(super) fn handle_command_attach(
 ) -> Result<Value, String> {
     const MAX_ATTACHMENT_BYTES: usize = 64 * 1024;
     let session_id = require_session_id(session_id, "attach")?;
-    let attachment =
-        crate::commands::load_text_attachment(&state.project_root, path, MAX_ATTACHMENT_BYTES)?;
+    let attachment = crate::commands::load_text_attachment(
+        &state.project_root,
+        path,
+        MAX_ATTACHMENT_BYTES,
+        state.run_config.vision.max_image_bytes,
+    )?;
     let inlined = attachment.content.is_some();
     let path = attachment.path.clone();
     let bytes = attachment.bytes;

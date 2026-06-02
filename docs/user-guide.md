@@ -167,6 +167,13 @@ Key knobs (spec §16): provider/auth, single `model` knob, permission
 level (`safe`/`auto`), reasoning tier, service tier, budget caps,
 `[auto_fix].max_attempts`, MCP servers, and hooks.
 
+Multimodal vision (`[vision]`): `/attach`-ed images are sent to
+vision-capable models as image blocks and automatically stripped to a
+text placeholder for text-only models. `[vision].enabled` (default `true`)
+turns image sending off entirely; `[vision].max_image_bytes` (default
+`5242880`, i.e. 5 MiB) caps how large an image may be before it stays
+placeholder-only.
+
 ## 8. Permissions & safety
 
 Peridot enforces a layered safety model (spec §19):

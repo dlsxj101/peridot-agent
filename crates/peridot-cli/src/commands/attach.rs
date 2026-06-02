@@ -4,11 +4,6 @@ use base64::Engine as _;
 use peridot_context::{ContextEntry, ContextSource};
 use peridot_llm::ImageContent;
 
-/// Largest image inlined as base64 for vision input. Images above this stay
-/// placeholder-only (the model sees the textual mention, not the pixels).
-/// Sized for the smaller provider ceiling (Anthropic ~5 MB per image).
-pub(crate) const MAX_IMAGE_BYTES: usize = 5 * 1024 * 1024;
-
 /// Text attachment loaded from a workspace-local file.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct TextAttachment {
@@ -35,6 +30,7 @@ pub(crate) fn load_text_attachment(
     project_root: &Path,
     requested_path: &str,
     max_bytes: usize,
+    max_image_bytes: usize,
 ) -> Result<TextAttachment, String> {
     let requested_path = requested_path.trim();
     if requested_path.is_empty() {
@@ -66,7 +62,7 @@ pub(crate) fn load_text_attachment(
     // otherwise keep a placeholder. (The `max_bytes` text limit does not gate
     // images — `MAX_IMAGE_BYTES` does.)
     if let Some(media_type) = media_type {
-        let image_base64 = if byte_len <= MAX_IMAGE_BYTES {
+        let image_base64 = if byte_len <= max_image_bytes {
             let bytes = std::fs::read(&canonical)
                 .map_err(|err| format!("attach: failed to read {}: {err}", canonical.display()))?;
             Some(base64::engine::general_purpose::STANDARD.encode(&bytes))
@@ -244,7 +240,7 @@ mod tests {
         let root = temp_project("escape");
         let outside = root.parent().unwrap().join("outside.txt");
         std::fs::write(&outside, "secret").unwrap();
-        let err = load_text_attachment(&root, "../outside.txt", 1024).unwrap_err();
+        let err = load_text_attachment(&root, "../outside.txt", 1024, 1024).unwrap_err();
         assert!(err.contains("outside the workspace"));
         let _ = std::fs::remove_file(outside);
         let _ = std::fs::remove_dir_all(root);
@@ -255,7 +251,7 @@ mod tests {
         let root = temp_project("utf8");
         std::fs::create_dir_all(root.join("src")).unwrap();
         std::fs::write(root.join("src/lib.rs"), "pub fn demo() {}\n").unwrap();
-        let attachment = load_text_attachment(&root, "src/lib.rs", 1024).unwrap();
+        let attachment = load_text_attachment(&root, "src/lib.rs", 1024, 1024).unwrap();
         assert_eq!(attachment.path, "src/lib.rs");
         assert!(attachment_plan_reminder(&attachment).contains("pub fn demo()"));
         let _ = std::fs::remove_dir_all(root);
@@ -265,7 +261,7 @@ mod tests {
     fn attachment_uses_placeholder_for_images() {
         let root = temp_project("image");
         std::fs::write(root.join("screen.png"), [0x89, b'P', b'N', b'G']).unwrap();
-        let attachment = load_text_attachment(&root, "screen.png", 1024).unwrap();
+        let attachment = load_text_attachment(&root, "screen.png", 1024, 1024).unwrap();
         assert_eq!(attachment.media_type.as_deref(), Some("image/png"));
         assert!(attachment.content.is_none());
         assert!(attachment_plan_reminder(&attachment).contains("image attachment placeholder"));
@@ -282,9 +278,9 @@ mod tests {
     #[test]
     fn oversized_image_stays_placeholder_only() {
         let root = temp_project("bigimage");
-        let big = vec![0u8; MAX_IMAGE_BYTES + 1];
-        std::fs::write(root.join("huge.png"), &big).unwrap();
-        let attachment = load_text_attachment(&root, "huge.png", 1024).unwrap();
+        // 17 bytes with a 16-byte image cap → over the limit, placeholder only.
+        std::fs::write(root.join("huge.png"), vec![0u8; 17]).unwrap();
+        let attachment = load_text_attachment(&root, "huge.png", 1024, 16).unwrap();
         assert_eq!(attachment.media_type.as_deref(), Some("image/png"));
         assert!(attachment.image_base64.is_none());
         assert!(attachment_image_content(&attachment).is_empty());

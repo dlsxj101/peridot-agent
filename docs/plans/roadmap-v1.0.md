@@ -221,9 +221,12 @@ treat them as separate milestones, not a single release.
   `ContextEntry.images`; `to_messages` emits `user_with_images` (role-merge
   keeps them discrete); the core loop strips images for text-only models
   via `enforce_vision_capability`. Tested at each layer.
+- **Config**: `[vision] enabled` (core gate via `set_vision_enabled` /
+  `enforce_vision_capability`) and `[vision] max_image_bytes` (attach cap,
+  both TUI and daemon surfaces) are wired.
 - **Remaining**: image downscaling (only a hard cap today), an OCR
-  text-only fallback, and config knobs + surface indicators. See the
-  design doc milestones 5–6.
+  text-only fallback, a vision-model override, and surface indicators. See
+  the design doc milestones 5–6.
 
 ### F3. Voice input
 
