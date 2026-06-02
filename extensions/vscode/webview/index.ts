@@ -79,6 +79,12 @@ let forceTranscriptBottomOnce = false;
 let transcriptScrollRestoreToken = 0;
 let lastTranscriptAnimationKey = '';
 let lastTranscriptCount = 0;
+// Transcript virtualization: only the most recent TRANSCRIPT_RENDER_CAP items
+// are kept in the DOM (older ones collapse behind a "show earlier" toggle), so
+// a very long conversation can't grow the DOM — and per-render signature work —
+// without bound. `transcriptExpanded` is the per-session opt-in to render all.
+const TRANSCRIPT_RENDER_CAP = 250;
+let transcriptExpanded = false;
 let lastComposerRunning: boolean | undefined;
 let editingSessionId: string | undefined;
 let editingSessionDraft: string | undefined;
@@ -1390,10 +1396,25 @@ interface TranscriptScrollPlan {
   previousScrollTop: number;
 }
 
+/** The "show earlier messages" affordance shown at the top of a virtualized
+ *  transcript. Clicking it renders the full history for this session. */
+function renderEarlierToggle(hiddenCount: number): HTMLElement {
+  const button = el('button', 'transcript-earlier');
+  button.type = 'button';
+  button.textContent = `Show ${hiddenCount} earlier message${hiddenCount === 1 ? '' : 's'}`;
+  button.addEventListener('click', () => {
+    transcriptExpanded = true;
+    if (state) render(state);
+  });
+  return button;
+}
+
 function renderTranscriptInto(wrap: HTMLElement, s: SidebarState): TranscriptScrollPlan {
   wrap.className = 'transcript';
   const transcriptKey = s.activeChatId ?? s.sessionId ?? 'draft';
   const sameTranscript = transcriptKey === lastTranscriptAnimationKey;
+  // Switching to a different conversation collapses back to the capped window.
+  if (!sameTranscript) transcriptExpanded = false;
   const activePrompt = latestPendingPrompt(s);
   const pendingToolIndexes = pendingToolIndexSet(s.transcript);
   const scrollMode = transcriptScrollMode(lastRenderedState, s);
@@ -1434,7 +1455,19 @@ function renderTranscriptInto(wrap: HTMLElement, s: SidebarState): TranscriptScr
     }
     return keyedTranscriptNode(key, build(), signature);
   };
-  for (let index = 0; index < s.transcript.length; index += 1) {
+  // Virtualize: render only the most recent window unless the user expanded.
+  const windowStart =
+    transcriptExpanded || s.transcript.length <= TRANSCRIPT_RENDER_CAP
+      ? 0
+      : s.transcript.length - TRANSCRIPT_RENDER_CAP;
+  if (windowStart > 0) {
+    nextNodes.push(
+      reuseOrBuild('transcript-earlier', `earlier:${windowStart}`, () =>
+        renderEarlierToggle(windowStart),
+      ),
+    );
+  }
+  for (let index = windowStart; index < s.transcript.length; index += 1) {
     const item = s.transcript[index];
     if (isActivePromptItem(item, activePrompt)) continue;
     if (item.role === 'tool') {
