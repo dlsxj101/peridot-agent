@@ -11,10 +11,11 @@
 //!
 //! Language support is behind the [`LanguageSymbols`] trait so languages plug
 //! in without changing callers, the same trait-boundary pattern the rest of
-//! the workspace uses. Rust ([`RustSymbols`]), TypeScript/JavaScript
-//! ([`TypeScriptSymbols`]), and Python ([`PythonSymbols`]) are implemented;
-//! callers usually dispatch by file extension via [`outline_for_extension`]
-//! and [`references_for_extension`].
+//! the workspace uses. Implemented: Rust, TypeScript/JavaScript/JSX, Python,
+//! Go, Java, Ruby, C, C++, C#, PHP, Bash, Scala, and Lua. Callers usually
+//! dispatch by file extension via [`outline_for_extension`] and
+//! [`references_for_extension`], falling back to their own heuristic when the
+//! extension has no grammar.
 
 use serde::{Deserialize, Serialize};
 
