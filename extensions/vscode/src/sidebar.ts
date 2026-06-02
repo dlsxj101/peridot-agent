@@ -189,6 +189,9 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
   private state: SidebarState = freshState();
   private sessions = new Map<string, StoredChatSession>();
   private nextSessionOrdinal = 1;
+  /** Set when a state post was skipped because the view was hidden, so the
+   *  next time the view becomes visible we flush the current state once. */
+  private pendingHiddenPublish = false;
   private streamCoalesceTimer: ReturnType<typeof setTimeout> | undefined;
   private streamCoalescePending = false;
   private persistTimer: ReturnType<typeof setTimeout> | undefined;
@@ -214,6 +217,14 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
     webviewView.webview.html = this.html(webviewView.webview);
     webviewView.onDidDispose(() => {
       if (this.view === webviewView) this.view = undefined;
+    });
+    // Flush the latest state once when the view returns to visibility, if any
+    // posts were skipped while it was hidden (see postState).
+    webviewView.onDidChangeVisibility(() => {
+      if (webviewView.visible && this.pendingHiddenPublish) {
+        this.pendingHiddenPublish = false;
+        this.postState();
+      }
     });
     webviewView.webview.onDidReceiveMessage((message: OutboundMessage) => {
       void this.receive(message);
@@ -1438,6 +1449,17 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
   }
 
   private postState(): void {
+    // While the sidebar view is hidden (the user switched to another sidebar
+    // view), there is no point serializing and posting the full state on every
+    // streaming frame — the webview can't show it, and a long transcript makes
+    // each post O(n). Skip while hidden and flush once when the view returns,
+    // so coming back to a large conversation does not stall replaying a burst
+    // of state messages. `retainContextWhenHidden` keeps the DOM, so a single
+    // post on return is enough.
+    if (this.view && !this.view.visible) {
+      this.pendingHiddenPublish = true;
+      return;
+    }
     const message: InboundMessage = { type: 'state', state: this.state };
     this.view?.webview.postMessage(message);
   }
