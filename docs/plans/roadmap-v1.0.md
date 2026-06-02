@@ -202,14 +202,16 @@ treat them as separate milestones, not a single release.
   `symbol_references` result is tagged `definition` or `usage` (the
   dispatch entry point cross-references occurrences against the file
   outline). `Reference` carries an `is_definition` flag.
-- **Incremental cache (first increment)**: `workspace_symbols` /
-  `symbol_search` / `symbol_definition` cache each file's parsed outline by
-  absolute path + (mtime, size), re-parsing only changed files instead of
-  the whole tree per query. In-process, bounded, invalidates on change.
+- **Incremental cache**: `workspace_symbols` / `symbol_search` /
+  `symbol_definition` cache each file's parsed outline by absolute path +
+  (mtime, size), re-parsing only changed files. The cache is **persisted to
+  `.peridot/symbol-cache.json`** (versioned, flushed once per query) and
+  reloaded on startup, so a daemon/agent restart warm-starts instead of
+  re-parsing the tree.
 - **Remaining**: more language grammars (Kotlin, Swift, Haskell, Elixir)
   via the same dispatcher; full scope resolution (shadowing / which binding
-  a usage resolves to) beyond name-token matching; on-disk persistence of
-  the outline cache + a notify-based file watcher for live invalidation;
+  a usage resolves to) beyond name-token matching; a `notify`-based file
+  watcher for live cache invalidation (needs a daemon-lifecycle owner);
   optionally real LSP clients. Highest context-savings payoff.
 
 ### F2. Multimodal image input (vision routing)
