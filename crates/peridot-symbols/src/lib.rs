@@ -18,6 +18,7 @@
 
 use serde::{Deserialize, Serialize};
 
+mod c_family;
 mod go;
 mod java;
 mod python;
@@ -25,6 +26,7 @@ mod ruby;
 mod rust;
 mod typescript;
 
+pub use c_family::CFamilySymbols;
 pub use go::GoSymbols;
 pub use java::JavaSymbols;
 pub use python::PythonSymbols;
@@ -158,6 +160,8 @@ pub fn language_for_extension(extension: &str) -> Option<Box<dyn LanguageSymbols
         "go" => Some(Box::new(GoSymbols)),
         "java" => Some(Box::new(JavaSymbols)),
         "rb" => Some(Box::new(RubySymbols)),
+        "c" | "h" => Some(Box::new(CFamilySymbols::c())),
+        "cpp" | "cc" | "cxx" | "hpp" | "hh" | "hxx" => Some(Box::new(CFamilySymbols::cpp())),
         _ => None,
     }
 }
@@ -304,6 +308,18 @@ mod tests {
         );
         assert!(
             outline_for_extension("rb", "def a\nend\n")
+                .unwrap()
+                .iter()
+                .any(|s| s.name == "a")
+        );
+        assert!(
+            outline_for_extension("c", "int a(void) { return 0; }")
+                .unwrap()
+                .iter()
+                .any(|s| s.name == "a")
+        );
+        assert!(
+            outline_for_extension("cpp", "class A { void a() {} };")
                 .unwrap()
                 .iter()
                 .any(|s| s.name == "a")
