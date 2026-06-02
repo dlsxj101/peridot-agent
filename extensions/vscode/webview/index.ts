@@ -1415,6 +1415,25 @@ function renderTranscriptInto(wrap: HTMLElement, s: SidebarState): TranscriptScr
     return { wrap, mode: 'none', previousScrollTop };
   }
   const nextNodes: HTMLElement[] = [];
+  // Lazy reuse: building a transcript node runs markdown rendering + DOM
+  // construction, which is the dominant per-render cost. Snapshot the existing
+  // nodes by key→signature so an item whose signature is unchanged reuses its
+  // node verbatim instead of being rebuilt and then discarded by the
+  // reconciler. During streaming only the trailing item's signature changes,
+  // so this turns an O(n) markdown re-render per delta into O(1).
+  const existingByKey = new Map<string, HTMLElement>();
+  for (const child of Array.from(wrap.children)) {
+    if (child instanceof HTMLElement && child.dataset.transcriptKey) {
+      existingByKey.set(child.dataset.transcriptKey, child);
+    }
+  }
+  const reuseOrBuild = (key: string, signature: string, build: () => HTMLElement): HTMLElement => {
+    const existing = existingByKey.get(key);
+    if (existing && existing.dataset.renderSignature === signature) {
+      return existing;
+    }
+    return keyedTranscriptNode(key, build(), signature);
+  };
   for (let index = 0; index < s.transcript.length; index += 1) {
     const item = s.transcript[index];
     if (isActivePromptItem(item, activePrompt)) continue;
@@ -1428,26 +1447,26 @@ function renderTranscriptInto(wrap: HTMLElement, s: SidebarState): TranscriptScr
       const stackEnd = index - 1;
       index -= 1;
       nextNodes.push(
-        keyedTranscriptNode(
-          toolStackKey(transcriptKey, stackStart),
+        reuseOrBuild(toolStackKey(transcriptKey, stackStart), toolStackSignature(tools), () =>
           decorateTranscriptEntry(
             renderToolStack(tools, stackStart, pendingToolIndexes),
             representativeToolItem(tools, stackStart, pendingToolIndexes),
             stackEnd >= animationStartIndex,
           ),
-          toolStackSignature(tools),
         ),
       );
     } else {
+      const itemIndex = index;
       nextNodes.push(
-        keyedTranscriptNode(
-          transcriptItemKey(transcriptKey, item, index),
-          decorateTranscriptEntry(
-            renderItem(item, `${transcriptKey}:${index}`),
-            item,
-            index >= animationStartIndex,
-          ),
+        reuseOrBuild(
+          transcriptItemKey(transcriptKey, item, itemIndex),
           transcriptItemSignature(item),
+          () =>
+            decorateTranscriptEntry(
+              renderItem(item, `${transcriptKey}:${itemIndex}`),
+              item,
+              itemIndex >= animationStartIndex,
+            ),
         ),
       );
     }
