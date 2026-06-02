@@ -78,28 +78,27 @@ Reviewed at `claude/code-review-roadmap-tx5SA`, workspace `0.8.14`.
 
 ### C2. Split `daemon.rs` into a module tree
 
-- **Status**: in progress (first pass landed 2026-06-02).
+- **Status**: landed (2026-06-02).
 - **Goal**: bring the daemon under the spec's "narrow files" rule and
   make RPC handlers reviewable in isolation.
 - **Where**: `crates/peridot-cli/src/commands/daemon.rs` →
-  `commands/daemon/{mod,branch,mcp,skills,codemap,notes,approval,tests}.rs`.
-- **Done so far**: `daemon.rs` (9,312 lines) became a directory module.
-  The 3,400-line test block plus six cohesive clusters — branch, MCP,
-  skills, codemap, notes, and approval/interaction — moved into
-  submodules. `mod.rs` is now ~4,300 lines. `dispatch_request` stays the
-  thin router; submodule handlers are `pub(super)` and reach shared
-  parent helpers through `use super::*` (Rust lets descendants see
-  private ancestor items). Behavior-preserving: `clippy --all-targets
-  -D warnings` is clean and the full daemon test suite passes (the only
-  failing tests are pre-existing git-commit-signing sandbox artifacts).
-- **Remaining**: the session-lifecycle command cluster
-  (`handle_command_session_*`, ~1,000 lines) and the attach/export
-  cluster are still in `mod.rs`. They are more entangled with shared
-  state-mutation helpers (`command_result`, `with_state_delta`,
-  `resolve_session_target_id`, persisted-session helpers), so they need a
-  careful separation of session-exclusive vs shared helpers before
-  moving. Do this **before** the feature work below, so new RPC methods
-  land in the right submodule instead of regrowing the monolith.
+  `commands/daemon/{mod,session_cmd,inspect,approval,codemap,attach,branch,mcp,skills,notes,tests}.rs`.
+- **Result**: `daemon.rs` (9,312 lines) became a directory module. The
+  3,400-line test block plus nine cohesive clusters moved into
+  submodules; `mod.rs` dropped from 5,882 non-test lines to ~2,500
+  (`session_cmd` 984, `inspect` 529, `approval` 454, `codemap` 343,
+  `attach` 328, `branch` 280, `mcp` 264, `skills` 242, `notes` 103).
+  `dispatch_request` stays the thin router; submodule handlers are
+  `pub(super)` and reach shared parent helpers (the `command_result`
+  family, `update_session_spec`, context-snapshot helpers, `emit_*`)
+  through `use super::*` — Rust lets descendants see private ancestor
+  items, so the genuinely shared helpers stayed in `mod.rs` with no
+  visibility churn. `resolve_session_target_id` is shared between the
+  session and export handlers, so it lives in `session_cmd` and `attach`
+  calls it through `super`. Behavior-preserving: `cargo fmt --all
+  --check` clean, `clippy --workspace --all-targets -D warnings` clean,
+  and the full daemon test suite passes (the only failing workspace
+  tests are pre-existing git-commit-signing sandbox artifacts).
 
 ### C3. Carve down the other >500-line modules
 
