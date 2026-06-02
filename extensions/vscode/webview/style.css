@@ -1353,6 +1353,9 @@ textarea {
   border-radius: var(--peri-radius-tight);
   background: var(--vscode-textCodeBlock-background, var(--peri-bg-elev-soft));
   overflow: auto;
+  /* Clamp huge fenced code blocks to a scrollable box so one giant block
+     can't make the message — and the transcript layout — enormous. */
+  max-height: 420px;
   white-space: pre;
 }
 
