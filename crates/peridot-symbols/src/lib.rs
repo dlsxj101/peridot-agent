@@ -23,10 +23,12 @@ mod c_family;
 mod csharp;
 mod go;
 mod java;
+mod lua;
 mod php;
 mod python;
 mod ruby;
 mod rust;
+mod scala;
 mod typescript;
 
 pub use bash::BashSymbols;
@@ -34,10 +36,12 @@ pub use c_family::CFamilySymbols;
 pub use csharp::CSharpSymbols;
 pub use go::GoSymbols;
 pub use java::JavaSymbols;
+pub use lua::LuaSymbols;
 pub use php::PhpSymbols;
 pub use python::PythonSymbols;
 pub use ruby::RubySymbols;
 pub use rust::RustSymbols;
+pub use scala::ScalaSymbols;
 pub use typescript::TypeScriptSymbols;
 
 /// The kind of a source symbol. Additive: new variants may appear as more
@@ -171,6 +175,8 @@ pub fn language_for_extension(extension: &str) -> Option<Box<dyn LanguageSymbols
         "cs" => Some(Box::new(CSharpSymbols)),
         "php" => Some(Box::new(PhpSymbols)),
         "sh" | "bash" => Some(Box::new(BashSymbols)),
+        "scala" | "sc" => Some(Box::new(ScalaSymbols)),
+        "lua" => Some(Box::new(LuaSymbols)),
         _ => None,
     }
 }
@@ -347,6 +353,18 @@ mod tests {
         );
         assert!(
             outline_for_extension("sh", "a() { echo hi; }")
+                .unwrap()
+                .iter()
+                .any(|s| s.name == "a")
+        );
+        assert!(
+            outline_for_extension("scala", "object A { def a(): Int = 0 }")
+                .unwrap()
+                .iter()
+                .any(|s| s.name == "a")
+        );
+        assert!(
+            outline_for_extension("lua", "function a() end")
                 .unwrap()
                 .iter()
                 .any(|s| s.name == "a")
