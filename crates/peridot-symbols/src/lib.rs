@@ -18,11 +18,17 @@
 
 use serde::{Deserialize, Serialize};
 
+mod go;
+mod java;
 mod python;
+mod ruby;
 mod rust;
 mod typescript;
 
+pub use go::GoSymbols;
+pub use java::JavaSymbols;
 pub use python::PythonSymbols;
+pub use ruby::RubySymbols;
 pub use rust::RustSymbols;
 pub use typescript::TypeScriptSymbols;
 
@@ -149,6 +155,9 @@ pub fn language_for_extension(extension: &str) -> Option<Box<dyn LanguageSymbols
         // The TSX grammar is a superset that also parses plain JS and JSX.
         "tsx" | "js" | "jsx" | "mjs" | "cjs" => Some(Box::new(TypeScriptSymbols::tsx())),
         "py" | "pyi" => Some(Box::new(PythonSymbols)),
+        "go" => Some(Box::new(GoSymbols)),
+        "java" => Some(Box::new(JavaSymbols)),
+        "rb" => Some(Box::new(RubySymbols)),
         _ => None,
     }
 }
@@ -211,6 +220,26 @@ pub(crate) fn field_name<'a>(node: &tree_sitter::Node, source: &'a str) -> Optio
         .and_then(|n| n.utf8_text(source.as_bytes()).ok())
 }
 
+/// Returns the text of the first descendant (depth-first, self included) whose
+/// node kind is `kind`. Used to dig a name out of a wrapper node, e.g. the
+/// receiver type of a Go method.
+pub(crate) fn first_descendant_text<'a>(
+    node: tree_sitter::Node,
+    kind: &str,
+    source: &'a str,
+) -> Option<&'a str> {
+    if node.kind() == kind {
+        return node.utf8_text(source.as_bytes()).ok();
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if let Some(text) = first_descendant_text(child, kind, source) {
+            return Some(text);
+        }
+    }
+    None
+}
+
 /// Depth-first walk recording every leaf identifier token whose text equals
 /// `name`, using `is_identifier` to decide which leaf kinds count. Shared by
 /// every language's [`LanguageSymbols::references`].
@@ -257,6 +286,24 @@ mod tests {
         );
         assert!(
             outline_for_extension("py", "def a():\n    pass\n")
+                .unwrap()
+                .iter()
+                .any(|s| s.name == "a")
+        );
+        assert!(
+            outline_for_extension("go", "package m\nfunc a() {}")
+                .unwrap()
+                .iter()
+                .any(|s| s.name == "a")
+        );
+        assert!(
+            outline_for_extension("java", "class A { void a() {} }")
+                .unwrap()
+                .iter()
+                .any(|s| s.name == "a")
+        );
+        assert!(
+            outline_for_extension("rb", "def a\nend\n")
                 .unwrap()
                 .iter()
                 .any(|s| s.name == "a")
