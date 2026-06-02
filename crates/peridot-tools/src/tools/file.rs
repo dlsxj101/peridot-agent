@@ -785,10 +785,13 @@ fn collect_references(
         .to_string_lossy()
         .replace('\\', "/");
     let lines: Vec<&str> = content.lines().collect();
-    let is_rust = path.extension().and_then(|value| value.to_str()) == Some("rs");
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("");
 
-    if is_rust {
-        for reference in peridot_symbols::references_rust(&content, name) {
+    if let Some(references) = peridot_symbols::references_for_extension(extension, &content, name) {
+        for reference in references {
             if out.len() >= limit {
                 break;
             }
@@ -1195,14 +1198,15 @@ fn outline_file(project_root: &Path, path: &Path, limit: usize) -> PeriResult<Ve
         .extension()
         .and_then(|value| value.to_str())
         .unwrap_or("");
-    // Rust files get a real tree-sitter parse (Beyond-v1 feature F1) instead
-    // of the line-based heuristic: accurate kinds, impl/trait association, and
-    // multi-line-aware start positions. Other languages keep the heuristic
-    // until their grammars are wired in.
-    if extension == "rs" {
+    // Languages with a tree-sitter grammar (Rust, TypeScript/JS, Python) get a
+    // real parse (Beyond-v1 feature F1) instead of the line-based heuristic:
+    // accurate kinds, class/impl association, and multi-line-aware start
+    // positions. Other languages keep the heuristic until their grammars are
+    // wired in.
+    if let Some(parsed) = peridot_symbols::outline_for_extension(extension, &content) {
         let lines: Vec<&str> = content.lines().collect();
         let mut symbols = Vec::new();
-        for symbol in peridot_symbols::outline_rust(&content) {
+        for symbol in parsed {
             if symbols.len() >= limit {
                 break;
             }

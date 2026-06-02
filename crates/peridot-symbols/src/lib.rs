@@ -1,19 +1,30 @@
-//! Semantic symbol extraction for Peridot (Beyond-v1 feature F1 foundation).
+//! Semantic symbol extraction for Peridot (Beyond-v1 feature F1).
 //!
-//! Today the agent finds code through `file_search` (glob) and `shell_exec`
+//! The agent finds code through `file_search` (glob) and `shell_exec`
 //! (grep) plus the persisted `.peridot/codemap.json` text index. This crate
-//! is the first semantic layer: it parses source with
+//! is the semantic layer: it parses source with
 //! [tree-sitter](https://tree-sitter.github.io/) and returns structured
-//! symbols (functions, structs, enums, traits, impls, modules, ...) with line
-//! ranges, so callers can build `symbol_outline` / `symbol_definition` tools
-//! that attach exact definitions instead of whole grep dumps.
+//! symbols (functions, structs, classes, enums, traits, methods, ...) with
+//! line ranges, so the `file_outline` / `symbol_definition` /
+//! `symbol_references` tools attach exact definitions instead of whole grep
+//! dumps.
 //!
-//! Language support is behind the [`LanguageSymbols`] trait so future
-//! languages (TypeScript, Go, Python) plug in without changing callers, the
-//! same trait-boundary pattern the rest of the workspace uses. Rust is the
-//! first implementation ([`RustSymbols`]).
+//! Language support is behind the [`LanguageSymbols`] trait so languages plug
+//! in without changing callers, the same trait-boundary pattern the rest of
+//! the workspace uses. Rust ([`RustSymbols`]), TypeScript/JavaScript
+//! ([`TypeScriptSymbols`]), and Python ([`PythonSymbols`]) are implemented;
+//! callers usually dispatch by file extension via [`outline_for_extension`]
+//! and [`references_for_extension`].
 
 use serde::{Deserialize, Serialize};
+
+mod python;
+mod rust;
+mod typescript;
+
+pub use python::PythonSymbols;
+pub use rust::RustSymbols;
+pub use typescript::TypeScriptSymbols;
 
 /// The kind of a source symbol. Additive: new variants may appear as more
 /// node types are recognized, so match with a wildcard arm when exhaustive
@@ -31,6 +42,10 @@ pub enum SymbolKind {
     Static,
     TypeAlias,
     Macro,
+    Class,
+    Interface,
+    Method,
+    Variable,
 }
 
 impl SymbolKind {
@@ -47,6 +62,10 @@ impl SymbolKind {
             SymbolKind::Static => "static",
             SymbolKind::TypeAlias => "type",
             SymbolKind::Macro => "macro",
+            SymbolKind::Class => "class",
+            SymbolKind::Interface => "interface",
+            SymbolKind::Method => "method",
+            SymbolKind::Variable => "var",
         }
     }
 }
@@ -65,8 +84,9 @@ pub struct Symbol {
     pub start_line: usize,
     /// 1-based last line of the definition (inclusive).
     pub end_line: usize,
-    /// For associated items, the owning `impl`/`trait` type
-    /// (e.g. `DaemonState` for a method inside `impl DaemonState`).
+    /// For associated items, the owning type/class
+    /// (e.g. `DaemonState` for a method inside `impl DaemonState`, or the
+    /// class name for a TypeScript/Python method).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub container: Option<String>,
 }
@@ -119,157 +139,34 @@ pub trait LanguageSymbols {
     fn references(&self, source: &str, name: &str) -> Vec<Reference>;
 }
 
-/// Rust symbol extraction backed by `tree-sitter-rust`.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct RustSymbols;
-
-/// Maps a tree-sitter Rust node kind to a [`SymbolKind`].
-fn rust_node_kind(node_kind: &str) -> Option<SymbolKind> {
-    Some(match node_kind {
-        "function_item" | "function_signature_item" => SymbolKind::Function,
-        "struct_item" => SymbolKind::Struct,
-        "enum_item" => SymbolKind::Enum,
-        "union_item" => SymbolKind::Struct,
-        "trait_item" => SymbolKind::Trait,
-        "impl_item" => SymbolKind::Impl,
-        "mod_item" => SymbolKind::Module,
-        "const_item" => SymbolKind::Const,
-        "static_item" => SymbolKind::Static,
-        "type_item" => SymbolKind::TypeAlias,
-        "macro_definition" => SymbolKind::Macro,
-        _ => return None,
-    })
-}
-
-/// Returns the source text of an `impl`/`trait` item's type name, used as the
-/// `container` for nested associated items and as the name of the `impl`
-/// itself. For `impl Trait for Type` this returns `Type`.
-fn impl_or_trait_type_name<'a>(node: &tree_sitter::Node, source: &'a str) -> Option<&'a str> {
-    // `impl_item` exposes a `type` field for the implementing type; `trait_item`
-    // exposes `name`. Prefer the implementing type so methods read as
-    // `Type::method`.
-    let type_node = node
-        .child_by_field_name("type")
-        .or_else(|| node.child_by_field_name("name"))?;
-    type_node.utf8_text(source.as_bytes()).ok()
-}
-
-impl LanguageSymbols for RustSymbols {
-    fn outline(&self, source: &str) -> Vec<Symbol> {
-        let mut parser = tree_sitter::Parser::new();
-        let language: tree_sitter::Language = tree_sitter_rust::LANGUAGE.into();
-        if parser.set_language(&language).is_err() {
-            return Vec::new();
-        }
-        let Some(tree) = parser.parse(source, None) else {
-            return Vec::new();
-        };
-
-        let mut symbols = Vec::new();
-        collect_rust(tree.root_node(), source, None, &mut symbols);
-        symbols
-    }
-
-    fn references(&self, source: &str, name: &str) -> Vec<Reference> {
-        let mut parser = tree_sitter::Parser::new();
-        let language: tree_sitter::Language = tree_sitter_rust::LANGUAGE.into();
-        if parser.set_language(&language).is_err() {
-            return Vec::new();
-        }
-        let Some(tree) = parser.parse(source, None) else {
-            return Vec::new();
-        };
-
-        let mut refs = Vec::new();
-        collect_rust_references(tree.root_node(), source, name, &mut refs);
-        refs
+/// Returns the symbol extractor for a file extension (lower-case, no dot), or
+/// `None` when no tree-sitter grammar is wired in for it. Callers fall back to
+/// their textual heuristic in the `None` case.
+pub fn language_for_extension(extension: &str) -> Option<Box<dyn LanguageSymbols>> {
+    match extension {
+        "rs" => Some(Box::new(RustSymbols)),
+        "ts" | "mts" | "cts" => Some(Box::new(TypeScriptSymbols::typescript())),
+        // The TSX grammar is a superset that also parses plain JS and JSX.
+        "tsx" | "js" | "jsx" | "mjs" | "cjs" => Some(Box::new(TypeScriptSymbols::tsx())),
+        "py" | "pyi" => Some(Box::new(PythonSymbols)),
+        _ => None,
     }
 }
 
-/// Leaf node kinds that count as identifier usages for reference search.
-fn is_rust_identifier_kind(kind: &str) -> bool {
-    matches!(
-        kind,
-        "identifier" | "type_identifier" | "field_identifier" | "shorthand_field_identifier"
-    )
+/// Outlines `source` using the grammar for `extension`, or `None` when the
+/// extension has no grammar.
+pub fn outline_for_extension(extension: &str, source: &str) -> Option<Vec<Symbol>> {
+    language_for_extension(extension).map(|lang| lang.outline(source))
 }
 
-/// Depth-first walk recording every identifier-token whose text equals `name`.
-fn collect_rust_references(
-    node: tree_sitter::Node,
+/// Finds references to `name` in `source` using the grammar for `extension`,
+/// or `None` when the extension has no grammar.
+pub fn references_for_extension(
+    extension: &str,
     source: &str,
     name: &str,
-    out: &mut Vec<Reference>,
-) {
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        if child.child_count() == 0 {
-            if is_rust_identifier_kind(child.kind())
-                && child.utf8_text(source.as_bytes()) == Ok(name)
-            {
-                let pos = child.start_position();
-                out.push(Reference {
-                    line: pos.row + 1,
-                    column: pos.column + 1,
-                });
-            }
-        } else {
-            collect_rust_references(child, source, name, out);
-        }
-    }
-}
-
-/// Depth-first walk that records definitions and threads the enclosing
-/// `impl`/`trait` type down as the `container` for associated items.
-fn collect_rust(
-    node: tree_sitter::Node,
-    source: &str,
-    container: Option<String>,
-    out: &mut Vec<Symbol>,
-) {
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        let node_kind = child.kind();
-        let Some(kind) = rust_node_kind(node_kind) else {
-            // Descend through wrapper nodes (e.g. `declaration_list`) so we
-            // still reach items nested one level down.
-            collect_rust(child, source, container.clone(), out);
-            continue;
-        };
-
-        let (name, child_container) = if kind == SymbolKind::Impl {
-            // The impl block itself is recorded under its type name, and its
-            // members get that type as their container.
-            let type_name = impl_or_trait_type_name(&child, source).map(str::to_string);
-            (type_name.clone(), type_name)
-        } else if kind == SymbolKind::Trait {
-            let trait_name = child
-                .child_by_field_name("name")
-                .and_then(|n| n.utf8_text(source.as_bytes()).ok())
-                .map(str::to_string);
-            (trait_name.clone(), trait_name)
-        } else {
-            let name = child
-                .child_by_field_name("name")
-                .and_then(|n| n.utf8_text(source.as_bytes()).ok())
-                .map(str::to_string);
-            (name, container.clone())
-        };
-
-        if let Some(name) = name {
-            out.push(Symbol {
-                name,
-                kind,
-                start_line: child.start_position().row + 1,
-                end_line: child.end_position().row + 1,
-                container: container.clone(),
-            });
-        }
-
-        // Recurse so nested items (impl methods, items inside `mod`) are
-        // captured with the right container.
-        collect_rust(child, source, child_container, out);
-    }
+) -> Option<Vec<Reference>> {
+    language_for_extension(extension).map(|lang| lang.references(source, name))
 }
 
 /// Convenience wrapper: outline a Rust source string.
@@ -282,168 +179,95 @@ pub fn references_rust(source: &str, name: &str) -> Vec<Reference> {
     RustSymbols.references(source, name)
 }
 
+// ---- shared tree-sitter helpers used by the language modules ----
+
+/// Parses `source` with `language`, returning `None` on setup or parse
+/// failure. tree-sitter is error-tolerant, so partial files still parse.
+pub(crate) fn parse(language: &tree_sitter::Language, source: &str) -> Option<tree_sitter::Tree> {
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(language).ok()?;
+    parser.parse(source, None)
+}
+
+/// Builds a [`Symbol`] from a definition `node` (1-based inclusive line range).
+pub(crate) fn symbol_at(
+    node: &tree_sitter::Node,
+    kind: SymbolKind,
+    name: String,
+    container: Option<String>,
+) -> Symbol {
+    Symbol {
+        name,
+        kind,
+        start_line: node.start_position().row + 1,
+        end_line: node.end_position().row + 1,
+        container,
+    }
+}
+
+/// Returns the text of `node`'s `name` field, if present.
+pub(crate) fn field_name<'a>(node: &tree_sitter::Node, source: &'a str) -> Option<&'a str> {
+    node.child_by_field_name("name")
+        .and_then(|n| n.utf8_text(source.as_bytes()).ok())
+}
+
+/// Depth-first walk recording every leaf identifier token whose text equals
+/// `name`, using `is_identifier` to decide which leaf kinds count. Shared by
+/// every language's [`LanguageSymbols::references`].
+pub(crate) fn collect_references_by_kind(
+    node: tree_sitter::Node,
+    source: &str,
+    name: &str,
+    is_identifier: fn(&str) -> bool,
+    out: &mut Vec<Reference>,
+) {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.child_count() == 0 {
+            if is_identifier(child.kind()) && child.utf8_text(source.as_bytes()) == Ok(name) {
+                let pos = child.start_position();
+                out.push(Reference {
+                    line: pos.row + 1,
+                    column: pos.column + 1,
+                });
+            }
+        } else {
+            collect_references_by_kind(child, source, name, is_identifier, out);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    const SAMPLE: &str = r#"
-pub struct DaemonState {
-    out: u32,
-}
-
-impl DaemonState {
-    pub fn new() -> Self {
-        Self { out: 0 }
-    }
-    fn helper(&self) -> u32 {
-        self.out
-    }
-}
-
-pub enum Mode {
-    Plan,
-    Execute,
-}
-
-pub trait Runner {
-    fn run(&self);
-}
-
-const MAX: usize = 8;
-
-pub fn free_function(x: u32) -> u32 {
-    x + 1
-}
-
-mod inner {
-    pub fn nested() {}
-}
-"#;
-
-    fn find<'a>(symbols: &'a [Symbol], name: &str) -> Option<&'a Symbol> {
-        symbols.iter().find(|s| s.name == name)
-    }
-
     #[test]
-    fn extracts_top_level_items() {
-        let symbols = outline_rust(SAMPLE);
-
-        let s = find(&symbols, "DaemonState").expect("struct");
-        assert_eq!(s.kind, SymbolKind::Struct);
-        assert!(s.container.is_none());
-
-        assert_eq!(find(&symbols, "Mode").unwrap().kind, SymbolKind::Enum);
-        assert_eq!(find(&symbols, "Runner").unwrap().kind, SymbolKind::Trait);
-        assert_eq!(find(&symbols, "MAX").unwrap().kind, SymbolKind::Const);
-        assert_eq!(
-            find(&symbols, "free_function").unwrap().kind,
-            SymbolKind::Function
-        );
-        assert_eq!(find(&symbols, "inner").unwrap().kind, SymbolKind::Module);
-    }
-
-    #[test]
-    fn associates_impl_methods_with_their_type() {
-        let symbols = outline_rust(SAMPLE);
-
-        let new_fn = symbols
-            .iter()
-            .find(|s| s.name == "new" && s.kind == SymbolKind::Function)
-            .expect("new method");
-        assert_eq!(new_fn.container.as_deref(), Some("DaemonState"));
-
-        let helper = symbols
-            .iter()
-            .find(|s| s.name == "helper")
-            .expect("helper method");
-        assert_eq!(helper.container.as_deref(), Some("DaemonState"));
-        assert_eq!(helper.outline_label(), "fn DaemonState::helper");
-    }
-
-    #[test]
-    fn captures_nested_module_function() {
-        let symbols = outline_rust(SAMPLE);
-        let nested = find(&symbols, "nested").expect("nested fn");
-        assert_eq!(nested.kind, SymbolKind::Function);
-    }
-
-    #[test]
-    fn line_numbers_are_one_based_and_inclusive() {
-        let symbols = outline_rust("fn a() {}\nfn b() {\n}\n");
-        let a = find(&symbols, "a").unwrap();
-        assert_eq!(a.start_line, 1);
-        assert_eq!(a.end_line, 1);
-        let b = find(&symbols, "b").unwrap();
-        assert_eq!(b.start_line, 2);
-        assert_eq!(b.end_line, 3);
-    }
-
-    #[test]
-    fn definitions_filters_by_name() {
-        let defs = RustSymbols.definitions(SAMPLE, "new");
-        assert_eq!(defs.len(), 1);
-        assert_eq!(defs[0].name, "new");
-    }
-
-    #[test]
-    fn malformed_source_is_error_tolerant() {
-        // A valid function followed by a truncated one: tree-sitter recovers
-        // the well-formed item instead of dropping the whole file.
-        let symbols = outline_rust("fn good() {}\nfn broken(  {");
+    fn dispatch_routes_by_extension() {
         assert!(
-            symbols.iter().any(|s| s.name == "good"),
-            "valid item should survive a later parse error: {symbols:?}"
+            outline_for_extension("rs", "fn a() {}")
+                .unwrap()
+                .iter()
+                .any(|s| s.name == "a")
         );
-    }
-
-    #[test]
-    fn references_find_all_identifier_occurrences() {
-        let source = "\
-fn target() {}
-fn caller() {
-    target();
-    let x = target;
-}
-";
-        let refs = references_rust(source, "target");
-        // definition + two usages
-        assert_eq!(refs.len(), 3, "{refs:?}");
-        assert_eq!(refs[0].line, 1); // definition
-        assert_eq!(refs[1].line, 3); // call
-        assert_eq!(refs[2].line, 4); // value position
-    }
-
-    #[test]
-    fn references_skip_comments_and_strings() {
-        let source = "\
-fn needle() {}
-fn other() {
-    // needle in a comment
-    let s = \"needle in a string\";
-    needle();
-}
-";
-        let refs = references_rust(source, "needle");
-        // Only the definition (line 1) and the real call (line 5); the
-        // comment and string occurrences are not identifier tokens.
-        assert_eq!(refs.len(), 2, "{refs:?}");
-        assert_eq!(refs[0].line, 1);
-        assert_eq!(refs[1].line, 5);
-        assert!(refs[1].column >= 1);
-    }
-
-    #[test]
-    fn references_empty_for_unknown_name() {
-        assert!(references_rust("fn a() {}", "zzz").is_empty());
-    }
-
-    #[test]
-    fn symbol_serializes_without_null_container() {
-        let symbols = outline_rust("fn solo() {}");
-        let json = serde_json::to_string(&symbols[0]).unwrap();
         assert!(
-            !json.contains("container"),
-            "container should be omitted: {json}"
+            outline_for_extension("ts", "function a() {}")
+                .unwrap()
+                .iter()
+                .any(|s| s.name == "a")
         );
+        assert!(
+            outline_for_extension("py", "def a():\n    pass\n")
+                .unwrap()
+                .iter()
+                .any(|s| s.name == "a")
+        );
+        assert!(outline_for_extension("txt", "anything").is_none());
+    }
+
+    #[test]
+    fn references_dispatch_routes_by_extension() {
+        let refs = references_for_extension("py", "def a():\n    pass\na()\n", "a").unwrap();
+        assert_eq!(refs.len(), 2);
+        assert!(references_for_extension("md", "a a a", "a").is_none());
     }
 }

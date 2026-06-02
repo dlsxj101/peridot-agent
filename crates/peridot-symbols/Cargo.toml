@@ -10,6 +10,8 @@ rust-version.workspace = true
 serde.workspace = true
 tree-sitter = "0.26"
 tree-sitter-rust = "0.24"
+tree-sitter-typescript = "0.23"
+tree-sitter-python = "0.25"
 
 [dev-dependencies]
 serde_json.workspace = true

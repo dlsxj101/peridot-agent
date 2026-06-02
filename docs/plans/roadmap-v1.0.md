@@ -177,25 +177,29 @@ treat them as separate milestones, not a single release.
   the model attaches exact defs/usages instead of whole grep dumps.
 - **Where**: new `peridot-symbols` crate, tool registry in
   `peridot-tools`, codemap cache in `peridot-project`.
-- **Done so far**: new `peridot-symbols` crate parses Rust with
-  `tree-sitter-rust` and returns structured `Symbol`s (kind, name,
-  1-based line range, impl/trait `container`) plus identifier-token
-  `Reference`s, behind a `LanguageSymbols` trait so other languages plug
-  in later. `file_outline` / `workspace_symbols` / `symbol_search` use the
-  tree-sitter parse for `.rs` files (accurate kinds, impl-method
-  association, multi-line-aware positions) and keep the line-based
-  heuristic for other languages. Dedicated `symbol_definition` (exact-name
-  defs) and `symbol_references` (AST-aware usages for Rust — skips
-  comments/strings; word-boundary textual fallback for other languages)
-  tools are registered and recommended in the grounding prompt. Existing
-  tool tests pass unchanged against the new parser; the crate and tools
-  have their own unit tests. Behavior-preserving: fmt/clippy clean, full
-  suite green.
-- **Remaining**: more language grammars (TS, Go, Python) via the trait;
-  scope-aware references (distinguish the definition from usages, resolve
-  shadowing) instead of name-token matching; incremental refresh (notify
-  crate) and a semantic codemap cache; optionally real LSP clients.
-  Highest context-savings payoff.
+- **Done so far**: new `peridot-symbols` crate parses **Rust, TypeScript /
+  JavaScript / JSX, and Python** with tree-sitter and returns structured
+  `Symbol`s (kind, name, 1-based line range, container) plus
+  identifier-token `Reference`s, behind a `LanguageSymbols` trait with an
+  extension dispatcher (`outline_for_extension` /
+  `references_for_extension`). `SymbolKind` gained `Class` / `Interface` /
+  `Method` / `Variable` for the new languages; TS class methods and Python
+  methods carry their class as `container`, TS arrow-function consts are
+  recognized as functions. `file_outline` / `workspace_symbols` /
+  `symbol_search` use the tree-sitter parse for any supported extension
+  (accurate kinds, class/impl association, multi-line-aware positions) and
+  keep the line-based heuristic for the rest. Dedicated `symbol_definition`
+  (exact-name defs) and `symbol_references` (AST-aware usages — skips
+  comments/strings; word-boundary textual fallback for unsupported
+  languages) tools are registered and recommended in the grounding prompt.
+  Per-language modules (`rust.rs` / `typescript.rs` / `python.rs`) over
+  shared helpers; each has unit tests. Behavior-preserving: fmt/clippy
+  clean, full suite green.
+- **Remaining**: more language grammars (Go, Java, C/C++, Ruby) via the
+  same dispatcher; scope-aware references (distinguish the definition from
+  usages, resolve shadowing) instead of name-token matching; incremental
+  refresh (notify crate) and a semantic codemap cache; optionally real LSP
+  clients. Highest context-savings payoff.
 
 ### F2. Multimodal image input (vision routing)
 

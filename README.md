@@ -321,7 +321,7 @@ Nine SPEC-consistency issues from the v0.5.1 audit are now resolved (see [CHANGE
 - AGENTS.md path boundary enforcement.
 - Bounded agent loop with deterministic mock provider support, Goal Checker, budget guardrails, parse-failure recovery, and intent clarification flow (`agent_ask_user`).
 - Project scanner for Rust, Node, Python, Go, Make, AGENTS metadata, and git state.
-- Semantic Rust symbol extraction (`peridot-symbols`, tree-sitter) backing `file_outline` / `workspace_symbols` / `symbol_search` for `.rs` files; other languages use the line-based heuristic.
+- Semantic symbol extraction (`peridot-symbols`, tree-sitter) for Rust, TypeScript/JavaScript/JSX, and Python, backing `file_outline` / `workspace_symbols` / `symbol_search` / `symbol_definition` / `symbol_references`; other languages use the line-based heuristic.
 - SQLite-backed session summary store with session save/resume.
 - Multi-session runtime: `SessionRouter`, `CancelToken`, workspace isolation, `/fork`, `/teammate`, `/worktree` subagent spawning.
 - LLM-generated session titles after first response (main model, no reasoning overhead).

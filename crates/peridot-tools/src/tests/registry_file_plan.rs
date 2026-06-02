@@ -262,6 +262,57 @@ async fn semantic_code_tools_outline_and_search_workspace_symbols() {
 }
 
 #[tokio::test]
+async fn file_outline_parses_typescript_and_python() {
+    let root = std::env::temp_dir().join(format!("peridot-tools-multilang-{}", std::process::id()));
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("src/app.ts"),
+        "export class AppShell {\n    start(): void {}\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src/scan.py"),
+        "class Scanner:\n    def scan(self):\n        pass\n",
+    )
+    .unwrap();
+    let ctx = ToolContext::new(&root, PermissionMode::Auto);
+
+    let ts = FileOutlineTool
+        .execute(serde_json::json!({"path": "src/app.ts"}), &ctx)
+        .await
+        .unwrap();
+    let ts = ts.output.as_array().unwrap();
+    assert!(
+        ts.iter()
+            .any(|s| s["name"] == "AppShell" && s["kind"] == "class"),
+        "{ts:?}"
+    );
+    assert!(
+        ts.iter()
+            .any(|s| s["name"] == "start" && s["kind"] == "method"),
+        "{ts:?}"
+    );
+
+    let py = FileOutlineTool
+        .execute(serde_json::json!({"path": "src/scan.py"}), &ctx)
+        .await
+        .unwrap();
+    let py = py.output.as_array().unwrap();
+    assert!(
+        py.iter()
+            .any(|s| s["name"] == "Scanner" && s["kind"] == "class"),
+        "{py:?}"
+    );
+    assert!(
+        py.iter()
+            .any(|s| s["name"] == "scan" && s["kind"] == "method"),
+        "{py:?}"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
 async fn symbol_definition_and_references_locate_rust_symbols() {
     let root = std::env::temp_dir().join(format!("peridot-tools-symdefs-{}", std::process::id()));
     fs::create_dir_all(root.join("src")).unwrap();
