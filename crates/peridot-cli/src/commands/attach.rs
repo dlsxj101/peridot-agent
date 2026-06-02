@@ -12,7 +12,8 @@ pub(crate) struct TextAttachment {
     pub(crate) media_type: Option<String>,
     pub(crate) content: Option<String>,
     /// Base64-encoded image bytes for vision input, when the file is an image
-    /// within [`MAX_IMAGE_BYTES`]. `None` for text or oversized images.
+    /// within the configured `max_image_bytes` (or downscaled to fit). `None`
+    /// for text, undecodable images, or images that can't be shrunk to fit.
     pub(crate) image_base64: Option<String>,
 }
 
@@ -58,21 +59,29 @@ pub(crate) fn load_text_attachment(
             max_bytes
         ));
     }
-    // Images: inline as base64 for vision input when within the image cap;
-    // otherwise keep a placeholder. (The `max_bytes` text limit does not gate
-    // images — `MAX_IMAGE_BYTES` does.)
+    // Images: inline as base64 for vision input when within the image cap.
+    // Larger images are downscaled to fit (re-encoded as JPEG); only images
+    // that fail to decode or shrink stay placeholder-only. (The `max_bytes`
+    // text limit does not gate images — `max_image_bytes` does.)
     if let Some(media_type) = media_type {
-        let image_base64 = if byte_len <= max_image_bytes {
+        let (final_media_type, image_base64) = if byte_len <= max_image_bytes {
             let bytes = std::fs::read(&canonical)
                 .map_err(|err| format!("attach: failed to read {}: {err}", canonical.display()))?;
-            Some(base64::engine::general_purpose::STANDARD.encode(&bytes))
+            (
+                media_type,
+                Some(base64::engine::general_purpose::STANDARD.encode(&bytes)),
+            )
+        } else if let Some((downscaled_type, data)) =
+            downscale_image_to_fit(&canonical, max_image_bytes)
+        {
+            (downscaled_type, Some(data))
         } else {
-            None
+            (media_type, None)
         };
         return Ok(TextAttachment {
             path: display_relative(&root, &canonical),
             bytes: byte_len,
-            media_type: Some(media_type),
+            media_type: Some(final_media_type),
             content: None,
             image_base64,
         });
@@ -92,6 +101,43 @@ pub(crate) fn load_text_attachment(
         content,
         image_base64: None,
     })
+}
+
+/// Hard ceiling on the source bytes we will decode for downscaling, so a
+/// pathologically large file can't exhaust memory.
+const MAX_DECODE_BYTES: usize = 64 * 1024 * 1024;
+
+/// Decodes an over-cap image and repeatedly halves its dimensions until the
+/// JPEG re-encoding fits within `max_bytes`, returning `(media_type, base64)`.
+/// Returns `None` when the file can't be decoded or can't be shrunk to fit.
+fn downscale_image_to_fit(path: &Path, max_bytes: usize) -> Option<(String, String)> {
+    use image::GenericImageView as _;
+
+    let bytes = std::fs::read(path).ok()?;
+    if bytes.len() > MAX_DECODE_BYTES {
+        return None;
+    }
+    let mut image = image::load_from_memory(&bytes).ok()?;
+    // A handful of halvings takes any realistic image well under any sane cap.
+    for _ in 0..10 {
+        let rgb = image.to_rgb8();
+        let mut encoded = Vec::new();
+        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut encoded, 80)
+            .encode_image(&rgb)
+            .ok()?;
+        if encoded.len() <= max_bytes {
+            return Some((
+                "image/jpeg".to_string(),
+                base64::engine::general_purpose::STANDARD.encode(&encoded),
+            ));
+        }
+        let (width, height) = image.dimensions();
+        if width <= 64 || height <= 64 {
+            break;
+        }
+        image = image.resize(width / 2, height / 2, image::imageops::FilterType::Triangle);
+    }
+    None
 }
 
 /// Image content to attach to the context entry for vision input — empty for
@@ -276,14 +322,47 @@ mod tests {
     }
 
     #[test]
-    fn oversized_image_stays_placeholder_only() {
+    fn undecodable_oversized_image_stays_placeholder_only() {
         let root = temp_project("bigimage");
-        // 17 bytes with a 16-byte image cap → over the limit, placeholder only.
+        // 17 junk bytes with a 16-byte cap → over the limit and not a real
+        // image, so downscaling fails and it stays placeholder-only.
         std::fs::write(root.join("huge.png"), vec![0u8; 17]).unwrap();
         let attachment = load_text_attachment(&root, "huge.png", 1024, 16).unwrap();
         assert_eq!(attachment.media_type.as_deref(), Some("image/png"));
         assert!(attachment.image_base64.is_none());
         assert!(attachment_image_content(&attachment).is_empty());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn oversized_real_image_is_downscaled_to_fit() {
+        let root = temp_project("downscale");
+        // A 600x600 image whose encoded size exceeds the tiny cap, forcing the
+        // downscale path; the loop shrinks it until the JPEG fits.
+        let pixels = image::RgbImage::from_fn(600, 600, |x, y| {
+            image::Rgb([(x % 256) as u8, (y % 256) as u8, ((x + y) % 256) as u8])
+        });
+        pixels.save(root.join("big.png")).unwrap();
+        let cap = 4_000;
+        let attachment = load_text_attachment(&root, "big.png", 1024, cap).unwrap();
+        assert_eq!(
+            attachment.media_type.as_deref(),
+            Some("image/jpeg"),
+            "downscaled images are re-encoded as JPEG"
+        );
+        let data = attachment
+            .image_base64
+            .as_ref()
+            .expect("downscaled image inlined");
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(data.as_bytes())
+            .unwrap();
+        assert!(
+            decoded.len() <= cap,
+            "downscaled to {} bytes",
+            decoded.len()
+        );
+        assert_eq!(attachment_image_content(&attachment).len(), 1);
         let _ = std::fs::remove_dir_all(root);
     }
 

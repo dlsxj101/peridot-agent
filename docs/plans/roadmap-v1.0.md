@@ -227,9 +227,11 @@ treat them as separate milestones, not a single release.
 - **Surface indicators**: `/attach` reports whether an image is sent to
   vision models or kept as a placeholder (too large); the daemon attach
   response exposes a `vision` boolean for VS Code.
-- **Remaining**: image downscaling (only a hard cap today), an OCR
-  text-only fallback, and an explicit vision-model override. See the
-  design doc milestone 5 and the `[vision] model` note in milestone 6.
+- **Downscaling**: over-cap images are decoded and halved until the JPEG
+  re-encoding fits `max_image_bytes` (pure-Rust `image` crate) instead of
+  dropping to a placeholder.
+- **Remaining**: an OCR text-only fallback and an explicit vision-model
+  override. See the design doc milestone 5 (OCR) and `[vision] model`.
 
 ### F3. Voice input
 

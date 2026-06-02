@@ -36,9 +36,9 @@ text-only models.
   `enforce_vision_capability`, stripping image blocks when the active model
   is text-only so the request stays valid (the user turn keeps its text
   placeholder). Tested at each layer.
-- ❌ **Remaining**: image downscaling (only a hard size cap today), an OCR
-  text fallback for text-only models (milestone 5), and config knobs +
-  surface indicators (milestone 6).
+- ❌ **Remaining**: an OCR text fallback for text-only models
+  (milestone 5) and an explicit vision-model override (milestone 6).
+  Image downscaling, config knobs, and surface indicators are landed.
 
 ## Architecture
 
@@ -103,8 +103,10 @@ Keep a `From<String>` so existing text-only call sites are unchanged
 4. ✅ Attachment→image resolver wired into the context/request path
    (base64 at attach time with a 5 MB cap; `user_with_images` from
    `to_messages`; `enforce_vision_capability` gate in the core loop).
-5. ⬜ Image downscaling + an OCR text fallback for text-only models
-   (behind a feature flag + trait).
+5. 🚧 ✅ Image downscaling — over-cap images are decoded and halved until
+   the JPEG re-encoding fits `max_image_bytes` (pure-Rust `image` crate),
+   instead of dropping to a placeholder. ⬜ OCR text fallback for
+   text-only models (behind a feature flag + trait).
 6. 🚧 Config knobs: ✅ `[vision] enabled` (core gate honours it) and
    `[vision] max_image_bytes` (attach cap, both TUI and daemon surfaces).
    ✅ surface indicators — `/attach` reports whether an image is "sent to
