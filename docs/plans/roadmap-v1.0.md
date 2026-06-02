@@ -65,16 +65,22 @@ Reviewed at `claude/code-review-roadmap-tx5SA`, workspace `0.8.14`.
 
 ### C1. Pin the build toolchain to the MSRV
 
-- **Status**: planned.
-- **Goal**: make a fresh checkout build on any host without a manual
-  `rustup toolchain install`, and stop `stable < 1.95` hosts from failing
-  every cargo command.
-- **Where**: `rust-toolchain.toml`, `.github/workflows/ci.yml`,
-  `CONTRIBUTING.md`.
-- **Plan**: set `rust-toolchain.toml` `channel` to the explicit version
-  that matches `workspace.rust-version` (e.g. `"1.95.0"`) — or keep
-  `stable` but document that the host's stable must be ≥ 1.95 and have CI
-  assert it. Keep `clippy`/`rustfmt` in `components`.
+- **Status**: landed (2026-06-02, documentation route).
+- **Goal**: stop `stable < 1.95` hosts from failing every cargo command
+  with a confusing error.
+- **Where**: `rust-toolchain.toml`, `CONTRIBUTING.md`,
+  `docs/user-guide.md`.
+- **Result**: kept `channel = "stable"` (so contributors on current
+  stable get the latest compiler instead of being force-downgraded to a
+  pinned patch) but documented the requirement everywhere it surfaces:
+  `rust-toolchain.toml` now carries an MSRV comment pointing at
+  `CONTRIBUTING.md > Toolchain`, which spells out the `rustup` fix, and
+  the user-guide troubleshooting section covers the same error. CI uses
+  `dtolnay/rust-toolchain@stable`, whose runner stable is already ≥ 1.95,
+  so the cargo `rust-version = 1.95` gate produces a clear message rather
+  than a silent failure. A hard version pin was rejected because it would
+  force every contributor onto one patch release and trigger an extra
+  toolchain download for the common (up-to-date) case.
 
 ### C2. Split `daemon.rs` into a module tree
 
@@ -113,14 +119,23 @@ Reviewed at `claude/code-review-roadmap-tx5SA`, workspace `0.8.14`.
 
 ### C4. Audit non-test `unwrap`/`expect` on the daemon path
 
-- **Status**: planned.
+- **Status**: landed (2026-06-02).
 - **Goal**: keep a single malformed request or missing field from
   panicking the long-lived daemon and killing every concurrent session.
-- **Where**: `crates/peridot-cli/src/commands/daemon.rs` (request
-  handlers), then `run_loop.rs`.
-- **Plan**: convert request-handling `unwrap()`/`expect()` to
-  `emit_error` / `?` propagation. Leave genuinely-infallible cases with a
-  `// SAFETY:`-style comment explaining the invariant.
+- **Where**: `crates/peridot-cli/src/commands/daemon/*.rs`.
+- **Result**: the audit found that the original worry was already
+  handled — the daemon's request handlers parse params and propagate
+  failures through `emit_error`, so **none** of the ~22 non-test
+  `unwrap`/`expect` calls are on the request-parsing path. Every one is a
+  `std::sync::Mutex` lock on live-session state (usage / plan / goal /
+  approval-snapshot / ask-user-pending) or the session-router mutex,
+  which only panics if another thread already panicked while holding the
+  lock. Rather than convert idiomatic poison-unwraps into recoverable
+  errors (poisoning means a bug already happened), the bare
+  `.lock().unwrap()` sites were given descriptive
+  `.expect("daemon mutex (<field>) poisoned")` messages to match the
+  existing router `expect`s, so a poisoning panic now names the mutex
+  involved.
 
 ### C5. Author the user and contributing guides
 

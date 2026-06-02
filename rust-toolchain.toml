@@ -1,3 +1,8 @@
+# The workspace MSRV is declared in Cargo.toml (`workspace.rust-version`).
+# `stable` must be >= that version. If `cargo` reports
+# `rustc <older> is not supported`, update your toolchain
+# (`rustup update stable`) or install the MSRV explicitly
+# (`rustup toolchain install <version>`). See CONTRIBUTING.md > Toolchain.
 [toolchain]
 channel = "stable"
 components = ["clippy", "rustfmt"]

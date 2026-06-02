@@ -1116,12 +1116,13 @@ async fn live_session_usage_snapshot(
     state: &DaemonState,
     session_id: &str,
 ) -> Option<LiveSessionUsage> {
-    state
-        .sessions
-        .lock()
-        .await
-        .get(session_id)
-        .map(|entry| entry.usage.lock().unwrap().clone())
+    state.sessions.lock().await.get(session_id).map(|entry| {
+        entry
+            .usage
+            .lock()
+            .expect("daemon mutex (usage) poisoned")
+            .clone()
+    })
 }
 
 fn initial_live_goal(spec: &SessionRunSpec) -> LiveSessionGoal {
@@ -1384,16 +1385,24 @@ async fn run_session_task(
                 risk_class,
             } = &event
             {
-                *approval_snapshot_for_events.lock().unwrap() = Some(ApprovalRequestSnapshot {
-                    tool_name: tool_name.clone(),
-                    reason: reason.clone(),
-                    parameters: parameters.clone(),
-                    risk_class: risk_class.clone(),
-                });
+                *approval_snapshot_for_events
+                    .lock()
+                    .expect("daemon mutex (approval_snapshot_for_events) poisoned") =
+                    Some(ApprovalRequestSnapshot {
+                        tool_name: tool_name.clone(),
+                        reason: reason.clone(),
+                        parameters: parameters.clone(),
+                        risk_class: risk_class.clone(),
+                    });
             }
-            usage_for_events.lock().unwrap().record_event(&event);
+            usage_for_events
+                .lock()
+                .expect("daemon mutex (usage_for_events) poisoned")
+                .record_event(&event);
             if let AgentRunEvent::PlanUpdated { steps, current } = &event {
-                *plan_for_events.lock().unwrap() = LiveSessionPlan {
+                *plan_for_events
+                    .lock()
+                    .expect("daemon mutex (plan_for_events) poisoned") = LiveSessionPlan {
                     steps: steps.clone(),
                     current: *current,
                 };
@@ -1407,7 +1416,10 @@ async fn run_session_task(
     match result {
         Ok(summary) => {
             if summary.stopped_reason == StopReason::ApprovalRequired {
-                let approval = approval_snapshot.lock().unwrap().clone();
+                let approval = approval_snapshot
+                    .lock()
+                    .expect("daemon mutex (approval_snapshot) poisoned")
+                    .clone();
                 approval::mark_session_waiting_approval(&state, &session_id, approval.clone())
                     .await;
                 emit_event(
@@ -1434,7 +1446,10 @@ async fn run_session_task(
             );
         }
         Err(err) => {
-            let approval = approval_snapshot.lock().unwrap().clone();
+            let approval = approval_snapshot
+                .lock()
+                .expect("daemon mutex (approval_snapshot) poisoned")
+                .clone();
             if approval.is_some() && approval::is_approval_required_error(&err) {
                 approval::mark_session_waiting_approval(&state, &session_id, approval.clone())
                     .await;
@@ -1502,7 +1517,11 @@ impl AskUserPort for DaemonAskUserPort {
         let request_id = format!("{}:ask-user:{next}", self.session_id);
         let (tx, rx) = oneshot::channel();
         {
-            let mut pending = self.state.ask_user_pending.lock().unwrap();
+            let mut pending = self
+                .state
+                .ask_user_pending
+                .lock()
+                .expect("daemon mutex (ask_user_pending) poisoned");
             pending.insert(request_id.clone(), tx);
         }
         emit_event(

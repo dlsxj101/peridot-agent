@@ -51,7 +51,11 @@ pub(super) async fn handle_interaction_respond(
     };
 
     let accepted = {
-        let sender = state.ask_user_pending.lock().unwrap().remove(request_id);
+        let sender = state
+            .ask_user_pending
+            .lock()
+            .expect("daemon mutex (ask_user_pending) poisoned")
+            .remove(request_id);
         sender
             .map(|sender| sender.send(answer).is_ok())
             .unwrap_or(false)
@@ -255,7 +259,10 @@ pub(super) async fn handle_approval_respond(
 
 pub(super) fn clear_pending_ask_user_for_session(state: &DaemonState, session_id: &str) {
     let prefix = format!("{session_id}:");
-    let mut pending = state.ask_user_pending.lock().unwrap();
+    let mut pending = state
+        .ask_user_pending
+        .lock()
+        .expect("daemon mutex (ask_user_pending) poisoned");
     pending.retain(|request_id, _| !request_id.starts_with(&prefix));
 }
 

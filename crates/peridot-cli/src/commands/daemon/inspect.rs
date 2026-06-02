@@ -28,7 +28,7 @@ pub(super) async fn handle_command_goal_control(
     let Some((goal, plan)) = ({
         let sessions = state.sessions.lock().await;
         sessions.get(session_id).map(|entry| {
-            let mut goal = entry.goal.lock().unwrap();
+            let mut goal = entry.goal.lock().expect("daemon mutex (goal) poisoned");
             if goal.objective.is_none() && entry.spec.mode == ExecutionMode::Goal {
                 *goal = initial_live_goal(&entry.spec);
             }
@@ -45,11 +45,19 @@ pub(super) async fn handle_command_goal_control(
                         status: Some(GoalStatus::Cleared),
                         started_at_unix: None,
                     };
-                    *entry.plan.lock().unwrap() = LiveSessionPlan::default();
+                    *entry.plan.lock().expect("daemon mutex (plan) poisoned") =
+                        LiveSessionPlan::default();
                 }
                 _ => {}
             }
-            (goal.clone(), entry.plan.lock().unwrap().clone())
+            (
+                goal.clone(),
+                entry
+                    .plan
+                    .lock()
+                    .expect("daemon mutex (plan) poisoned")
+                    .clone(),
+            )
         })
     }) else {
         return Ok(goal_command_result(
@@ -146,12 +154,13 @@ pub(super) async fn handle_command_plan_show(
     raw_command: &str,
 ) -> Result<Value, String> {
     let plan = if let Some(session_id) = session_id {
-        state
-            .sessions
-            .lock()
-            .await
-            .get(session_id)
-            .map(|entry| entry.plan.lock().unwrap().clone())
+        state.sessions.lock().await.get(session_id).map(|entry| {
+            entry
+                .plan
+                .lock()
+                .expect("daemon mutex (plan) poisoned")
+                .clone()
+        })
     } else {
         None
     }
@@ -352,7 +361,11 @@ async fn cost_session_rows(state: &DaemonState) -> Result<Vec<CostSessionRow>, S
         );
     }
     for (id, entry) in state.sessions.lock().await.iter() {
-        let usage = entry.usage.lock().unwrap().clone();
+        let usage = entry
+            .usage
+            .lock()
+            .expect("daemon mutex (usage) poisoned")
+            .clone();
         let row = rows.entry(id.clone()).or_insert_with(|| CostSessionRow {
             id: id.clone(),
             title: session_title_from_task(&entry.spec.task),
@@ -380,7 +393,11 @@ async fn current_budget_limit(state: &DaemonState, session_id: Option<&str>) -> 
     if let Some(session_id) = session_id
         && let Some(entry) = state.sessions.lock().await.get(session_id)
     {
-        let usage = entry.usage.lock().unwrap().clone();
+        let usage = entry
+            .usage
+            .lock()
+            .expect("daemon mutex (usage) poisoned")
+            .clone();
         return usage.cost_limit.or_else(|| {
             (entry.spec.config.defaults.budget_usd > 0.0)
                 .then_some(entry.spec.config.defaults.budget_usd)
