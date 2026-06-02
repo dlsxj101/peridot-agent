@@ -705,7 +705,7 @@ impl Tool for SymbolReferencesTool {
     }
 
     fn description(&self) -> &str {
-        "Find references (usages) of a symbol by name across the workspace"
+        "Find references of a symbol by name across the workspace; each result is tagged definition or usage"
     }
 
     fn parameters_schema(&self) -> Value {
@@ -803,6 +803,7 @@ fn collect_references(
                 "path": relative,
                 "line": reference.line,
                 "column": reference.column,
+                "kind": if reference.is_definition { "definition" } else { "usage" },
                 "text": text,
             }));
         }

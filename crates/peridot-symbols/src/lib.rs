@@ -131,6 +131,12 @@ pub struct Reference {
     pub line: usize,
     /// 1-based column (character offset within the line) of the occurrence.
     pub column: usize,
+    /// Whether this occurrence is the symbol's definition site (vs. a usage).
+    /// Set by the dispatch/convenience entry points, which cross-reference the
+    /// occurrence against the file's outline; the raw per-language
+    /// [`LanguageSymbols::references`] walk leaves it `false`.
+    #[serde(default)]
+    pub is_definition: bool,
 }
 
 /// A per-language symbol extractor. Implementations are stateless and cheap to
@@ -194,7 +200,25 @@ pub fn references_for_extension(
     source: &str,
     name: &str,
 ) -> Option<Vec<Reference>> {
-    language_for_extension(extension).map(|lang| lang.references(source, name))
+    language_for_extension(extension).map(|lang| marked_references(lang.as_ref(), source, name))
+}
+
+/// Runs a language's reference walk, then flags the occurrences that sit on a
+/// definition line for `name` (cross-referenced against the file outline) as
+/// definitions. This is what distinguishes the def site from usages without
+/// per-language definition-tracking.
+fn marked_references(lang: &dyn LanguageSymbols, source: &str, name: &str) -> Vec<Reference> {
+    let mut references = lang.references(source, name);
+    let definition_lines: std::collections::HashSet<usize> = lang
+        .outline(source)
+        .into_iter()
+        .filter(|symbol| symbol.name == name)
+        .map(|symbol| symbol.start_line)
+        .collect();
+    for reference in &mut references {
+        reference.is_definition = definition_lines.contains(&reference.line);
+    }
+    references
 }
 
 /// Convenience wrapper: outline a Rust source string.
@@ -202,9 +226,10 @@ pub fn outline_rust(source: &str) -> Vec<Symbol> {
     RustSymbols.outline(source)
 }
 
-/// Convenience wrapper: find identifier-token references to `name` in Rust source.
+/// Convenience wrapper: find identifier-token references to `name` in Rust
+/// source, with definition sites flagged.
 pub fn references_rust(source: &str, name: &str) -> Vec<Reference> {
-    RustSymbols.references(source, name)
+    marked_references(&RustSymbols, source, name)
 }
 
 // ---- shared tree-sitter helpers used by the language modules ----
@@ -277,6 +302,7 @@ pub(crate) fn collect_references_by_kind(
                 out.push(Reference {
                     line: pos.row + 1,
                     column: pos.column + 1,
+                    is_definition: false,
                 });
             }
         } else {
@@ -377,5 +403,19 @@ mod tests {
         let refs = references_for_extension("py", "def a():\n    pass\na()\n", "a").unwrap();
         assert_eq!(refs.len(), 2);
         assert!(references_for_extension("md", "a a a", "a").is_none());
+    }
+
+    #[test]
+    fn references_flag_the_definition_site() {
+        // def on line 1, call on line 3.
+        let refs = references_for_extension("py", "def a():\n    pass\na()\n", "a").unwrap();
+        let def = refs
+            .iter()
+            .find(|r| r.is_definition)
+            .expect("definition flagged");
+        assert_eq!(def.line, 1);
+        // Exactly one definition; the call is a usage.
+        assert_eq!(refs.iter().filter(|r| r.is_definition).count(), 1);
+        assert!(refs.iter().any(|r| !r.is_definition && r.line == 3));
     }
 }

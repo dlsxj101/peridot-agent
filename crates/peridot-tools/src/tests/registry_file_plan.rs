@@ -342,8 +342,11 @@ async fn symbol_definition_and_references_locate_rust_symbols() {
     // line 3 is excluded by the AST-aware Rust scan.
     assert_eq!(refs.len(), 2, "{refs:?}");
     assert!(refs.iter().all(|r| r["path"] == "src/lib.rs"));
+    // The definition (line 1) is tagged; the call (line 4) is a usage.
     assert_eq!(refs[0]["line"], 1);
+    assert_eq!(refs[0]["kind"], "definition");
     assert_eq!(refs[1]["line"], 4);
+    assert_eq!(refs[1]["kind"], "usage");
 
     fs::remove_dir_all(root).unwrap();
 }

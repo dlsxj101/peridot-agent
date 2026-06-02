@@ -198,10 +198,14 @@ treat them as separate milestones, not a single release.
   Per-language modules (`rust.rs` / `typescript.rs` / `python.rs`) over
   shared helpers; each has unit tests. Behavior-preserving: fmt/clippy
   clean, full suite green.
+- **References** distinguish the definition site from usages: each
+  `symbol_references` result is tagged `definition` or `usage` (the
+  dispatch entry point cross-references occurrences against the file
+  outline). `Reference` carries an `is_definition` flag.
 - **Remaining**: more language grammars (Kotlin, Swift, Haskell, Elixir)
-  via the same dispatcher; scope-aware references (distinguish the definition from
-  usages, resolve shadowing) instead of name-token matching; incremental
-  refresh (notify crate) and a semantic codemap cache; optionally real LSP
+  via the same dispatcher; full scope resolution (shadowing / which binding
+  a usage resolves to) beyond name-token matching; incremental refresh
+  (notify crate) and a semantic codemap cache; optionally real LSP
   clients. Highest context-savings payoff.
 
 ### F2. Multimodal image input (vision routing)
