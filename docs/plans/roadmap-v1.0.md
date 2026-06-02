@@ -178,7 +178,7 @@ treat them as separate milestones, not a single release.
 - **Where**: new `peridot-symbols` crate, tool registry in
   `peridot-tools`, codemap cache in `peridot-project`.
 - **Done so far**: new `peridot-symbols` crate parses **Rust, TypeScript /
-  JavaScript / JSX, Python, Go, Java, Ruby, C, and C++** with tree-sitter and returns structured
+  JavaScript / JSX, Python, Go, Java, Ruby, C, C++, C#, PHP, and Bash** with tree-sitter and returns structured
   `Symbol`s (kind, name, 1-based line range, container) plus
   identifier-token `Reference`s, behind a `LanguageSymbols` trait with an
   extension dispatcher (`outline_for_extension` /
@@ -198,7 +198,7 @@ treat them as separate milestones, not a single release.
   Per-language modules (`rust.rs` / `typescript.rs` / `python.rs`) over
   shared helpers; each has unit tests. Behavior-preserving: fmt/clippy
   clean, full suite green.
-- **Remaining**: more language grammars (C#, PHP, Kotlin, Swift)
+- **Remaining**: more language grammars (Kotlin, Swift, Scala, Lua)
   via the same dispatcher; scope-aware references (distinguish the definition from
   usages, resolve shadowing) instead of name-token matching; incremental
   refresh (notify crate) and a semantic codemap cache; optionally real LSP

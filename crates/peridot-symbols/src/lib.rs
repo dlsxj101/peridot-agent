@@ -18,17 +18,23 @@
 
 use serde::{Deserialize, Serialize};
 
+mod bash;
 mod c_family;
+mod csharp;
 mod go;
 mod java;
+mod php;
 mod python;
 mod ruby;
 mod rust;
 mod typescript;
 
+pub use bash::BashSymbols;
 pub use c_family::CFamilySymbols;
+pub use csharp::CSharpSymbols;
 pub use go::GoSymbols;
 pub use java::JavaSymbols;
+pub use php::PhpSymbols;
 pub use python::PythonSymbols;
 pub use ruby::RubySymbols;
 pub use rust::RustSymbols;
@@ -162,6 +168,9 @@ pub fn language_for_extension(extension: &str) -> Option<Box<dyn LanguageSymbols
         "rb" => Some(Box::new(RubySymbols)),
         "c" | "h" => Some(Box::new(CFamilySymbols::c())),
         "cpp" | "cc" | "cxx" | "hpp" | "hh" | "hxx" => Some(Box::new(CFamilySymbols::cpp())),
+        "cs" => Some(Box::new(CSharpSymbols)),
+        "php" => Some(Box::new(PhpSymbols)),
+        "sh" | "bash" => Some(Box::new(BashSymbols)),
         _ => None,
     }
 }
@@ -320,6 +329,24 @@ mod tests {
         );
         assert!(
             outline_for_extension("cpp", "class A { void a() {} };")
+                .unwrap()
+                .iter()
+                .any(|s| s.name == "a")
+        );
+        assert!(
+            outline_for_extension("cs", "class A { void a() {} }")
+                .unwrap()
+                .iter()
+                .any(|s| s.name == "a")
+        );
+        assert!(
+            outline_for_extension("php", "<?php function a() {}")
+                .unwrap()
+                .iter()
+                .any(|s| s.name == "a")
+        );
+        assert!(
+            outline_for_extension("sh", "a() { echo hi; }")
                 .unwrap()
                 .iter()
                 .any(|s| s.name == "a")
