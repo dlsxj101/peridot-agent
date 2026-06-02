@@ -33,10 +33,15 @@ pub(super) fn handle_command_attach(
         .clone()
         .unwrap_or_else(|| "text/plain".to_string());
     let content = attachment.content.clone();
+    // Whether this image will actually be sent to a vision-capable model
+    // (encoded under the size cap) vs. degraded to a text placeholder.
+    let vision = attachment.image_base64.is_some();
     let detail = if inlined {
         format!("{bytes} bytes · inlined")
+    } else if vision {
+        format!("{bytes} bytes · {media_type} · sent to vision models")
     } else {
-        format!("{bytes} bytes · {media_type} placeholder")
+        format!("{bytes} bytes · {media_type} placeholder (too large for vision)")
     };
     append_plan_reminder_to_context(
         state,
@@ -55,6 +60,7 @@ pub(super) fn handle_command_attach(
             "bytes": bytes,
             "media_type": media_type,
             "inlined": inlined,
+            "vision": vision,
             "content": content,
         },
         "items": [{
@@ -65,6 +71,7 @@ pub(super) fn handle_command_attach(
             "bytes": bytes,
             "media_type": media_type,
             "inlined": inlined,
+            "vision": vision,
         }],
     }))
 }

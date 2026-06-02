@@ -3139,9 +3139,16 @@ fn handle_attach(state: &mut TuiState, project_root: &Path, path: &str) {
             ) {
                 Ok(()) => {
                     state.add_attachment_path(attachment.path.clone());
+                    // Tell the operator whether an image will reach a vision
+                    // model or only its text placeholder (feature F2).
+                    let vision_note = match (&attachment.media_type, &attachment.image_base64) {
+                        (Some(_), Some(_)) => " (image, sent to vision models)",
+                        (Some(_), None) => " (image too large; placeholder only)",
+                        _ => "",
+                    };
                     state.push_transcript(format!(
-                        "attach: added {} ({} bytes) to session context",
-                        attachment.path, attachment.bytes
+                        "attach: added {} ({} bytes) to session context{}",
+                        attachment.path, attachment.bytes, vision_note
                     ));
                 }
                 Err(err) => state.push_error(format!("attach: failed to update context: {err}")),

@@ -107,7 +107,10 @@ Keep a `From<String>` so existing text-only call sites are unchanged
    (behind a feature flag + trait).
 6. 🚧 Config knobs: ✅ `[vision] enabled` (core gate honours it) and
    `[vision] max_image_bytes` (attach cap, both TUI and daemon surfaces).
-   ⬜ model override + surface indicators ("image sent" vs "placeholder").
+   ✅ surface indicators — `/attach` reports whether an image is "sent to
+   vision models" or "placeholder (too large for vision)"; the daemon
+   attach response carries a `vision` boolean for the VS Code surface.
+   ⬜ explicit vision-model override (`[vision] model`).
 
 Milestone 4 chose to carry the image bytes on `ContextEntry.images`
 (encoded once at attach time) rather than re-reading files during request

@@ -224,9 +224,12 @@ treat them as separate milestones, not a single release.
 - **Config**: `[vision] enabled` (core gate via `set_vision_enabled` /
   `enforce_vision_capability`) and `[vision] max_image_bytes` (attach cap,
   both TUI and daemon surfaces) are wired.
+- **Surface indicators**: `/attach` reports whether an image is sent to
+  vision models or kept as a placeholder (too large); the daemon attach
+  response exposes a `vision` boolean for VS Code.
 - **Remaining**: image downscaling (only a hard cap today), an OCR
-  text-only fallback, a vision-model override, and surface indicators. See
-  the design doc milestones 5–6.
+  text-only fallback, and an explicit vision-model override. See the
+  design doc milestone 5 and the `[vision] model` note in milestone 6.
 
 ### F3. Voice input
 
