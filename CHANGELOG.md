@@ -38,11 +38,13 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
   into a new `summarize.rs` submodule, leaving `ContextManager` focused on
   lifecycle. No behavior change; the public API and the full test suite are
   unchanged.
-- **`symbol_references` rows now carry an enclosing `scope`** — the qualified
-  name (`Container::method`, else `name`) of the function/method/type a usage
-  lives in, computed from the outline ranges. A first step toward scope
-  resolution that tells the model where each reference sits; definitions
-  report their parent scope and file-scope occurrences omit it.
+- **`symbol_references` rows now carry the full lexical `scope` chain** —
+  `outer::…::inner` naming every nested module / namespace / type / function
+  body a usage sits in, from outermost to innermost (e.g. `ui::Widget::render`),
+  computed language-agnostically from the outline ranges plus each symbol's
+  container (adjacent duplicates collapsed). Definitions report their parent
+  scope rather than themselves and file-scope occurrences omit it, so the model
+  sees exactly which lexical scope each reference lives in.
 
 ## [0.8.14 / extension 0.5.21] — 2026-05-29
 

@@ -232,15 +232,19 @@ treat them as separate milestones, not a single release.
   `symbol_references` result is tagged `definition` or `usage` (the
   dispatch entry point cross-references occurrences against the file
   outline). `Reference` carries an `is_definition` flag.
-- **Scope location (first scope-resolution increment)**: each reference now
-  also carries the qualified name (`Container::method`, else `name`) of the
-  innermost outline symbol that lexically encloses it, exposed as `scope` on
-  the `symbol_references` rows. A definition occurrence reports its *parent*
-  scope rather than itself; file-scope occurrences omit it. This is computed
-  from the existing outline ranges, so it is language-agnostic across every
-  wired grammar and tells the model which function/method/type a usage lives
-  in — a step toward full scope resolution that stops short of resolving
-  which binding a name refers to.
+- **Scope resolution (full lexical chain)**: each reference carries the
+  fully-qualified scope chain (`outer::…::inner`) of the outline symbols that
+  enclose it — every nested module / namespace / type / function body from
+  outermost to innermost (e.g. `ui::Widget::render`), exposed as `scope` on the
+  `symbol_references` rows. The path is built from the enclosing symbols' line
+  ranges and each symbol's `container`, with adjacent duplicates collapsed, so
+  a method whose owning type lives only in the `container` field still names
+  its owner and a type that appears both as an enclosing node and as a
+  container is named once. A definition occurrence reports its *parent* scope
+  rather than itself; file-scope occurrences omit it. Computed from the
+  existing outline ranges, so it is language-agnostic across every wired
+  grammar (verified for Rust nesting and nested Python classes) and tells the
+  model exactly which lexical scope a usage lives in.
 - **Incremental cache**: `workspace_symbols` / `symbol_search` /
   `symbol_definition` cache each file's parsed outline by absolute path +
   (mtime, size), re-parsing only changed files. The cache is **persisted to
@@ -255,10 +259,11 @@ treat them as separate milestones, not a single release.
   to 16 files per event (bigger batches like a branch switch just
   invalidate) and skipping non-source/oversized/deleted paths.
 - **Remaining**: further language grammars (e.g. Nix, Clojure, Erlang,
-  Solidity) via the same dispatcher; full scope resolution beyond the enclosing-scope
-  location now shipped — resolving shadowing and which binding a usage
+  Solidity) via the same dispatcher; binding-level resolution on top of the
+  lexical scope chain — resolving shadowing and which declaration a usage
   actually refers to (e.g. a local parameter named `foo` vs. a top-level
-  `foo`); optionally real LSP clients. Highest context-savings payoff.
+  `foo`), which needs per-language declaration tracking; optionally real LSP
+  clients. Highest context-savings payoff.
 
 ### F2. Multimodal image input (vision routing)
 

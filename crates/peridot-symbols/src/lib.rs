@@ -157,14 +157,14 @@ pub struct Reference {
     /// [`LanguageSymbols::references`] walk leaves it `false`.
     #[serde(default)]
     pub is_definition: bool,
-    /// The qualified name (`Container::name`, or just `name`) of the innermost
-    /// outline symbol that lexically encloses this occurrence — the function,
-    /// method, or type body the reference sits in. `None` for occurrences at
-    /// file scope. A definition occurrence reports its *parent* scope rather
-    /// than itself. This is a first step toward full scope resolution: it
-    /// locates each usage's enclosing definition without yet resolving which
-    /// binding the name refers to. Like [`Reference::is_definition`], it is
-    /// filled by the dispatch/convenience entry points, not the raw walk.
+    /// The fully-qualified lexical scope chain (`outer::…::inner`) of the
+    /// outline symbols that enclose this occurrence — every nested module,
+    /// namespace, type, and function body the reference sits in, from outermost
+    /// to innermost (e.g. `ui::Widget::render`). `None` for occurrences at file
+    /// scope. A definition occurrence reports its *parent* scope rather than
+    /// itself, so a definition is never listed as enclosing itself. Like
+    /// [`Reference::is_definition`], it is filled by the dispatch/convenience
+    /// entry points, not the raw per-language walk.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scope: Option<String>,
 }
@@ -269,22 +269,45 @@ fn marked_references(lang: &dyn LanguageSymbols, source: &str, name: &str) -> Ve
     references
 }
 
-/// The qualified name (`Container::name`, else `name`) of the innermost outline
-/// symbol whose line range encloses `line`. A definition occurrence (`is_def`)
-/// reports its *parent* scope by excluding the symbol that starts on its own
-/// line, so a definition is never reported as enclosing itself. Returns `None`
-/// for occurrences that sit at file scope.
+/// The fully-qualified lexical scope chain (`outer::…::inner`) of the
+/// outline symbols that enclose `line`, from outermost to innermost. A
+/// definition occurrence (`is_def`) excludes the symbol that starts on its own
+/// line, so a definition reports its *parent* scope rather than itself.
+/// Returns `None` for occurrences that sit at file scope.
+///
+/// The path is built from the line ranges of the enclosing symbols, so nested
+/// modules / namespaces / types all contribute a component (`ui::Widget::render`
+/// rather than just `Widget::render`). Each symbol's [`Symbol::container`] is
+/// folded in as well, so a method whose enclosing type is not itself a separate
+/// outline node (it lives only in the `container` field) still names its owner.
+/// Adjacent duplicate components are collapsed so a type that appears both as an
+/// enclosing node and as a member's `container` is not repeated.
 fn enclosing_scope(outline: &[Symbol], line: usize, is_def: bool) -> Option<String> {
-    outline
+    let mut enclosers: Vec<&Symbol> = outline
         .iter()
         .filter(|symbol| symbol.start_line <= line && line <= symbol.end_line)
         .filter(|symbol| !(is_def && symbol.start_line == line))
-        // Innermost = the latest-starting, then shortest, enclosing range.
-        .max_by_key(|symbol| (symbol.start_line, std::cmp::Reverse(symbol.end_line)))
-        .map(|symbol| match &symbol.container {
-            Some(owner) => format!("{owner}::{}", symbol.name),
-            None => symbol.name.clone(),
-        })
+        .collect();
+    if enclosers.is_empty() {
+        return None;
+    }
+    // Outermost first: earliest start, then widest range on ties.
+    enclosers.sort_by_key(|symbol| (symbol.start_line, std::cmp::Reverse(symbol.end_line)));
+
+    // Collapse adjacent duplicates so a type that shows up both as an enclosing
+    // node and as a member's `container` is named once.
+    let mut path: Vec<&str> = Vec::new();
+    for symbol in &enclosers {
+        if let Some(owner) = symbol.container.as_deref()
+            && path.last() != Some(&owner)
+        {
+            path.push(owner);
+        }
+        if path.last() != Some(&symbol.name.as_str()) {
+            path.push(symbol.name.as_str());
+        }
+    }
+    Some(path.join("::"))
 }
 
 /// Convenience wrapper: outline a Rust source string.
@@ -596,5 +619,48 @@ impl Widget {
         let refs = references_rust(source, "helper");
         let inside = refs.iter().find(|r| r.line == 4).expect("call in render");
         assert_eq!(inside.scope.as_deref(), Some("Widget::render"));
+    }
+
+    #[test]
+    fn enclosing_scope_reports_the_full_nesting_chain() {
+        // A call nested module > impl > method reports every enclosing level,
+        // outermost first, with the type named once despite appearing both as
+        // an enclosing node and as the method's container.
+        let source = "\
+mod ui {
+    struct Widget;
+    impl Widget {
+        fn render(&self) {
+            helper();
+        }
+    }
+    fn helper() {}
+}
+";
+        let refs = references_rust(source, "helper");
+        let call = refs
+            .iter()
+            .find(|r| !r.is_definition && r.line == 5)
+            .expect("call in render");
+        assert_eq!(call.scope.as_deref(), Some("ui::Widget::render"));
+        // A module-level definition reports the module as its parent scope,
+        // picked up purely from range nesting (its `container` is None).
+        let def = refs.iter().find(|r| r.is_definition).expect("definition");
+        assert_eq!(def.scope.as_deref(), Some("ui"));
+    }
+
+    #[test]
+    fn enclosing_scope_chains_nested_python_classes() {
+        // Language-agnostic: nested classes contribute their own components,
+        // sourced from each symbol's `container` field.
+        let source = "\
+class Outer:
+    class Inner:
+        def method(self):
+            helper()
+";
+        let refs = references_for_extension("py", source, "helper").unwrap();
+        let call = refs.iter().find(|r| r.line == 4).expect("call in method");
+        assert_eq!(call.scope.as_deref(), Some("Outer::Inner::method"));
     }
 }

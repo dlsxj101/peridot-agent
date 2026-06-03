@@ -895,8 +895,8 @@ fn collect_references(
                 "kind": if reference.is_definition { "definition" } else { "usage" },
                 "text": text,
             });
-            // The enclosing function/method/type the occurrence sits in, when
-            // it is not at file scope (F1 scope-location).
+            // The full lexical scope chain (`outer::…::inner`) the occurrence
+            // sits in, when it is not at file scope (F1 scope resolution).
             if let Some(scope) = reference.scope {
                 entry["scope"] = serde_json::Value::String(scope);
             }
