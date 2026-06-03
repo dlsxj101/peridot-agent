@@ -86,37 +86,52 @@ impl LanguageSymbols for RustSymbols {
         };
         let mut bindings = Vec::new();
         walk_nodes(tree.root_node(), &mut |node| match node.kind() {
-            // `fn f(foo: T)` and typed closure params `|foo: T|`: the binding
-            // name is the pattern field; the parameter governs its function or
-            // closure.
+            // `fn f(foo: T)` / typed closure params `|foo: T|`, including
+            // destructuring like `(a, b): (T, U)`. The parameter governs its
+            // function or closure.
             "parameter" => {
-                if let Some(token) = pattern_identifier(&node, name, source)
+                if let Some(pattern) = node.child_by_field_name("pattern")
                     && let Some(scope) = nearest_ancestor(node, RUST_PARAM_SCOPES)
                 {
-                    bindings.push(local_binding(&token, &scope));
+                    push_pattern(pattern, name, source, &scope, &mut bindings);
                 }
             }
-            // Bare closure params `|foo|` are identifiers directly under
+            // Bare closure params `|foo|` are patterns directly under
             // `closure_parameters`.
             "closure_parameters" => {
-                let mut cursor = node.walk();
-                for child in node.children(&mut cursor) {
-                    if child.kind() == "identifier"
-                        && child.utf8_text(source.as_bytes()) == Ok(name)
-                        && let Some(scope) = nearest_ancestor(node, &["closure_expression"])
-                    {
-                        bindings.push(local_binding(&child, &scope));
-                    }
+                if let Some(scope) = nearest_ancestor(node, &["closure_expression"]) {
+                    push_pattern(node, name, source, &scope, &mut bindings);
                 }
             }
-            // `let foo = …` governs the rest of its enclosing block.
+            // `let <pattern> = …`, incl. `let (a, b) = …`, governs the rest of
+            // its block.
             "let_declaration" => {
                 if let Some(pattern) = node.child_by_field_name("pattern")
-                    && pattern.kind() == "identifier"
-                    && pattern.utf8_text(source.as_bytes()) == Ok(name)
                     && let Some(scope) = nearest_ancestor(node, &["block"])
                 {
-                    bindings.push(local_binding(&pattern, &scope));
+                    push_pattern(pattern, name, source, &scope, &mut bindings);
+                }
+            }
+            // `if let Some(x) = …` / `while let … = …`: the pattern binds for
+            // the enclosing `if`/`while` expression.
+            "let_condition" => {
+                if let Some(pattern) = node.child_by_field_name("pattern")
+                    && let Some(scope) =
+                        nearest_ancestor(node, &["if_expression", "while_expression"])
+                {
+                    push_pattern(pattern, name, source, &scope, &mut bindings);
+                }
+            }
+            // `for <pattern> in …` binds for the loop body.
+            "for_expression" => {
+                if let Some(pattern) = node.child_by_field_name("pattern") {
+                    push_pattern(pattern, name, source, &node, &mut bindings);
+                }
+            }
+            // `match` arm patterns bind for that arm.
+            "match_arm" => {
+                if let Some(pattern) = node.child_by_field_name("pattern") {
+                    push_pattern(pattern, name, source, &node, &mut bindings);
                 }
             }
             _ => {}
@@ -125,22 +140,31 @@ impl LanguageSymbols for RustSymbols {
     }
 }
 
-/// The identifier node in `parameter`'s pattern field whose text is `name`, if
-/// the parameter binds a simple identifier of that name. Skips the parameter's
-/// type annotation (which carries its own identifiers).
-fn pattern_identifier<'a>(
-    parameter: &tree_sitter::Node<'a>,
+/// Binding-leaf node kinds inside a Rust pattern.
+const RUST_PATTERN_BINDINGS: &[&str] = &["identifier", "shorthand_field_identifier"];
+
+/// Collects every binding of `name` in `pattern` (handling tuple / struct /
+/// tuple-struct destructuring, skipping the constructor/type path) and pushes a
+/// [`LocalBinding`] governed by `scope` for each.
+fn push_pattern(
+    pattern: tree_sitter::Node,
     name: &str,
     source: &str,
-) -> Option<tree_sitter::Node<'a>> {
-    let pattern = parameter.child_by_field_name("pattern")?;
-    let token = if pattern.kind() == "identifier" {
-        pattern
-    } else {
-        // `mut foo`, `ref foo`, … wrap the identifier.
-        crate::first_descendant_node(pattern, "identifier")?
-    };
-    (token.utf8_text(source.as_bytes()) == Ok(name)).then_some(token)
+    scope: &tree_sitter::Node,
+    out: &mut Vec<LocalBinding>,
+) {
+    let mut tokens = Vec::new();
+    crate::collect_pattern_idents(
+        pattern,
+        name,
+        source,
+        RUST_PATTERN_BINDINGS,
+        &["type"],
+        &mut tokens,
+    );
+    for token in tokens {
+        out.push(local_binding(&token, scope));
+    }
 }
 
 /// Depth-first walk that records definitions and threads the enclosing

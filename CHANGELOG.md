@@ -47,7 +47,11 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
   (no-op default, so other grammars are unchanged); six language families ship
   resolvers covering parameters and local variable declarations — Rust, Python,
   TypeScript / JavaScript, Go (`:=` / `var` / `range`), Java
-  (params / `catch` / locals), and C / C++ (params / block declarations).
+  (params / `catch` / locals), and C / C++ (params / block declarations). The
+  Rust, Python, and TypeScript / JavaScript resolvers also handle destructuring
+  and scoped binders — tuple/struct/object/array patterns, `if let` / `match`
+  arms, `for` targets, `with` / `except` / `catch` binders, walrus (`:=`), and
+  comprehension variables.
 - **`symbol_references` rows now carry the full lexical `scope` chain** —
   `outer::…::inner` naming every nested module / namespace / type / function
   body a usage sits in, from outermost to innermost (e.g. `ui::Widget::render`),

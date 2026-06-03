@@ -6,8 +6,7 @@
 
 use crate::{
     LanguageSymbols, LocalBinding, Reference, Symbol, SymbolKind, collect_references_by_kind,
-    field_name, first_descendant_node, local_binding, nearest_ancestor, parse, symbol_at,
-    walk_nodes,
+    field_name, local_binding, nearest_ancestor, parse, symbol_at, walk_nodes,
 };
 
 /// Node kinds that introduce a value scope a parameter governs.
@@ -67,7 +66,13 @@ fn node_kind(node_kind: &str) -> Option<SymbolKind> {
 fn is_identifier_kind(kind: &str) -> bool {
     matches!(
         kind,
-        "identifier" | "type_identifier" | "property_identifier" | "shorthand_property_identifier"
+        "identifier"
+            | "type_identifier"
+            | "property_identifier"
+            | "shorthand_property_identifier"
+            // Shorthand binding in object destructuring patterns (`{ x }`), so
+            // a destructured binding site shows up as an occurrence.
+            | "shorthand_property_identifier_pattern"
     )
 }
 
@@ -102,14 +107,13 @@ impl LanguageSymbols for TypeScriptSymbols {
         };
         let mut bindings = Vec::new();
         walk_nodes(tree.root_node(), &mut |node| match node.kind() {
-            // `function f(foo)`, `(foo) => …`, method params: a parameter binds
-            // for its whole function.
+            // `function f(foo)`, method params, incl. destructuring like
+            // `({a, b})` / `([c])`: a parameter binds for its whole function.
             "required_parameter" | "optional_parameter" => {
-                if let Some(token) = first_descendant_node(node, "identifier")
-                    && token.utf8_text(source.as_bytes()) == Ok(name)
+                if let Some(pattern) = node.child_by_field_name("pattern")
                     && let Some(scope) = nearest_ancestor(node, TS_FUNCTION_SCOPES)
                 {
-                    bindings.push(local_binding(&token, &scope));
+                    push_pattern(pattern, name, source, &scope, &mut bindings);
                 }
             }
             // Bare single arrow param `foo => …`.
@@ -121,20 +125,59 @@ impl LanguageSymbols for TypeScriptSymbols {
                     bindings.push(local_binding(&param, &node));
                 }
             }
-            // `let`/`const`/`var foo = …` governs the rest of its enclosing
-            // block; module-level declarations (no block) are module symbols.
+            // `let`/`const`/`var foo = …`, incl. `const {x} = …` / `const [y]
+            // = …`, governs the rest of its block; module-level declarations
+            // (no block) are module symbols.
             "variable_declarator" => {
                 if let Some(target) = node.child_by_field_name("name")
-                    && target.kind() == "identifier"
-                    && target.utf8_text(source.as_bytes()) == Ok(name)
                     && let Some(scope) = nearest_ancestor(node, &["statement_block"])
                 {
-                    bindings.push(local_binding(&target, &scope));
+                    push_pattern(target, name, source, &scope, &mut bindings);
+                }
+            }
+            // `for (const d of …)` / `for (const k in …)` bind for the loop body.
+            "for_in_statement" => {
+                if let Some(target) = node.child_by_field_name("left") {
+                    push_pattern(target, name, source, &node, &mut bindings);
+                }
+            }
+            // `catch (e)` binds for the catch body.
+            "catch_clause" => {
+                if let Some(param) = node.child_by_field_name("parameter") {
+                    push_pattern(param, name, source, &node, &mut bindings);
                 }
             }
             _ => {}
         });
         bindings
+    }
+}
+
+/// Binding-leaf node kinds inside a TypeScript / JavaScript binding pattern.
+const TS_PATTERN_BINDINGS: &[&str] = &["identifier", "shorthand_property_identifier_pattern"];
+
+/// Collects every binding of `name` in `pattern` (handling object / array
+/// destructuring, skipping type annotations and default-value expressions) and
+/// pushes a [`LocalBinding`] governed by `scope` for each.
+fn push_pattern(
+    pattern: tree_sitter::Node,
+    name: &str,
+    source: &str,
+    scope: &tree_sitter::Node,
+    out: &mut Vec<LocalBinding>,
+) {
+    let mut tokens = Vec::new();
+    crate::collect_pattern_idents(
+        pattern,
+        name,
+        source,
+        TS_PATTERN_BINDINGS,
+        // Skip type annotations and `= default` values inside patterns.
+        &["type", "value", "right"],
+        &mut tokens,
+    );
+    for token in tokens {
+        out.push(local_binding(&token, scope));
     }
 }
 

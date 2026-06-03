@@ -61,25 +61,109 @@ impl LanguageSymbols for PythonSymbols {
                     }
                 }
             }
-            // In Python an assignment makes the name function-local for the
-            // entire enclosing function; module-level assignments are treated
-            // as module symbols, not locals.
+            // An assignment, a `for` target, and a walrus (`:=`) all make the
+            // name function-local for the entire enclosing function;
+            // module-level binders are treated as module symbols, not locals.
             "assignment" => {
-                if let Some(target) = node.child_by_field_name("left")
-                    && target.kind() == "identifier"
-                    && target.utf8_text(source.as_bytes()) == Ok(name)
-                    && let Some(scope) = nearest_ancestor(node, &["function_definition"])
+                if let Some(target) = node.child_by_field_name("left") {
+                    push_function_local(target, name, source, &mut bindings);
+                }
+            }
+            "for_statement" => {
+                if let Some(target) = node.child_by_field_name("left") {
+                    push_function_local(target, name, source, &mut bindings);
+                }
+            }
+            "named_expression" => {
+                if let Some(target) = node.child_by_field_name("name") {
+                    push_function_local(target, name, source, &mut bindings);
+                }
+            }
+            // `with … as w` / `except … as e`: the alias binds for the closest
+            // `except` handler, else for the enclosing function.
+            "as_pattern_target" => {
+                if let Some(token) = first_descendant_node(node, "identifier")
+                    && token.utf8_text(source.as_bytes()) == Ok(name)
                 {
-                    // The local governs the whole function, including any use
-                    // textually before the assignment.
-                    let mut binding = local_binding(&target, &scope);
-                    binding.scope_start_line = scope.start_position().row + 1;
-                    bindings.push(binding);
+                    if let Some(handler) = nearest_ancestor(node, &["except_clause"]) {
+                        bindings.push(local_binding(&token, &handler));
+                    } else {
+                        push_function_local(token, name, source, &mut bindings);
+                    }
+                }
+            }
+            // Comprehension variables are scoped to the comprehension itself.
+            "for_in_clause" => {
+                if let Some(target) = node.child_by_field_name("left")
+                    && let Some(scope) = nearest_ancestor(
+                        node,
+                        &[
+                            "list_comprehension",
+                            "set_comprehension",
+                            "dictionary_comprehension",
+                            "generator_expression",
+                        ],
+                    )
+                {
+                    let mut tokens = Vec::new();
+                    collect_target_idents(target, name, source, &mut tokens);
+                    for token in tokens {
+                        bindings.push(local_binding(&token, &scope));
+                    }
                 }
             }
             _ => {}
         });
         bindings
+    }
+}
+
+/// Collects the `identifier` binding tokens named `name` in an assignment / for
+/// / comprehension target, recursing through tuple and list targets but never
+/// into `attribute` (`obj.x`) or `subscript` (`a[i]`) targets, which rebind an
+/// existing object rather than introduce a new name.
+fn collect_target_idents<'a>(
+    node: tree_sitter::Node<'a>,
+    name: &str,
+    source: &str,
+    out: &mut Vec<tree_sitter::Node<'a>>,
+) {
+    match node.kind() {
+        "attribute" | "subscript" | "call" => return,
+        "identifier" => {
+            if node.utf8_text(source.as_bytes()) == Ok(name) {
+                out.push(node);
+            }
+            return;
+        }
+        _ => {}
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_target_idents(child, name, source, out);
+    }
+}
+
+/// Pushes a function-local binding for every `identifier` named `name` in
+/// `target` (handling tuple targets like `for a, b in …`). The local governs
+/// the whole enclosing function — Python names are function-scoped — so any use
+/// textually before the binder still resolves to it. Module-level binders (no
+/// enclosing function) are left as module symbols.
+fn push_function_local(
+    target: tree_sitter::Node,
+    name: &str,
+    source: &str,
+    out: &mut Vec<LocalBinding>,
+) {
+    let Some(scope) = nearest_ancestor(target, &["function_definition"]) else {
+        return;
+    };
+    let mut tokens = Vec::new();
+    collect_target_idents(target, name, source, &mut tokens);
+    for token in tokens {
+        let mut binding = local_binding(&token, &scope);
+        binding.scope_start_line = scope.start_position().row + 1;
+        out.push(binding);
     }
 }
 

@@ -525,6 +525,39 @@ pub(crate) fn local_binding(token: &tree_sitter::Node, scope: &tree_sitter::Node
     }
 }
 
+/// Collects, into `out`, every binding-identifier node within the pattern
+/// rooted at `node` whose text is `name`. `binding_kinds` are the leaf node
+/// kinds that introduce a binding (e.g. `identifier`, or a language's
+/// shorthand-field pattern token); `skip_fields` are field names whose subtree
+/// is *not* a binding position and must be skipped — the `type`/constructor
+/// path of a destructuring pattern, or a default-value field. This lets the
+/// per-language resolvers handle tuple / struct / object / array destructuring
+/// without mistaking a constructor name or default expression for a binding.
+pub(crate) fn collect_pattern_idents<'a>(
+    node: tree_sitter::Node<'a>,
+    name: &str,
+    source: &str,
+    binding_kinds: &[&str],
+    skip_fields: &[&str],
+    out: &mut Vec<tree_sitter::Node<'a>>,
+) {
+    if binding_kinds.contains(&node.kind()) {
+        if node.utf8_text(source.as_bytes()) == Ok(name) {
+            out.push(node);
+        }
+        return;
+    }
+    let mut cursor = node.walk();
+    for (i, child) in node.children(&mut cursor).enumerate() {
+        if let Some(field) = node.field_name_for_child(i as u32)
+            && skip_fields.contains(&field)
+        {
+            continue;
+        }
+        collect_pattern_idents(child, name, source, binding_kinds, skip_fields, out);
+    }
+}
+
 /// Depth-first walk recording every leaf identifier token whose text equals
 /// `name`, using `is_identifier` to decide which leaf kinds count. Shared by
 /// every language's [`LanguageSymbols::references`].
@@ -959,6 +992,146 @@ int other() {
         assert_eq!(shadowed.binding, Some(Binding::Local));
         let module_use = refs.iter().find(|r| r.line == 7).expect("call in other");
         assert_eq!(module_use.binding, None);
+    }
+
+    #[test]
+    fn rust_binding_resolution_handles_if_let_and_for_patterns() {
+        let source = "\
+fn helper() {}
+fn caller() {
+    if let Some(helper) = opt() {
+        helper;
+    }
+    for helper in items() {
+        helper;
+    }
+    helper();
+}
+";
+        let refs = references_rust(source, "helper");
+        let kind = |line: usize| refs.iter().find(|r| r.line == line).unwrap().binding;
+        assert_eq!(kind(3), Some(Binding::LocalDefinition)); // `if let Some(helper)`
+        assert_eq!(kind(4), Some(Binding::Local)); // use inside the `if let`
+        assert_eq!(kind(6), Some(Binding::LocalDefinition)); // `for helper`
+        assert_eq!(kind(7), Some(Binding::Local)); // use inside the loop
+        assert_eq!(kind(9), None); // outside both — the module fn
+    }
+
+    #[test]
+    fn rust_binding_resolution_handles_tuple_destructuring() {
+        let source = "\
+fn helper() {}
+fn caller() {
+    let (helper, _x) = pair();
+    helper;
+}
+";
+        let refs = references_rust(source, "helper");
+        let kind = |line: usize| refs.iter().find(|r| r.line == line).unwrap().binding;
+        assert_eq!(kind(3), Some(Binding::LocalDefinition)); // `let (helper, _x)`
+        assert_eq!(kind(4), Some(Binding::Local)); // use of the tuple binding
+    }
+
+    #[test]
+    fn rust_binding_resolution_handles_match_arm_patterns() {
+        let source = "\
+fn helper() {}
+fn caller(m: M) {
+    match m {
+        Wrap(helper) =>
+            helper,
+        _ => helper(),
+    }
+}
+";
+        let refs = references_rust(source, "helper");
+        let kind = |line: usize| refs.iter().find(|r| r.line == line).unwrap().binding;
+        assert_eq!(kind(4), Some(Binding::LocalDefinition)); // `Wrap(helper)` arm
+        assert_eq!(kind(5), Some(Binding::Local)); // use inside that arm
+        assert_eq!(kind(6), None); // `_ =>` arm has no binding — the module fn
+    }
+
+    #[test]
+    fn python_binding_resolution_handles_for_and_with_targets() {
+        let source = "\
+def helper():
+    pass
+
+def caller(path):
+    with open(path) as helper:
+        read(helper)
+
+def other():
+    return helper()
+";
+        let refs = references_for_extension("py", source, "helper").unwrap();
+        let kind = |line: usize| refs.iter().find(|r| r.line == line).unwrap().binding;
+        assert_eq!(kind(5), Some(Binding::LocalDefinition)); // `with … as helper`
+        assert_eq!(kind(6), Some(Binding::Local)); // use inside the `with`
+        assert_eq!(kind(9), None); // call in `other` — the module fn
+    }
+
+    #[test]
+    fn python_binding_resolution_handles_comprehension_variables() {
+        let source = "\
+def helper():
+    pass
+
+def caller(items):
+    return [helper for helper in items]
+";
+        let refs = references_for_extension("py", source, "helper").unwrap();
+        // The module definition resolves to the module symbol.
+        assert_eq!(refs.iter().find(|r| r.is_definition).unwrap().binding, None);
+        // Both occurrences on the comprehension line resolve to the local.
+        assert!(
+            refs.iter()
+                .filter(|r| r.line == 5)
+                .all(|r| r.binding.is_some())
+        );
+    }
+
+    #[test]
+    fn typescript_binding_resolution_handles_destructuring_params() {
+        let source = "\
+function helper(): void {}
+
+function caller({ helper }: P): void {
+    helper;
+}
+
+function other(): void {
+    helper();
+}
+";
+        let refs = references_for_extension("ts", source, "helper").unwrap();
+        let kind = |line: usize| refs.iter().find(|r| r.line == line).unwrap().binding;
+        assert_eq!(kind(3), Some(Binding::LocalDefinition)); // `{ helper }` param
+        assert_eq!(kind(4), Some(Binding::Local)); // use in the body
+        assert_eq!(kind(8), None); // call in `other` — the module fn
+    }
+
+    #[test]
+    fn typescript_binding_resolution_handles_for_of_and_catch() {
+        let source = "\
+function helper(): void {}
+function caller(items: number[]): void {
+    for (const helper of items) {
+        helper;
+    }
+    try {} catch (helper) {
+        helper;
+    }
+}
+function other(): void { helper(); }
+";
+        let refs = references_for_extension("ts", source, "helper").unwrap();
+        let kind = |line: usize| refs.iter().find(|r| r.line == line).unwrap().binding;
+        assert_eq!(kind(3), Some(Binding::LocalDefinition)); // `for (const helper …)`
+        assert_eq!(kind(4), Some(Binding::Local)); // use in the loop body
+        assert_eq!(kind(6), Some(Binding::LocalDefinition)); // `catch (helper)`
+        assert_eq!(kind(7), Some(Binding::Local)); // use in the catch body
+        assert_eq!(kind(10), None); // call in `other` — the module fn
     }
 
     #[test]

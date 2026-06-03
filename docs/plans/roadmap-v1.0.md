@@ -260,7 +260,14 @@ treat them as separate milestones, not a single release.
   (method/constructor/lambda params, `catch`, local vars), and **C / C++**
   (function params, block-scoped declarations). The `symbol_references` tool
   surfaces `binding` so the model can skip shadowed locals when hunting real
-  call sites.
+  call sites. Beyond simple params and `let`/`var` declarations, the resolvers
+  also cover destructuring and scoped binders: Rust tuple/struct/tuple-struct
+  patterns, `if let` / `while let`, `for`, and `match`-arm patterns; Python
+  `for` targets, `with`/`except … as`, walrus (`:=`), and comprehension
+  variables; and TypeScript / JavaScript object/array destructuring,
+  `for…of` / `for…in`, and `catch` bindings. A shared `collect_pattern_idents`
+  walker collects binding identifiers from a pattern while skipping
+  constructor paths, type annotations, and default-value expressions.
 - **Incremental cache**: `workspace_symbols` / `symbol_search` /
   `symbol_definition` cache each file's parsed outline by absolute path +
   (mtime, size), re-parsing only changed files. The cache is **persisted to
@@ -277,10 +284,8 @@ treat them as separate milestones, not a single release.
 - **Remaining**: further language grammars (e.g. Nix, Clojure, Erlang,
   Solidity) via the same dispatcher; binding resolvers for the remaining
   grammars (Ruby, Kotlin, Swift, PHP, Scala, …) on top of the existing
-  `local_bindings` hook; richer binding cases within the shipped languages
-  (tuple/struct-destructuring patterns, `if let` / `match` arms, `for` targets,
-  `with`/`catch` binders, comprehension variables); optionally real LSP
-  clients. Highest context-savings payoff.
+  `local_bindings` hook; optionally real LSP clients. Highest context-savings
+  payoff.
 
 ### F2. Multimodal image input (vision routing)
 
