@@ -36,8 +36,19 @@ text-only models.
   `enforce_vision_capability`, stripping image blocks when the active model
   is text-only so the request stays valid (the user turn keeps its text
   placeholder). Tested at each layer.
-- ❌ **Remaining**: an OCR text fallback for text-only models
-  (milestone 5) and an explicit vision-model override (milestone 6).
+- ✅ **OCR fallback (landed)**: `enforce_vision_capability` takes an optional
+  `ImageTextExtractor`; when the active model is text-only but the vision
+  feature is on and an extractor is installed, each image's recognized text is
+  appended as an `<image-ocr>…</image-ocr>` block before the image is dropped.
+  The Tesseract backend is behind the optional `ocr-tesseract` CLI feature
+  (native `libtesseract`); the default build links no engine and `ocr =
+  "tesseract"` warns that it is unavailable.
+- ✅ **Vision-model override (landed)**: `[vision] model` routes a turn that
+  carries images to a configured vision-capable model when the active model is
+  text-only (same provider), via `route_vision_model` in the core loop.
+- ❌ **Remaining**: nothing required for v1 — only optional polish (a
+  non-native pure-Rust OCR backend; surfacing the OCR-vs-inline choice in the
+  attachment cards).
   Image downscaling, config knobs, and surface indicators are landed.
 
 ## Architecture
@@ -103,16 +114,22 @@ Keep a `From<String>` so existing text-only call sites are unchanged
 4. ✅ Attachment→image resolver wired into the context/request path
    (base64 at attach time with a 5 MB cap; `user_with_images` from
    `to_messages`; `enforce_vision_capability` gate in the core loop).
-5. 🚧 ✅ Image downscaling — over-cap images are decoded and halved until
+5. ✅ Image downscaling — over-cap images are decoded and halved until
    the JPEG re-encoding fits `max_image_bytes` (pure-Rust `image` crate),
-   instead of dropping to a placeholder. ⬜ OCR text fallback for
-   text-only models (behind a feature flag + trait).
-6. 🚧 Config knobs: ✅ `[vision] enabled` (core gate honours it) and
-   `[vision] max_image_bytes` (attach cap, both TUI and daemon surfaces).
+   instead of dropping to a placeholder. ✅ OCR text fallback for
+   text-only models: `enforce_vision_capability` takes an optional
+   `ImageTextExtractor` trait object and injects an `<image-ocr>` block per
+   image; the Tesseract backend is behind the optional `ocr-tesseract` CLI
+   feature (selected by `[vision] ocr = "tesseract"`).
+6. ✅ Config knobs: ✅ `[vision] enabled` (core gate honours it),
+   `[vision] max_image_bytes` (attach cap, both TUI and daemon surfaces),
+   `[vision] ocr` (OCR backend), and `[vision] model` (vision-model override).
    ✅ surface indicators — `/attach` reports whether an image is "sent to
    vision models" or "placeholder (too large for vision)"; the daemon
    attach response carries a `vision` boolean for the VS Code surface.
-   ⬜ explicit vision-model override (`[vision] model`).
+   ✅ explicit vision-model override (`[vision] model`) — `route_vision_model`
+   routes an image-carrying turn on a text-only active model to a configured
+   capable model on the same provider.
 
 Milestone 4 chose to carry the image bytes on `ContextEntry.images`
 (encoded once at attach time) rather than re-reading files during request

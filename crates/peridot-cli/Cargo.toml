@@ -16,8 +16,14 @@ e2e = []
 # attention. Opt-in because it adds a system D-Bus / notification
 # dependency on Linux.
 os-notify = ["dep:notify-rust"]
+# OCR text fallback for attached images on text-only models (F2 milestone 5).
+# Opt-in because Tesseract is a native dependency (`libtesseract` +
+# `libleptonica` must be installed to build/link).
+ocr-tesseract = ["dep:leptess"]
 
 [dependencies]
+# Optional: only built when the `ocr-tesseract` feature is enabled.
+leptess = { version = "0.14", optional = true }
 anyhow.workspace = true
 async-trait.workspace = true
 clap.workspace = true

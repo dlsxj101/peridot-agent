@@ -554,6 +554,31 @@ pub struct VisionConfig {
     /// ceiling, Anthropic).
     #[serde(default = "default_max_image_bytes")]
     pub max_image_bytes: usize,
+    /// Optional vision-capable model id to route a turn to when it carries
+    /// images but the active model is text-only. Must be served by the same
+    /// configured provider as the active model. `None` (default) leaves the
+    /// active model in place (images are then OCR'd or dropped).
+    #[serde(default)]
+    pub model: Option<String>,
+    /// OCR backend used to extract text from attached images when they cannot
+    /// be sent to a vision model (text-only model, no override). `Off` (default)
+    /// drops the images to their text placeholder; `Tesseract` extracts text
+    /// via the optional `ocr-tesseract` build feature.
+    #[serde(default)]
+    pub ocr: OcrBackend,
+}
+
+/// Selects the OCR backend for the text-only image fallback (F2 milestone 5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum OcrBackend {
+    /// No OCR: images that cannot be sent to a vision model are dropped to
+    /// their text placeholder.
+    #[default]
+    Off,
+    /// Extract text with Tesseract (requires the `ocr-tesseract` build feature
+    /// and a system `libtesseract`).
+    Tesseract,
 }
 
 fn default_max_image_bytes() -> usize {
@@ -565,6 +590,8 @@ impl Default for VisionConfig {
         Self {
             enabled: true,
             max_image_bytes: default_max_image_bytes(),
+            model: None,
+            ocr: OcrBackend::Off,
         }
     }
 }

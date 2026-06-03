@@ -14,6 +14,20 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 
 ## Unreleased
 
+### Added — vision routing completion (F2)
+
+- **Vision-model override (`[vision] model`).** When a turn carries attached
+  images but the active model is text-only, the request is routed to a
+  configured vision-capable model on the same provider so the images still
+  reach a model that can see them.
+- **OCR text fallback for text-only models (`[vision] ocr`).** When images
+  can't be sent to a vision model, an optional OCR backend extracts their text
+  and injects it as an `<image-ocr>` block (tagged as observed content) instead
+  of dropping the image to a placeholder. The Tesseract backend is behind the
+  optional `ocr-tesseract` build feature (native `libtesseract`); the default
+  build links no OCR engine and reports `ocr = "tesseract"` as unavailable. OCR
+  is pluggable through the new `ImageTextExtractor` trait.
+
 ### Added — more semantic symbol languages (F1)
 
 - **Zig, OCaml, Dart, Elm, and Julia** join the tree-sitter symbol index for

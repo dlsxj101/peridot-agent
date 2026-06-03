@@ -19,7 +19,7 @@ mod state;
 mod tests;
 mod usage;
 
-pub use agent::HarnessAgent;
+pub use agent::{HarnessAgent, ImageTextExtractor};
 pub use complexity::{TaskComplexity, classify_task_complexity};
 pub use goal::{GoalController, GoalStatus};
 pub use grader::{GraderVerdict, grade_work};

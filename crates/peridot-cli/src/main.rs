@@ -60,6 +60,7 @@ mod run_state;
 mod session_router;
 #[cfg(test)]
 mod tests;
+mod vision;
 mod worktree_cleanup;
 
 use checkpoints::restore_latest_checkpoint;

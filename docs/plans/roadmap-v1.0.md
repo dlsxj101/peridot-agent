@@ -289,8 +289,8 @@ treat them as separate milestones, not a single release.
 
 ### F2. Multimodal image input (vision routing)
 
-- **Status**: in progress (attach UX + LLM vision layer + end-to-end
-  resolver landed; downscale/OCR/config remain). Design doc:
+- **Status**: landed for v1 (attach UX + LLM vision layer + end-to-end
+  resolver + downscaling + OCR fallback + config knobs). Design doc:
   [`f2-multimodal-vision.md`](f2-multimodal-vision.md).
 - **Goal**: actually send attached images to a vision-capable model
   instead of recording placeholder metadata.
@@ -313,8 +313,17 @@ treat them as separate milestones, not a single release.
 - **Downscaling**: over-cap images are decoded and halved until the JPEG
   re-encoding fits `max_image_bytes` (pure-Rust `image` crate) instead of
   dropping to a placeholder.
-- **Remaining**: an OCR text-only fallback and an explicit vision-model
-  override. See the design doc milestone 5 (OCR) and `[vision] model`.
+- **OCR fallback**: `enforce_vision_capability` takes an optional
+  `ImageTextExtractor`; on a text-only model (vision still enabled) each
+  image's recognized text is injected as an `<image-ocr>` block before the
+  image is dropped. The Tesseract backend is behind the optional
+  `ocr-tesseract` CLI feature (native `libtesseract`), selected by
+  `[vision] ocr = "tesseract"`; the default build links no engine.
+- **Vision-model override**: `[vision] model` routes an image-carrying turn to
+  a configured vision-capable model when the active model is text-only (same
+  provider), via `route_vision_model`.
+- **Remaining**: only optional polish — a pure-Rust (non-native) OCR backend
+  and an OCR-vs-inline indicator on the attachment cards.
 
 ### F3. Voice input
 

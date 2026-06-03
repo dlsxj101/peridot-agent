@@ -12,7 +12,8 @@ use peridot_context::{
     estimate_tokens_for_text,
 };
 use peridot_llm::{
-    CompletionRequest, LlmMessage, LlmProvider, ToolChoice, ToolDefinition, ToolInvocation, Usage,
+    CompletionRequest, ImageContent, LlmMessage, LlmProvider, ToolChoice, ToolDefinition,
+    ToolInvocation, Usage,
 };
 use peridot_tools::audit::{AuditEvent, append_audit_event};
 use peridot_tools::hooks::{HookRunner, tool_hook_variables};
@@ -153,20 +154,93 @@ pub struct HarnessAgent {
     /// (feature F2, `[vision] enabled`). When `false`, images are always
     /// stripped regardless of model capability. Defaults to `true`.
     vision_enabled: bool,
+    /// Optional vision-capable model id (`[vision] model`) to route a turn to
+    /// when it carries images but the active model is text-only. Must be served
+    /// by the same provider as the active model. `None` leaves the model as-is.
+    vision_model: Option<String>,
+    /// Optional OCR backend (F2 milestone 5). When set, images bound for a
+    /// text-only model are run through it and their text injected as an
+    /// `<image-ocr>` block instead of being dropped. `None` keeps the
+    /// placeholder-only behavior.
+    image_text_extractor: Option<Arc<dyn ImageTextExtractor>>,
 }
 
-/// Strips image blocks from outgoing messages when images must not be sent:
-/// either vision is disabled by config, or the active model is not
-/// vision-capable (text-only providers reject image content). The user turn
-/// keeps its text placeholder. A no-op when vision is enabled and the model
-/// supports it.
-fn enforce_vision_capability(messages: &mut [LlmMessage], model: &str, vision_enabled: bool) {
+/// Extracts text from an attached image so a text-only model can still reason
+/// about it (F2 milestone 5, OCR fallback). Implementations wrap an OCR engine
+/// (e.g. Tesseract) behind a build feature; the core loop holds one only when
+/// the operator opted into OCR. Returns `None` when no text could be extracted.
+pub trait ImageTextExtractor: Send + Sync {
+    /// Returns the recognized text of `image`, or `None` if extraction failed
+    /// or yielded nothing.
+    fn extract(&self, image: &ImageContent) -> Option<String>;
+}
+
+/// The model id to send a turn to once vision routing is considered. When the
+/// turn carries images, vision is enabled, the active model is text-only, and a
+/// vision-capable override is configured, route to the override so the images
+/// reach a capable model. Otherwise the active model is used unchanged.
+fn route_vision_model(
+    active: &str,
+    override_model: Option<&str>,
+    vision_enabled: bool,
+    has_images: bool,
+) -> String {
+    if has_images
+        && vision_enabled
+        && !peridot_llm::model_supports_vision(active)
+        && let Some(candidate) = override_model
+        && peridot_llm::model_supports_vision(candidate)
+    {
+        return candidate.to_string();
+    }
+    active.to_string()
+}
+
+/// Reconciles outgoing image blocks with what the active model can accept.
+///
+/// A no-op when vision is enabled and the model is vision-capable (images pass
+/// through). Otherwise the images cannot be sent, so they are stripped and the
+/// user turn keeps its text placeholder. When vision is enabled but the model
+/// is text-only and an OCR `extractor` is supplied, each image's recognized
+/// text is appended to the message as a tagged `<image-ocr>` block first, so
+/// the model still sees the image content as (untrusted) text.
+fn enforce_vision_capability(
+    messages: &mut [LlmMessage],
+    model: &str,
+    vision_enabled: bool,
+    extractor: Option<&dyn ImageTextExtractor>,
+) {
     if vision_enabled && peridot_llm::model_supports_vision(model) {
         return;
     }
     for message in messages.iter_mut() {
+        if message.images.is_empty() {
+            continue;
+        }
+        // OCR fallback only applies when the vision feature is on (the model
+        // just can't see images); a disabled feature drops them silently.
+        if vision_enabled && let Some(extractor) = extractor {
+            for image in &message.images {
+                if let Some(text) = extractor.extract(image) {
+                    append_ocr_block(&mut message.content, &text);
+                }
+            }
+        }
         message.images.clear();
     }
+}
+
+/// Appends an `<image-ocr>` tagged block carrying OCR-extracted `text` to a
+/// message's content. The tag marks the text as external/observed content
+/// (the same untrusted-content convention the context layer uses), so the
+/// model treats it as evidence rather than instructions.
+fn append_ocr_block(content: &mut String, text: &str) {
+    if !content.is_empty() {
+        content.push_str("\n\n");
+    }
+    content.push_str("<image-ocr>\n");
+    content.push_str(text.trim());
+    content.push_str("\n</image-ocr>");
 }
 
 impl HarnessAgent {
@@ -194,6 +268,8 @@ impl HarnessAgent {
             pending_resume_path: None,
             cached_tool_definitions,
             vision_enabled: true,
+            vision_model: None,
+            image_text_extractor: None,
         }
     }
 
@@ -201,6 +277,22 @@ impl HarnessAgent {
     /// (feature F2, `[vision] enabled`). Defaults to enabled.
     pub fn set_vision_enabled(&mut self, enabled: bool) {
         self.vision_enabled = enabled;
+    }
+
+    /// Sets the vision-capable model override (`[vision] model`). When a turn
+    /// carries images but the active model is text-only, the request is routed
+    /// to this model (which must be served by the same provider). `None`
+    /// disables routing.
+    pub fn set_vision_model(&mut self, model: Option<String>) {
+        self.vision_model = model.filter(|m| !m.is_empty());
+    }
+
+    /// Installs an OCR backend for the text-only image fallback (F2 milestone
+    /// 5). When set, images that cannot be sent to a vision model have their
+    /// recognized text injected as an `<image-ocr>` block instead of being
+    /// dropped.
+    pub fn set_image_text_extractor(&mut self, extractor: Arc<dyn ImageTextExtractor>) {
+        self.image_text_extractor = Some(extractor);
     }
 
     /// Configures the file Pending tool calls are persisted to when an
@@ -617,10 +709,25 @@ impl HarnessAgent {
         let tool_definitions = self.cached_tool_definitions.clone();
         let system_prompt = system_prompt_for_role(self.state.mode, self.role).to_string();
         let mut messages = self.context.to_messages();
-        // Vision routing (feature F2): a text-only model (or vision disabled by
-        // config) must not receive image blocks. The user turn keeps its text
-        // placeholder, so the attachment degrades to a textual mention.
-        enforce_vision_capability(&mut messages, &request.model, self.vision_enabled);
+        // Vision routing (feature F2). When the turn carries images but the
+        // active model is text-only, route to the `[vision] model` override if
+        // one is configured and capable. Then reconcile image blocks with the
+        // effective model: a vision model keeps them; a text-only model gets
+        // OCR-extracted text (when an extractor is installed) or drops them to
+        // the user turn's text placeholder.
+        let has_images = messages.iter().any(|message| !message.images.is_empty());
+        let effective_model = route_vision_model(
+            &request.model,
+            self.vision_model.as_deref(),
+            self.vision_enabled,
+            has_images,
+        );
+        enforce_vision_capability(
+            &mut messages,
+            &effective_model,
+            self.vision_enabled,
+            self.image_text_extractor.as_deref(),
+        );
         // Emit the effective next-request footprint, not just the stored
         // context-manager estimate. Provider latency is driven by the full
         // assembled request: system prompt, messages, tool schemas and the
@@ -649,7 +756,7 @@ impl HarnessAgent {
         let completion = stream_completion_with_chunks(
             provider,
             CompletionRequest {
-                model: request.model,
+                model: effective_model,
                 system: Some(system_prompt),
                 messages,
                 max_tokens: Some(request.max_tokens),
@@ -2530,19 +2637,93 @@ mod helpers_tests {
         let mut messages = vec![LlmMessage::user_with_images("look", vec![image.clone()])];
 
         // Vision-capable model with vision enabled: images preserved.
-        enforce_vision_capability(&mut messages, "claude-opus-4-8", true);
+        enforce_vision_capability(&mut messages, "claude-opus-4-8", true, None);
         assert_eq!(messages[0].images.len(), 1);
 
         // Vision disabled by config: images stripped even on a vision model.
-        enforce_vision_capability(&mut messages, "claude-opus-4-8", false);
+        enforce_vision_capability(&mut messages, "claude-opus-4-8", false, None);
         assert!(messages[0].images.is_empty());
 
         // Text-only model: images stripped, text kept.
         let mut messages = vec![LlmMessage::user_with_images("look", vec![image])];
-        enforce_vision_capability(&mut messages, "gpt-3.5-turbo", true);
+        enforce_vision_capability(&mut messages, "gpt-3.5-turbo", true, None);
         assert!(messages[0].images.is_empty());
         assert_eq!(messages[0].content, "look");
         assert_eq!(messages[0].role, MessageRole::User);
+    }
+
+    /// Test OCR backend that returns a fixed string for any image.
+    struct FixedOcr(&'static str);
+    impl ImageTextExtractor for FixedOcr {
+        fn extract(&self, _image: &ImageContent) -> Option<String> {
+            Some(self.0.to_string())
+        }
+    }
+
+    #[test]
+    fn ocr_fallback_injects_tagged_text_for_text_only_models() {
+        let image = ImageContent {
+            media_type: "image/png".to_string(),
+            data: "QUJD".to_string(),
+        };
+        let extractor = FixedOcr("hello from the image");
+
+        // Text-only model + OCR backend: images dropped, OCR text injected.
+        let mut messages = vec![LlmMessage::user_with_images("look", vec![image.clone()])];
+        enforce_vision_capability(&mut messages, "gpt-3.5-turbo", true, Some(&extractor));
+        assert!(messages[0].images.is_empty());
+        assert!(messages[0].content.contains("look"));
+        assert!(
+            messages[0]
+                .content
+                .contains("<image-ocr>\nhello from the image\n</image-ocr>")
+        );
+
+        // Vision-capable model: OCR is not invoked and images are preserved.
+        let mut messages = vec![LlmMessage::user_with_images("look", vec![image.clone()])];
+        enforce_vision_capability(&mut messages, "claude-opus-4-8", true, Some(&extractor));
+        assert_eq!(messages[0].images.len(), 1);
+        assert_eq!(messages[0].content, "look");
+
+        // Vision disabled: images dropped without OCR even with a backend.
+        let mut messages = vec![LlmMessage::user_with_images("look", vec![image])];
+        enforce_vision_capability(&mut messages, "gpt-3.5-turbo", false, Some(&extractor));
+        assert!(messages[0].images.is_empty());
+        assert_eq!(messages[0].content, "look");
+    }
+
+    #[test]
+    fn route_vision_model_prefers_capable_override_only_when_needed() {
+        // Text-only active model + capable override + images → route.
+        assert_eq!(
+            route_vision_model("gpt-3.5-turbo", Some("gpt-4o"), true, true),
+            "gpt-4o"
+        );
+        // No images → keep the active model.
+        assert_eq!(
+            route_vision_model("gpt-3.5-turbo", Some("gpt-4o"), true, false),
+            "gpt-3.5-turbo"
+        );
+        // Active model already vision-capable → keep it.
+        assert_eq!(
+            route_vision_model("claude-opus-4-8", Some("gpt-4o"), true, true),
+            "claude-opus-4-8"
+        );
+        // Override is itself text-only → don't route to it.
+        assert_eq!(
+            route_vision_model("gpt-3.5-turbo", Some("gpt-3.5-turbo"), true, true),
+            "gpt-3.5-turbo"
+        );
+        // Vision disabled → never route.
+        assert_eq!(
+            route_vision_model("gpt-3.5-turbo", Some("gpt-4o"), false, true),
+            "gpt-3.5-turbo"
+        );
+        // No override configured → keep the active model.
+        assert_eq!(
+            route_vision_model("gpt-3.5-turbo", None, true, true),
+            "gpt-3.5-turbo"
+        );
     }
 
     #[test]
