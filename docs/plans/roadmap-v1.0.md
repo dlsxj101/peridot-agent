@@ -183,7 +183,8 @@ treat them as separate milestones, not a single release.
   `peridot-tools`, codemap cache in `peridot-project`.
 - **Done so far**: new `peridot-symbols` crate parses **Rust, TypeScript /
   JavaScript / JSX, Python, Go, Java, Ruby, C, C++, C#, PHP, Bash, Scala, Lua,
-  Kotlin, Swift, Haskell, and Elixir** with tree-sitter and returns structured
+  Kotlin, Swift, Haskell, Elixir, Zig, OCaml, Dart, Elm, and Julia** with
+  tree-sitter and returns structured
   `Symbol`s (kind, name, 1-based line range, container) plus
   identifier-token `Reference`s, behind a `LanguageSymbols` trait with an
   extension dispatcher (`outline_for_extension` /
@@ -200,7 +201,8 @@ treat them as separate milestones, not a single release.
   `call` nodes) carry their `defmodule`. `file_outline` / `workspace_symbols` /
   `symbol_search` use the tree-sitter parse for any supported extension
   (`.rs/.ts/.tsx/.js/.jsx/.mjs/.cjs/.mts/.cts/.py/.pyi/.go/.java/.rb/.c/.cpp/`
-  `.cs/.php/.sh/.scala/.lua/.kt/.kts/.swift/.hs/.ex/.exs`),
+  `.cs/.php/.sh/.scala/.lua/.kt/.kts/.swift/.hs/.ex/.exs/.zig/.ml/.mli/.dart/`
+  `.elm/.jl`),
   accurate kinds, class/impl association, multi-line-aware positions) and
   keep the line-based heuristic for the rest. The "is this a source file?"
   walk gate now delegates to `peridot_symbols::supports_extension`, so the
@@ -239,8 +241,8 @@ treat them as separate milestones, not a single release.
   changed source file in the background so the next query is warm — bounded
   to 16 files per event (bigger batches like a branch switch just
   invalidate) and skipping non-source/oversized/deleted paths.
-- **Remaining**: further language grammars (e.g. Zig, OCaml, Dart, Elm)
-  via the same dispatcher; full scope resolution beyond the enclosing-scope
+- **Remaining**: further language grammars (e.g. Nix, Clojure, Erlang,
+  Solidity) via the same dispatcher; full scope resolution beyond the enclosing-scope
   location now shipped — resolving shadowing and which binding a usage
   actually refers to (e.g. a local parameter named `foo` vs. a top-level
   `foo`); optionally real LSP clients. Highest context-savings payoff.

@@ -16,6 +16,10 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 
 ### Added — more semantic symbol languages (F1)
 
+- **Zig, OCaml, Dart, Elm, and Julia** join the tree-sitter symbol index for
+  `.zig`, `.ml` / `.mli`, `.dart`, `.elm`, and `.jl` files, with the same
+  outline / definition / reference tooling and container association as the
+  other languages.
 - **Kotlin, Swift, Haskell, and Elixir** join the tree-sitter symbol index,
   so `file_outline` / `workspace_symbols` / `symbol_search` /
   `symbol_definition` / `symbol_references` attach exact definitions and

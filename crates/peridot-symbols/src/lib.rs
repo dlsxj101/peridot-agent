@@ -13,7 +13,7 @@
 //! in without changing callers, the same trait-boundary pattern the rest of
 //! the workspace uses. Implemented: Rust, TypeScript/JavaScript/JSX, Python,
 //! Go, Java, Ruby, C, C++, C#, PHP, Bash, Scala, Lua, Kotlin, Swift, Haskell,
-//! and Elixir. Callers usually
+//! Elixir, Zig, OCaml, Dart, Elm, and Julia. Callers usually
 //! dispatch by file extension via [`outline_for_extension`] and
 //! [`references_for_extension`], falling back to their own heuristic when the
 //! extension has no grammar.
@@ -23,12 +23,16 @@ use serde::{Deserialize, Serialize};
 mod bash;
 mod c_family;
 mod csharp;
+mod dart;
 mod elixir;
+mod elm;
 mod go;
 mod haskell;
 mod java;
+mod julia;
 mod kotlin;
 mod lua;
+mod ocaml;
 mod php;
 mod python;
 mod ruby;
@@ -36,16 +40,21 @@ mod rust;
 mod scala;
 mod swift;
 mod typescript;
+mod zig;
 
 pub use bash::BashSymbols;
 pub use c_family::CFamilySymbols;
 pub use csharp::CSharpSymbols;
+pub use dart::DartSymbols;
 pub use elixir::ElixirSymbols;
+pub use elm::ElmSymbols;
 pub use go::GoSymbols;
 pub use haskell::HaskellSymbols;
 pub use java::JavaSymbols;
+pub use julia::JuliaSymbols;
 pub use kotlin::KotlinSymbols;
 pub use lua::LuaSymbols;
+pub use ocaml::OCamlSymbols;
 pub use php::PhpSymbols;
 pub use python::PythonSymbols;
 pub use ruby::RubySymbols;
@@ -53,6 +62,7 @@ pub use rust::RustSymbols;
 pub use scala::ScalaSymbols;
 pub use swift::SwiftSymbols;
 pub use typescript::TypeScriptSymbols;
+pub use zig::ZigSymbols;
 
 /// The kind of a source symbol. Additive: new variants may appear as more
 /// node types are recognized, so match with a wildcard arm when exhaustive
@@ -207,6 +217,11 @@ pub fn language_for_extension(extension: &str) -> Option<Box<dyn LanguageSymbols
         "swift" => Some(Box::new(SwiftSymbols)),
         "hs" => Some(Box::new(HaskellSymbols)),
         "ex" | "exs" => Some(Box::new(ElixirSymbols)),
+        "zig" => Some(Box::new(ZigSymbols)),
+        "ml" | "mli" => Some(Box::new(OCamlSymbols)),
+        "dart" => Some(Box::new(DartSymbols)),
+        "elm" => Some(Box::new(ElmSymbols)),
+        "jl" => Some(Box::new(JuliaSymbols)),
         _ => None,
     }
 }
@@ -313,6 +328,20 @@ pub(crate) fn symbol_at(
 pub(crate) fn field_name<'a>(node: &tree_sitter::Node, source: &'a str) -> Option<&'a str> {
     node.child_by_field_name("name")
         .and_then(|n| n.utf8_text(source.as_bytes()).ok())
+}
+
+/// Returns the text of the first direct child of `node` whose node kind is
+/// `kind`. Used to read a declaration's name when it is a named child rather
+/// than a `name` field (e.g. a Zig `identifier`, an Elm `upper_case_identifier`).
+pub(crate) fn first_child_text<'a>(
+    node: &tree_sitter::Node,
+    kind: &str,
+    source: &'a str,
+) -> Option<&'a str> {
+    let mut cursor = node.walk();
+    node.children(&mut cursor)
+        .find(|child| child.kind() == kind)
+        .and_then(|child| child.utf8_text(source.as_bytes()).ok())
 }
 
 /// Returns the text of the first descendant (depth-first, self included) whose
@@ -467,6 +496,36 @@ mod tests {
         );
         assert!(
             outline_for_extension("ex", "defmodule M do\n  def a, do: 1\nend\n")
+                .unwrap()
+                .iter()
+                .any(|s| s.name == "a")
+        );
+        assert!(
+            outline_for_extension("zig", "fn a() void {}")
+                .unwrap()
+                .iter()
+                .any(|s| s.name == "a")
+        );
+        assert!(
+            outline_for_extension("ml", "let a x = x")
+                .unwrap()
+                .iter()
+                .any(|s| s.name == "a")
+        );
+        assert!(
+            outline_for_extension("dart", "int a() => 0;")
+                .unwrap()
+                .iter()
+                .any(|s| s.name == "a")
+        );
+        assert!(
+            outline_for_extension("elm", "a : Int\na = 1\n")
+                .unwrap()
+                .iter()
+                .any(|s| s.name == "a")
+        );
+        assert!(
+            outline_for_extension("jl", "a(x) = x")
                 .unwrap()
                 .iter()
                 .any(|s| s.name == "a")
