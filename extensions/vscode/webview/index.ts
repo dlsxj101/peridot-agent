@@ -395,7 +395,10 @@ function renderLandingHome(s: SidebarState): HTMLElement {
   list.append(
     optionCardCompact({
       title: t('Local LLM endpoint', '로컬 LLM 엔드포인트'),
-      body: 'Ollama, LM Studio, vLLM — anything OpenAI-compatible.',
+      body: t(
+        'Ollama, LM Studio, vLLM — anything OpenAI-compatible.',
+        'Ollama, LM Studio, vLLM — OpenAI 호환이면 무엇이든.',
+      ),
       disabled: s.authBusy,
       onClick: () => vscode.postMessage({ type: 'showLanding', screen: 'localLlm' }),
     }),
