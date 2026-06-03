@@ -350,9 +350,9 @@ function renderLandingHome(s: SidebarState): HTMLElement {
   // Primary providers — the two the team recommends for most users.
   list.append(
     optionCard({
-      title: 'Sign in with ChatGPT',
-      body: 'OAuth via your ChatGPT account. Uses your existing subscription if eligible.',
-      cta: 'Sign in',
+      title: t('Sign in with ChatGPT', 'ChatGPT로 로그인'),
+      body: t('OAuth via your ChatGPT account. Uses your existing subscription if eligible.', 'ChatGPT 계정 OAuth 로그인. 자격이 되면 기존 구독을 사용합니다.'),
+      cta: t('Sign in', '로그인'),
       disabled: s.authBusy,
       onClick: () =>
         vscode.postMessage({ type: 'registerProvider', provider: 'chatgpt', params: {} }),
@@ -361,9 +361,9 @@ function renderLandingHome(s: SidebarState): HTMLElement {
 
   list.append(
     optionCard({
-      title: 'OpenRouter API key',
+      title: t('OpenRouter API key', 'OpenRouter API 키'),
       body: 'One key, 75+ models. Easiest way to try providers without committing.',
-      cta: 'Set up key',
+      cta: t('Set up key', '키 설정'),
       disabled: s.authBusy,
       onClick: () => vscode.postMessage({ type: 'showLanding', screen: 'openrouter' }),
     }),
@@ -371,13 +371,13 @@ function renderLandingHome(s: SidebarState): HTMLElement {
 
   // Secondary providers — kept for users who already have direct accounts.
   const divider = el('div', 'option-divider');
-  divider.append(el('span', 'option-divider-text', 'or use another provider'));
+  divider.append(el('span', 'option-divider-text', t('or use another provider', '또는 다른 제공자 사용')));
   list.append(divider);
 
   list.append(
     optionCardCompact({
-      title: 'Anthropic API key',
-      body: 'Direct Claude API access.',
+      title: t('Anthropic API key', 'Anthropic API 키'),
+      body: t('Direct Claude API access.', 'Claude API 직접 연결.'),
       disabled: s.authBusy,
       onClick: () => vscode.postMessage({ type: 'showLanding', screen: 'claude' }),
     }),
@@ -385,8 +385,8 @@ function renderLandingHome(s: SidebarState): HTMLElement {
 
   list.append(
     optionCardCompact({
-      title: 'OpenAI API key',
-      body: 'Direct GPT API access.',
+      title: t('OpenAI API key', 'OpenAI API 키'),
+      body: t('Direct GPT API access.', 'GPT API 직접 연결.'),
       disabled: s.authBusy,
       onClick: () => vscode.postMessage({ type: 'showLanding', screen: 'openai' }),
     }),
@@ -394,7 +394,7 @@ function renderLandingHome(s: SidebarState): HTMLElement {
 
   list.append(
     optionCardCompact({
-      title: 'Local LLM endpoint',
+      title: t('Local LLM endpoint', '로컬 LLM 엔드포인트'),
       body: 'Ollama, LM Studio, vLLM — anything OpenAI-compatible.',
       disabled: s.authBusy,
       onClick: () => vscode.postMessage({ type: 'showLanding', screen: 'localLlm' }),
@@ -402,7 +402,7 @@ function renderLandingHome(s: SidebarState): HTMLElement {
   );
 
   if (s.context.authConfigured) {
-    const skip = el('button', 'link-button', 'Skip — keep current provider');
+    const skip = el('button', 'link-button', t('Skip — keep current provider', '건너뛰기 — 현재 제공자 유지'));
     skip.type = 'button';
     skip.addEventListener('click', () => vscode.postMessage({ type: 'showSession' }));
     list.append(skip);
@@ -451,7 +451,7 @@ function optionCardCompact(opts: OptionCardCompactArgs): HTMLElement {
 function renderOpenRouterForm(s: SidebarState): HTMLElement {
   const form = el('form', 'landing-form');
   form.append(formBack());
-  form.append(el('h2', 'form-title', 'OpenRouter API key'));
+  form.append(el('h2', 'form-title', t('OpenRouter API key', 'OpenRouter API 키')));
   form.append(
     el(
       'p',
@@ -462,7 +462,7 @@ function renderOpenRouterForm(s: SidebarState): HTMLElement {
 
   const keyField = labelledInput({
     id: 'or-key',
-    label: 'API key',
+    label: t('API key', 'API 키'),
     type: 'password',
     placeholder: 'sk-or-…',
     required: true,
@@ -477,7 +477,7 @@ function renderOpenRouterForm(s: SidebarState): HTMLElement {
   });
   form.append(modelField.wrap);
 
-  form.append(submitButton('Save and continue', s.authBusy));
+  form.append(submitButton(t('Save and continue', '저장하고 계속'), s.authBusy));
 
   form.addEventListener('submit', (event) => {
     event.preventDefault();
@@ -497,7 +497,7 @@ function renderOpenRouterForm(s: SidebarState): HTMLElement {
 function renderClaudeForm(s: SidebarState): HTMLElement {
   const form = el('form', 'landing-form');
   form.append(formBack());
-  form.append(el('h2', 'form-title', 'Anthropic API key'));
+  form.append(el('h2', 'form-title', t('Anthropic API key', 'Anthropic API 키')));
   form.append(
     el(
       'p',
@@ -508,7 +508,7 @@ function renderClaudeForm(s: SidebarState): HTMLElement {
 
   const keyField = labelledInput({
     id: 'an-key',
-    label: 'API key',
+    label: t('API key', 'API 키'),
     type: 'password',
     placeholder: 'sk-ant-…',
     required: true,
@@ -523,7 +523,7 @@ function renderClaudeForm(s: SidebarState): HTMLElement {
   });
   form.append(modelField.wrap);
 
-  form.append(submitButton('Save and continue', s.authBusy));
+  form.append(submitButton(t('Save and continue', '저장하고 계속'), s.authBusy));
 
   form.addEventListener('submit', (event) => {
     event.preventDefault();
@@ -543,7 +543,7 @@ function renderClaudeForm(s: SidebarState): HTMLElement {
 function renderOpenAiForm(s: SidebarState): HTMLElement {
   const form = el('form', 'landing-form');
   form.append(formBack());
-  form.append(el('h2', 'form-title', 'OpenAI API key'));
+  form.append(el('h2', 'form-title', t('OpenAI API key', 'OpenAI API 키')));
   form.append(
     el(
       'p',
@@ -554,7 +554,7 @@ function renderOpenAiForm(s: SidebarState): HTMLElement {
 
   const keyField = labelledInput({
     id: 'oa-key',
-    label: 'API key',
+    label: t('API key', 'API 키'),
     type: 'password',
     placeholder: 'sk-…',
     required: true,
@@ -569,7 +569,7 @@ function renderOpenAiForm(s: SidebarState): HTMLElement {
   });
   form.append(modelField.wrap);
 
-  form.append(submitButton('Save and continue', s.authBusy));
+  form.append(submitButton(t('Save and continue', '저장하고 계속'), s.authBusy));
 
   form.addEventListener('submit', (event) => {
     event.preventDefault();
@@ -589,7 +589,7 @@ function renderOpenAiForm(s: SidebarState): HTMLElement {
 function renderLocalLlmForm(s: SidebarState): HTMLElement {
   const form = el('form', 'landing-form');
   form.append(formBack());
-  form.append(el('h2', 'form-title', 'Local LLM endpoint'));
+  form.append(el('h2', 'form-title', t('Local LLM endpoint', '로컬 LLM 엔드포인트')));
   form.append(
     el(
       'p',
@@ -600,7 +600,7 @@ function renderLocalLlmForm(s: SidebarState): HTMLElement {
 
   const urlField = labelledInput({
     id: 'll-url',
-    label: 'Base URL',
+    label: t('Base URL', '기본 URL'),
     type: 'url',
     placeholder: 'http://localhost:11434/v1',
     required: true,
@@ -617,13 +617,13 @@ function renderLocalLlmForm(s: SidebarState): HTMLElement {
 
   const modelField = labelledInput({
     id: 'll-model',
-    label: 'Default model',
+    label: t('Default model', '기본 모델'),
     type: 'text',
     placeholder: 'llama3.2:3b',
   });
   form.append(modelField.wrap);
 
-  form.append(submitButton('Save and continue', s.authBusy));
+  form.append(submitButton(t('Save and continue', '저장하고 계속'), s.authBusy));
 
   form.addEventListener('submit', (event) => {
     event.preventDefault();
@@ -642,7 +642,7 @@ function renderLocalLlmForm(s: SidebarState): HTMLElement {
 }
 
 function formBack(): HTMLElement {
-  const back = el('button', 'link-button back-link', '← Back');
+  const back = el('button', 'link-button back-link', t('← Back', '← 뒤로'));
   back.type = 'button';
   back.addEventListener('click', () =>
     vscode.postMessage({ type: 'showLanding', screen: 'home' }),
@@ -841,58 +841,58 @@ function renderHeader(s: SidebarState): HTMLElement {
 
   const right = el('div', 'header-actions');
   right.append(renderSessionMenu(s));
-  right.append(iconButton('codemap', t('Workspace Code Map', 'ìí¬ì¤íì´ì¤ ì½ë ë§µ'), () => vscode.postMessage({ type: 'showCodeMap' })));
-  right.append(iconButton('info', t('Workspace Code Map Status', 'ìí¬ì¤íì´ì¤ ì½ë ë§µ ìí'), () => vscode.postMessage({ type: 'showCodeMapStatus' })));
-  right.append(iconButton('search', t('Search Workspace Code Map', 'ìí¬ì¤íì´ì¤ ì½ë ë§µ ê²ì'), () => vscode.postMessage({ type: 'searchCodeMap' })));
+  right.append(iconButton('codemap', t('Workspace Code Map', '워크스페이스 코드 맵'), () => vscode.postMessage({ type: 'showCodeMap' })));
+  right.append(iconButton('info', t('Workspace Code Map Status', '워크스페이스 코드 맵 상태'), () => vscode.postMessage({ type: 'showCodeMapStatus' })));
+  right.append(iconButton('search', t('Search Workspace Code Map', '워크스페이스 코드 맵 검색'), () => vscode.postMessage({ type: 'searchCodeMap' })));
   right.append(
-    iconButton('find', t('Find in conversation', 'ëí ê¸°ë¡ìì ì°¾ê¸°'), () => {
+    iconButton('find', t('Find in conversation', '대화 기록에서 찾기'), () => {
       transcriptSearchActive = !transcriptSearchActive;
       if (!transcriptSearchActive) transcriptSearchQuery = '';
       if (state) render(state);
     }),
   );
-  right.append(iconButton('list-tree', t('Outline Current File', 'íì¬ íì¼ ê°ì'), () => vscode.postMessage({ type: 'outlineCurrentFile' })));
-  right.append(iconButton('references', t('Find Symbol References', 'ì¬ë³¼ ì°¸ì¡° ì°¾ê¸°'), () => vscode.postMessage({ type: 'findSymbolReferences' })));
-  right.append(iconButton('skills', t('Show Skills', 'ì¤í¬ ë³´ê¸°'), () => vscode.postMessage({ type: 'showSkills' })));
-  right.append(iconButton('archive', t('Show Archived Skills', 'ë³´ê´ë ì¤í¬ ë³´ê¸°'), () => vscode.postMessage({ type: 'showArchivedSkills' })));
-  right.append(iconButton('search', t('Search Skills', 'ì¤í¬ ê²ì'), () => vscode.postMessage({ type: 'searchSkills' })));
-  right.append(iconButton('search-archive', t('Search Archived Skills', 'ë³´ê´ë ì¤í¬ ê²ì'), () => vscode.postMessage({ type: 'searchArchivedSkills' })));
-  right.append(iconButton('attach', t('Attach File', 'íì¼ ì²¨ë¶'), () => vscode.postMessage({ type: 'attachFile' })));
-  right.append(iconButton('todos', t('Show Workspace TODOs', 'ìí¬ì¤íì´ì¤ TODO ë³´ê¸°'), () => vscode.postMessage({ type: 'showTodos' })));
-  right.append(iconButton('context-top', t('Show Context Top', 'ì»¨íì¤í¸ ìë¨ ë³´ê¸°'), () => vscode.postMessage({ type: 'showContextTop' })));
-  right.append(iconButton('working-diff', t('Show Working Tree Diff', 'ìì í¸ë¦¬ diff ë³´ê¸°'), () => vscode.postMessage({ type: 'showWorkingTreeDiff' })));
-  right.append(iconButton('mcp', t('Show MCP Servers', 'MCP ìë² ë³´ê¸°'), () => vscode.postMessage({ type: 'showMcpServers' })));
-  right.append(iconButton('mcp-add', t('Add MCP Server', 'MCP ìë² ì¶ê°'), () => vscode.postMessage({ type: 'addMcpServer' })));
-  right.append(iconButton('mcp-test', t('Test MCP Server', 'MCP ìë² íì¤í¸'), () => vscode.postMessage({ type: 'testMcpServer' })));
-  right.append(iconButton('mcp-remove', t('Remove MCP Server', 'MCP ìë² ì ê±°'), () => vscode.postMessage({ type: 'removeMcpServer' })));
-  right.append(iconButton('note-add', t('Add Session Note', 'ì¸ì ë¸í¸ ì¶ê°'), () => vscode.postMessage({ type: 'addSessionNote' })));
-  right.append(iconButton('note-list', t('Show Session Notes', 'ì¸ì ë¸í¸ ë³´ê¸°'), () => vscode.postMessage({ type: 'showSessionNotes' })));
-  right.append(iconButton('note-clear', t('Clear Session Notes', 'ì¸ì ë¸í¸ ì§ì°ê¸°'), () => vscode.postMessage({ type: 'clearSessionNotes' })));
-  right.append(iconButton('session-new', t('New Session', 'ì ì¸ì'), () => vscode.postMessage({ type: 'newPersistedSession' })));
-  right.append(iconButton('session-switch', t('Switch Session', 'ì¸ì ì í'), () => vscode.postMessage({ type: 'switchPersistedSession' })));
-  right.append(iconButton('session-close', t('Close Session', 'ì¸ì ë«ê¸°'), () => vscode.postMessage({ type: 'closePersistedSession' })));
-  right.append(iconButton('session-count', t('Show Session Count', 'ì¸ì ì ë³´ê¸°'), () => vscode.postMessage({ type: 'showSessionCount' })));
-  right.append(iconButton('session-detail', t('Show Session Details', 'ì¸ì ìì¸ ë³´ê¸°'), () => vscode.postMessage({ type: 'showPersistedSessionDetails' })));
-  right.append(iconButton('session-locate', t('Locate Session Directory', 'ì¸ì ëë í°ë¦¬ ìì¹'), () => vscode.postMessage({ type: 'locatePersistedSessionDirectory' })));
-  right.append(iconButton('session-resume', t('Resume Session', 'ì¸ì ì¬ê°'), () => vscode.postMessage({ type: 'resumePersistedSession' })));
-  right.append(iconButton('session-rename', t('Rename Session', 'ì¸ì ì´ë¦ ë³ê²½'), () => vscode.postMessage({ type: 'renamePersistedSession' })));
-  right.append(iconButton('session-delete', t('Delete Session', 'ì¸ì ì­ì '), () => vscode.postMessage({ type: 'deletePersistedSession' })));
-  right.append(iconButton('sessions', t('Show Sessions', 'ì¸ì ëª©ë¡ ë³´ê¸°'), () => vscode.postMessage({ type: 'showSessions' })));
-  right.append(iconButton('session-search', t('Search Sessions', 'ì¸ì ê²ì'), () => vscode.postMessage({ type: 'searchSessions' })));
-  right.append(iconButton('trash', t('Prune Sessions', 'ì¸ì ì ë¦¬'), () => vscode.postMessage({ type: 'pruneSessions' })));
-  right.append(iconButton('history', t('Replay Session Timeline', 'ì¸ì íìë¼ì¸ ì¬ì'), () => vscode.postMessage({ type: 'replaySessionTimeline' })));
-  right.append(iconButton('export', t('Export Session Artifacts', 'ì¸ì ìí°í©í¸ ë´ë³´ë´ê¸°'), () => vscode.postMessage({ type: 'exportSessionArtifacts' })));
-  right.append(iconButton('import', t('Import Session Artifacts', 'ì¸ì ìí°í©í¸ ê°ì ¸ì¤ê¸°'), () => vscode.postMessage({ type: 'importSessionArtifacts' })));
-  right.append(iconButton('pr', t('GitHub PR Status', 'GitHub PR ìí'), () => vscode.postMessage({ type: 'showPrStatus' })));
-  right.append(iconButton('ship', t('Ship Changes to PR', 'ë³ê²½ì¬í­ PRë¡ ë³´ë´ê¸°'), () => vscode.postMessage({ type: 'shipChanges' })));
+  right.append(iconButton('list-tree', t('Outline Current File', '현재 파일 개요'), () => vscode.postMessage({ type: 'outlineCurrentFile' })));
+  right.append(iconButton('references', t('Find Symbol References', '심볼 참조 찾기'), () => vscode.postMessage({ type: 'findSymbolReferences' })));
+  right.append(iconButton('skills', t('Show Skills', '스킬 보기'), () => vscode.postMessage({ type: 'showSkills' })));
+  right.append(iconButton('archive', t('Show Archived Skills', '보관된 스킬 보기'), () => vscode.postMessage({ type: 'showArchivedSkills' })));
+  right.append(iconButton('search', t('Search Skills', '스킬 검색'), () => vscode.postMessage({ type: 'searchSkills' })));
+  right.append(iconButton('search-archive', t('Search Archived Skills', '보관된 스킬 검색'), () => vscode.postMessage({ type: 'searchArchivedSkills' })));
+  right.append(iconButton('attach', t('Attach File', '파일 첨부'), () => vscode.postMessage({ type: 'attachFile' })));
+  right.append(iconButton('todos', t('Show Workspace TODOs', '워크스페이스 TODO 보기'), () => vscode.postMessage({ type: 'showTodos' })));
+  right.append(iconButton('context-top', t('Show Context Top', '컨텍스트 상단 보기'), () => vscode.postMessage({ type: 'showContextTop' })));
+  right.append(iconButton('working-diff', t('Show Working Tree Diff', '작업 트리 diff 보기'), () => vscode.postMessage({ type: 'showWorkingTreeDiff' })));
+  right.append(iconButton('mcp', t('Show MCP Servers', 'MCP 서버 보기'), () => vscode.postMessage({ type: 'showMcpServers' })));
+  right.append(iconButton('mcp-add', t('Add MCP Server', 'MCP 서버 추가'), () => vscode.postMessage({ type: 'addMcpServer' })));
+  right.append(iconButton('mcp-test', t('Test MCP Server', 'MCP 서버 테스트'), () => vscode.postMessage({ type: 'testMcpServer' })));
+  right.append(iconButton('mcp-remove', t('Remove MCP Server', 'MCP 서버 제거'), () => vscode.postMessage({ type: 'removeMcpServer' })));
+  right.append(iconButton('note-add', t('Add Session Note', '세션 노트 추가'), () => vscode.postMessage({ type: 'addSessionNote' })));
+  right.append(iconButton('note-list', t('Show Session Notes', '세션 노트 보기'), () => vscode.postMessage({ type: 'showSessionNotes' })));
+  right.append(iconButton('note-clear', t('Clear Session Notes', '세션 노트 지우기'), () => vscode.postMessage({ type: 'clearSessionNotes' })));
+  right.append(iconButton('session-new', t('New Session', '새 세션'), () => vscode.postMessage({ type: 'newPersistedSession' })));
+  right.append(iconButton('session-switch', t('Switch Session', '세션 전환'), () => vscode.postMessage({ type: 'switchPersistedSession' })));
+  right.append(iconButton('session-close', t('Close Session', '세션 닫기'), () => vscode.postMessage({ type: 'closePersistedSession' })));
+  right.append(iconButton('session-count', t('Show Session Count', '세션 수 보기'), () => vscode.postMessage({ type: 'showSessionCount' })));
+  right.append(iconButton('session-detail', t('Show Session Details', '세션 상세 보기'), () => vscode.postMessage({ type: 'showPersistedSessionDetails' })));
+  right.append(iconButton('session-locate', t('Locate Session Directory', '세션 디렉터리 위치'), () => vscode.postMessage({ type: 'locatePersistedSessionDirectory' })));
+  right.append(iconButton('session-resume', t('Resume Session', '세션 재개'), () => vscode.postMessage({ type: 'resumePersistedSession' })));
+  right.append(iconButton('session-rename', t('Rename Session', '세션 이름 변경'), () => vscode.postMessage({ type: 'renamePersistedSession' })));
+  right.append(iconButton('session-delete', t('Delete Session', '세션 삭제'), () => vscode.postMessage({ type: 'deletePersistedSession' })));
+  right.append(iconButton('sessions', t('Show Sessions', '세션 목록 보기'), () => vscode.postMessage({ type: 'showSessions' })));
+  right.append(iconButton('session-search', t('Search Sessions', '세션 검색'), () => vscode.postMessage({ type: 'searchSessions' })));
+  right.append(iconButton('trash', t('Prune Sessions', '세션 정리'), () => vscode.postMessage({ type: 'pruneSessions' })));
+  right.append(iconButton('history', t('Replay Session Timeline', '세션 타임라인 재생'), () => vscode.postMessage({ type: 'replaySessionTimeline' })));
+  right.append(iconButton('export', t('Export Session Artifacts', '세션 아티팩트 내보내기'), () => vscode.postMessage({ type: 'exportSessionArtifacts' })));
+  right.append(iconButton('import', t('Import Session Artifacts', '세션 아티팩트 가져오기'), () => vscode.postMessage({ type: 'importSessionArtifacts' })));
+  right.append(iconButton('pr', t('GitHub PR Status', 'GitHub PR 상태'), () => vscode.postMessage({ type: 'showPrStatus' })));
+  right.append(iconButton('ship', t('Ship Changes to PR', '변경사항 PR로 보내기'), () => vscode.postMessage({ type: 'shipChanges' })));
   right.append(iconButton('merge', t('Merge GitHub PR', 'GitHub PR merge'), () => vscode.postMessage({ type: 'mergePr' })));
-  right.append(iconButton('refresh', t('Refresh', 'ìë¡ê³ ì¹¨'), () => vscode.postMessage({ type: 'refreshStatus' })));
+  right.append(iconButton('refresh', t('Refresh', '새로고침'), () => vscode.postMessage({ type: 'refreshStatus' })));
   right.append(
-    iconButton('switch', t('Switch provider', 'ì ê³µì ì í'), () =>
+    iconButton('switch', t('Switch provider', '제공자 전환'), () =>
       vscode.postMessage({ type: 'showLanding', screen: 'home' }),
     ),
   );
-  right.append(iconButton('gear', t('Settings', 'ì¤ì '), () => vscode.postMessage({ type: 'openSettings' })));
+  right.append(iconButton('gear', t('Settings', '설정'), () => vscode.postMessage({ type: 'openSettings' })));
   header.append(left, right);
   return header;
 }
@@ -901,9 +901,9 @@ function renderSessionMenu(s: SidebarState): HTMLElement {
   const active = s.sessions.find((session) => session.active);
   const details = el('details', 'session-menu');
   const summary = el('summary', 'session-menu-trigger');
-  summary.title = 'Open sessions';
-  summary.setAttribute('aria-label', 'Open sessions');
-  summary.append(el('span', 'session-menu-current', active?.title ?? 'New session'));
+  summary.title = t('Open sessions', '열린 세션');
+  summary.setAttribute('aria-label', t('Open sessions', '열린 세션'));
+  summary.append(el('span', 'session-menu-current', active?.title ?? t('New session', '새 세션')));
   summary.append(el('span', 'session-menu-chevron', ''));
   details.append(summary);
   details.open = sessionMenuOpen;
@@ -918,8 +918,8 @@ function renderSessionMenu(s: SidebarState): HTMLElement {
   newIcon.innerHTML = iconSvg('new');
   newButton.append(newIcon);
   const newText = el('span', 'session-menu-text');
-  newText.append(el('span', 'session-menu-title', 'New session'));
-  newText.append(el('span', 'session-menu-subtitle', 'Start when you send the first message'));
+  newText.append(el('span', 'session-menu-title', t('New session', '새 세션')));
+  newText.append(el('span', 'session-menu-subtitle', t('Start when you send the first message', '첫 메시지를 보내면 시작됩니다')));
   newButton.append(newText);
   newButton.addEventListener('click', () => {
     composerDraft = '';
@@ -985,11 +985,11 @@ function renderSessionMenu(s: SidebarState): HTMLElement {
       const save = sessionMenuAction('check', `Save ${session.title}`, () =>
         commitSessionRename(session.id, editingSessionDraft ?? session.title),
       );
-      const cancel = sessionMenuAction('remove', 'Cancel rename', cancelSessionRename);
+      const cancel = sessionMenuAction('remove', t('Cancel rename', '이름 변경 취소'), cancelSessionRename);
       actions.append(save, cancel);
       actions.classList.add('editing');
     } else if (deletingSessionId === session.id) {
-      const confirm = sessionMenuAction('check', 'Confirm delete', () => {
+      const confirm = sessionMenuAction('check', t('Confirm delete', '삭제 확인'), () => {
         deletingSessionId = undefined;
         editingSessionId = undefined;
         editingSessionDraft = undefined;
@@ -997,11 +997,11 @@ function renderSessionMenu(s: SidebarState): HTMLElement {
         vscode.postMessage({ type: 'deleteSession', id: session.id });
       });
       confirm.classList.add('session-menu-confirm-delete');
-      const cancelDel = sessionMenuAction('remove', 'Cancel delete', () => {
+      const cancelDel = sessionMenuAction('remove', t('Cancel delete', '삭제 취소'), () => {
         deletingSessionId = undefined;
         render(state ?? s);
       });
-      const confirmLabel = el('span', 'session-menu-confirm-label', 'Delete?');
+      const confirmLabel = el('span', 'session-menu-confirm-label', t('Delete?', '삭제할까요?'));
       actions.append(confirmLabel, confirm, cancelDel);
       actions.classList.add('confirming');
     } else {
@@ -1190,7 +1190,7 @@ function phaseColor(phase: string): string {
 
 function renderContextStrip(context: SidebarContext): HTMLElement {
   const strip = el('div', 'context-strip');
-  const workspace = context.workspace || 'No workspace';
+  const workspace = context.workspace || t('No workspace', '워크스페이스 없음');
   strip.append(el('span', 'workspace-text', workspace));
 
   const pills = el('div', 'pill-row');
@@ -1305,7 +1305,7 @@ function renderContextDock(s: SidebarState): HTMLElement {
   svg.append(track, value);
   donut.append(svg);
   const tooltip = el('span', 'context-tooltip');
-  tooltip.append(el('span', 'context-tooltip-label', 'Request'));
+  tooltip.append(el('span', 'context-tooltip-label', t('Request', '요청')));
   tooltip.append(el('span', 'context-tooltip-value', pctText));
   tooltip.append(el('span', 'context-tooltip-detail', exact));
   if (breakdown.length > 0) {
@@ -1355,7 +1355,7 @@ function renderTodoProgress(plan: PlanSlice, running: boolean): HTMLElement {
   });
 
   const summary = el('summary', `todo-summary ${changed && !todoExpanded ? 'is-changing' : ''}`);
-  const label = el('span', 'todo-summary-label', 'Todo');
+  const label = el('span', 'todo-summary-label', t('Todo', '할 일'));
   const text = el('span', 'todo-summary-text');
   text.textContent = current
     ? current.text
@@ -2060,22 +2060,22 @@ function renderEmptyState(context: SidebarContext): HTMLElement {
     wrap.append(img);
   }
   if (!context.workspace || context.workspace === 'No workspace') {
-    wrap.append(el('div', 'empty-heading', 'No workspace open'));
+    wrap.append(el('div', 'empty-heading', t('No workspace open', '열린 워크스페이스 없음')));
     wrap.append(
       el(
         'div',
         'empty-body',
-        'Open a folder to let Peridot run tasks against your project.',
+        t('Open a folder to let Peridot run tasks against your project.', '폴더를 열면 Peridot이 프로젝트에서 작업을 실행할 수 있습니다.'),
       ),
     );
     return wrap;
   }
-  wrap.append(el('div', 'empty-heading', 'Peridot is ready'));
+  wrap.append(el('div', 'empty-heading', t('Peridot is ready', 'Peridot 준비 완료')));
   wrap.append(
     el(
       'div',
       'empty-body',
-      'Describe what you want done. Peridot reads your repo, runs tools, asks before touching anything risky.',
+      t('Describe what you want done. Peridot reads your repo, runs tools, asks before touching anything risky.', '원하는 작업을 설명하세요. Peridot이 저장소를 읽고 도구를 실행하며, 위험한 변경 전에는 먼저 확인합니다.'),
     ),
   );
 
@@ -2125,7 +2125,7 @@ function renderItem(item: TranscriptItem, itemKey?: string): HTMLElement {
 
 function renderUserBubble(item: TranscriptItem): HTMLElement {
   const wrap = el('section', 'msg msg-user');
-  wrap.append(el('div', 'msg-label', 'You'));
+  wrap.append(el('div', 'msg-label', t('You', '나')));
   wrap.append(el('div', 'msg-body', item.text));
   return wrap;
 }
@@ -2140,8 +2140,8 @@ function renderAssistantBubble(item: TranscriptItem, itemKey?: string): HTMLElem
   const footer = el('div', 'msg-footer');
   const copy = el('button', 'copy-button', '');
   copy.type = 'button';
-  copy.title = 'Copy response';
-  copy.setAttribute('aria-label', 'Copy response');
+  copy.title = t('Copy response', '응답 복사');
+  copy.setAttribute('aria-label', t('Copy response', '응답 복사'));
   copy.innerHTML = iconSvg('copy');
   copy.addEventListener('click', () => {
     void markCopied(copy, item.text);
@@ -2155,13 +2155,13 @@ async function markCopied(button: HTMLElement, text: string): Promise<void> {
   await copyText(text);
   button.classList.add('copied');
   button.innerHTML = iconSvg('check');
-  button.title = 'Copied';
+  button.title = t('Copied', '복사됨');
   button.setAttribute('aria-label', 'Copied');
   setTimeout(() => {
     button.classList.remove('copied');
     button.innerHTML = iconSvg('copy');
-    button.title = 'Copy response';
-    button.setAttribute('aria-label', 'Copy response');
+    button.title = t('Copy response', '응답 복사');
+    button.setAttribute('aria-label', t('Copy response', '응답 복사'));
   }, 3000);
 }
 
@@ -2339,8 +2339,8 @@ function toolDetailKey(startIndex: number, offset: number): string {
 function renderThinkingBlock(item: TranscriptItem): HTMLElement {
   const details = el('details', 'thinking-block thinking-active');
   const summary = el('summary', 'thinking-summary');
-  const label = el('span', 'thinking-label text-gradient-active', 'Thinking');
-  const state = el('span', 'thinking-state', 'reasoning trace');
+  const label = el('span', 'thinking-label text-gradient-active', t('Thinking', '생각 중'));
+  const state = el('span', 'thinking-state', t('reasoning trace', '추론 과정'));
   summary.append(label, state);
   details.append(summary);
   const body = el('pre', 'thinking-body');
@@ -2474,7 +2474,7 @@ function renderCompactionDetails(snapshot: CompactionSnapshotView): HTMLElement 
   const details = el('details', 'compaction-details');
   const summary = el('summary', 'compaction-summary');
   summary.append(el('span', 'compaction-toggle'));
-  summary.append(el('span', 'compaction-summary-text', 'Snapshot'));
+  summary.append(el('span', 'compaction-summary-text', t('Snapshot', '스냅샷')));
   summary.append(
     el(
       'span',
@@ -2490,18 +2490,18 @@ function renderCompactionDetails(snapshot: CompactionSnapshotView): HTMLElement 
   }
   const sections = [
     ['Decisions', snapshot.decisions],
-    ['Files read', snapshot.filesRead],
-    ['Files changed', snapshot.filesChanged],
+    [t('Files read', '읽은 파일'), snapshot.filesRead],
+    [t('Files changed', '변경된 파일'), snapshot.filesChanged],
     ['Verifications', snapshot.verifications],
-    ['Open todos', snapshot.openTodos],
+    [t('Open todos', '열린 할 일'), snapshot.openTodos],
     ['Approvals', snapshot.approvals],
-    ['Untrusted inputs', snapshot.untrustedInputs],
+    [t('Untrusted inputs', '신뢰할 수 없는 입력'), snapshot.untrustedInputs],
   ] as const;
   for (const [title, items] of sections) {
     if (items.length > 0) body.append(renderCompactionSection(title, items));
   }
   if (body.childElementCount === 0) {
-    body.append(el('div', 'compaction-empty', 'No structured details'));
+    body.append(el('div', 'compaction-empty', t('No structured details', '구조화된 세부 정보 없음')));
   }
   details.append(body);
   return details;
@@ -2540,13 +2540,13 @@ function renderErrorLine(item: TranscriptItem): HTMLElement {
 }
 
 function renderAskUserBubble(item: TranscriptItem): HTMLElement {
-  const wrap = renderPromptPanel('ask-user', 'Input requested', item.text);
+  const wrap = renderPromptPanel('ask-user', t('Input requested', '입력 요청됨'), item.text);
   wrap.append(renderAskUserForm(item));
   return wrap;
 }
 
 function renderApprovalBubble(item: TranscriptItem): HTMLElement {
-  const wrap = renderPromptPanel('approval', 'Approval requested', item.toolName || item.text);
+  const wrap = renderPromptPanel('approval', t('Approval requested', '승인 요청됨'), item.toolName || item.text);
   const risk = riskChipView(item.riskClass);
   if (risk) {
     const chip = el('span', risk.className, risk.label);
@@ -2573,7 +2573,7 @@ function renderApprovalBubble(item: TranscriptItem): HTMLElement {
 
   const scope = selectControl(
     'scope-select',
-    'Approval scope',
+    t('Approval scope', '승인 범위'),
     APPROVAL_SCOPE_OPTIONS,
     'once',
   );
@@ -2733,10 +2733,10 @@ function appendOtherChoice(wrap: HTMLElement, radioName?: string): void {
   toggle.dataset.otherToggle = 'true';
 
   const content = el('div', 'choice-other-body');
-  content.append(el('span', 'choice-other-label', 'Other'));
+  content.append(el('span', 'choice-other-label', t('Other', '기타')));
   const input = el('input', 'inline-text-input ask-other-input') as HTMLInputElement;
   input.type = 'text';
-  input.placeholder = 'Write your answer';
+  input.placeholder = t('Write your answer', '답변 입력');
   input.dataset.otherText = 'true';
   input.disabled = true;
   content.append(input);
@@ -2886,7 +2886,7 @@ function renderCommandBlock(item: TranscriptItem): HTMLElement {
       list.append(line);
     });
     wrap.append(list);
-    if (result.truncated) wrap.append(el('div', 'command-footnote', 'further hits truncated'));
+    if (result.truncated) wrap.append(el('div', 'command-footnote', t('further hits truncated', '이후 결과 생략됨')));
   }
   return wrap;
 }
@@ -2905,7 +2905,7 @@ function renderAttachmentBlock(item: TranscriptItem): HTMLElement {
   const title = el('div', 'attachment-title');
   title.append(el('span', 'command-title', result?.title ?? 'Attachment'));
   const chips = el('div', 'attachment-chips');
-  chips.append(el('span', 'command-chip', inlined ? 'inlined' : 'placeholder'));
+  chips.append(el('span', 'command-chip', inlined ? t('inlined', '인라인') : t('placeholder', '플레이스홀더')));
   if (bytes !== undefined) chips.append(el('span', 'command-chip', `${bytes} bytes`));
   chips.append(el('span', 'command-chip', mediaType));
   title.append(chips);
@@ -2943,7 +2943,13 @@ function renderAttachmentBlock(item: TranscriptItem): HTMLElement {
     preview.textContent = previewAttachmentContent(content);
     wrap.append(preview);
   } else {
-    wrap.append(el('div', 'attachment-placeholder', `${mediaType} attachment placeholder`));
+    wrap.append(
+      el(
+        'div',
+        'attachment-placeholder',
+        tf('{type} attachment placeholder', '{type} 첨부 플레이스홀더', { type: mediaType }),
+      ),
+    );
   }
   return wrap;
 }
@@ -2953,7 +2959,7 @@ function renderDetachBlock(item: TranscriptItem): HTMLElement {
   const wrap = el('section', 'command-block attachment-block attachment-inventory-block');
   const header = el('div', 'attachment-header');
   const title = el('div', 'attachment-title');
-  title.append(el('span', 'command-title', result?.title ?? 'Detach Attachment'));
+  title.append(el('span', 'command-title', result?.title ?? t('Detach Attachment', '첨부 제거')));
   const chips = el('div', 'attachment-chips');
   const removed = result?.removed_count ?? result?.removedCount ?? 0;
   const remaining = result?.remaining_count ?? result?.remainingCount;
@@ -3005,7 +3011,7 @@ function renderAttachmentInventoryBlock(item: TranscriptItem): HTMLElement {
   const wrap = el('section', 'command-block attachment-block attachment-inventory-block');
   const header = el('div', 'attachment-header');
   const title = el('div', 'attachment-title');
-  title.append(el('span', 'command-title', result?.title ?? 'Session Attachments'));
+  title.append(el('span', 'command-title', result?.title ?? t('Session Attachments', '세션 첨부')));
   const chips = el('div', 'attachment-chips');
   chips.append(el('span', 'command-chip', `${result?.total ?? attachments.length} files`));
   title.append(chips);
@@ -3013,7 +3019,7 @@ function renderAttachmentInventoryBlock(item: TranscriptItem): HTMLElement {
   wrap.append(header);
   if (result?.message) wrap.append(el('div', 'command-message', result.message));
   if (attachments.length === 0) {
-    wrap.append(el('div', 'attachment-placeholder', 'No files attached to this session.'));
+    wrap.append(el('div', 'attachment-placeholder', t('No files attached to this session.', '이 세션에 첨부된 파일이 없습니다.')));
     return wrap;
   }
   const list = el('div', 'attachment-list');
@@ -3028,7 +3034,7 @@ function renderAttachmentInventoryRow(attachment: AttachmentView): HTMLElement {
   const path = attachment.path ?? 'attachment';
   const bytes = typeof attachment.bytes === 'number' ? `${attachment.bytes} bytes` : '';
   const mediaType = attachment.media_type ?? attachment.mediaType ?? 'text/plain';
-  const mode = attachment.inlined ? 'inlined' : 'placeholder';
+  const mode = attachment.inlined ? t('inlined', '인라인') : t('placeholder', '플레이스홀더');
   const content = typeof attachment.content === 'string' ? attachment.content : undefined;
   const previewUri = attachment.preview_uri ?? attachment.previewUri;
   const row = el('div', 'attachment-inventory-row');
@@ -3070,7 +3076,7 @@ function renderSessionExportBlock(item: TranscriptItem): HTMLElement {
   const wrap = el('section', 'command-block attachment-block');
   const header = el('div', 'attachment-header');
   const title = el('div', 'attachment-title');
-  title.append(el('span', 'command-title', result?.title ?? 'Session Artifact Export'));
+  title.append(el('span', 'command-title', result?.title ?? t('Session Artifact Export', '세션 아티팩트 내보내기')));
   const chips = el('div', 'attachment-chips');
   summaryChips.forEach((chip) => chips.append(el('span', 'command-chip', chip)));
   title.append(chips);
@@ -3134,7 +3140,7 @@ function renderSessionImportBlock(item: TranscriptItem): HTMLElement {
   const wrap = el('section', 'command-block attachment-block');
   const header = el('div', 'attachment-header');
   const title = el('div', 'attachment-title');
-  title.append(el('span', 'command-title', result?.title ?? 'Session Artifact Import'));
+  title.append(el('span', 'command-title', result?.title ?? t('Session Artifact Import', '세션 아티팩트 가져오기')));
   const chips = el('div', 'attachment-chips');
   chips.append(el('span', 'command-chip', `${files.length || result?.total || 0} files`));
   if (sessionId) chips.append(el('span', 'command-chip', sessionId));
@@ -3185,12 +3191,12 @@ function appendSessionContextDetails(
     const row = el('div', 'attachment-inventory-row');
     const main = el('div', 'attachment-row-main');
     const top = el('div', 'attachment-path-row');
-    top.append(el('span', 'command-row-label', 'latest note'));
+    top.append(el('span', 'command-row-label', t('latest note', '최근 노트')));
     main.append(top);
     main.append(el('div', 'command-row-detail', context.latestNote));
     row.append(main);
     const actions = el('div', 'attachment-actions');
-    const copy = iconButton('copy', t('Copy latest note', 'ìµê·¼ ë¸í¸ ë³µì¬'), () => {
+    const copy = iconButton('copy', t('Copy latest note', '최근 노트 복사'), () => {
       void markCopied(copy, context.latestNote ?? '');
     });
     actions.append(copy);
@@ -3230,7 +3236,7 @@ function renderSessionLocateBlock(item: TranscriptItem): HTMLElement {
   const wrap = el('section', `command-block attachment-block ${result?.severity === 'error' ? 'error' : ''}`);
   const header = el('div', 'attachment-header');
   const title = el('div', 'attachment-title');
-  title.append(el('span', 'command-title', result?.title ?? 'Session Locate'));
+  title.append(el('span', 'command-title', result?.title ?? t('Session Locate', '세션 위치')));
   const chips = el('div', 'attachment-chips');
   if (sessionId) chips.append(el('span', 'command-chip', sessionId));
   chips.append(el('span', 'command-chip', exists ? 'present' : 'not present'));
@@ -3258,7 +3264,7 @@ function renderNotesBlock(item: TranscriptItem): HTMLElement {
   const wrap = el('section', 'command-block attachment-block');
   const header = el('div', 'attachment-header');
   const title = el('div', 'attachment-title');
-  title.append(el('span', 'command-title', result?.title ?? 'Session Notes'));
+  title.append(el('span', 'command-title', result?.title ?? t('Session Notes', '세션 노트')));
   const chips = el('div', 'attachment-chips');
   if (typeof result?.total === 'number') chips.append(el('span', 'command-chip', `${result.total} total`));
   if (result?.session_id) chips.append(el('span', 'command-chip', result.session_id));
@@ -3267,7 +3273,7 @@ function renderNotesBlock(item: TranscriptItem): HTMLElement {
   wrap.append(header);
   if (result?.message) wrap.append(el('div', 'command-message', result.message));
   if (notes.length === 0) {
-    wrap.append(el('div', 'attachment-placeholder', 'No notes for this session.'));
+    wrap.append(el('div', 'attachment-placeholder', t('No notes for this session.', '이 세션에 노트가 없습니다.')));
     return wrap;
   }
   const list = el('div', 'attachment-list');
@@ -3283,7 +3289,7 @@ function renderNotesBlock(item: TranscriptItem): HTMLElement {
     row.append(main);
     if (text) {
       const actions = el('div', 'attachment-actions');
-      const copy = iconButton('copy', t('Copy note', 'ë¸í¸ ë³µì¬'), () => {
+      const copy = iconButton('copy', t('Copy note', '노트 복사'), () => {
         void markCopied(copy, text);
       });
       actions.append(copy);
@@ -3310,7 +3316,7 @@ function renderSkillsBlock(item: TranscriptItem): HTMLElement {
   wrap.append(header);
   if (result?.message) wrap.append(el('div', 'command-message', result.message));
   if (skills.length === 0) {
-    wrap.append(el('div', 'attachment-placeholder', archivedList ? 'No archived skills in this workspace.' : 'No active skills in this workspace.'));
+    wrap.append(el('div', 'attachment-placeholder', archivedList ? t('No archived skills in this workspace.', '이 워크스페이스에 보관된 스킬이 없습니다.') : t('No active skills in this workspace.', '이 워크스페이스에 활성 스킬이 없습니다.')));
     return wrap;
   }
   const list = el('div', 'attachment-list');
@@ -3397,8 +3403,8 @@ function renderSkillDetailBlock(item: TranscriptItem): HTMLElement {
   title.append(el('span', 'command-title', result?.title ?? label));
   const chips = el('div', 'attachment-chips');
   if (result?.scope) chips.append(el('span', 'command-chip', result.scope));
-  if (archived) chips.append(el('span', 'command-chip', 'archived'));
-  if (result?.pinned) chips.append(el('span', 'command-chip', 'pinned'));
+  if (archived) chips.append(el('span', 'command-chip', t('archived', '보관됨')));
+  if (result?.pinned) chips.append(el('span', 'command-chip', t('pinned', '고정됨')));
   if (typeof archivedAt === 'number' && archivedAt > 0) {
     chips.append(el('span', 'command-chip', `archived ${archivedAt}`));
   }
@@ -3500,7 +3506,7 @@ function renderCodeMapBlock(item: TranscriptItem): HTMLElement {
   const wrap = el('section', 'command-block codemap-block');
   const header = el('div', 'codemap-header');
   const title = el('div', 'codemap-title');
-  title.append(el('span', 'command-title', result?.title ?? 'Workspace Code Map'));
+  title.append(el('span', 'command-title', result?.title ?? t('Workspace Code Map', '워크스페이스 코드 맵')));
   const chips = el('div', 'codemap-chips');
   chips.append(el('span', 'command-chip', `${result?.symbol_count ?? symbols.length} symbols`));
   chips.append(el('span', 'command-chip', `${result?.todo_count ?? todos.length} todos`));
@@ -3525,8 +3531,8 @@ function renderCodeMapBlock(item: TranscriptItem): HTMLElement {
   const filter = document.createElement('input');
   filter.type = 'search';
   filter.className = 'codemap-filter';
-  filter.placeholder = 'Filter symbols, TODOs, or paths';
-  filter.setAttribute('aria-label', 'Filter workspace code map');
+  filter.placeholder = t('Filter symbols, TODOs, or paths', '심볼, TODO, 경로 필터');
+  filter.setAttribute('aria-label', t('Filter workspace code map', '워크스페이스 코드 맵 필터'));
   controls.append(filter);
   wrap.append(controls);
 
@@ -3540,17 +3546,17 @@ function renderCodeMapBlock(item: TranscriptItem): HTMLElement {
     const referenceMatches = references.filter((row) => codemapRowMatches(row, query));
     body.replaceChildren();
     appendCodeMapGroup(body, 'Symbols', symbolMatches);
-    appendCodeMapGroup(body, 'TODO Markers', todoMatches);
+    appendCodeMapGroup(body, t('TODO Markers', 'TODO 마커'), todoMatches);
     appendCodeMapGroup(body, 'References', referenceMatches);
     if (symbolMatches.length === 0 && todoMatches.length === 0 && referenceMatches.length === 0) {
-      body.append(el('div', 'codemap-empty', 'No code map entries match this filter.'));
+      body.append(el('div', 'codemap-empty', t('No code map entries match this filter.', '이 필터에 맞는 코드 맵 항목이 없습니다.')));
     }
   };
 
   filter.addEventListener('input', renderRows);
   renderRows();
   if (result?.truncated) {
-    wrap.append(el('div', 'command-footnote', 'further code map entries truncated'));
+    wrap.append(el('div', 'command-footnote', t('further code map entries truncated', '이후 코드 맵 항목 생략됨')));
   }
   return wrap;
 }
@@ -3560,7 +3566,7 @@ function renderCodeMapStatusBlock(item: TranscriptItem): HTMLElement {
   const wrap = el('section', `command-block codemap-block ${result?.stale ? 'warning' : ''}`);
   const header = el('div', 'codemap-header');
   const title = el('div', 'codemap-title');
-  title.append(el('span', 'command-title', result?.title ?? 'Workspace Code Map Status'));
+  title.append(el('span', 'command-title', result?.title ?? t('Workspace Code Map Status', '워크스페이스 코드 맵 상태')));
   const chips = el('div', 'codemap-chips');
   chips.append(el('span', 'command-chip', result?.index_exists ? 'indexed' : 'missing'));
   chips.append(el('span', 'command-chip', result?.stale ? 'stale' : 'fresh'));
@@ -3584,7 +3590,7 @@ function renderCodeMapStatusBlock(item: TranscriptItem): HTMLElement {
     const action = document.createElement('button');
     action.type = 'button';
     action.className = 'secondary-button';
-    action.textContent = 'Refresh index';
+    action.textContent = t('Refresh index', '인덱스 새로고침');
     action.addEventListener('click', () => vscode.postMessage({ type: 'refreshCodeMap' }));
     wrap.append(action);
   }
@@ -3643,8 +3649,8 @@ function renderBranchPicker(s: SidebarState): HTMLElement {
   const result = s.branchPicker;
   const wrap = el('section', 'branch-picker-panel');
   const header = el('div', 'branch-picker-header');
-  header.append(el('div', 'branch-picker-title', result?.title ?? 'Branch Turns'));
-  const close = iconButton('remove', t('Close branch picker', 'branch ì íê¸° ë«ê¸°'), () =>
+  header.append(el('div', 'branch-picker-title', result?.title ?? t('Branch Turns', 'Branch 턴')));
+  const close = iconButton('remove', t('Close branch picker', 'branch 선택기 닫기'), () =>
     vscode.postMessage({ type: 'dismissBranchPicker' }),
   );
   header.append(close);
@@ -3652,7 +3658,7 @@ function renderBranchPicker(s: SidebarState): HTMLElement {
   if (result?.message) wrap.append(el('div', 'branch-picker-message', result.message));
   const items = Array.isArray(result?.items) ? result.items : [];
   if (items.length === 0) {
-    wrap.append(el('div', 'branch-picker-empty', 'No turns available'));
+    wrap.append(el('div', 'branch-picker-empty', t('No turns available', '사용 가능한 턴 없음')));
     return wrap;
   }
   const list = el('div', 'branch-picker-list');
@@ -3697,10 +3703,12 @@ function renderQueue(s: SidebarState): HTMLElement {
     el(
       'span',
       'queue-label',
-      `${s.queue.length} queued — will run after the current task`,
+      tf('{n} queued — will run after the current task', '{n}개 대기 중 — 현재 작업 후 실행', {
+        n: s.queue.length,
+      }),
     ),
   );
-  const clear = el('button', 'link-button', 'Clear');
+  const clear = el('button', 'link-button', t('Clear', '지우기'));
   clear.type = 'button';
   clear.addEventListener('click', () => vscode.postMessage({ type: 'queueClear' }));
   header.append(clear);
@@ -3716,7 +3724,7 @@ function renderQueueItem(item: QueuedMessage): HTMLElement {
   const text = el('div', 'queue-text', item.text);
   text.contentEditable = 'true';
   text.spellcheck = false;
-  text.dataset.placeholder = 'Empty prompt — remove or fill it in';
+  text.dataset.placeholder = t('Empty prompt — remove or fill it in', '빈 프롬프트 — 제거하거나 입력하세요');
   // Save on blur so users can refine queued prompts without a Save button.
   text.addEventListener('blur', () => {
     const next = text.textContent ?? '';
@@ -3748,7 +3756,7 @@ function renderQueueItem(item: QueuedMessage): HTMLElement {
   const actions = el('div', 'queue-actions');
   const remove = el('button', 'icon-button mini', '');
   remove.type = 'button';
-  remove.title = 'Remove';
+  remove.title = t('Remove', '제거');
   remove.innerHTML = iconSvg('remove');
   remove.addEventListener('click', () =>
     vscode.postMessage({ type: 'queueRemove', id: item.id }),
@@ -3780,8 +3788,8 @@ function renderComposer(s: SidebarState): HTMLElement {
   textarea.id = 'composer-input';
   textarea.className = 'composer-textarea';
   textarea.placeholder = s.running
-    ? 'Type another task — Enter queues it'
-    : 'Ask Peridot to work in this repo';
+    ? t('Type another task — Enter queues it', '다른 작업 입력 — Enter로 대기열에 추가')
+    : t('Ask Peridot to work in this repo', '이 저장소에서 작업을 Peridot에게 요청하세요');
   textarea.rows = 1;
   textarea.value = composerDraft;
   textarea.addEventListener('input', () => {
@@ -3893,7 +3901,7 @@ function renderComposer(s: SidebarState): HTMLElement {
 
   const button = el('button', `composer-button ${s.running ? 'stop' : 'send'}`);
   button.type = 'button';
-  button.title = s.running ? 'Stop current task' : 'Send';
+  button.title = s.running ? t('Stop current task', '현재 작업 중지') : t('Send', '보내기');
   button.innerHTML = iconSvg(s.running ? 'stop' : 'send');
   const shouldAnimateIconSwap =
     lastComposerRunning !== undefined && lastComposerRunning !== s.running;
@@ -4232,7 +4240,7 @@ function modeSelect(opts: RunOptions): HTMLSelectElement {
   const current = composerModeOverride ?? opts.mode;
   return selectControl(
     'composer-select',
-    'Execution mode',
+    t('Execution mode', '실행 모드'),
     [
       ['execute', 'Execute'],
       ['plan', 'Plan'],
@@ -4270,7 +4278,7 @@ function chatGptModelSelect(s: SidebarState): HTMLSelectElement {
   const current = CHATGPT_MODELS.includes(configured) ? configured : 'gpt-5.5';
   return selectControl(
     'composer-select composer-model composer-model-select',
-    'ChatGPT model',
+    t('ChatGPT model', 'ChatGPT 모델'),
     CHATGPT_MODELS.map((model) => [model, model] as const),
     current,
     'composer-model',
