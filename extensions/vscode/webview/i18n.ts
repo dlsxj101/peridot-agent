@@ -6,9 +6,15 @@
 
 let useKorean = false;
 
-/** Reads the host-injected locale from #app once at startup. */
+/** Reads the host-injected locale from #app once at startup. Accesses the DOM
+ *  through `globalThis` so this module compiles in non-DOM test builds too. */
 export function initLocale(): void {
-  const locale = document.getElementById('app')?.dataset.locale;
+  const doc = (
+    globalThis as unknown as {
+      document?: { getElementById(id: string): { dataset?: { locale?: string } } | null };
+    }
+  ).document;
+  const locale = doc?.getElementById('app')?.dataset?.locale;
   useKorean = locale === 'ko';
 }
 

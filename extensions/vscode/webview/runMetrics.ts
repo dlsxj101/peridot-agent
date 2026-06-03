@@ -1,4 +1,5 @@
 import type { ChatSessionSummary, HudState } from '../src/types';
+import { t, tf } from './i18n';
 
 export type RunMetricTone = 'normal' | 'warn' | 'critical' | 'muted';
 
@@ -24,16 +25,16 @@ export function runMetricChips(
       (usage.cacheCreationTokens ?? 0);
     if (totalTokens > 0) {
       chips.push({
-        label: 'Tokens',
+        label: t('Tokens', '토큰'),
         value: compactNumber(totalTokens),
         tone: 'muted',
         title: [
-          `${totalTokens.toLocaleString()} executor tokens`,
-          `input ${usage.inputTokens.toLocaleString()}`,
-          `output ${usage.outputTokens.toLocaleString()}`,
-          usage.cacheReadTokens ? `cache read ${usage.cacheReadTokens.toLocaleString()}` : undefined,
-          usage.cacheCreationTokens ? `cache write ${usage.cacheCreationTokens.toLocaleString()}` : undefined,
-          committee.tokens > 0 ? `committee ${committee.tokens.toLocaleString()}` : undefined,
+          tf('{n} executor tokens', '실행기 토큰 {n}', { n: totalTokens.toLocaleString() }),
+          tf('input {n}', '입력 {n}', { n: usage.inputTokens.toLocaleString() }),
+          tf('output {n}', '출력 {n}', { n: usage.outputTokens.toLocaleString() }),
+          usage.cacheReadTokens ? tf('cache read {n}', '캐시 읽기 {n}', { n: usage.cacheReadTokens.toLocaleString() }) : undefined,
+          usage.cacheCreationTokens ? tf('cache write {n}', '캐시 쓰기 {n}', { n: usage.cacheCreationTokens.toLocaleString() }) : undefined,
+          committee.tokens > 0 ? tf('committee {n}', '위원회 {n}', { n: committee.tokens.toLocaleString() }) : undefined,
         ].filter(Boolean).join(' · '),
       });
     }
@@ -43,13 +44,13 @@ export function runMetricChips(
   const totalCost = executorCost + committee.costUsd;
   if (totalCost > 0) {
     chips.push({
-      label: 'Cost',
+      label: t('Cost', '비용'),
       value: formatUsd(totalCost),
       tone: 'normal',
       title: [
-        `total ${formatUsd(totalCost)}`,
-        executorCost > 0 ? `executor ${formatUsd(executorCost)}` : undefined,
-        committee.costUsd > 0 ? `committee ${formatUsd(committee.costUsd)}` : undefined,
+        tf('total {v}', '합계 {v}', { v: formatUsd(totalCost) }),
+        executorCost > 0 ? tf('executor {v}', '실행기 {v}', { v: formatUsd(executorCost) }) : undefined,
+        committee.costUsd > 0 ? tf('committee {v}', '위원회 {v}', { v: formatUsd(committee.costUsd) }) : undefined,
       ].filter(Boolean).join(' · '),
     });
   }
@@ -67,13 +68,13 @@ export function runMetricChips(
     (aggregate.costUsd > totalCost + 0.000_001 || aggregate.tokens > currentTokens)
   ) {
     chips.push({
-      label: 'All',
+      label: t('All', '전체'),
       value: aggregate.costUsd > 0 ? formatUsd(aggregate.costUsd) : compactNumber(aggregate.tokens),
       tone: 'muted',
       title: [
-        `${aggregate.tokens.toLocaleString()} tokens`,
-        aggregate.costUsd > 0 ? `${formatUsd(aggregate.costUsd)} total` : undefined,
-        `${aggregate.sessions} sessions`,
+        tf('{n} tokens', '토큰 {n}', { n: aggregate.tokens.toLocaleString() }),
+        aggregate.costUsd > 0 ? tf('{v} total', '{v} 합계', { v: formatUsd(aggregate.costUsd) }) : undefined,
+        tf('{n} sessions', '세션 {n}개', { n: aggregate.sessions }),
       ].filter(Boolean).join(' · '),
     });
   }
@@ -82,7 +83,7 @@ export function runMetricChips(
   if (budget?.costLimit && budget.costLimit > 0) {
     const pct = budget.costUsed / budget.costLimit;
     chips.push({
-      label: 'Budget',
+      label: t('Budget', '예산'),
       value: `${Math.round(pct * 100)}%`,
       tone: thresholdTone(pct),
       title: `${formatUsd(budget.costUsed)} / ${formatUsd(budget.costLimit)}`,
@@ -93,12 +94,12 @@ export function runMetricChips(
     const hasLimit = typeof budget.turnsLimit === 'number' && budget.turnsLimit > 0;
     const pct = hasLimit ? budget.turnsUsed / (budget.turnsLimit as number) : 0;
     chips.push({
-      label: 'Turns',
+      label: t('Turns', '턴'),
       value: hasLimit ? `${budget.turnsUsed}/${budget.turnsLimit}` : String(budget.turnsUsed),
       tone: hasLimit ? thresholdTone(pct) : 'muted',
       title: hasLimit
-        ? `${budget.turnsUsed.toLocaleString()} / ${budget.turnsLimit?.toLocaleString()} turns`
-        : `${budget.turnsUsed.toLocaleString()} turns used`,
+        ? tf('{a} / {b} turns', '턴 {a} / {b}', { a: budget.turnsUsed.toLocaleString(), b: budget.turnsLimit?.toLocaleString() ?? '' })
+        : tf('{n} turns used', '턴 {n}개 사용', { n: budget.turnsUsed.toLocaleString() }),
     });
   }
 

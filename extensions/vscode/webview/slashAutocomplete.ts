@@ -1,5 +1,6 @@
 import type { SlashCommandSpec } from '../src/types';
 import { filterFileMentionPaths } from './fileMention';
+import { t } from './i18n';
 
 export interface SlashArgumentContext {
   command: SlashCommandSpec;
@@ -393,7 +394,7 @@ function mcpServerArgumentContext(
   return {
     command: {
       name: commandName,
-      description: 'MCP server',
+      description: t('MCP server', 'MCP 서버'),
       category: 'mcp',
     },
     options,
@@ -671,7 +672,7 @@ function mcpAddTransportArgumentContext(query: string): SlashArgumentContext | u
   return {
     command: {
       name: `${commandName} ${serverName}`,
-      description: 'MCP transport',
+      description: t('MCP transport', 'MCP 전송'),
       category: 'mcp',
     },
     options,

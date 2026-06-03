@@ -1,5 +1,6 @@
 import { diffLines } from 'diff';
 import { el } from './util';
+import { t, tf } from './i18n';
 
 const COLLAPSE_THRESHOLD = 24; // Lines visible before the diff collapses.
 
@@ -58,15 +59,15 @@ export function renderUnifiedDiff(
 
   if (lineCount > COLLAPSE_THRESHOLD) {
     pre.style.maxHeight = '120px';
-    const toggle = el('button', 'diff-toggle', `Expand (${lineCount} lines)`);
+    const toggle = el('button', 'diff-toggle', tf('Expand ({n} lines)', '펼치기 ({n}줄)', { n: lineCount }));
     toggle.type = 'button';
     toggle.addEventListener('click', () => {
       if (pre.style.maxHeight === '120px') {
         pre.style.maxHeight = 'none';
-        toggle.textContent = 'Collapse';
+        toggle.textContent = t('Collapse', '접기');
       } else {
         pre.style.maxHeight = '120px';
-        toggle.textContent = `Expand (${lineCount} lines)`;
+        toggle.textContent = tf('Expand ({n} lines)', '펼치기 ({n}줄)', { n: lineCount });
       }
     });
     root.append(toggle);
