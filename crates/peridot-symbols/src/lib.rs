@@ -147,6 +147,16 @@ pub struct Reference {
     /// [`LanguageSymbols::references`] walk leaves it `false`.
     #[serde(default)]
     pub is_definition: bool,
+    /// The qualified name (`Container::name`, or just `name`) of the innermost
+    /// outline symbol that lexically encloses this occurrence — the function,
+    /// method, or type body the reference sits in. `None` for occurrences at
+    /// file scope. A definition occurrence reports its *parent* scope rather
+    /// than itself. This is a first step toward full scope resolution: it
+    /// locates each usage's enclosing definition without yet resolving which
+    /// binding the name refers to. Like [`Reference::is_definition`], it is
+    /// filled by the dispatch/convenience entry points, not the raw walk.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
 }
 
 /// A per-language symbol extractor. Implementations are stateless and cheap to
@@ -224,22 +234,42 @@ pub fn references_for_extension(
     language_for_extension(extension).map(|lang| marked_references(lang.as_ref(), source, name))
 }
 
-/// Runs a language's reference walk, then flags the occurrences that sit on a
-/// definition line for `name` (cross-referenced against the file outline) as
-/// definitions. This is what distinguishes the def site from usages without
-/// per-language definition-tracking.
+/// Runs a language's reference walk, then annotates each occurrence against the
+/// file outline: flags the ones sitting on a definition line for `name` as
+/// definitions, and records the innermost enclosing symbol as the occurrence's
+/// [`Reference::scope`]. This is what distinguishes the def site from usages and
+/// locates each usage's lexical container without per-language tracking.
 fn marked_references(lang: &dyn LanguageSymbols, source: &str, name: &str) -> Vec<Reference> {
     let mut references = lang.references(source, name);
-    let definition_lines: std::collections::HashSet<usize> = lang
-        .outline(source)
-        .into_iter()
+    let outline = lang.outline(source);
+    let definition_lines: std::collections::HashSet<usize> = outline
+        .iter()
         .filter(|symbol| symbol.name == name)
         .map(|symbol| symbol.start_line)
         .collect();
     for reference in &mut references {
         reference.is_definition = definition_lines.contains(&reference.line);
+        reference.scope = enclosing_scope(&outline, reference.line, reference.is_definition);
     }
     references
+}
+
+/// The qualified name (`Container::name`, else `name`) of the innermost outline
+/// symbol whose line range encloses `line`. A definition occurrence (`is_def`)
+/// reports its *parent* scope by excluding the symbol that starts on its own
+/// line, so a definition is never reported as enclosing itself. Returns `None`
+/// for occurrences that sit at file scope.
+fn enclosing_scope(outline: &[Symbol], line: usize, is_def: bool) -> Option<String> {
+    outline
+        .iter()
+        .filter(|symbol| symbol.start_line <= line && line <= symbol.end_line)
+        .filter(|symbol| !(is_def && symbol.start_line == line))
+        // Innermost = the latest-starting, then shortest, enclosing range.
+        .max_by_key(|symbol| (symbol.start_line, std::cmp::Reverse(symbol.end_line)))
+        .map(|symbol| match &symbol.container {
+            Some(owner) => format!("{owner}::{}", symbol.name),
+            None => symbol.name.clone(),
+        })
 }
 
 /// Convenience wrapper: outline a Rust source string.
@@ -324,6 +354,7 @@ pub(crate) fn collect_references_by_kind(
                     line: pos.row + 1,
                     column: pos.column + 1,
                     is_definition: false,
+                    scope: None,
                 });
             }
         } else {
@@ -462,5 +493,49 @@ mod tests {
         // Exactly one definition; the call is a usage.
         assert_eq!(refs.iter().filter(|r| r.is_definition).count(), 1);
         assert!(refs.iter().any(|r| !r.is_definition && r.line == 3));
+    }
+
+    #[test]
+    fn references_record_their_enclosing_scope() {
+        // `helper` is called once at file scope and once inside `caller`.
+        let source = "\
+fn helper() {}
+fn caller() {
+    helper();
+}
+helper();
+";
+        let refs = references_rust(source, "helper");
+        // The definition reports its parent scope (file scope) as None.
+        let def = refs.iter().find(|r| r.is_definition).expect("definition");
+        assert_eq!(def.scope, None);
+        // The call inside `caller` is scoped to it.
+        let inside = refs
+            .iter()
+            .find(|r| !r.is_definition && r.line == 3)
+            .expect("call inside caller");
+        assert_eq!(inside.scope.as_deref(), Some("caller"));
+        // The trailing top-level call has no enclosing definition.
+        let top = refs
+            .iter()
+            .find(|r| !r.is_definition && r.line == 5)
+            .expect("top-level call");
+        assert_eq!(top.scope, None);
+    }
+
+    #[test]
+    fn enclosing_scope_qualifies_methods_with_their_container() {
+        // A usage inside an impl method is scoped as `Container::method`.
+        let source = "\
+struct Widget;
+impl Widget {
+    fn render(&self) {
+        helper();
+    }
+}
+";
+        let refs = references_rust(source, "helper");
+        let inside = refs.iter().find(|r| r.line == 4).expect("call in render");
+        assert_eq!(inside.scope.as_deref(), Some("Widget::render"));
     }
 }

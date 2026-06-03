@@ -26,6 +26,11 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
   `peridot_symbols::supports_extension`, fixing a stale hard-coded allowlist
   that had been excluding already-supported Ruby, C#, PHP, Bash, Scala, and
   Lua files from the workspace symbol walk and watcher pre-warm.
+- **`symbol_references` rows now carry an enclosing `scope`** — the qualified
+  name (`Container::method`, else `name`) of the function/method/type a usage
+  lives in, computed from the outline ranges. A first step toward scope
+  resolution that tells the model where each reference sits; definitions
+  report their parent scope and file-scope occurrences omit it.
 
 ## [0.8.14 / extension 0.5.21] — 2026-05-29
 

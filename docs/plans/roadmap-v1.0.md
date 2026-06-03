@@ -152,14 +152,18 @@ Reviewed at `claude/code-review-roadmap-tx5SA`, workspace `0.8.14`.
 
 ### C5. Author the user and contributing guides
 
-- **Status**: in progress (this pass).
+- **Status**: landed.
 - **Goal**: close the two open §22 documentation items.
 - **Where**: `docs/user-guide.md` (new), `CONTRIBUTING.md` (expanded),
   `PERIDOT_SPEC_v1.md` §22 checkboxes.
-- **Plan**: user guide covers install, first run, modes, slash commands,
-  providers, sessions, MCP, hooks; contributing guide covers the
-  workspace map, the fmt/clippy/test gate, the toolchain requirement
-  (C1), and the spec-as-source-of-truth rule.
+- **Result**: `docs/user-guide.md` covers install, first run, execution
+  modes, the interactive TUI and headless scripting, slash commands,
+  sessions, configuration, permissions/safety, MCP servers, the Git/GitHub
+  workflow, verification/auto-fix, memory/skills/AGENTS.md, the VS Code
+  extension, and troubleshooting. `CONTRIBUTING.md` documents the toolchain
+  requirement (C1), the local fmt/clippy/test gate, the workspace map, and
+  the spec-as-source-of-truth rule. Both §22 documentation checkboxes are
+  marked done.
 
 ---
 
@@ -213,6 +217,15 @@ treat them as separate milestones, not a single release.
   `symbol_references` result is tagged `definition` or `usage` (the
   dispatch entry point cross-references occurrences against the file
   outline). `Reference` carries an `is_definition` flag.
+- **Scope location (first scope-resolution increment)**: each reference now
+  also carries the qualified name (`Container::method`, else `name`) of the
+  innermost outline symbol that lexically encloses it, exposed as `scope` on
+  the `symbol_references` rows. A definition occurrence reports its *parent*
+  scope rather than itself; file-scope occurrences omit it. This is computed
+  from the existing outline ranges, so it is language-agnostic across every
+  wired grammar and tells the model which function/method/type a usage lives
+  in — a step toward full scope resolution that stops short of resolving
+  which binding a name refers to.
 - **Incremental cache**: `workspace_symbols` / `symbol_search` /
   `symbol_definition` cache each file's parsed outline by absolute path +
   (mtime, size), re-parsing only changed files. The cache is **persisted to
@@ -227,9 +240,10 @@ treat them as separate milestones, not a single release.
   to 16 files per event (bigger batches like a branch switch just
   invalidate) and skipping non-source/oversized/deleted paths.
 - **Remaining**: further language grammars (e.g. Zig, OCaml, Dart, Elm)
-  via the same dispatcher; full scope resolution (shadowing / which binding
-  a usage resolves to) beyond name-token matching; optionally real LSP
-  clients. Highest context-savings payoff.
+  via the same dispatcher; full scope resolution beyond the enclosing-scope
+  location now shipped — resolving shadowing and which binding a usage
+  actually refers to (e.g. a local parameter named `foo` vs. a top-level
+  `foo`); optionally real LSP clients. Highest context-savings payoff.
 
 ### F2. Multimodal image input (vision routing)
 

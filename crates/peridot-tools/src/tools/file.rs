@@ -888,13 +888,19 @@ fn collect_references(
                 .get(reference.line.saturating_sub(1))
                 .map(|line| line.trim().to_string())
                 .unwrap_or_default();
-            out.push(serde_json::json!({
+            let mut entry = serde_json::json!({
                 "path": relative,
                 "line": reference.line,
                 "column": reference.column,
                 "kind": if reference.is_definition { "definition" } else { "usage" },
                 "text": text,
-            }));
+            });
+            // The enclosing function/method/type the occurrence sits in, when
+            // it is not at file scope (F1 scope-location).
+            if let Some(scope) = reference.scope {
+                entry["scope"] = serde_json::Value::String(scope);
+            }
+            out.push(entry);
         }
     } else {
         for (line_idx, line) in lines.iter().enumerate() {
