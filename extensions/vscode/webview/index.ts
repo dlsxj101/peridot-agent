@@ -48,6 +48,7 @@ import { sessionContextSummary, sessionContextSummaryChips } from './sessionCont
 import { sessionExportSummary } from './sessionExportSummary';
 import { el, formatTokens, highlightLite, isRecord, json } from './util';
 import { countTranscriptMatches, transcriptItemMatchesQuery } from './transcriptSearch';
+import { initLocale, t, tf } from './i18n';
 
 declare function acquireVsCodeApi(): {
   postMessage(msg: OutboundMessage): void;
@@ -57,6 +58,7 @@ declare function acquireVsCodeApi(): {
 
 const vscode = acquireVsCodeApi();
 const root = document.getElementById('app') as HTMLElement;
+initLocale();
 const mascotUri = root.dataset.mascot ?? '';
 const restoredComposerState = readComposerWebviewState(vscode.getState());
 
@@ -839,58 +841,58 @@ function renderHeader(s: SidebarState): HTMLElement {
 
   const right = el('div', 'header-actions');
   right.append(renderSessionMenu(s));
-  right.append(iconButton('codemap', 'Workspace Code Map', () => vscode.postMessage({ type: 'showCodeMap' })));
-  right.append(iconButton('info', 'Workspace Code Map Status', () => vscode.postMessage({ type: 'showCodeMapStatus' })));
-  right.append(iconButton('search', 'Search Workspace Code Map', () => vscode.postMessage({ type: 'searchCodeMap' })));
+  right.append(iconButton('codemap', t('Workspace Code Map', 'ìí¬ì¤íì´ì¤ ì½ë ë§µ'), () => vscode.postMessage({ type: 'showCodeMap' })));
+  right.append(iconButton('info', t('Workspace Code Map Status', 'ìí¬ì¤íì´ì¤ ì½ë ë§µ ìí'), () => vscode.postMessage({ type: 'showCodeMapStatus' })));
+  right.append(iconButton('search', t('Search Workspace Code Map', 'ìí¬ì¤íì´ì¤ ì½ë ë§µ ê²ì'), () => vscode.postMessage({ type: 'searchCodeMap' })));
   right.append(
-    iconButton('find', 'Find in conversation', () => {
+    iconButton('find', t('Find in conversation', 'ëí ê¸°ë¡ìì ì°¾ê¸°'), () => {
       transcriptSearchActive = !transcriptSearchActive;
       if (!transcriptSearchActive) transcriptSearchQuery = '';
       if (state) render(state);
     }),
   );
-  right.append(iconButton('list-tree', 'Outline Current File', () => vscode.postMessage({ type: 'outlineCurrentFile' })));
-  right.append(iconButton('references', 'Find Symbol References', () => vscode.postMessage({ type: 'findSymbolReferences' })));
-  right.append(iconButton('skills', 'Show Skills', () => vscode.postMessage({ type: 'showSkills' })));
-  right.append(iconButton('archive', 'Show Archived Skills', () => vscode.postMessage({ type: 'showArchivedSkills' })));
-  right.append(iconButton('search', 'Search Skills', () => vscode.postMessage({ type: 'searchSkills' })));
-  right.append(iconButton('search-archive', 'Search Archived Skills', () => vscode.postMessage({ type: 'searchArchivedSkills' })));
-  right.append(iconButton('attach', 'Attach File', () => vscode.postMessage({ type: 'attachFile' })));
-  right.append(iconButton('todos', 'Show Workspace TODOs', () => vscode.postMessage({ type: 'showTodos' })));
-  right.append(iconButton('context-top', 'Show Context Top', () => vscode.postMessage({ type: 'showContextTop' })));
-  right.append(iconButton('working-diff', 'Show Working Tree Diff', () => vscode.postMessage({ type: 'showWorkingTreeDiff' })));
-  right.append(iconButton('mcp', 'Show MCP Servers', () => vscode.postMessage({ type: 'showMcpServers' })));
-  right.append(iconButton('mcp-add', 'Add MCP Server', () => vscode.postMessage({ type: 'addMcpServer' })));
-  right.append(iconButton('mcp-test', 'Test MCP Server', () => vscode.postMessage({ type: 'testMcpServer' })));
-  right.append(iconButton('mcp-remove', 'Remove MCP Server', () => vscode.postMessage({ type: 'removeMcpServer' })));
-  right.append(iconButton('note-add', 'Add Session Note', () => vscode.postMessage({ type: 'addSessionNote' })));
-  right.append(iconButton('note-list', 'Show Session Notes', () => vscode.postMessage({ type: 'showSessionNotes' })));
-  right.append(iconButton('note-clear', 'Clear Session Notes', () => vscode.postMessage({ type: 'clearSessionNotes' })));
-  right.append(iconButton('session-new', 'New Session', () => vscode.postMessage({ type: 'newPersistedSession' })));
-  right.append(iconButton('session-switch', 'Switch Session', () => vscode.postMessage({ type: 'switchPersistedSession' })));
-  right.append(iconButton('session-close', 'Close Session', () => vscode.postMessage({ type: 'closePersistedSession' })));
-  right.append(iconButton('session-count', 'Show Session Count', () => vscode.postMessage({ type: 'showSessionCount' })));
-  right.append(iconButton('session-detail', 'Show Session Details', () => vscode.postMessage({ type: 'showPersistedSessionDetails' })));
-  right.append(iconButton('session-locate', 'Locate Session Directory', () => vscode.postMessage({ type: 'locatePersistedSessionDirectory' })));
-  right.append(iconButton('session-resume', 'Resume Session', () => vscode.postMessage({ type: 'resumePersistedSession' })));
-  right.append(iconButton('session-rename', 'Rename Session', () => vscode.postMessage({ type: 'renamePersistedSession' })));
-  right.append(iconButton('session-delete', 'Delete Session', () => vscode.postMessage({ type: 'deletePersistedSession' })));
-  right.append(iconButton('sessions', 'Show Sessions', () => vscode.postMessage({ type: 'showSessions' })));
-  right.append(iconButton('session-search', 'Search Sessions', () => vscode.postMessage({ type: 'searchSessions' })));
-  right.append(iconButton('trash', 'Prune Sessions', () => vscode.postMessage({ type: 'pruneSessions' })));
-  right.append(iconButton('history', 'Replay Session Timeline', () => vscode.postMessage({ type: 'replaySessionTimeline' })));
-  right.append(iconButton('export', 'Export Session Artifacts', () => vscode.postMessage({ type: 'exportSessionArtifacts' })));
-  right.append(iconButton('import', 'Import Session Artifacts', () => vscode.postMessage({ type: 'importSessionArtifacts' })));
-  right.append(iconButton('pr', 'GitHub PR Status', () => vscode.postMessage({ type: 'showPrStatus' })));
-  right.append(iconButton('ship', 'Ship Changes to PR', () => vscode.postMessage({ type: 'shipChanges' })));
-  right.append(iconButton('merge', 'Merge GitHub PR', () => vscode.postMessage({ type: 'mergePr' })));
-  right.append(iconButton('refresh', 'Refresh', () => vscode.postMessage({ type: 'refreshStatus' })));
+  right.append(iconButton('list-tree', t('Outline Current File', 'íì¬ íì¼ ê°ì'), () => vscode.postMessage({ type: 'outlineCurrentFile' })));
+  right.append(iconButton('references', t('Find Symbol References', 'ì¬ë³¼ ì°¸ì¡° ì°¾ê¸°'), () => vscode.postMessage({ type: 'findSymbolReferences' })));
+  right.append(iconButton('skills', t('Show Skills', 'ì¤í¬ ë³´ê¸°'), () => vscode.postMessage({ type: 'showSkills' })));
+  right.append(iconButton('archive', t('Show Archived Skills', 'ë³´ê´ë ì¤í¬ ë³´ê¸°'), () => vscode.postMessage({ type: 'showArchivedSkills' })));
+  right.append(iconButton('search', t('Search Skills', 'ì¤í¬ ê²ì'), () => vscode.postMessage({ type: 'searchSkills' })));
+  right.append(iconButton('search-archive', t('Search Archived Skills', 'ë³´ê´ë ì¤í¬ ê²ì'), () => vscode.postMessage({ type: 'searchArchivedSkills' })));
+  right.append(iconButton('attach', t('Attach File', 'íì¼ ì²¨ë¶'), () => vscode.postMessage({ type: 'attachFile' })));
+  right.append(iconButton('todos', t('Show Workspace TODOs', 'ìí¬ì¤íì´ì¤ TODO ë³´ê¸°'), () => vscode.postMessage({ type: 'showTodos' })));
+  right.append(iconButton('context-top', t('Show Context Top', 'ì»¨íì¤í¸ ìë¨ ë³´ê¸°'), () => vscode.postMessage({ type: 'showContextTop' })));
+  right.append(iconButton('working-diff', t('Show Working Tree Diff', 'ìì í¸ë¦¬ diff ë³´ê¸°'), () => vscode.postMessage({ type: 'showWorkingTreeDiff' })));
+  right.append(iconButton('mcp', t('Show MCP Servers', 'MCP ìë² ë³´ê¸°'), () => vscode.postMessage({ type: 'showMcpServers' })));
+  right.append(iconButton('mcp-add', t('Add MCP Server', 'MCP ìë² ì¶ê°'), () => vscode.postMessage({ type: 'addMcpServer' })));
+  right.append(iconButton('mcp-test', t('Test MCP Server', 'MCP ìë² íì¤í¸'), () => vscode.postMessage({ type: 'testMcpServer' })));
+  right.append(iconButton('mcp-remove', t('Remove MCP Server', 'MCP ìë² ì ê±°'), () => vscode.postMessage({ type: 'removeMcpServer' })));
+  right.append(iconButton('note-add', t('Add Session Note', 'ì¸ì ë¸í¸ ì¶ê°'), () => vscode.postMessage({ type: 'addSessionNote' })));
+  right.append(iconButton('note-list', t('Show Session Notes', 'ì¸ì ë¸í¸ ë³´ê¸°'), () => vscode.postMessage({ type: 'showSessionNotes' })));
+  right.append(iconButton('note-clear', t('Clear Session Notes', 'ì¸ì ë¸í¸ ì§ì°ê¸°'), () => vscode.postMessage({ type: 'clearSessionNotes' })));
+  right.append(iconButton('session-new', t('New Session', 'ì ì¸ì'), () => vscode.postMessage({ type: 'newPersistedSession' })));
+  right.append(iconButton('session-switch', t('Switch Session', 'ì¸ì ì í'), () => vscode.postMessage({ type: 'switchPersistedSession' })));
+  right.append(iconButton('session-close', t('Close Session', 'ì¸ì ë«ê¸°'), () => vscode.postMessage({ type: 'closePersistedSession' })));
+  right.append(iconButton('session-count', t('Show Session Count', 'ì¸ì ì ë³´ê¸°'), () => vscode.postMessage({ type: 'showSessionCount' })));
+  right.append(iconButton('session-detail', t('Show Session Details', 'ì¸ì ìì¸ ë³´ê¸°'), () => vscode.postMessage({ type: 'showPersistedSessionDetails' })));
+  right.append(iconButton('session-locate', t('Locate Session Directory', 'ì¸ì ëë í°ë¦¬ ìì¹'), () => vscode.postMessage({ type: 'locatePersistedSessionDirectory' })));
+  right.append(iconButton('session-resume', t('Resume Session', 'ì¸ì ì¬ê°'), () => vscode.postMessage({ type: 'resumePersistedSession' })));
+  right.append(iconButton('session-rename', t('Rename Session', 'ì¸ì ì´ë¦ ë³ê²½'), () => vscode.postMessage({ type: 'renamePersistedSession' })));
+  right.append(iconButton('session-delete', t('Delete Session', 'ì¸ì ì­ì '), () => vscode.postMessage({ type: 'deletePersistedSession' })));
+  right.append(iconButton('sessions', t('Show Sessions', 'ì¸ì ëª©ë¡ ë³´ê¸°'), () => vscode.postMessage({ type: 'showSessions' })));
+  right.append(iconButton('session-search', t('Search Sessions', 'ì¸ì ê²ì'), () => vscode.postMessage({ type: 'searchSessions' })));
+  right.append(iconButton('trash', t('Prune Sessions', 'ì¸ì ì ë¦¬'), () => vscode.postMessage({ type: 'pruneSessions' })));
+  right.append(iconButton('history', t('Replay Session Timeline', 'ì¸ì íìë¼ì¸ ì¬ì'), () => vscode.postMessage({ type: 'replaySessionTimeline' })));
+  right.append(iconButton('export', t('Export Session Artifacts', 'ì¸ì ìí°í©í¸ ë´ë³´ë´ê¸°'), () => vscode.postMessage({ type: 'exportSessionArtifacts' })));
+  right.append(iconButton('import', t('Import Session Artifacts', 'ì¸ì ìí°í©í¸ ê°ì ¸ì¤ê¸°'), () => vscode.postMessage({ type: 'importSessionArtifacts' })));
+  right.append(iconButton('pr', t('GitHub PR Status', 'GitHub PR ìí'), () => vscode.postMessage({ type: 'showPrStatus' })));
+  right.append(iconButton('ship', t('Ship Changes to PR', 'ë³ê²½ì¬í­ PRë¡ ë³´ë´ê¸°'), () => vscode.postMessage({ type: 'shipChanges' })));
+  right.append(iconButton('merge', t('Merge GitHub PR', 'GitHub PR merge'), () => vscode.postMessage({ type: 'mergePr' })));
+  right.append(iconButton('refresh', t('Refresh', 'ìë¡ê³ ì¹¨'), () => vscode.postMessage({ type: 'refreshStatus' })));
   right.append(
-    iconButton('switch', 'Switch provider', () =>
+    iconButton('switch', t('Switch provider', 'ì ê³µì ì í'), () =>
       vscode.postMessage({ type: 'showLanding', screen: 'home' }),
     ),
   );
-  right.append(iconButton('gear', 'Settings', () => vscode.postMessage({ type: 'openSettings' })));
+  right.append(iconButton('gear', t('Settings', 'ì¤ì '), () => vscode.postMessage({ type: 'openSettings' })));
   header.append(left, right);
   return header;
 }
@@ -1422,9 +1424,9 @@ function renderTranscriptSearch(s: SidebarState): HTMLElement {
   const input = el('input', 'transcript-search-input');
   input.type = 'text';
   input.id = 'transcript-search-input';
-  input.placeholder = 'Find in conversation';
+  input.placeholder = t('Find in conversation', '대화 기록에서 찾기');
   input.value = transcriptSearchQuery;
-  input.setAttribute('aria-label', 'Find in conversation');
+  input.setAttribute('aria-label', t('Find in conversation', '대화 기록에서 찾기'));
   input.addEventListener('input', () => {
     transcriptSearchQuery = input.value;
     if (state) render(state);
@@ -1441,13 +1443,19 @@ function renderTranscriptSearch(s: SidebarState): HTMLElement {
   const query = transcriptSearchQuery.trim();
   if (query.length > 0) {
     const count = countTranscriptMatches(s.transcript, query);
-    bar.append(el('span', 'transcript-search-count', `${count} match${count === 1 ? '' : 'es'}`));
+    bar.append(
+      el(
+        'span',
+        'transcript-search-count',
+        tf('{n} match{es}', '{n}개 일치', { n: count, es: count === 1 ? '' : 'es' }),
+      ),
+    );
   }
 
   const close = el('button', 'transcript-search-close', '✕');
   close.type = 'button';
-  close.title = 'Close search';
-  close.setAttribute('aria-label', 'Close search');
+  close.title = t('Close search', '검색 닫기');
+  close.setAttribute('aria-label', t('Close search', '검색 닫기'));
   close.addEventListener('click', () => {
     transcriptSearchActive = false;
     transcriptSearchQuery = '';
@@ -1462,7 +1470,10 @@ function renderTranscriptSearch(s: SidebarState): HTMLElement {
 function renderEarlierToggle(hiddenCount: number): HTMLElement {
   const button = el('button', 'transcript-earlier');
   button.type = 'button';
-  button.textContent = `Show ${hiddenCount} earlier message${hiddenCount === 1 ? '' : 's'}`;
+  button.textContent = tf('Show {n} earlier message{s}', '이전 메시지 {n}개 보기', {
+    n: hiddenCount,
+    s: hiddenCount === 1 ? '' : 's',
+  });
   button.addEventListener('click', () => {
     transcriptExpanded = true;
     if (state) render(state);
@@ -1477,7 +1488,7 @@ function renderTranscriptInto(wrap: HTMLElement, s: SidebarState): TranscriptScr
   // removals (and reordering) from being announced.
   if (wrap.getAttribute('role') !== 'log') {
     wrap.setAttribute('role', 'log');
-    wrap.setAttribute('aria-label', 'Conversation transcript');
+    wrap.setAttribute('aria-label', t('Conversation transcript', '대화 기록'));
     wrap.setAttribute('aria-live', 'polite');
     wrap.setAttribute('aria-relevant', 'additions text');
   }
@@ -3179,7 +3190,7 @@ function appendSessionContextDetails(
     main.append(el('div', 'command-row-detail', context.latestNote));
     row.append(main);
     const actions = el('div', 'attachment-actions');
-    const copy = iconButton('copy', 'Copy latest note', () => {
+    const copy = iconButton('copy', t('Copy latest note', 'ìµê·¼ ë¸í¸ ë³µì¬'), () => {
       void markCopied(copy, context.latestNote ?? '');
     });
     actions.append(copy);
@@ -3272,7 +3283,7 @@ function renderNotesBlock(item: TranscriptItem): HTMLElement {
     row.append(main);
     if (text) {
       const actions = el('div', 'attachment-actions');
-      const copy = iconButton('copy', 'Copy note', () => {
+      const copy = iconButton('copy', t('Copy note', 'ë¸í¸ ë³µì¬'), () => {
         void markCopied(copy, text);
       });
       actions.append(copy);
@@ -3633,7 +3644,7 @@ function renderBranchPicker(s: SidebarState): HTMLElement {
   const wrap = el('section', 'branch-picker-panel');
   const header = el('div', 'branch-picker-header');
   header.append(el('div', 'branch-picker-title', result?.title ?? 'Branch Turns'));
-  const close = iconButton('remove', 'Close branch picker', () =>
+  const close = iconButton('remove', t('Close branch picker', 'branch ì íê¸° ë«ê¸°'), () =>
     vscode.postMessage({ type: 'dismissBranchPicker' }),
   );
   header.append(close);

@@ -2027,6 +2027,8 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
 
   private html(webview: vscode.Webview): string {
     const nonce = nonceValue();
+    // The webview reads this to pick its UI language (see webview/i18n.ts).
+    const locale = vscode.env.language.toLowerCase().startsWith('ko') ? 'ko' : 'en';
     const scriptUri = webview.asWebviewUri(
       vscode.Uri.joinPath(this.extensionUri, 'dist', 'webview.js'),
     );
@@ -2037,7 +2039,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       vscode.Uri.joinPath(this.extensionUri, 'resources', 'peridot-icon.png'),
     );
     return /* html */ `<!DOCTYPE html>
-<html lang="en">
+<html lang="${locale}">
 <head>
   <meta charset="UTF-8">
   <meta
@@ -2049,7 +2051,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
   <link href="${styleUri}" rel="stylesheet" />
 </head>
 <body>
-  <div class="app" id="app" data-mascot="${iconUri}">
+  <div class="app" id="app" data-mascot="${iconUri}" data-locale="${locale}">
     <!-- Webview bundle owns layout; index.ts populates #app based on
          the SidebarState received over postMessage. -->
   </div>
