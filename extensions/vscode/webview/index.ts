@@ -362,7 +362,7 @@ function renderLandingHome(s: SidebarState): HTMLElement {
   list.append(
     optionCard({
       title: t('OpenRouter API key', 'OpenRouter API 키'),
-      body: 'One key, 75+ models. Easiest way to try providers without committing.',
+      body: t('One key, 75+ models. Easiest way to try providers without committing.', '키 하나로 75개 이상 모델. 약정 없이 제공자를 시험하는 가장 쉬운 방법.'),
       cta: t('Set up key', '키 설정'),
       disabled: s.authBusy,
       onClick: () => vscode.postMessage({ type: 'showLanding', screen: 'openrouter' }),
@@ -471,7 +471,7 @@ function renderOpenRouterForm(s: SidebarState): HTMLElement {
 
   const modelField = labelledInput({
     id: 'or-model',
-    label: 'Default model (optional)',
+    label: t('Default model (optional)', '기본 모델 (선택)'),
     type: 'text',
     placeholder: 'anthropic/claude-sonnet-4',
   });
@@ -517,7 +517,7 @@ function renderClaudeForm(s: SidebarState): HTMLElement {
 
   const modelField = labelledInput({
     id: 'an-model',
-    label: 'Default model (optional)',
+    label: t('Default model (optional)', '기본 모델 (선택)'),
     type: 'text',
     placeholder: 'claude-sonnet-4-6',
   });
@@ -548,7 +548,7 @@ function renderOpenAiForm(s: SidebarState): HTMLElement {
     el(
       'p',
       'form-help',
-      'Get a key at platform.openai.com/api-keys. Stored locally as OPENAI_API_KEY.',
+      t('Get a key at platform.openai.com/api-keys. Stored locally as OPENAI_API_KEY.', 'platform.openai.com/api-keys에서 키 발급. OPENAI_API_KEY로 로컬 저장됩니다.'),
     ),
   );
 
@@ -563,7 +563,7 @@ function renderOpenAiForm(s: SidebarState): HTMLElement {
 
   const modelField = labelledInput({
     id: 'oa-model',
-    label: 'Default model (optional)',
+    label: t('Default model (optional)', '기본 모델 (선택)'),
     type: 'text',
     placeholder: 'gpt-5',
   });
@@ -609,7 +609,7 @@ function renderLocalLlmForm(s: SidebarState): HTMLElement {
 
   const keyField = labelledInput({
     id: 'll-key',
-    label: 'API key (use "local" if your server does not require one)',
+    label: t('API key (use "local" if your server does not require one)', 'API 키 (서버가 필요 없으면 "local" 입력)'),
     type: 'password',
     placeholder: 'local',
   });
@@ -745,7 +745,7 @@ function renderRunFooter(s: SidebarState): HTMLElement | undefined {
   footer.append(gem);
 
   const label = el('span', 'run-footer-text');
-  label.append(document.createTextNode('Peridot is working · '));
+  label.append(document.createTextNode(t('Peridot is working · ', 'Peridot 작업 중 · ')));
   label.append(el('span', 'run-footer-time', formatElapsed(Date.now() - (s.runStartedAtMs ?? Date.now()))));
   footer.append(label);
   return footer;
@@ -1197,9 +1197,9 @@ function renderContextStrip(context: SidebarContext): HTMLElement {
   if (context.provider) pills.append(pill(context.provider, 'provider'));
   if (context.model) pills.append(pill(context.model, 'model'));
   if (context.authConfigured) {
-    pills.append(pill('auth ok', 'good'));
+    pills.append(pill(t('auth ok', '인증 정상'), 'good'));
   } else {
-    pills.append(pill('auth missing', 'warn'));
+    pills.append(pill(t('auth missing', '인증 없음'), 'warn'));
   }
   if (context.mode) pills.append(pill(context.mode, 'mode'));
   if (context.permission) pills.append(pill(context.permission, 'mode'));
@@ -3239,7 +3239,7 @@ function renderSessionLocateBlock(item: TranscriptItem): HTMLElement {
   title.append(el('span', 'command-title', result?.title ?? t('Session Locate', '세션 위치')));
   const chips = el('div', 'attachment-chips');
   if (sessionId) chips.append(el('span', 'command-chip', sessionId));
-  chips.append(el('span', 'command-chip', exists ? 'present' : 'not present'));
+  chips.append(el('span', 'command-chip', exists ? t('present', '있음') : t('not present', '없음')));
   title.append(chips);
   header.append(title);
   if (directory) {

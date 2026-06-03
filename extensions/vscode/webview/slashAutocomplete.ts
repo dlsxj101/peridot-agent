@@ -186,7 +186,7 @@ function pathArgumentContext(query: string, commandName: string, paths: string[]
   return {
     command: {
       name: commandName,
-      description: 'workspace file',
+      description: t('workspace file', '워크스페이스 파일'),
       category: 'workspace',
     },
     options,
@@ -215,7 +215,7 @@ function notesArgumentContext(query: string): SlashArgumentContext | undefined {
   return {
     command: {
       name: commandName,
-      description: 'subcommand',
+      description: t('subcommand', '하위 명령'),
       category: 'session',
     },
     options,
@@ -248,7 +248,7 @@ function exportArtifactArgumentContext(query: string): SlashArgumentContext | un
   return {
     command: {
       name: tokens.length === 0 ? commandName : `${commandName} ${tokens.join(' ')}`,
-      description: 'export artifact',
+      description: t('export artifact', '내보내기 아티팩트'),
       category: 'session',
     },
     options,
@@ -286,7 +286,7 @@ function staticSubcommandArgumentContext(
   return {
     command: {
       name: commandName,
-      description: 'subcommand',
+      description: t('subcommand', '하위 명령'),
       category: 'session',
     },
     options,
@@ -313,7 +313,7 @@ function branchSnapshotArgumentContext(
   return {
     command: {
       name: commandName,
-      description: 'branch snapshot',
+      description: t('branch snapshot', 'branch 스냅샷'),
       category: 'branch',
     },
     options,
@@ -337,7 +337,7 @@ function codemapContinuationArgumentContext(query: string): SlashArgumentContext
   return {
     command: {
       name: commandName,
-      description: 'code map',
+      description: t('code map', '코드 맵'),
       category: 'plan',
     },
     options,
@@ -366,7 +366,7 @@ function modelNameArgumentContext(
   return {
     command: {
       name: commandName,
-      description: 'model',
+      description: t('model', '모델'),
       category: 'session',
     },
     options,
@@ -438,7 +438,7 @@ function sessionTargetArgumentContext(
   return {
     command: {
       name: commandName,
-      description: 'session target',
+      description: t('session target', '세션 대상'),
       category: 'session',
     },
     options,
@@ -476,7 +476,7 @@ function sessionSubcommandArgumentContext(query: string): SlashArgumentContext |
   return {
     command: {
       name: commandName,
-      description: 'session subcommand',
+      description: t('session subcommand', '세션 하위 명령'),
       category: 'session',
     },
     options,
@@ -502,7 +502,7 @@ function sessionReplayArgumentContext(query: string): SlashArgumentContext | und
     return {
       command: {
         name: commandName,
-        description: 'session replay filter',
+        description: t('session replay filter', '세션 재생 필터'),
         category: 'session',
       },
       options,
@@ -537,7 +537,7 @@ function sessionExportArgumentContext(query: string): SlashArgumentContext | und
   return {
     command: {
       name: parts.length === 1 ? commandName : `${commandName} ${parts.join(' ')}`,
-      description: 'session export artifact',
+      description: t('session export artifact', '세션 내보내기 아티팩트'),
       category: 'session',
     },
     options,
@@ -564,7 +564,7 @@ function sessionImportArgumentContext(query: string): SlashArgumentContext | und
   return {
     command: {
       name: commandName,
-      description: 'session import flag',
+      description: t('session import flag', '세션 가져오기 플래그'),
       category: 'session',
     },
     options,
@@ -587,7 +587,7 @@ function sessionListStatusArgumentContext(query: string): SlashArgumentContext |
     return {
       command: {
         name: commandName,
-        description: 'session list filter',
+        description: t('session list filter', '세션 목록 필터'),
         category: 'session',
       },
       options,
@@ -604,7 +604,7 @@ function sessionListStatusArgumentContext(query: string): SlashArgumentContext |
   return {
     command: {
       name: `${commandName} ${parts[0]}`,
-      description: 'session status',
+      description: t('session status', '세션 상태'),
       category: 'session',
     },
     options,
@@ -628,7 +628,7 @@ function sessionPruneArgumentContext(query: string): SlashArgumentContext | unde
     return {
       command: {
         name: `${commandName} ${parts.join(' ')}`,
-        description: 'session prune status',
+        description: t('session prune status', '세션 정리 상태'),
         category: 'session',
       },
       options,
@@ -645,7 +645,7 @@ function sessionPruneArgumentContext(query: string): SlashArgumentContext | unde
   return {
     command: {
       name: commandName,
-      description: 'session prune filter',
+      description: t('session prune filter', '세션 정리 필터'),
       category: 'session',
     },
     options,
@@ -717,7 +717,7 @@ function skillNameArgumentContext(
   return {
     command: {
       name: commandName,
-      description: 'stored skill',
+      description: t('stored skill', '저장된 스킬'),
       category: 'skill',
     },
     options: filtered,
