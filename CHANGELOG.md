@@ -14,6 +14,19 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 
 ## Unreleased
 
+### Added — more semantic symbol languages (F1)
+
+- **Kotlin, Swift, Haskell, and Elixir** join the tree-sitter symbol index,
+  so `file_outline` / `workspace_symbols` / `symbol_search` /
+  `symbol_definition` / `symbol_references` attach exact definitions and
+  AST-aware usages for `.kt` / `.kts`, `.swift`, `.hs`, and `.ex` / `.exs`
+  files. Methods and properties carry their enclosing type/module as the
+  container.
+- **The source-file walk gate now follows the grammar set.** It delegates to
+  `peridot_symbols::supports_extension`, fixing a stale hard-coded allowlist
+  that had been excluding already-supported Ruby, C#, PHP, Bash, Scala, and
+  Lua files from the workspace symbol walk and watcher pre-warm.
+
 ## [0.8.14 / extension 0.5.21] — 2026-05-29
 
 ### Added — surface-aware slash catalog

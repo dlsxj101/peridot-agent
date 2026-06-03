@@ -1348,26 +1348,14 @@ fn should_skip_symbol_dir(path: &Path) -> bool {
     )
 }
 
+/// A file is a "source file" for the semantic symbol tools exactly when a
+/// tree-sitter grammar is wired in for its extension. Delegating to
+/// [`peridot_symbols::supports_extension`] keeps the walk set from drifting
+/// behind the grammar set as languages are added.
 fn is_source_file(path: &Path) -> bool {
-    matches!(
-        path.extension().and_then(|extension| extension.to_str()),
-        Some(
-            "rs" | "ts"
-                | "tsx"
-                | "js"
-                | "jsx"
-                | "py"
-                | "go"
-                | "java"
-                | "kt"
-                | "swift"
-                | "c"
-                | "cc"
-                | "cpp"
-                | "h"
-                | "hpp"
-        )
-    )
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(peridot_symbols::supports_extension)
 }
 
 fn detect_symbol(line: &str, extension: &str) -> Option<(String, String)> {

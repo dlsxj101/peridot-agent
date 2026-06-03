@@ -178,7 +178,8 @@ treat them as separate milestones, not a single release.
 - **Where**: new `peridot-symbols` crate, tool registry in
   `peridot-tools`, codemap cache in `peridot-project`.
 - **Done so far**: new `peridot-symbols` crate parses **Rust, TypeScript /
-  JavaScript / JSX, Python, Go, Java, Ruby, C, C++, C#, PHP, Bash, Scala, and Lua** with tree-sitter and returns structured
+  JavaScript / JSX, Python, Go, Java, Ruby, C, C++, C#, PHP, Bash, Scala, Lua,
+  Kotlin, Swift, Haskell, and Elixir** with tree-sitter and returns structured
   `Symbol`s (kind, name, 1-based line range, container) plus
   identifier-token `Reference`s, behind a `LanguageSymbols` trait with an
   extension dispatcher (`outline_for_extension` /
@@ -187,11 +188,21 @@ treat them as separate milestones, not a single release.
   methods carry their class as `container`, TS arrow-function consts are
   recognized as functions; Go methods carry their receiver type, Java
   methods/constructors and Ruby methods carry their class/module as
-  `container`. `file_outline` / `workspace_symbols` /
+  `container`; Kotlin/Swift methods and properties carry their enclosing
+  type (Swift folds class/struct/enum/extension into one node read via its
+  `declaration_kind`; Kotlin interfaces and enums are `class_declaration`
+  variants), Haskell type-class signatures carry the class and multi-equation
+  functions are de-duplicated, and Elixir `def`/`defp`/`defmacro` (plain
+  `call` nodes) carry their `defmodule`. `file_outline` / `workspace_symbols` /
   `symbol_search` use the tree-sitter parse for any supported extension
-  (`.rs/.ts/.tsx/.js/.jsx/.mjs/.cjs/.mts/.cts/.py/.pyi/.go/.java/.rb`,
+  (`.rs/.ts/.tsx/.js/.jsx/.mjs/.cjs/.mts/.cts/.py/.pyi/.go/.java/.rb/.c/.cpp/`
+  `.cs/.php/.sh/.scala/.lua/.kt/.kts/.swift/.hs/.ex/.exs`),
   accurate kinds, class/impl association, multi-line-aware positions) and
-  keep the line-based heuristic for the rest. Dedicated `symbol_definition`
+  keep the line-based heuristic for the rest. The "is this a source file?"
+  walk gate now delegates to `peridot_symbols::supports_extension`, so the
+  set of walked files can no longer drift behind the grammar set (this also
+  brought the already-supported Ruby/C#/PHP/Bash/Scala/Lua files, previously
+  excluded by a stale hard-coded list, into the workspace walk). Dedicated `symbol_definition`
   (exact-name defs) and `symbol_references` (AST-aware usages — skips
   comments/strings; word-boundary textual fallback for unsupported
   languages) tools are registered and recommended in the grounding prompt.
@@ -215,7 +226,7 @@ treat them as separate milestones, not a single release.
   changed source file in the background so the next query is warm — bounded
   to 16 files per event (bigger batches like a branch switch just
   invalidate) and skipping non-source/oversized/deleted paths.
-- **Remaining**: more language grammars (Kotlin, Swift, Haskell, Elixir)
+- **Remaining**: further language grammars (e.g. Zig, OCaml, Dart, Elm)
   via the same dispatcher; full scope resolution (shadowing / which binding
   a usage resolves to) beyond name-token matching; optionally real LSP
   clients. Highest context-savings payoff.

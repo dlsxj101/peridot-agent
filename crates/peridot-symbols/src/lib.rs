@@ -12,7 +12,8 @@
 //! Language support is behind the [`LanguageSymbols`] trait so languages plug
 //! in without changing callers, the same trait-boundary pattern the rest of
 //! the workspace uses. Implemented: Rust, TypeScript/JavaScript/JSX, Python,
-//! Go, Java, Ruby, C, C++, C#, PHP, Bash, Scala, and Lua. Callers usually
+//! Go, Java, Ruby, C, C++, C#, PHP, Bash, Scala, Lua, Kotlin, Swift, Haskell,
+//! and Elixir. Callers usually
 //! dispatch by file extension via [`outline_for_extension`] and
 //! [`references_for_extension`], falling back to their own heuristic when the
 //! extension has no grammar.
@@ -22,27 +23,35 @@ use serde::{Deserialize, Serialize};
 mod bash;
 mod c_family;
 mod csharp;
+mod elixir;
 mod go;
+mod haskell;
 mod java;
+mod kotlin;
 mod lua;
 mod php;
 mod python;
 mod ruby;
 mod rust;
 mod scala;
+mod swift;
 mod typescript;
 
 pub use bash::BashSymbols;
 pub use c_family::CFamilySymbols;
 pub use csharp::CSharpSymbols;
+pub use elixir::ElixirSymbols;
 pub use go::GoSymbols;
+pub use haskell::HaskellSymbols;
 pub use java::JavaSymbols;
+pub use kotlin::KotlinSymbols;
 pub use lua::LuaSymbols;
 pub use php::PhpSymbols;
 pub use python::PythonSymbols;
 pub use ruby::RubySymbols;
 pub use rust::RustSymbols;
 pub use scala::ScalaSymbols;
+pub use swift::SwiftSymbols;
 pub use typescript::TypeScriptSymbols;
 
 /// The kind of a source symbol. Additive: new variants may appear as more
@@ -184,8 +193,19 @@ pub fn language_for_extension(extension: &str) -> Option<Box<dyn LanguageSymbols
         "sh" | "bash" => Some(Box::new(BashSymbols)),
         "scala" | "sc" => Some(Box::new(ScalaSymbols)),
         "lua" => Some(Box::new(LuaSymbols)),
+        "kt" | "kts" => Some(Box::new(KotlinSymbols)),
+        "swift" => Some(Box::new(SwiftSymbols)),
+        "hs" => Some(Box::new(HaskellSymbols)),
+        "ex" | "exs" => Some(Box::new(ElixirSymbols)),
         _ => None,
     }
+}
+
+/// Whether a tree-sitter grammar is wired in for a file extension (lower-case,
+/// no dot). Callers gating directory walks on "is this a source file?" should
+/// use this so the walk set never drifts from [`language_for_extension`].
+pub fn supports_extension(extension: &str) -> bool {
+    language_for_extension(extension).is_some()
 }
 
 /// Outlines `source` using the grammar for `extension`, or `None` when the
@@ -392,6 +412,30 @@ mod tests {
         );
         assert!(
             outline_for_extension("lua", "function a() end")
+                .unwrap()
+                .iter()
+                .any(|s| s.name == "a")
+        );
+        assert!(
+            outline_for_extension("kt", "fun a() {}")
+                .unwrap()
+                .iter()
+                .any(|s| s.name == "a")
+        );
+        assert!(
+            outline_for_extension("swift", "func a() {}")
+                .unwrap()
+                .iter()
+                .any(|s| s.name == "a")
+        );
+        assert!(
+            outline_for_extension("hs", "a :: Int\na = 1\n")
+                .unwrap()
+                .iter()
+                .any(|s| s.name == "a")
+        );
+        assert!(
+            outline_for_extension("ex", "defmodule M do\n  def a, do: 1\nend\n")
                 .unwrap()
                 .iter()
                 .any(|s| s.name == "a")
