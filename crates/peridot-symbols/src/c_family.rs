@@ -7,8 +7,9 @@
 //! methods (named with `field_identifier`), handled via [`CFamilySymbols::cpp`].
 
 use crate::{
-    LanguageSymbols, Reference, Symbol, SymbolKind, collect_references_by_kind, field_name, parse,
-    symbol_at,
+    LanguageSymbols, LocalBinding, Reference, Symbol, SymbolKind, collect_references_by_kind,
+    field_name, first_descendant_node, local_binding, nearest_ancestor, parse, symbol_at,
+    walk_nodes,
 };
 
 /// C / C++ symbol extraction.
@@ -92,6 +93,63 @@ impl LanguageSymbols for CFamilySymbols {
         );
         refs
     }
+
+    fn local_bindings(&self, source: &str, name: &str) -> Vec<LocalBinding> {
+        let Some(tree) = parse(&self.language(), source) else {
+            return Vec::new();
+        };
+        let mut bindings = Vec::new();
+        walk_nodes(tree.root_node(), &mut |node| match node.kind() {
+            // Function parameters: the binding name is the first identifier of
+            // the declarator (skipping the type), governing the function body.
+            "parameter_declaration" => {
+                if let Some(token) = declarator_binding(&node, name, source)
+                    && let Some(scope) = nearest_ancestor(node, &["function_definition"])
+                {
+                    bindings.push(local_binding(&token, &scope));
+                }
+            }
+            // `int bar = …;` / `int bar;` inside a block governs that block.
+            // File-scope declarations have no enclosing block and stay module
+            // symbols.
+            "declaration" => {
+                let Some(scope) = nearest_ancestor(node, &["compound_statement"]) else {
+                    return;
+                };
+                let mut cursor = node.walk();
+                for child in node.children(&mut cursor) {
+                    let declarator = match child.kind() {
+                        "init_declarator" => child.child_by_field_name("declarator"),
+                        "identifier"
+                        | "pointer_declarator"
+                        | "array_declarator"
+                        | "reference_declarator" => Some(child),
+                        _ => None,
+                    };
+                    if let Some(declarator) = declarator
+                        && let Some(token) = first_descendant_node(declarator, "identifier")
+                        && token.utf8_text(source.as_bytes()) == Ok(name)
+                    {
+                        bindings.push(local_binding(&token, &scope));
+                    }
+                }
+            }
+            _ => {}
+        });
+        bindings
+    }
+}
+
+/// The parameter's binding identifier (the first identifier reached through its
+/// `declarator` field, skipping the type), if its name is `name`.
+fn declarator_binding<'a>(
+    parameter: &tree_sitter::Node<'a>,
+    name: &str,
+    source: &str,
+) -> Option<tree_sitter::Node<'a>> {
+    let declarator = parameter.child_by_field_name("declarator")?;
+    let token = first_descendant_node(declarator, "identifier")?;
+    (token.utf8_text(source.as_bytes()) == Ok(name)).then_some(token)
 }
 
 fn collect(

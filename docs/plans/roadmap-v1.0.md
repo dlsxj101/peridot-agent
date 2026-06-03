@@ -253,11 +253,14 @@ treat them as separate milestones, not a single release.
   `local` (the occurrence resolves to such a local), or absent (resolves to the
   module-level symbol). Resolution is opt-in per language behind a
   `local_bindings` trait method with a no-op default, so grammars without a
-  resolver behave exactly as before; **Rust** (fn/closure params, `let`),
-  **Python** (params, function-scoped assignments), and **TypeScript /
-  JavaScript** (params, `let` / `const` / `var` declarators) ship resolvers.
-  The `symbol_references` tool surfaces `binding` so the model can skip
-  shadowed locals when hunting real call sites.
+  resolver behave exactly as before. Six language families ship resolvers:
+  **Rust** (fn/closure params, `let`), **Python** (params, function-scoped
+  assignments), **TypeScript / JavaScript** (params, `let` / `const` / `var`
+  declarators), **Go** (params, `:=` / `var`, `range` loop vars), **Java**
+  (method/constructor/lambda params, `catch`, local vars), and **C / C++**
+  (function params, block-scoped declarations). The `symbol_references` tool
+  surfaces `binding` so the model can skip shadowed locals when hunting real
+  call sites.
 - **Incremental cache**: `workspace_symbols` / `symbol_search` /
   `symbol_definition` cache each file's parsed outline by absolute path +
   (mtime, size), re-parsing only changed files. The cache is **persisted to
@@ -272,11 +275,12 @@ treat them as separate milestones, not a single release.
   to 16 files per event (bigger batches like a branch switch just
   invalidate) and skipping non-source/oversized/deleted paths.
 - **Remaining**: further language grammars (e.g. Nix, Clojure, Erlang,
-  Solidity) via the same dispatcher; binding resolvers for the languages that
-  don't yet have one (Go, Java, C/C++, …) on top of the existing
+  Solidity) via the same dispatcher; binding resolvers for the remaining
+  grammars (Ruby, Kotlin, Swift, PHP, Scala, …) on top of the existing
   `local_bindings` hook; richer binding cases within the shipped languages
-  (tuple/struct-destructuring patterns, `if let` / `match` arms, comprehension
-  variables); optionally real LSP clients. Highest context-savings payoff.
+  (tuple/struct-destructuring patterns, `if let` / `match` arms, `for` targets,
+  `with`/`catch` binders, comprehension variables); optionally real LSP
+  clients. Highest context-savings payoff.
 
 ### F2. Multimodal image input (vision routing)
 

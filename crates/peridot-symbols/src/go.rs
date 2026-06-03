@@ -1,8 +1,8 @@
 //! Go symbol extraction backed by `tree-sitter-go`.
 
 use crate::{
-    LanguageSymbols, Reference, Symbol, SymbolKind, collect_references_by_kind,
-    first_descendant_text, parse, symbol_at,
+    LanguageSymbols, LocalBinding, Reference, Symbol, SymbolKind, collect_references_by_kind,
+    first_descendant_text, local_binding, nearest_ancestor, parse, symbol_at, walk_nodes,
 };
 
 /// Go symbol extraction.
@@ -40,6 +40,68 @@ impl LanguageSymbols for GoSymbols {
             &mut refs,
         );
         refs
+    }
+
+    fn local_bindings(&self, source: &str, name: &str) -> Vec<LocalBinding> {
+        let Some(tree) = parse(&language(), source) else {
+            return Vec::new();
+        };
+        let mut bindings = Vec::new();
+        walk_nodes(tree.root_node(), &mut |node| match node.kind() {
+            // `func f(foo int)` — the `identifier` children name the params;
+            // the trailing `type_identifier` is the type. Params govern the
+            // enclosing function / method / closure.
+            "parameter_declaration" | "variadic_parameter_declaration" => {
+                if let Some(scope) = nearest_ancestor(
+                    node,
+                    &["function_declaration", "method_declaration", "func_literal"],
+                ) {
+                    push_named_identifiers(&node, name, source, &scope, &mut bindings);
+                }
+            }
+            // `bar := …` and `var bar = …` govern the rest of their block;
+            // package-level `var` (no enclosing block) is a module symbol.
+            "short_var_declaration" => {
+                if let Some(left) = node.child_by_field_name("left")
+                    && let Some(scope) = nearest_ancestor(node, &["block"])
+                {
+                    push_named_identifiers(&left, name, source, &scope, &mut bindings);
+                }
+            }
+            "var_spec" => {
+                if let Some(scope) = nearest_ancestor(node, &["block"]) {
+                    push_named_identifiers(&node, name, source, &scope, &mut bindings);
+                }
+            }
+            // `for k, v := range …` binds the loop variables for the loop body.
+            "range_clause" => {
+                if let Some(left) = node.child_by_field_name("left")
+                    && let Some(scope) = nearest_ancestor(node, &["for_statement"])
+                {
+                    push_named_identifiers(&left, name, source, &scope, &mut bindings);
+                }
+            }
+            _ => {}
+        });
+        bindings
+    }
+}
+
+/// Pushes a [`LocalBinding`] for every direct `identifier` child of `parent`
+/// whose text is `name`, governed by `scope`. Used for Go's comma-separated
+/// declarations (`a, b int`, `a, b := …`) whose names are sibling identifiers.
+fn push_named_identifiers(
+    parent: &tree_sitter::Node,
+    name: &str,
+    source: &str,
+    scope: &tree_sitter::Node,
+    out: &mut Vec<LocalBinding>,
+) {
+    let mut cursor = parent.walk();
+    for child in parent.children(&mut cursor) {
+        if child.kind() == "identifier" && child.utf8_text(source.as_bytes()) == Ok(name) {
+            out.push(local_binding(&child, scope));
+        }
     }
 }
 

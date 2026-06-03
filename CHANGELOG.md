@@ -44,9 +44,10 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
   such a local, and absent when it resolves to the module-level symbol. This
   lets the model skip same-named locals that shadow a top-level symbol instead
   of mistaking them for real call sites. Resolution is opt-in per language
-  (no-op default, so other grammars are unchanged); Rust, Python, and
-  TypeScript / JavaScript ship resolvers covering parameters and local
-  variable declarations.
+  (no-op default, so other grammars are unchanged); six language families ship
+  resolvers covering parameters and local variable declarations — Rust, Python,
+  TypeScript / JavaScript, Go (`:=` / `var` / `range`), Java
+  (params / `catch` / locals), and C / C++ (params / block declarations).
 - **`symbol_references` rows now carry the full lexical `scope` chain** —
   `outer::…::inner` naming every nested module / namespace / type / function
   body a usage sits in, from outermost to innermost (e.g. `ui::Widget::render`),

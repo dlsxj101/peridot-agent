@@ -894,17 +894,83 @@ function other(): void {
     }
 
     #[test]
-    fn languages_without_a_resolver_report_no_bindings() {
-        // Go has no binding resolver wired in, so every occurrence resolves to
-        // the module symbol (binding stays `None`) — unchanged behavior.
+    fn go_binding_resolution_marks_params_and_locals() {
         let source = "\
 package main
 
+func helper() {}
+
 func caller(helper int) int {
-    return helper + 1
+    bar := helper + 1
+    return bar
+}
+
+func other() {
+    helper()
 }
 ";
         let refs = references_for_extension("go", source, "helper").unwrap();
+        let param = refs.iter().find(|r| r.line == 5).expect("parameter");
+        assert_eq!(param.binding, Some(Binding::LocalDefinition));
+        let shadowed = refs.iter().find(|r| r.line == 6).expect("use in caller");
+        assert_eq!(shadowed.binding, Some(Binding::Local));
+        let module_use = refs.iter().find(|r| r.line == 11).expect("call in other");
+        assert_eq!(module_use.binding, None);
+    }
+
+    #[test]
+    fn java_binding_resolution_marks_params_and_locals() {
+        let source = "\
+class C {
+    void helper() {}
+    int caller(int helper) {
+        return helper + 1;
+    }
+    void other() {
+        helper();
+    }
+}
+";
+        let refs = references_for_extension("java", source, "helper").unwrap();
+        let param = refs.iter().find(|r| r.line == 3).expect("parameter");
+        assert_eq!(param.binding, Some(Binding::LocalDefinition));
+        let shadowed = refs.iter().find(|r| r.line == 4).expect("use in caller");
+        assert_eq!(shadowed.binding, Some(Binding::Local));
+        let module_use = refs.iter().find(|r| r.line == 7).expect("call in other");
+        assert_eq!(module_use.binding, None);
+    }
+
+    #[test]
+    fn c_binding_resolution_marks_params_and_locals() {
+        let source = "\
+int helper() { return 0; }
+int caller(int helper) {
+    int bar = helper + 1;
+    return bar;
+}
+int other() {
+    return helper();
+}
+";
+        let refs = references_for_extension("c", source, "helper").unwrap();
+        let param = refs.iter().find(|r| r.line == 2).expect("parameter");
+        assert_eq!(param.binding, Some(Binding::LocalDefinition));
+        let shadowed = refs.iter().find(|r| r.line == 3).expect("use in caller");
+        assert_eq!(shadowed.binding, Some(Binding::Local));
+        let module_use = refs.iter().find(|r| r.line == 7).expect("call in other");
+        assert_eq!(module_use.binding, None);
+    }
+
+    #[test]
+    fn languages_without_a_resolver_report_no_bindings() {
+        // Ruby has no binding resolver wired in, so every occurrence resolves
+        // to the module symbol (binding stays `None`) — unchanged behavior.
+        let source = "\
+def caller(helper)
+  helper + 1
+end
+";
+        let refs = references_for_extension("rb", source, "helper").unwrap();
         assert!(!refs.is_empty());
         assert!(refs.iter().all(|r| r.binding.is_none()));
     }

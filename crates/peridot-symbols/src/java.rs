@@ -1,9 +1,16 @@
 //! Java symbol extraction backed by `tree-sitter-java`.
 
 use crate::{
-    LanguageSymbols, Reference, Symbol, SymbolKind, collect_references_by_kind, field_name, parse,
-    symbol_at,
+    LanguageSymbols, LocalBinding, Reference, Symbol, SymbolKind, collect_references_by_kind,
+    field_name, local_binding, nearest_ancestor, parse, symbol_at, walk_nodes,
 };
+
+/// Node kinds that introduce a value scope a parameter governs.
+const JAVA_PARAM_SCOPES: &[&str] = &[
+    "method_declaration",
+    "constructor_declaration",
+    "lambda_expression",
+];
 
 /// Java symbol extraction.
 #[derive(Debug, Default, Clone, Copy)]
@@ -50,6 +57,64 @@ impl LanguageSymbols for JavaSymbols {
             &mut refs,
         );
         refs
+    }
+
+    fn local_bindings(&self, source: &str, name: &str) -> Vec<LocalBinding> {
+        let Some(tree) = parse(&language(), source) else {
+            return Vec::new();
+        };
+        let mut bindings = Vec::new();
+        walk_nodes(tree.root_node(), &mut |node| match node.kind() {
+            // Method / constructor / lambda params, and `catch (E e)` params.
+            "formal_parameter" | "spread_parameter" | "catch_formal_parameter" => {
+                if let Some(token) = node.child_by_field_name("name")
+                    && token.utf8_text(source.as_bytes()) == Ok(name)
+                {
+                    let scope = nearest_ancestor(node, JAVA_PARAM_SCOPES).unwrap_or(node);
+                    bindings.push(local_binding(&token, &scope));
+                }
+            }
+            // `int bar = …;` — one binding per declarator, governing its block.
+            "local_variable_declaration" => {
+                let Some(scope) = nearest_ancestor(node, &["block"]) else {
+                    return;
+                };
+                let mut cursor = node.walk();
+                for child in node.children(&mut cursor) {
+                    if child.kind() == "variable_declarator"
+                        && let Some(token) = child.child_by_field_name("name")
+                        && token.utf8_text(source.as_bytes()) == Ok(name)
+                    {
+                        bindings.push(local_binding(&token, &scope));
+                    }
+                }
+            }
+            // `(foo) -> …` lambda params declared without types.
+            "inferred_parameters" => {
+                if let Some(scope) = nearest_ancestor(node, &["lambda_expression"]) {
+                    let mut cursor = node.walk();
+                    for child in node.children(&mut cursor) {
+                        if child.kind() == "identifier"
+                            && child.utf8_text(source.as_bytes()) == Ok(name)
+                        {
+                            bindings.push(local_binding(&child, &scope));
+                        }
+                    }
+                }
+            }
+            // A bare single lambda param `foo -> …` is an identifier in the
+            // `parameters` field of the lambda.
+            "lambda_expression" => {
+                if let Some(param) = node.child_by_field_name("parameters")
+                    && param.kind() == "identifier"
+                    && param.utf8_text(source.as_bytes()) == Ok(name)
+                {
+                    bindings.push(local_binding(&param, &node));
+                }
+            }
+            _ => {}
+        });
+        bindings
     }
 }
 
