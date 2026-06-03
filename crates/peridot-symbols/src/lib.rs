@@ -167,6 +167,47 @@ pub struct Reference {
     /// entry points, not the raw per-language walk.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scope: Option<String>,
+    /// How this occurrence resolves once local bindings are considered. `None`
+    /// means it resolves to the module-level (outline) symbol of this name —
+    /// the common case, and the only case for grammars without a binding
+    /// resolver. [`Binding::Local`] / [`Binding::LocalDefinition`] mean a local
+    /// binding (a parameter or local variable) of the same name lexically
+    /// shadows the module symbol here, so this occurrence does *not* refer to
+    /// it. Filled by the dispatch/convenience entry points.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub binding: Option<Binding>,
+}
+
+/// How a reference occurrence resolves once local bindings are taken into
+/// account, distinguishing a use of the searched module-level symbol from a
+/// same-named local that shadows it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Binding {
+    /// This occurrence *declares* a local binding (a function/closure
+    /// parameter or a local variable) of the searched name.
+    LocalDefinition,
+    /// This occurrence resolves to a local binding that lexically shadows any
+    /// module-level symbol of the same name.
+    Local,
+}
+
+/// A local binding (parameter or local variable) of a searched name, and the
+/// lexical line range it governs. Returned by
+/// [`LanguageSymbols::local_bindings`] and used to resolve whether a reference
+/// occurrence refers to a local binding (shadowing) rather than the
+/// module-level symbol. Line numbers are 1-based; `decl_column` is the 1-based
+/// byte column of the declaration's name token, matching [`Reference::column`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LocalBinding {
+    /// 1-based line of the binding's declaration token.
+    pub decl_line: usize,
+    /// 1-based byte column of the binding's declaration token.
+    pub decl_column: usize,
+    /// First line (inclusive) of the lexical range the binding governs.
+    pub scope_start_line: usize,
+    /// Last line (inclusive) of the lexical range the binding governs.
+    pub scope_end_line: usize,
 }
 
 /// A per-language symbol extractor. Implementations are stateless and cheap to
@@ -191,6 +232,19 @@ pub trait LanguageSymbols {
     /// occurrences inside comments and string literals are skipped. The
     /// definition site is included.
     fn references(&self, source: &str, name: &str) -> Vec<Reference>;
+
+    /// Local bindings (function/closure parameters and local variables) named
+    /// `name`, with the lexical line range each governs. Used by the dispatch
+    /// entry points to resolve whether a reference occurrence refers to a local
+    /// binding (shadowing the module symbol) rather than the module-level
+    /// symbol of the same name.
+    ///
+    /// The default returns none, so grammars without a binding resolver report
+    /// every occurrence as module-level — the behavior before binding
+    /// resolution existed. Languages opt in by overriding this.
+    fn local_bindings(&self, _source: &str, _name: &str) -> Vec<LocalBinding> {
+        Vec::new()
+    }
 }
 
 /// Returns the symbol extractor for a file extension (lower-case, no dot), or
@@ -262,11 +316,35 @@ fn marked_references(lang: &dyn LanguageSymbols, source: &str, name: &str) -> Ve
         .filter(|symbol| symbol.name == name)
         .map(|symbol| symbol.start_line)
         .collect();
+    let bindings = lang.local_bindings(source, name);
     for reference in &mut references {
         reference.is_definition = definition_lines.contains(&reference.line);
         reference.scope = enclosing_scope(&outline, reference.line, reference.is_definition);
+        reference.binding = resolve_binding(&bindings, reference);
     }
     references
+}
+
+/// Classifies a reference against the local bindings of its name. A module-level
+/// definition keeps `None` (it resolves to the outline symbol, never a local).
+/// An occurrence sitting at a binding's declaration token is a
+/// [`Binding::LocalDefinition`]; any other occurrence inside a binding's
+/// governing range resolves to that local ([`Binding::Local`]). Occurrences
+/// outside every local range resolve to the module symbol (`None`).
+fn resolve_binding(bindings: &[LocalBinding], reference: &Reference) -> Option<Binding> {
+    if reference.is_definition {
+        return None;
+    }
+    if bindings
+        .iter()
+        .any(|b| b.decl_line == reference.line && b.decl_column == reference.column)
+    {
+        return Some(Binding::LocalDefinition);
+    }
+    bindings
+        .iter()
+        .any(|b| b.scope_start_line <= reference.line && reference.line <= b.scope_end_line)
+        .then_some(Binding::Local)
 }
 
 /// The fully-qualified lexical scope chain (`outer::…::inner`) of the
@@ -387,6 +465,66 @@ pub(crate) fn first_descendant_text<'a>(
     None
 }
 
+/// The first descendant (depth-first, self included) whose node kind is
+/// `kind`, or `None`. The node-returning companion to [`first_descendant_text`].
+pub(crate) fn first_descendant_node<'a>(
+    node: tree_sitter::Node<'a>,
+    kind: &str,
+) -> Option<tree_sitter::Node<'a>> {
+    if node.kind() == kind {
+        return Some(node);
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if let Some(found) = first_descendant_node(child, kind) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+/// The nearest ancestor of `node` (walking up via `parent`) whose kind is one
+/// of `kinds`, or `None` if there is no such ancestor. Used by the per-language
+/// binding resolvers to find the function / block a parameter or local
+/// variable governs.
+pub(crate) fn nearest_ancestor<'a>(
+    node: tree_sitter::Node<'a>,
+    kinds: &[&str],
+) -> Option<tree_sitter::Node<'a>> {
+    let mut current = node.parent();
+    while let Some(ancestor) = current {
+        if kinds.contains(&ancestor.kind()) {
+            return Some(ancestor);
+        }
+        current = ancestor.parent();
+    }
+    None
+}
+
+/// Depth-first pre-order walk invoking `visit` on every node. Shared by the
+/// per-language binding resolvers, which need to inspect interior nodes
+/// (parameters, declarations) rather than only leaf identifier tokens.
+pub(crate) fn walk_nodes(node: tree_sitter::Node, visit: &mut dyn FnMut(tree_sitter::Node)) {
+    visit(node);
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        walk_nodes(child, visit);
+    }
+}
+
+/// Builds a [`LocalBinding`] from a declaration name `token` and the `scope`
+/// node it governs. The governing range runs from the declaration line to the
+/// end of `scope`, so the declaration token itself is inside its own range.
+pub(crate) fn local_binding(token: &tree_sitter::Node, scope: &tree_sitter::Node) -> LocalBinding {
+    let pos = token.start_position();
+    LocalBinding {
+        decl_line: pos.row + 1,
+        decl_column: pos.column + 1,
+        scope_start_line: pos.row + 1,
+        scope_end_line: scope.end_position().row + 1,
+    }
+}
+
 /// Depth-first walk recording every leaf identifier token whose text equals
 /// `name`, using `is_identifier` to decide which leaf kinds count. Shared by
 /// every language's [`LanguageSymbols::references`].
@@ -407,6 +545,7 @@ pub(crate) fn collect_references_by_kind(
                     column: pos.column + 1,
                     is_definition: false,
                     scope: None,
+                    binding: None,
                 });
             }
         } else {
@@ -662,5 +801,111 @@ class Outer:
         let refs = references_for_extension("py", source, "helper").unwrap();
         let call = refs.iter().find(|r| r.line == 4).expect("call in method");
         assert_eq!(call.scope.as_deref(), Some("Outer::Inner::method"));
+    }
+
+    #[test]
+    fn rust_binding_resolution_distinguishes_locals_from_the_module_symbol() {
+        // `helper` is a top-level fn, a parameter in `caller`, and a free call
+        // in `other`.
+        let source = "\
+fn helper() {}
+fn caller(helper: u32) -> u32 {
+    helper + 1
+}
+fn other() {
+    helper();
+}
+";
+        let refs = references_rust(source, "helper");
+        // The top-level definition resolves to the module symbol (no binding).
+        let def = refs.iter().find(|r| r.is_definition).expect("definition");
+        assert_eq!(def.binding, None);
+        // The parameter is a local declaration.
+        let param = refs.iter().find(|r| r.line == 2).expect("parameter");
+        assert_eq!(param.binding, Some(Binding::LocalDefinition));
+        // Its use inside `caller` resolves to the local, not the module fn.
+        let shadowed = refs.iter().find(|r| r.line == 3).expect("use in caller");
+        assert_eq!(shadowed.binding, Some(Binding::Local));
+        // The call in `other` still resolves to the module fn.
+        let module_use = refs.iter().find(|r| r.line == 6).expect("call in other");
+        assert_eq!(module_use.binding, None);
+    }
+
+    #[test]
+    fn rust_binding_resolution_handles_let_shadowing() {
+        let source = "\
+fn f() {
+    let x = 1;
+    x + x
+}
+";
+        let refs = references_rust(source, "x");
+        let decl = refs.iter().find(|r| r.line == 2).expect("let binding");
+        assert_eq!(decl.binding, Some(Binding::LocalDefinition));
+        // Both uses on line 3 resolve to the local.
+        assert!(
+            refs.iter()
+                .filter(|r| r.line == 3)
+                .all(|r| r.binding == Some(Binding::Local))
+        );
+    }
+
+    #[test]
+    fn python_binding_resolution_marks_params_and_locals() {
+        let source = "\
+def helper():
+    pass
+
+def caller(helper):
+    return helper + 1
+
+def other():
+    return helper()
+";
+        let refs = references_for_extension("py", source, "helper").unwrap();
+        let param = refs.iter().find(|r| r.line == 4).expect("parameter");
+        assert_eq!(param.binding, Some(Binding::LocalDefinition));
+        let shadowed = refs.iter().find(|r| r.line == 5).expect("use in caller");
+        assert_eq!(shadowed.binding, Some(Binding::Local));
+        let module_use = refs.iter().find(|r| r.line == 8).expect("call in other");
+        assert_eq!(module_use.binding, None);
+    }
+
+    #[test]
+    fn typescript_binding_resolution_marks_params_and_locals() {
+        let source = "\
+function helper(): void {}
+
+function caller(helper: number): number {
+    return helper + 1;
+}
+
+function other(): void {
+    helper();
+}
+";
+        let refs = references_for_extension("ts", source, "helper").unwrap();
+        let param = refs.iter().find(|r| r.line == 3).expect("parameter");
+        assert_eq!(param.binding, Some(Binding::LocalDefinition));
+        let shadowed = refs.iter().find(|r| r.line == 4).expect("use in caller");
+        assert_eq!(shadowed.binding, Some(Binding::Local));
+        let module_use = refs.iter().find(|r| r.line == 8).expect("call in other");
+        assert_eq!(module_use.binding, None);
+    }
+
+    #[test]
+    fn languages_without_a_resolver_report_no_bindings() {
+        // Go has no binding resolver wired in, so every occurrence resolves to
+        // the module symbol (binding stays `None`) — unchanged behavior.
+        let source = "\
+package main
+
+func caller(helper int) int {
+    return helper + 1
+}
+";
+        let refs = references_for_extension("go", source, "helper").unwrap();
+        assert!(!refs.is_empty());
+        assert!(refs.iter().all(|r| r.binding.is_none()));
     }
 }

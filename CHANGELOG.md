@@ -38,6 +38,15 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
   into a new `summarize.rs` submodule, leaving `ContextManager` focused on
   lifecycle. No behavior change; the public API and the full test suite are
   unchanged.
+- **`symbol_references` now resolves local bindings (shadowing).** Each row
+  carries a `binding` field: `local_definition` when the occurrence declares a
+  parameter or local variable of the searched name, `local` when it resolves to
+  such a local, and absent when it resolves to the module-level symbol. This
+  lets the model skip same-named locals that shadow a top-level symbol instead
+  of mistaking them for real call sites. Resolution is opt-in per language
+  (no-op default, so other grammars are unchanged); Rust, Python, and
+  TypeScript / JavaScript ship resolvers covering parameters and local
+  variable declarations.
 - **`symbol_references` rows now carry the full lexical `scope` chain** —
   `outer::…::inner` naming every nested module / namespace / type / function
   body a usage sits in, from outermost to innermost (e.g. `ui::Widget::render`),

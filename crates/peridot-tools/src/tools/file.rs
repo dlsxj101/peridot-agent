@@ -900,6 +900,16 @@ fn collect_references(
             if let Some(scope) = reference.scope {
                 entry["scope"] = serde_json::Value::String(scope);
             }
+            // How the occurrence resolves once local bindings are considered:
+            // `local`/`local_definition` mean a same-named parameter or local
+            // variable shadows the module symbol here, so this is *not* a
+            // reference to it (F1 binding resolution). Absent = resolves to the
+            // module symbol.
+            if let Some(binding) = reference.binding
+                && let Ok(value) = serde_json::to_value(binding)
+            {
+                entry["binding"] = value;
+            }
             out.push(entry);
         }
     } else {

@@ -1,8 +1,9 @@
 //! Python symbol extraction backed by `tree-sitter-python`.
 
 use crate::{
-    LanguageSymbols, Reference, Symbol, SymbolKind, collect_references_by_kind, field_name, parse,
-    symbol_at,
+    LanguageSymbols, LocalBinding, Reference, Symbol, SymbolKind, collect_references_by_kind,
+    field_name, first_descendant_node, local_binding, nearest_ancestor, parse, symbol_at,
+    walk_nodes,
 };
 
 /// Python symbol extraction.
@@ -41,6 +42,63 @@ impl LanguageSymbols for PythonSymbols {
         );
         refs
     }
+
+    fn local_bindings(&self, source: &str, name: &str) -> Vec<LocalBinding> {
+        let Some(tree) = parse(&language(), source) else {
+            return Vec::new();
+        };
+        let mut bindings = Vec::new();
+        walk_nodes(tree.root_node(), &mut |node| match node.kind() {
+            // Parameters bind for the whole function body.
+            "function_definition" => {
+                let Some(params) = node.child_by_field_name("parameters") else {
+                    return;
+                };
+                let mut cursor = params.walk();
+                for param in params.children(&mut cursor) {
+                    if let Some(token) = param_name(param, name, source) {
+                        bindings.push(local_binding(&token, &node));
+                    }
+                }
+            }
+            // In Python an assignment makes the name function-local for the
+            // entire enclosing function; module-level assignments are treated
+            // as module symbols, not locals.
+            "assignment" => {
+                if let Some(target) = node.child_by_field_name("left")
+                    && target.kind() == "identifier"
+                    && target.utf8_text(source.as_bytes()) == Ok(name)
+                    && let Some(scope) = nearest_ancestor(node, &["function_definition"])
+                {
+                    // The local governs the whole function, including any use
+                    // textually before the assignment.
+                    let mut binding = local_binding(&target, &scope);
+                    binding.scope_start_line = scope.start_position().row + 1;
+                    bindings.push(binding);
+                }
+            }
+            _ => {}
+        });
+        bindings
+    }
+}
+
+/// The binding identifier of a parameter node whose name is `name`, covering
+/// simple, typed, and default parameters. Returns the name token so its
+/// declaration site can be matched precisely.
+fn param_name<'a>(
+    param: tree_sitter::Node<'a>,
+    name: &str,
+    source: &str,
+) -> Option<tree_sitter::Node<'a>> {
+    let token = if param.kind() == "identifier" {
+        param
+    } else {
+        // typed / default / splat parameters carry the name as their first
+        // identifier descendant (the name field precedes any default value).
+        first_descendant_node(param, "identifier")?
+    };
+    (token.utf8_text(source.as_bytes()) == Ok(name)).then_some(token)
 }
 
 /// Depth-first walk. A `function_definition` directly inside a class body is a

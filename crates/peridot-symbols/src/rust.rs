@@ -1,9 +1,16 @@
 //! Rust symbol extraction backed by `tree-sitter-rust`.
 
 use crate::{
-    LanguageSymbols, Reference, Symbol, SymbolKind, collect_references_by_kind, field_name, parse,
-    symbol_at,
+    LanguageSymbols, LocalBinding, Reference, Symbol, SymbolKind, collect_references_by_kind,
+    field_name, local_binding, nearest_ancestor, parse, symbol_at, walk_nodes,
 };
+
+/// Node kinds that introduce a value scope a parameter governs.
+const RUST_PARAM_SCOPES: &[&str] = &[
+    "function_item",
+    "function_signature_item",
+    "closure_expression",
+];
 
 /// Rust symbol extraction backed by `tree-sitter-rust`.
 #[derive(Debug, Default, Clone, Copy)]
@@ -72,6 +79,68 @@ impl LanguageSymbols for RustSymbols {
         );
         refs
     }
+
+    fn local_bindings(&self, source: &str, name: &str) -> Vec<LocalBinding> {
+        let Some(tree) = parse(&language(), source) else {
+            return Vec::new();
+        };
+        let mut bindings = Vec::new();
+        walk_nodes(tree.root_node(), &mut |node| match node.kind() {
+            // `fn f(foo: T)` and typed closure params `|foo: T|`: the binding
+            // name is the pattern field; the parameter governs its function or
+            // closure.
+            "parameter" => {
+                if let Some(token) = pattern_identifier(&node, name, source)
+                    && let Some(scope) = nearest_ancestor(node, RUST_PARAM_SCOPES)
+                {
+                    bindings.push(local_binding(&token, &scope));
+                }
+            }
+            // Bare closure params `|foo|` are identifiers directly under
+            // `closure_parameters`.
+            "closure_parameters" => {
+                let mut cursor = node.walk();
+                for child in node.children(&mut cursor) {
+                    if child.kind() == "identifier"
+                        && child.utf8_text(source.as_bytes()) == Ok(name)
+                        && let Some(scope) = nearest_ancestor(node, &["closure_expression"])
+                    {
+                        bindings.push(local_binding(&child, &scope));
+                    }
+                }
+            }
+            // `let foo = …` governs the rest of its enclosing block.
+            "let_declaration" => {
+                if let Some(pattern) = node.child_by_field_name("pattern")
+                    && pattern.kind() == "identifier"
+                    && pattern.utf8_text(source.as_bytes()) == Ok(name)
+                    && let Some(scope) = nearest_ancestor(node, &["block"])
+                {
+                    bindings.push(local_binding(&pattern, &scope));
+                }
+            }
+            _ => {}
+        });
+        bindings
+    }
+}
+
+/// The identifier node in `parameter`'s pattern field whose text is `name`, if
+/// the parameter binds a simple identifier of that name. Skips the parameter's
+/// type annotation (which carries its own identifiers).
+fn pattern_identifier<'a>(
+    parameter: &tree_sitter::Node<'a>,
+    name: &str,
+    source: &str,
+) -> Option<tree_sitter::Node<'a>> {
+    let pattern = parameter.child_by_field_name("pattern")?;
+    let token = if pattern.kind() == "identifier" {
+        pattern
+    } else {
+        // `mut foo`, `ref foo`, … wrap the identifier.
+        crate::first_descendant_node(pattern, "identifier")?
+    };
+    (token.utf8_text(source.as_bytes()) == Ok(name)).then_some(token)
 }
 
 /// Depth-first walk that records definitions and threads the enclosing

@@ -245,6 +245,19 @@ treat them as separate milestones, not a single release.
   existing outline ranges, so it is language-agnostic across every wired
   grammar (verified for Rust nesting and nested Python classes) and tells the
   model exactly which lexical scope a usage lives in.
+- **Binding resolution (shadowing)**: each reference also resolves against the
+  *local* bindings of its name, so a usage that actually refers to a parameter
+  or local variable shadowing a module-level symbol is flagged rather than
+  reported as a hit on that symbol. References carry a `binding` field:
+  `local_definition` (the occurrence declares a parameter/local of the name),
+  `local` (the occurrence resolves to such a local), or absent (resolves to the
+  module-level symbol). Resolution is opt-in per language behind a
+  `local_bindings` trait method with a no-op default, so grammars without a
+  resolver behave exactly as before; **Rust** (fn/closure params, `let`),
+  **Python** (params, function-scoped assignments), and **TypeScript /
+  JavaScript** (params, `let` / `const` / `var` declarators) ship resolvers.
+  The `symbol_references` tool surfaces `binding` so the model can skip
+  shadowed locals when hunting real call sites.
 - **Incremental cache**: `workspace_symbols` / `symbol_search` /
   `symbol_definition` cache each file's parsed outline by absolute path +
   (mtime, size), re-parsing only changed files. The cache is **persisted to
@@ -259,11 +272,11 @@ treat them as separate milestones, not a single release.
   to 16 files per event (bigger batches like a branch switch just
   invalidate) and skipping non-source/oversized/deleted paths.
 - **Remaining**: further language grammars (e.g. Nix, Clojure, Erlang,
-  Solidity) via the same dispatcher; binding-level resolution on top of the
-  lexical scope chain — resolving shadowing and which declaration a usage
-  actually refers to (e.g. a local parameter named `foo` vs. a top-level
-  `foo`), which needs per-language declaration tracking; optionally real LSP
-  clients. Highest context-savings payoff.
+  Solidity) via the same dispatcher; binding resolvers for the languages that
+  don't yet have one (Go, Java, C/C++, …) on top of the existing
+  `local_bindings` hook; richer binding cases within the shipped languages
+  (tuple/struct-destructuring patterns, `if let` / `match` arms, comprehension
+  variables); optionally real LSP clients. Highest context-savings payoff.
 
 ### F2. Multimodal image input (vision routing)
 

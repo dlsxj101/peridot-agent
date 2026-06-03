@@ -5,9 +5,21 @@
 //! grammar (which rejects JSX `<tags>` as comparison operators).
 
 use crate::{
-    LanguageSymbols, Reference, Symbol, SymbolKind, collect_references_by_kind, field_name, parse,
-    symbol_at,
+    LanguageSymbols, LocalBinding, Reference, Symbol, SymbolKind, collect_references_by_kind,
+    field_name, first_descendant_node, local_binding, nearest_ancestor, parse, symbol_at,
+    walk_nodes,
 };
+
+/// Node kinds that introduce a value scope a parameter governs.
+const TS_FUNCTION_SCOPES: &[&str] = &[
+    "function_declaration",
+    "generator_function_declaration",
+    "function_expression",
+    "generator_function",
+    "arrow_function",
+    "method_definition",
+    "function_signature",
+];
 
 /// TypeScript / JavaScript symbol extraction.
 #[derive(Debug, Clone, Copy)]
@@ -82,6 +94,47 @@ impl LanguageSymbols for TypeScriptSymbols {
             &mut refs,
         );
         refs
+    }
+
+    fn local_bindings(&self, source: &str, name: &str) -> Vec<LocalBinding> {
+        let Some(tree) = parse(&self.language(), source) else {
+            return Vec::new();
+        };
+        let mut bindings = Vec::new();
+        walk_nodes(tree.root_node(), &mut |node| match node.kind() {
+            // `function f(foo)`, `(foo) => …`, method params: a parameter binds
+            // for its whole function.
+            "required_parameter" | "optional_parameter" => {
+                if let Some(token) = first_descendant_node(node, "identifier")
+                    && token.utf8_text(source.as_bytes()) == Ok(name)
+                    && let Some(scope) = nearest_ancestor(node, TS_FUNCTION_SCOPES)
+                {
+                    bindings.push(local_binding(&token, &scope));
+                }
+            }
+            // Bare single arrow param `foo => …`.
+            "arrow_function" => {
+                if let Some(param) = node.child_by_field_name("parameter")
+                    && param.kind() == "identifier"
+                    && param.utf8_text(source.as_bytes()) == Ok(name)
+                {
+                    bindings.push(local_binding(&param, &node));
+                }
+            }
+            // `let`/`const`/`var foo = …` governs the rest of its enclosing
+            // block; module-level declarations (no block) are module symbols.
+            "variable_declarator" => {
+                if let Some(target) = node.child_by_field_name("name")
+                    && target.kind() == "identifier"
+                    && target.utf8_text(source.as_bytes()) == Ok(name)
+                    && let Some(scope) = nearest_ancestor(node, &["statement_block"])
+                {
+                    bindings.push(local_binding(&target, &scope));
+                }
+            }
+            _ => {}
+        });
+        bindings
     }
 }
 
