@@ -5,6 +5,7 @@ mod git;
 pub(crate) mod plan;
 pub(crate) mod shell;
 mod skill;
+mod symbol_cache;
 mod verify;
 mod web;
 
