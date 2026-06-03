@@ -1,4 +1,5 @@
 import type { McpServerSummary } from '../src/types';
+import { t, tf } from './i18n';
 
 export interface McpContextPill {
   label: string;
@@ -22,8 +23,10 @@ export function mcpContextPill(servers: McpServerSummary[] | undefined): McpCont
   const disconnected = normalized.filter((server) => server.connected === false).length;
   const totalTools = normalized.reduce((total, server) => total + (server.toolCount ?? 0), 0);
   const hasDisconnected = disconnected > 0;
-  const status = knownConnections.length > 0 ? `${connected}/${knownConnections.length} up` : `${normalized.length} configured`;
-  const tools = totalTools > 0 ? ` · ${totalTools} tools` : '';
+  const status = knownConnections.length > 0
+    ? tf('{up}/{known} up', '{up}/{known} 연결됨', { up: connected, known: knownConnections.length })
+    : tf('{count} configured', '{count}개 구성됨', { count: normalized.length });
+  const tools = totalTools > 0 ? tf(' · {count} tools', ' · 도구 {count}개', { count: totalTools }) : '';
 
   return {
     label: `MCP ${status}${tools}`,
@@ -40,8 +43,8 @@ function mcpServerTitleLine(server: {
 }): string {
   const details = [
     server.transport,
-    typeof server.toolCount === 'number' ? `${server.toolCount} tools` : undefined,
-    server.connected === true ? 'connected' : server.connected === false ? 'disconnected' : undefined,
+    typeof server.toolCount === 'number' ? tf('{count} tools', '도구 {count}개', { count: server.toolCount }) : undefined,
+    server.connected === true ? t('connected', '연결됨') : server.connected === false ? t('disconnected', '연결 끊김') : undefined,
   ].filter(Boolean);
   return details.length > 0 ? `${server.name}: ${details.join(', ')}` : server.name;
 }
