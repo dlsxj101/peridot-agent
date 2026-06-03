@@ -2159,7 +2159,7 @@ async function markCopied(button: HTMLElement, text: string): Promise<void> {
   button.classList.add('copied');
   button.innerHTML = iconSvg('check');
   button.title = t('Copied', '복사됨');
-  button.setAttribute('aria-label', 'Copied');
+  button.setAttribute('aria-label', t('Copied', '복사됨'));
   setTimeout(() => {
     button.classList.remove('copied');
     button.innerHTML = iconSvg('copy');
@@ -2228,7 +2228,7 @@ function linkifyFilePaths(root: HTMLElement): void {
       link.className = 'link-button file-link inline-file-link';
       link.type = 'button';
       link.textContent = fullMatch;
-      link.title = line ? `Open ${path}:${line}` : `Open ${path}`;
+      link.title = line ? tf('Open {path}:{line}', '{path}:{line} 열기', { path, line }) : tf('Open {path}', '{path} 열기', { path });
       link.addEventListener('click', (event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -2385,7 +2385,7 @@ function renderFilePathButton(
 ): HTMLElement {
   const button = el('button', `link-button file-link ${className}`, path);
   button.type = 'button';
-  button.title = line ? `Open ${path}:${line}` : `Open ${path}`;
+  button.title = line ? tf('Open {path}:{line}', '{path}:{line} 열기', { path, line }) : tf('Open {path}', '{path} 열기', { path });
   button.addEventListener('click', (event) => {
     event.preventDefault();
     event.stopPropagation();
@@ -2482,7 +2482,10 @@ function renderCompactionDetails(snapshot: CompactionSnapshotView): HTMLElement 
     el(
       'span',
       'compaction-summary-counts',
-      `${snapshot.filesRead.length + snapshot.filesChanged.length} files · ${snapshot.decisions.length} decisions`,
+      tf('{files} files · {decisions} decisions', '파일 {files}개 · 결정 {decisions}개', {
+        files: snapshot.filesRead.length + snapshot.filesChanged.length,
+        decisions: snapshot.decisions.length,
+      }),
     ),
   );
   details.append(summary);
@@ -2492,12 +2495,12 @@ function renderCompactionDetails(snapshot: CompactionSnapshotView): HTMLElement 
     body.append(el('div', 'compaction-narrative', snapshot.narrative));
   }
   const sections = [
-    ['Decisions', snapshot.decisions],
+    [t('Decisions', '결정'), snapshot.decisions],
     [t('Files read', '읽은 파일'), snapshot.filesRead],
     [t('Files changed', '변경된 파일'), snapshot.filesChanged],
-    ['Verifications', snapshot.verifications],
+    [t('Verifications', '검증'), snapshot.verifications],
     [t('Open todos', '열린 할 일'), snapshot.openTodos],
-    ['Approvals', snapshot.approvals],
+    [t('Approvals', '승인'), snapshot.approvals],
     [t('Untrusted inputs', '신뢰할 수 없는 입력'), snapshot.untrustedInputs],
   ] as const;
   for (const [title, items] of sections) {
@@ -2561,7 +2564,7 @@ function renderApprovalBubble(item: TranscriptItem): HTMLElement {
   if (typeof item.before === 'string' || typeof item.after === 'string') {
     wrap.append(renderUnifiedDiff(item.before ?? '', item.after ?? '', item.path));
     if (item.path) {
-      const openLink = el('button', 'link-button file-link', `Open ${item.path}`);
+      const openLink = el('button', 'link-button file-link', tf('Open {path}', '{path} 열기', { path: item.path }));
       openLink.type = 'button';
       openLink.addEventListener('click', () =>
         vscode.postMessage({ type: 'openFile', path: item.path as string }),
@@ -2857,7 +2860,7 @@ function renderCommandBlock(item: TranscriptItem): HTMLElement {
   }
   if (typeof result?.diff === 'string') {
     const pre = el('pre', 'command-code');
-    pre.innerHTML = highlightLite(result.diff.trim() || '(no changes)');
+    pre.innerHTML = highlightLite(result.diff.trim() || t('(no changes)', '(변경 없음)'));
     wrap.append(pre);
   }
   if (Array.isArray(result?.items) && result.items.length > 0) {
@@ -2875,14 +2878,14 @@ function renderCommandBlock(item: TranscriptItem): HTMLElement {
         typeof row.tokens === 'number' ? `${formatTokens(row.tokens)}` : '',
         row.transport,
         typeof (row.tool_count ?? row.toolCount) === 'number'
-          ? `${row.tool_count ?? row.toolCount} tool(s)`
+          ? tf('{count} tool(s)', '도구 {count}개', { count: row.tool_count ?? row.toolCount ?? 0 })
           : '',
         typeof row.connected === 'boolean'
           ? row.connected
-            ? 'connected'
-            : 'disconnected'
+            ? t('connected', '연결됨')
+            : t('disconnected', '연결 끊김')
           : '',
-        typeof row.turn_id === 'number' ? `turn ${row.turn_id}` : '',
+        typeof row.turn_id === 'number' ? tf('turn {id}', '턴 {id}', { id: row.turn_id }) : '',
       ].filter(Boolean);
       if (meta.length > 0) line.append(el('span', 'command-row-meta', meta.join(' · ')));
       if (row.detail) line.append(el('span', 'command-row-detail', row.detail));
@@ -2906,30 +2909,30 @@ function renderAttachmentBlock(item: TranscriptItem): HTMLElement {
   const wrap = el('section', 'command-block attachment-block');
   const header = el('div', 'attachment-header');
   const title = el('div', 'attachment-title');
-  title.append(el('span', 'command-title', result?.title ?? 'Attachment'));
+  title.append(el('span', 'command-title', result?.title ?? t('Attachment', '첨부')));
   const chips = el('div', 'attachment-chips');
   chips.append(el('span', 'command-chip', inlined ? t('inlined', '인라인') : t('placeholder', '플레이스홀더')));
-  if (bytes !== undefined) chips.append(el('span', 'command-chip', `${bytes} bytes`));
+  if (bytes !== undefined) chips.append(el('span', 'command-chip', tf('{bytes} bytes', '{bytes} 바이트', { bytes })));
   chips.append(el('span', 'command-chip', mediaType));
   title.append(chips);
   header.append(title);
 
   const actions = el('div', 'attachment-actions');
-  const open = iconButton('open', `Open ${path}`, () => {
+  const open = iconButton('open', tf('Open {path}', '{path} 열기', { path }), () => {
     vscode.postMessage({ type: 'openFile', path });
   });
   actions.append(open);
-  const copyPath = iconButton('copy', `Copy ${path}`, () => {
+  const copyPath = iconButton('copy', tf('Copy {path}', '{path} 복사', { path }), () => {
     void markCopied(copyPath, path);
   });
   actions.append(copyPath);
   if (content !== undefined) {
-    const copyContent = iconButton('copy', `Copy attached content from ${path}`, () => {
+    const copyContent = iconButton('copy', tf('Copy attached content from {path}', '{path}의 첨부 내용 복사', { path }), () => {
       void markCopied(copyContent, content);
     });
     actions.append(copyContent);
   }
-  actions.append(iconButton('remove', `Detach ${path}`, () => {
+  actions.append(iconButton('remove', tf('Detach {path}', '{path} 분리', { path }), () => {
     vscode.postMessage({ type: 'detachAttachment', path });
   }));
   header.append(actions);
@@ -2966,8 +2969,8 @@ function renderDetachBlock(item: TranscriptItem): HTMLElement {
   const chips = el('div', 'attachment-chips');
   const removed = result?.removed_count ?? result?.removedCount ?? 0;
   const remaining = result?.remaining_count ?? result?.remainingCount;
-  chips.append(el('span', 'command-chip', `${removed} removed`));
-  if (typeof remaining === 'number') chips.append(el('span', 'command-chip', `${remaining} remaining`));
+  chips.append(el('span', 'command-chip', tf('{removed} removed', '{removed}개 제거됨', { removed })));
+  if (typeof remaining === 'number') chips.append(el('span', 'command-chip', tf('{remaining} remaining', '{remaining}개 남음', { remaining })));
   title.append(chips);
   header.append(title);
   wrap.append(header);
@@ -2982,7 +2985,7 @@ function renderDetachBlock(item: TranscriptItem): HTMLElement {
   }
   const remainingItems = attachmentsFromResult(result);
   if (remainingItems.length > 0) {
-    const remainingTitle = el('div', 'codemap-group-title', `Remaining · ${remainingItems.length}`);
+    const remainingTitle = el('div', 'codemap-group-title', tf('Remaining · {count}', '남음 · {count}', { count: remainingItems.length }));
     wrap.append(remainingTitle);
     const remainingList = el('div', 'attachment-list');
     remainingItems.forEach((attachment) => {
@@ -2995,13 +2998,13 @@ function renderDetachBlock(item: TranscriptItem): HTMLElement {
 
 function renderRemovedAttachmentRow(attachment: AttachmentView): HTMLElement {
   const path = attachment.path ?? 'attachment';
-  const bytes = typeof attachment.bytes === 'number' ? `${attachment.bytes} bytes` : '';
+  const bytes = typeof attachment.bytes === 'number' ? tf('{bytes} bytes', '{bytes} 바이트', { bytes: attachment.bytes }) : '';
   const mediaType = attachment.media_type ?? attachment.mediaType ?? 'text/plain';
   const row = el('div', 'attachment-inventory-row attachment-removed-row');
   const main = el('div', 'attachment-row-main');
   const top = el('div', 'attachment-path-row');
   top.append(el('span', 'command-row-label', path));
-  const meta = [bytes, mediaType, 'removed'].filter(Boolean).join(' · ');
+  const meta = [bytes, mediaType, t('removed', '제거됨')].filter(Boolean).join(' · ');
   if (meta) top.append(el('span', 'command-row-meta', meta));
   main.append(top);
   row.append(main);
@@ -3016,7 +3019,7 @@ function renderAttachmentInventoryBlock(item: TranscriptItem): HTMLElement {
   const title = el('div', 'attachment-title');
   title.append(el('span', 'command-title', result?.title ?? t('Session Attachments', '세션 첨부')));
   const chips = el('div', 'attachment-chips');
-  chips.append(el('span', 'command-chip', `${result?.total ?? attachments.length} files`));
+  chips.append(el('span', 'command-chip', tf('{count} files', '파일 {count}개', { count: result?.total ?? attachments.length })));
   title.append(chips);
   header.append(title);
   wrap.append(header);
@@ -3035,7 +3038,7 @@ function renderAttachmentInventoryBlock(item: TranscriptItem): HTMLElement {
 
 function renderAttachmentInventoryRow(attachment: AttachmentView): HTMLElement {
   const path = attachment.path ?? 'attachment';
-  const bytes = typeof attachment.bytes === 'number' ? `${attachment.bytes} bytes` : '';
+  const bytes = typeof attachment.bytes === 'number' ? tf('{bytes} bytes', '{bytes} 바이트', { bytes: attachment.bytes }) : '';
   const mediaType = attachment.media_type ?? attachment.mediaType ?? 'text/plain';
   const mode = attachment.inlined ? t('inlined', '인라인') : t('placeholder', '플레이스홀더');
   const content = typeof attachment.content === 'string' ? attachment.content : undefined;
@@ -3049,20 +3052,20 @@ function renderAttachmentInventoryRow(attachment: AttachmentView): HTMLElement {
   main.append(top);
   row.append(main);
   const actions = el('div', 'attachment-actions');
-  actions.append(iconButton('open', `Open ${path}`, () => {
+  actions.append(iconButton('open', tf('Open {path}', '{path} 열기', { path }), () => {
     vscode.postMessage({ type: 'openFile', path });
   }));
-  const copyPath = iconButton('copy', `Copy ${path}`, () => {
+  const copyPath = iconButton('copy', tf('Copy {path}', '{path} 복사', { path }), () => {
     void markCopied(copyPath, path);
   });
   actions.append(copyPath);
   if (content !== undefined) {
-    const copyContent = iconButton('copy', `Copy attached content from ${path}`, () => {
+    const copyContent = iconButton('copy', tf('Copy attached content from {path}', '{path}의 첨부 내용 복사', { path }), () => {
       void markCopied(copyContent, content);
     });
     actions.append(copyContent);
   }
-  actions.append(iconButton('remove', `Detach ${path}`, () => {
+  actions.append(iconButton('remove', tf('Detach {path}', '{path} 분리', { path }), () => {
     vscode.postMessage({ type: 'detachAttachment', path });
   }));
   row.append(actions);
@@ -3086,10 +3089,10 @@ function renderSessionExportBlock(item: TranscriptItem): HTMLElement {
   header.append(title);
   if (destination) {
     const actions = el('div', 'attachment-actions');
-    actions.append(iconButton('open', `Open ${destination}`, () => {
+    actions.append(iconButton('open', tf('Open {path}', '{path} 열기', { path: destination }), () => {
       vscode.postMessage({ type: 'openPath', path: destination });
     }));
-    actions.append(iconButton('copy', `Copy ${destination}`, () => {
+    actions.append(iconButton('copy', tf('Copy {path}', '{path} 복사', { path: destination }), () => {
       vscode.postMessage({ type: 'copyText', text: destination });
     }));
     header.append(actions);
@@ -3106,7 +3109,7 @@ function renderSessionExportBlock(item: TranscriptItem): HTMLElement {
       top.append(el('span', 'attachment-path', artifact.path ?? 'artifact'));
       const meta = [
         artifact.class,
-        typeof artifact.count === 'number' ? `${artifact.count} entries` : '',
+        typeof artifact.count === 'number' ? tf('{count} entries', '항목 {count}개', { count: artifact.count }) : '',
       ].filter(Boolean);
       if (meta.length > 0) top.append(el('span', 'attachment-meta', meta.join(' · ')));
       main.append(top);
@@ -3117,7 +3120,7 @@ function renderSessionExportBlock(item: TranscriptItem): HTMLElement {
   }
   if (fullCopyFiles.length > 0) {
     const group = el('div', 'attachment-list');
-    group.append(el('div', 'codemap-group-title', `Full Copy Entries · ${fullCopyFiles.length}`));
+    group.append(el('div', 'codemap-group-title', tf('Full Copy Entries · {count}', '전체 복사 항목 · {count}', { count: fullCopyFiles.length })));
     fullCopyFiles.forEach((file) => {
       const row = el('div', 'attachment-inventory-row');
       const main = el('div', 'attachment-row-main');
@@ -3145,7 +3148,7 @@ function renderSessionImportBlock(item: TranscriptItem): HTMLElement {
   const title = el('div', 'attachment-title');
   title.append(el('span', 'command-title', result?.title ?? t('Session Artifact Import', '세션 아티팩트 가져오기')));
   const chips = el('div', 'attachment-chips');
-  chips.append(el('span', 'command-chip', `${files.length || result?.total || 0} files`));
+  chips.append(el('span', 'command-chip', tf('{count} files', '파일 {count}개', { count: files.length || result?.total || 0 })));
   if (sessionId) chips.append(el('span', 'command-chip', sessionId));
   sessionContextSummaryChips(sessionContextSummary(result)).forEach((chip) => {
     chips.append(el('span', 'command-chip', chip));
@@ -3154,18 +3157,18 @@ function renderSessionImportBlock(item: TranscriptItem): HTMLElement {
   header.append(title);
   if (destination) {
     const actions = el('div', 'attachment-actions');
-    actions.append(iconButton('open', `Open ${destination}`, () => {
+    actions.append(iconButton('open', tf('Open {path}', '{path} 열기', { path: destination }), () => {
       vscode.postMessage({ type: 'openPath', path: destination });
     }));
-    actions.append(iconButton('copy', `Copy ${destination}`, () => {
+    actions.append(iconButton('copy', tf('Copy {path}', '{path} 복사', { path: destination }), () => {
       vscode.postMessage({ type: 'copyText', text: destination });
     }));
     header.append(actions);
   }
   wrap.append(header);
   if (result?.message) wrap.append(el('div', 'command-message', result.message));
-  if (source) wrap.append(el('div', 'attachment-path-row', `from ${source}`));
-  if (destination) wrap.append(el('div', 'attachment-path-row', `to ${destination}`));
+  if (source) wrap.append(el('div', 'attachment-path-row', tf('from {source}', '출처: {source}', { source })));
+  if (destination) wrap.append(el('div', 'attachment-path-row', tf('to {destination}', '대상: {destination}', { destination })));
   appendSessionContextDetails(wrap, result);
   if (files.length > 0) {
     const list = el('div', 'attachment-list');
@@ -3220,10 +3223,10 @@ function renderSessionContextAttachmentRow(path: string): HTMLElement {
   main.append(top);
   row.append(main);
   const actions = el('div', 'attachment-actions');
-  actions.append(iconButton('open', `Open ${path}`, () => {
+  actions.append(iconButton('open', tf('Open {path}', '{path} 열기', { path }), () => {
     vscode.postMessage({ type: 'openFile', path });
   }));
-  const copy = iconButton('copy', `Copy ${path}`, () => {
+  const copy = iconButton('copy', tf('Copy {path}', '{path} 복사', { path }), () => {
     void markCopied(copy, path);
   });
   actions.append(copy);
@@ -3247,10 +3250,10 @@ function renderSessionLocateBlock(item: TranscriptItem): HTMLElement {
   header.append(title);
   if (directory) {
     const actions = el('div', 'attachment-actions');
-    actions.append(iconButton('open', `Open ${directory}`, () => {
+    actions.append(iconButton('open', tf('Open {path}', '{path} 열기', { path: directory }), () => {
       vscode.postMessage({ type: 'openPath', path: directory });
     }));
-    actions.append(iconButton('copy', `Copy ${directory}`, () => {
+    actions.append(iconButton('copy', tf('Copy {path}', '{path} 복사', { path: directory }), () => {
       vscode.postMessage({ type: 'copyText', text: directory });
     }));
     header.append(actions);
@@ -3269,7 +3272,7 @@ function renderNotesBlock(item: TranscriptItem): HTMLElement {
   const title = el('div', 'attachment-title');
   title.append(el('span', 'command-title', result?.title ?? t('Session Notes', '세션 노트')));
   const chips = el('div', 'attachment-chips');
-  if (typeof result?.total === 'number') chips.append(el('span', 'command-chip', `${result.total} total`));
+  if (typeof result?.total === 'number') chips.append(el('span', 'command-chip', tf('{count} total', '총 {count}개', { count: result.total })));
   if (result?.session_id) chips.append(el('span', 'command-chip', result.session_id));
   title.append(chips);
   header.append(title);
@@ -3311,9 +3314,11 @@ function renderSkillsBlock(item: TranscriptItem): HTMLElement {
   const wrap = el('section', 'command-block attachment-block');
   const header = el('div', 'attachment-header');
   const title = el('div', 'attachment-title');
-  title.append(el('span', 'command-title', result?.title ?? 'Skills'));
+  title.append(el('span', 'command-title', result?.title ?? t('Skills', '스킬')));
   const chips = el('div', 'attachment-chips');
-  chips.append(el('span', 'command-chip', `${result?.total ?? skills.length} ${archivedList ? 'archived' : 'active'}`));
+  chips.append(el('span', 'command-chip', archivedList
+    ? tf('{count} archived', '보관 {count}개', { count: result?.total ?? skills.length })
+    : tf('{count} active', '활성 {count}개', { count: result?.total ?? skills.length })));
   title.append(chips);
   header.append(title);
   wrap.append(header);
@@ -3338,13 +3343,13 @@ function renderSkillsBlock(item: TranscriptItem): HTMLElement {
     top.append(el('span', 'command-row-label', label));
     const meta = [
       skill.scope,
-      archived ? 'archived' : '',
-      skill.pinned ? 'pinned' : '',
+      archived ? t('archived', '보관됨') : '',
+      skill.pinned ? t('pinned', '고정됨') : '',
       typeof archivedAt === 'number' && archivedAt > 0
-        ? `archived ${archivedAt}`
+        ? tf('archived {at}', '보관 {at}', { at: archivedAt })
         : '',
       typeof lastUsed === 'number' && lastUsed > 0
-        ? `used ${lastUsed}`
+        ? tf('used {at}', '사용 {at}', { at: lastUsed })
         : '',
     ].filter(Boolean).join(' · ');
     if (meta) top.append(el('span', 'command-row-meta', meta));
@@ -3355,30 +3360,30 @@ function renderSkillsBlock(item: TranscriptItem): HTMLElement {
     const command = String(label);
     const name = command.replace(/^\/+/, '');
     if (archived) {
-      actions.append(iconButton('open', `Show ${command}`, () => {
+      actions.append(iconButton('open', tf('Show {command}', '{command} 보기', { command }), () => {
         vscode.postMessage({ type: 'showSkill', name });
       }));
-      actions.append(iconButton('restore', `Restore ${command}`, () => {
+      actions.append(iconButton('restore', tf('Restore {command}', '{command} 복원', { command }), () => {
         vscode.postMessage({ type: 'restoreSkill', name });
       }));
     } else {
-      actions.append(iconButton('send', `Use ${command}`, () => {
+      actions.append(iconButton('send', tf('Use {command}', '{command} 사용', { command }), () => {
         vscode.postMessage({ type: 'useSkill', name });
       }));
-      actions.append(iconButton('open', `Show ${command}`, () => {
+      actions.append(iconButton('open', tf('Show {command}', '{command} 보기', { command }), () => {
         vscode.postMessage({ type: 'showSkill', name });
       }));
-      const pin = iconButton(skill.pinned ? 'unpin' : 'pin', skill.pinned ? `Unpin ${command}` : `Pin ${command}`, () => {
+      const pin = iconButton(skill.pinned ? 'unpin' : 'pin', skill.pinned ? tf('Unpin {command}', '{command} 고정 해제', { command }) : tf('Pin {command}', '{command} 고정', { command }), () => {
         vscode.postMessage({ type: 'toggleSkillPin', name, pinned: !skill.pinned });
       });
       actions.append(pin);
     }
-    const copy = iconButton('copy', `Copy ${command}`, () => {
+    const copy = iconButton('copy', tf('Copy {command}', '{command} 복사', { command }), () => {
       void markCopied(copy, command);
     });
     actions.append(copy);
     if (!archived) {
-      actions.append(iconButton('archive', `Archive ${command}`, () => {
+      actions.append(iconButton('archive', tf('Archive {command}', '{command} 보관', { command }), () => {
         vscode.postMessage({ type: 'archiveSkill', name });
       }));
     }
@@ -3409,10 +3414,10 @@ function renderSkillDetailBlock(item: TranscriptItem): HTMLElement {
   if (archived) chips.append(el('span', 'command-chip', t('archived', '보관됨')));
   if (result?.pinned) chips.append(el('span', 'command-chip', t('pinned', '고정됨')));
   if (typeof archivedAt === 'number' && archivedAt > 0) {
-    chips.append(el('span', 'command-chip', `archived ${archivedAt}`));
+    chips.append(el('span', 'command-chip', tf('archived {at}', '보관 {at}', { at: archivedAt })));
   }
   if (typeof lastUsed === 'number' && lastUsed > 0) {
-    chips.append(el('span', 'command-chip', `used ${lastUsed}`));
+    chips.append(el('span', 'command-chip', tf('used {at}', '사용 {at}', { at: lastUsed })));
   }
   title.append(chips);
   header.append(title);
@@ -3420,26 +3425,26 @@ function renderSkillDetailBlock(item: TranscriptItem): HTMLElement {
   const command = String(label);
   const name = command.replace(/^\/+/, '');
   if (archived) {
-    actions.append(iconButton('restore', `Restore ${command}`, () => {
+    actions.append(iconButton('restore', tf('Restore {command}', '{command} 복원', { command }), () => {
       vscode.postMessage({ type: 'restoreSkill', name });
     }));
   } else {
-    actions.append(iconButton('send', `Use ${command}`, () => {
+    actions.append(iconButton('send', tf('Use {command}', '{command} 사용', { command }), () => {
       vscode.postMessage({ type: 'useSkill', name });
     }));
   }
-  const copy = iconButton('copy', `Copy ${command}`, () => {
+  const copy = iconButton('copy', tf('Copy {command}', '{command} 복사', { command }), () => {
     void markCopied(copy, command);
   });
   actions.append(copy);
   if (body) {
-    const copyBody = iconButton('copy', `Copy ${command} body`, () => {
+    const copyBody = iconButton('copy', tf('Copy {command} body', '{command} 본문 복사', { command }), () => {
       void markCopied(copyBody, body);
     });
     actions.append(copyBody);
   }
   if (!archived) {
-    actions.append(iconButton('archive', `Archive ${command}`, () => {
+    actions.append(iconButton('archive', tf('Archive {command}', '{command} 보관', { command }), () => {
       vscode.postMessage({ type: 'archiveSkill', name });
     }));
   }
@@ -3447,7 +3452,7 @@ function renderSkillDetailBlock(item: TranscriptItem): HTMLElement {
   wrap.append(header);
   if (result?.detail) wrap.append(el('div', 'command-message', result.detail));
   const pre = el('pre', 'attachment-preview');
-  pre.textContent = body.trim() || '(empty skill body)';
+  pre.textContent = body.trim() || t('(empty skill body)', '(스킬 본문 없음)');
   wrap.append(pre);
   return wrap;
 }
@@ -3511,19 +3516,19 @@ function renderCodeMapBlock(item: TranscriptItem): HTMLElement {
   const title = el('div', 'codemap-title');
   title.append(el('span', 'command-title', result?.title ?? t('Workspace Code Map', '워크스페이스 코드 맵')));
   const chips = el('div', 'codemap-chips');
-  chips.append(el('span', 'command-chip', `${result?.symbol_count ?? symbols.length} symbols`));
-  chips.append(el('span', 'command-chip', `${result?.todo_count ?? todos.length} todos`));
+  chips.append(el('span', 'command-chip', tf('{count} symbols', '심볼 {count}개', { count: result?.symbol_count ?? symbols.length })));
+  chips.append(el('span', 'command-chip', tf('{count} todos', 'TODO {count}개', { count: result?.todo_count ?? todos.length })));
   if (references.length > 0 || typeof result?.reference_count === 'number') {
-    chips.append(el('span', 'command-chip', `${result?.reference_count ?? references.length} refs`));
+    chips.append(el('span', 'command-chip', tf('{count} refs', '참조 {count}개', { count: result?.reference_count ?? references.length })));
   }
   if (typeof result?.walked_files === 'number') {
-    chips.append(el('span', 'command-chip', `${result.walked_files} files`));
+    chips.append(el('span', 'command-chip', tf('{count} files', '파일 {count}개', { count: result.walked_files })));
   }
   if (typeof result?.generated_at_unix === 'number') {
-    chips.append(el('span', 'command-chip', result.refreshed ? 'refreshed' : 'cached'));
+    chips.append(el('span', 'command-chip', result.refreshed ? t('refreshed', '새로고침됨') : t('cached', '캐시됨')));
   }
   if (typeof result?.query === 'string' && result.query.trim().length > 0) {
-    chips.append(el('span', 'command-chip', `query: ${result.query.trim()}`));
+    chips.append(el('span', 'command-chip', tf('query: {query}', '쿼리: {query}', { query: result.query.trim() })));
   }
   title.append(chips);
   header.append(title);
@@ -3548,9 +3553,9 @@ function renderCodeMapBlock(item: TranscriptItem): HTMLElement {
     const todoMatches = todos.filter((row) => codemapRowMatches(row, query));
     const referenceMatches = references.filter((row) => codemapRowMatches(row, query));
     body.replaceChildren();
-    appendCodeMapGroup(body, 'Symbols', symbolMatches);
+    appendCodeMapGroup(body, t('Symbols', '심볼'), symbolMatches);
     appendCodeMapGroup(body, t('TODO Markers', 'TODO 마커'), todoMatches);
-    appendCodeMapGroup(body, 'References', referenceMatches);
+    appendCodeMapGroup(body, t('References', '참조'), referenceMatches);
     if (symbolMatches.length === 0 && todoMatches.length === 0 && referenceMatches.length === 0) {
       body.append(el('div', 'codemap-empty', t('No code map entries match this filter.', '이 필터에 맞는 코드 맵 항목이 없습니다.')));
     }
@@ -3571,19 +3576,19 @@ function renderCodeMapStatusBlock(item: TranscriptItem): HTMLElement {
   const title = el('div', 'codemap-title');
   title.append(el('span', 'command-title', result?.title ?? t('Workspace Code Map Status', '워크스페이스 코드 맵 상태')));
   const chips = el('div', 'codemap-chips');
-  chips.append(el('span', 'command-chip', result?.index_exists ? 'indexed' : 'missing'));
-  chips.append(el('span', 'command-chip', result?.stale ? 'stale' : 'fresh'));
+  chips.append(el('span', 'command-chip', result?.index_exists ? t('indexed', '인덱싱됨') : t('missing', '없음')));
+  chips.append(el('span', 'command-chip', result?.stale ? t('stale', '오래됨') : t('fresh', '최신')));
   if (typeof result?.source_files === 'number') {
-    chips.append(el('span', 'command-chip', `${result.source_files} source files`));
+    chips.append(el('span', 'command-chip', tf('{count} source files', '소스 파일 {count}개', { count: result.source_files })));
   }
   if (typeof result?.walked_files === 'number') {
-    chips.append(el('span', 'command-chip', `${result.walked_files} indexed files`));
+    chips.append(el('span', 'command-chip', tf('{count} indexed files', '인덱싱된 파일 {count}개', { count: result.walked_files })));
   }
   if (typeof result?.symbol_count === 'number') {
-    chips.append(el('span', 'command-chip', `${result.symbol_count} symbols`));
+    chips.append(el('span', 'command-chip', tf('{count} symbols', '심볼 {count}개', { count: result.symbol_count })));
   }
   if (typeof result?.todo_count === 'number') {
-    chips.append(el('span', 'command-chip', `${result.todo_count} todos`));
+    chips.append(el('span', 'command-chip', tf('{count} todos', 'TODO {count}개', { count: result.todo_count })));
   }
   title.append(chips);
   header.append(title);
@@ -3624,7 +3629,7 @@ function renderCodeMapRow(row: CommandResultItem): HTMLElement {
   const meta = [
     typeof row.line === 'number' ? `:${row.line}` : '',
     row.transport,
-    typeof row.turn_id === 'number' ? `turn ${row.turn_id}` : '',
+    typeof row.turn_id === 'number' ? tf('turn {id}', '턴 {id}', { id: row.turn_id }) : '',
   ].filter(Boolean);
   if (meta.length > 0) top.append(el('span', 'command-row-meta', meta.join(' · ')));
   main.append(top);
@@ -3634,9 +3639,9 @@ function renderCodeMapRow(row: CommandResultItem): HTMLElement {
 }
 
 function codemapSourceLabel(source?: string): string {
-  if (source === 'todo') return 'todo';
-  if (source === 'reference') return 'ref';
-  return 'symbol';
+  if (source === 'todo') return t('todo', 'TODO');
+  if (source === 'reference') return t('ref', '참조');
+  return t('symbol', '심볼');
 }
 
 function codemapRowMatches(row: CommandResultItem, query: string): boolean {
@@ -3679,8 +3684,8 @@ function renderBranchPicker(s: SidebarState): HTMLElement {
         options: currentOptionsFromDom(),
       });
     });
-    row.append(el('span', 'branch-picker-row-title', item.label ?? `turn ${turnId ?? '?'}`));
-    const meta = [item.source, typeof turnId === 'number' ? `turn ${turnId}` : '']
+    row.append(el('span', 'branch-picker-row-title', item.label ?? tf('turn {id}', '턴 {id}', { id: turnId ?? '?' })));
+    const meta = [item.source, typeof turnId === 'number' ? tf('turn {id}', '턴 {id}', { id: turnId }) : '']
       .filter(Boolean)
       .join(' · ');
     if (meta) row.append(el('span', 'branch-picker-row-meta', meta));
