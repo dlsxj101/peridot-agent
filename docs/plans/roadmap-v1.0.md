@@ -124,11 +124,24 @@ Reviewed at `claude/code-review-roadmap-tx5SA`, workspace `0.8.14`.
   `#[cfg(test)]` so the crate test module's `use super::render::*` still
   resolves it. Behavior-preserving: fmt/clippy clean and the TUI snapshot
   tests pass.
+- **Context summarisation carve-out**: `peridot-context/src/lib.rs`
+  (2,618 lines) dropped to ~2,219 by moving the deterministic
+  summarisation / tool-output digest cluster (19 pure functions:
+  `summarize_entries`, `compact_fragment`, the `digest_*` / `looks_like_*` /
+  `summarize_*` content-shape helpers, `render_untrusted_content`,
+  `append_evidence_footer`, `format_entries_for_summary`, the LLM-recap
+  renderers, and `source_name`) into a new `summarize.rs`. The functions
+  are `pub(crate)` and re-exported into `lib.rs` with `use summarize::*;`,
+  so `ContextManager` call sites and the `#[cfg(test)]` module's
+  `use super::*` resolve unchanged. `ContextManager` keeps lifecycle and
+  the message post-processing (`merge_consecutive_roles`,
+  `repair_tool_call_pairs`, …) stays in `lib.rs`. Behavior-preserving:
+  fmt/clippy clean, the full peridot-context suite (47 tests) passes.
 - **Plan for the rest**: stays opportunistic, lower priority than the
   feature track. Split `state.rs` (per-domain state), the remaining
-  `render` transcript/markdown helpers, `input.rs`, `context/lib.rs`, and
-  `agent.rs` by responsibility **when touching the area for other work**,
-  to avoid churn for its own sake.
+  `render` transcript/markdown helpers, `input.rs`, the rest of
+  `context/lib.rs`, and `agent.rs` by responsibility **when touching the
+  area for other work**, to avoid churn for its own sake.
 
 ### C4. Audit non-test `unwrap`/`expect` on the daemon path
 

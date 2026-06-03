@@ -30,6 +30,14 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
   `peridot_symbols::supports_extension`, fixing a stale hard-coded allowlist
   that had been excluding already-supported Ruby, C#, PHP, Bash, Scala, and
   Lua files from the workspace symbol walk and watcher pre-warm.
+
+### Internal — code health (C3)
+
+- **`peridot-context/src/lib.rs` carved down** (~2,618 → ~2,219 lines): the
+  deterministic context-summarisation and tool-output digest helpers moved
+  into a new `summarize.rs` submodule, leaving `ContextManager` focused on
+  lifecycle. No behavior change; the public API and the full test suite are
+  unchanged.
 - **`symbol_references` rows now carry an enclosing `scope`** — the qualified
   name (`Container::method`, else `name`) of the function/method/type a usage
   lives in, computed from the outline ranges. A first step toward scope
