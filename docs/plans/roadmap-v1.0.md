@@ -137,6 +137,17 @@ Reviewed at `claude/code-review-roadmap-tx5SA`, workspace `0.8.14`.
   the message post-processing (`merge_consecutive_roles`,
   `repair_tool_call_pairs`, …) stays in `lib.rs`. Behavior-preserving:
   fmt/clippy clean, the full peridot-context suite (47 tests) passes.
+- **Verifier-failure carve-out**: `peridot-core/src/agent.rs` (3,001 lines)
+  dropped to ~2,750 by moving the verifier-failure tracking cluster
+  (`VerifyFailureState`, `update_verify_failure_state`, the pure
+  `verify_failure_signature` / `extract_verify_failure_hints` /
+  `looks_like_path_with_line` parsers, and `verify_failure_directive`) plus its
+  five unit tests into a new `verify_failure.rs`. The only cross-module
+  consumer (`loop_policy/auto_fix.rs`) now imports them from
+  `crate::verify_failure`. Behavior-preserving: fmt/clippy clean, the full
+  peridot-core suite (153 tests) passes. This was the F2 work area (vision
+  routing lives in `agent.rs`), so the split followed the "carve when touching"
+  rule.
 - **Plan for the rest**: stays opportunistic, lower priority than the
   feature track. Split `state.rs` (per-domain state), the remaining
   `render` transcript/markdown helpers, `input.rs`, the rest of

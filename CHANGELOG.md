@@ -52,6 +52,10 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
   into a new `summarize.rs` submodule, leaving `ContextManager` focused on
   lifecycle. No behavior change; the public API and the full test suite are
   unchanged.
+- **`peridot-core/src/agent.rs` carved down** (~3,001 → ~2,750 lines): the
+  verifier-failure tracking + auto-fix-directive cluster moved into a new
+  `verify_failure.rs` submodule (with its five unit tests). No behavior change;
+  the auto-fix loop policy imports the moved items from `crate::verify_failure`.
 - **`symbol_references` now resolves local bindings (shadowing).** Each row
   carries a `binding` field: `local_definition` when the occurrence declares a
   parameter or local variable of the searched name, `local` when it resolves to

@@ -14,12 +14,13 @@
 use peridot_common::{AgentPhase, PeriResult};
 use peridot_context::{ContextEntry, ContextSource};
 
-use crate::agent::{
-    VerifyFailureState, transition_phase, update_verify_failure_state, verify_failure_directive,
-};
+use crate::agent::transition_phase;
 use crate::loop_policy::{Decision, LoopPolicy, PolicyCx};
 use crate::recovery::run_recovery_event_hook;
 use crate::requests::{AgentRunEvent, AgentTurnOutcome, StopReason};
+use crate::verify_failure::{
+    VerifyFailureState, update_verify_failure_state, verify_failure_directive,
+};
 
 /// Tracks the most recent `verify_*` failure across turns. When the
 /// model keeps trying the same fix and getting the same failure, the

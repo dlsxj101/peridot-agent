@@ -18,6 +18,7 @@ mod state;
 #[cfg(test)]
 mod tests;
 mod usage;
+mod verify_failure;
 
 pub use agent::{HarnessAgent, ImageTextExtractor};
 pub use complexity::{TaskComplexity, classify_task_complexity};
