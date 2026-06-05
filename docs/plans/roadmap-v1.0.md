@@ -161,11 +161,20 @@ Reviewed at `claude/code-review-roadmap-tx5SA`, workspace `0.8.14`.
   `file_patch`) and its test into a new `checkpoint.rs`. Behavior-preserving:
   fmt/clippy clean, peridot-core suite (156 tests) passes. Net: `agent.rs` went
   from 3,001 → ~2,581 lines across the three F2-adjacent passes.
+- **TUI tool-preview carve-out**: `peridot-tui/src/state.rs` (3,176 lines)
+  dropped to ~3,020 by moving the per-tool transcript preview formatters
+  (`tool_output_preview` / `tool_parameter_preview` and their shell / ripgrep /
+  file-write / file-patch helpers + `preview_lines`) into a new
+  `tool_preview.rs`. The two entry points are `pub(crate)` and `TuiState`
+  imports them; three coverage unit tests were added for the
+  previously-untested formatters. Behavior-preserving: fmt/clippy clean, the
+  full peridot-tui suite incl. snapshot tests (206) passes.
 - **Plan for the rest**: stays opportunistic, lower priority than the
-  feature track. Split `state.rs` (per-domain state), the remaining
-  `render` transcript/markdown helpers, `input.rs`, the rest of
-  `context/lib.rs`, and `agent.rs` by responsibility **when touching the
-  area for other work**, to avoid churn for its own sake.
+  feature track. Split the rest of `state.rs` (per-domain state, the
+  debug/JSON helpers), the remaining `render` transcript/markdown helpers,
+  `input.rs` (the `handle_key_event` / `apply_slash_state_delta` giants), and
+  `context/lib.rs` by responsibility **when touching the area for other work**,
+  to avoid churn for its own sake.
 
 ### C4. Audit non-test `unwrap`/`expect` on the daemon path
 

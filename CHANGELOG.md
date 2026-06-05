@@ -59,6 +59,10 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
   approval-grant matcher moved into a new `approval.rs` submodule (with added
   coverage tests), and the pre-mutation file-checkpoint writer moved into a new
   `checkpoint.rs` submodule. No behavior change.
+- **`peridot-tui/src/state.rs` carved down** (~3,176 → ~3,020 lines): the
+  per-tool transcript preview formatters moved into a new `tool_preview.rs`
+  submodule (with added coverage tests). No behavior change; the snapshot
+  suite is unchanged.
 - **`symbol_references` now resolves local bindings (shadowing).** Each row
   carries a `binding` field: `local_definition` when the occurrence declares a
   parameter or local variable of the searched name, `local` when it resolves to

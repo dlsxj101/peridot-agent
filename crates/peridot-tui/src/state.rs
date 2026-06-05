@@ -1,6 +1,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::*;
+use crate::tool_preview::{tool_output_preview, tool_parameter_preview};
 
 fn current_unix_seconds() -> u64 {
     SystemTime::now()
@@ -2999,145 +3000,6 @@ fn input_byte_index(input: &str, char_index: usize) -> usize {
         .unwrap_or(input.len())
 }
 
-fn tool_output_preview(tool_name: &str, output: &serde_json::Value) -> Vec<String> {
-    match tool_name {
-        "shell_exec" | "shell_readonly" => shell_output_preview(output),
-        "ripgrep_search" => ripgrep_output_preview(output),
-        "file_write" | "file_patch" | "file_read" => file_output_preview(tool_name, output),
-        _ => Vec::new(),
-    }
-}
-
-fn tool_parameter_preview(tool_name: &str, parameters: &serde_json::Value) -> Vec<String> {
-    match tool_name {
-        "shell_exec" | "shell_readonly" => parameters
-            .get("command")
-            .and_then(serde_json::Value::as_str)
-            .map(|command| vec![format!("  command: {command}")])
-            .unwrap_or_default(),
-        "ripgrep_search" => ripgrep_parameter_preview(parameters),
-        "file_patch" => file_patch_parameter_preview(parameters),
-        "file_write" => file_write_parameter_preview(parameters),
-        _ => parameters
-            .get("path")
-            .and_then(serde_json::Value::as_str)
-            .map(|path| vec![format!("  path: {path}")])
-            .unwrap_or_default(),
-    }
-}
-
-fn file_patch_parameter_preview(parameters: &serde_json::Value) -> Vec<String> {
-    let mut lines = Vec::new();
-    if let Some(path) = parameters.get("path").and_then(serde_json::Value::as_str) {
-        lines.push(format!("  path: {path}"));
-    }
-    // The diff bodies themselves arrive as a dedicated `FileDiff` event
-    // after the tool finishes (see `record_file_diff`), so the ToolStart
-    // preview only carries the path. Anything else here would
-    // double-render in the chat alongside the post-execution diff.
-    lines
-}
-
-fn file_write_parameter_preview(parameters: &serde_json::Value) -> Vec<String> {
-    let mut lines = Vec::new();
-    if let Some(path) = parameters.get("path").and_then(serde_json::Value::as_str) {
-        lines.push(format!("  path: {path}"));
-    }
-    if let Some(content) = parameters
-        .get("content")
-        .and_then(serde_json::Value::as_str)
-    {
-        lines.push("  content:".to_string());
-        lines.extend(
-            preview_lines(content, 4)
-                .into_iter()
-                .map(|line| format!("    {line}")),
-        );
-    }
-    lines
-}
-
-fn ripgrep_parameter_preview(parameters: &serde_json::Value) -> Vec<String> {
-    let mut lines = Vec::new();
-    if let Some(query) = parameters.get("query").and_then(serde_json::Value::as_str) {
-        lines.push(format!("  query: {query}"));
-    }
-    if let Some(path) = parameters.get("path").and_then(serde_json::Value::as_str) {
-        lines.push(format!("  path: {path}"));
-    }
-    lines
-}
-
-fn shell_output_preview(output: &serde_json::Value) -> Vec<String> {
-    let mut lines = Vec::new();
-    if let Some(status) = output.get("status") {
-        lines.push(format!("  status: {status}"));
-    }
-    if let Some(mutated) = output
-        .get("workspace_mutated")
-        .and_then(serde_json::Value::as_bool)
-    {
-        lines.push(format!("  mutated: {mutated}"));
-    }
-    for key in ["stdout", "stderr"] {
-        let Some(text) = output.get(key).and_then(serde_json::Value::as_str) else {
-            continue;
-        };
-        let preview = preview_lines(text, 3);
-        if !preview.is_empty() {
-            lines.push(format!("  {key}:"));
-            lines.extend(preview.into_iter().map(|line| format!("    {line}")));
-        }
-    }
-    lines
-}
-
-fn ripgrep_output_preview(output: &serde_json::Value) -> Vec<String> {
-    let mut lines = Vec::new();
-    if let Some(backend) = output.get("backend").and_then(serde_json::Value::as_str) {
-        lines.push(format!("  backend: {backend}"));
-    }
-    if let Some(matches) = output.get("matches").and_then(serde_json::Value::as_array) {
-        lines.push(format!("  matches: {}", matches.len()));
-        for item in matches.iter().take(3) {
-            let path = item
-                .get("path")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("<unknown>");
-            let line = item
-                .get("line")
-                .and_then(serde_json::Value::as_u64)
-                .unwrap_or_default();
-            let text = item
-                .get("text")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("")
-                .trim();
-            lines.push(format!("    {path}:{line}: {text}"));
-        }
-    }
-    lines
-}
-
-fn file_output_preview(tool_name: &str, output: &serde_json::Value) -> Vec<String> {
-    if tool_name == "file_read" {
-        let Some(content) = output.as_str() else {
-            return Vec::new();
-        };
-        let preview = preview_lines(content, 4);
-        if preview.is_empty() {
-            return Vec::new();
-        }
-        let mut lines = vec!["  preview:".to_string()];
-        lines.extend(preview.into_iter().map(|line| format!("    {line}")));
-        return lines;
-    }
-    output
-        .get("path")
-        .map(|path| vec![format!("  path: {path}")])
-        .unwrap_or_default()
-}
-
 fn dedupe_sorted_nonempty(values: Vec<String>) -> Vec<String> {
     let mut values: Vec<String> = values
         .into_iter()
@@ -3147,24 +3009,6 @@ fn dedupe_sorted_nonempty(values: Vec<String>) -> Vec<String> {
     values.sort();
     values.dedup_by(|left, right| left.eq_ignore_ascii_case(right));
     values
-}
-
-fn preview_lines(text: &str, limit: usize) -> Vec<String> {
-    let mut lines = text
-        .lines()
-        .take(limit)
-        .map(|line| {
-            if line.chars().count() > 120 {
-                format!("{}...", line.chars().take(117).collect::<String>())
-            } else {
-                line.to_string()
-            }
-        })
-        .collect::<Vec<_>>();
-    if text.lines().count() > limit {
-        lines.push("...".to_string());
-    }
-    lines
 }
 
 fn phase_display_label(phase: &str) -> &str {

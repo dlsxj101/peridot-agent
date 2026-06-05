@@ -53,6 +53,7 @@ mod state;
 mod terminal;
 #[cfg(test)]
 mod tests;
+mod tool_preview;
 
 pub use i18n::{PhraseKey, tr};
 pub use mascot::{
