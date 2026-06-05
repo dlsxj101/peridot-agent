@@ -3,6 +3,7 @@
 mod agent;
 mod agent_helpers;
 mod approval;
+mod checkpoint;
 mod complexity;
 mod goal;
 mod grader;

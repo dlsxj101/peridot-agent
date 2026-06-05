@@ -155,6 +155,12 @@ Reviewed at `claude/code-review-roadmap-tx5SA`, workspace `0.8.14`.
   adding three focused unit tests for the previously-untested
   session/call-key/path-scope/shell-command grant paths. Behavior-preserving:
   fmt/clippy clean, peridot-core suite (156 tests) passes.
+- **Checkpoint carve-out**: a third `agent.rs` pass (~2,686 → ~2,581) moved the
+  pre-mutation file-checkpoint writer (`FileCheckpoint` + `write_file_checkpoint`,
+  which snapshots a file to `.peridot/checkpoints/` before `file_write` /
+  `file_patch`) and its test into a new `checkpoint.rs`. Behavior-preserving:
+  fmt/clippy clean, peridot-core suite (156 tests) passes. Net: `agent.rs` went
+  from 3,001 → ~2,581 lines across the three F2-adjacent passes.
 - **Plan for the rest**: stays opportunistic, lower priority than the
   feature track. Split `state.rs` (per-domain state), the remaining
   `render` transcript/markdown helpers, `input.rs`, the rest of
