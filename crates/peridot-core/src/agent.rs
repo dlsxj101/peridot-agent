@@ -20,6 +20,7 @@ use peridot_tools::hooks::{HookRunner, tool_hook_variables};
 use peridot_tools::{AgentMessageBus, AskUserPort, ToolContext, ToolRegistry};
 
 use crate::agent_helpers::approval_required_error;
+use crate::approval::tool_call_has_confirmation_grant;
 use crate::permissions::ensure_tool_allowed;
 use crate::prompt::{read_plan_reminder, system_prompt_for_role};
 use crate::recovery::{
@@ -2393,71 +2394,6 @@ fn tool_invocation_parameters(invocation: &ToolInvocation) -> serde_json::Value 
         }
         other => other.clone(),
     }
-}
-
-fn tool_call_has_confirmation_grant(call: &ToolCall, security: &SecurityConfig) -> bool {
-    if security
-        .approved_session_tools
-        .iter()
-        .any(|tool| tool == &call.name)
-    {
-        return true;
-    }
-
-    let call_key = approved_tool_call_key(&call.name, &call.parameters);
-    if security
-        .approved_tool_calls
-        .iter()
-        .any(|approved| approved == &call_key)
-    {
-        return true;
-    }
-
-    if let Some(path) = call
-        .parameters
-        .get("path")
-        .and_then(serde_json::Value::as_str)
-    {
-        let path_key = approved_tool_path_key(&call.name, path);
-        if security
-            .approved_tool_path_scopes
-            .iter()
-            .any(|approved| approved == &path_key)
-        {
-            return true;
-        }
-    }
-
-    if call.name == "shell_exec"
-        && let Some(command) = call
-            .parameters
-            .get("command")
-            .and_then(serde_json::Value::as_str)
-    {
-        let normalized = normalize_shell_command_for_approval(command);
-        if security
-            .approved_shell_commands
-            .iter()
-            .any(|approved| approved == &normalized)
-        {
-            return true;
-        }
-    }
-
-    false
-}
-
-fn approved_tool_call_key(tool_name: &str, parameters: &serde_json::Value) -> String {
-    let encoded = serde_json::to_string(parameters).unwrap_or_else(|_| parameters.to_string());
-    format!("{tool_name}:{encoded}")
-}
-
-fn approved_tool_path_key(tool_name: &str, path: &str) -> String {
-    format!("{tool_name}:{path}")
-}
-
-fn normalize_shell_command_for_approval(command: &str) -> String {
-    command.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 #[cfg(test)]

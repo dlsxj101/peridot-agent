@@ -148,6 +148,13 @@ Reviewed at `claude/code-review-roadmap-tx5SA`, workspace `0.8.14`.
   peridot-core suite (153 tests) passes. This was the F2 work area (vision
   routing lives in `agent.rs`), so the split followed the "carve when touching"
   rule.
+- **Approval-grant carve-out**: a second `agent.rs` pass (~2,750 → ~2,686)
+  moved the tool-call approval-grant matcher (`tool_call_has_confirmation_grant`
+  and its `approved_tool_call_key` / `approved_tool_path_key` /
+  `normalize_shell_command_for_approval` helpers) into a new `approval.rs`,
+  adding three focused unit tests for the previously-untested
+  session/call-key/path-scope/shell-command grant paths. Behavior-preserving:
+  fmt/clippy clean, peridot-core suite (156 tests) passes.
 - **Plan for the rest**: stays opportunistic, lower priority than the
   feature track. Split `state.rs` (per-domain state), the remaining
   `render` transcript/markdown helpers, `input.rs`, the rest of
