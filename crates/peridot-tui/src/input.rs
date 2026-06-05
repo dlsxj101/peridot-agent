@@ -699,7 +699,7 @@ pub(super) fn handle_approval_key_event(state: &mut TuiState, key: KeyEvent) -> 
             }
         }
         KeyCode::Char('y') | KeyCode::Char('a') => {
-            let synthesised = panel_synthesised_parameters(panel);
+            let synthesised = panel.synthesised_parameters();
             let tool_name = panel.tool_name.clone();
             let reason = panel.reason.clone();
             let parameters = panel.tool_params.clone();
@@ -738,7 +738,7 @@ pub(super) fn handle_approval_key_event(state: &mut TuiState, key: KeyEvent) -> 
         KeyCode::Enter => {
             let (decision, scope) = panel.selected_decision();
             let synthesised = if decision == ApprovalDecision::Approve {
-                panel_synthesised_parameters(panel)
+                panel.synthesised_parameters()
             } else {
                 None
             };
@@ -756,24 +756,6 @@ pub(super) fn handle_approval_key_event(state: &mut TuiState, key: KeyEvent) -> 
             }
         }
         _ => TuiEventOutcome::Continue,
-    }
-}
-
-/// Builds the partial-patch parameter object when the operator
-/// rejected at least one hunk. Returns `None` when there are no hunks,
-/// when every hunk is accepted (the original parameters still hold),
-/// or when synthesis fails (missing `old_text` field).
-fn panel_synthesised_parameters(panel: &ApprovalPanel) -> Option<serde_json::Value> {
-    if panel.hunks.is_empty() || panel.all_hunks_accepted() {
-        return None;
-    }
-    let partial = panel.synthesised_new_text()?;
-    let mut params = panel.tool_params.clone();
-    if let Some(obj) = params.as_object_mut() {
-        obj.insert("new_text".to_string(), serde_json::Value::String(partial));
-        Some(params)
-    } else {
-        None
     }
 }
 

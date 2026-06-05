@@ -64,9 +64,11 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
   submodule, and the assistant-message display parser into a new
   `assistant_parse.rs` submodule (both with added coverage tests). No behavior
   change; the snapshot suite is unchanged.
-- **`peridot-tui/src/input.rs` carved down** (~1,730 → ~1,673 lines): the
+- **`peridot-tui/src/input.rs` carved down** (~1,730 → ~1,655 lines): the
   multi-line composer cursor navigation moved into a new `input_cursor.rs`
-  submodule (with added coverage tests). No behavior change.
+  submodule (with added coverage tests), and the partial-patch parameter
+  synthesis became an `ApprovalPanel::synthesised_parameters` method next to the
+  panel's other synthesis logic. No behavior change.
 - **`symbol_references` now resolves local bindings (shadowing).** Each row
   carries a `binding` field: `local_definition` when the occurrence declares a
   parameter or local variable of the searched name, `local` when it resolves to

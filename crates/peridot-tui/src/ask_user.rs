@@ -249,6 +249,22 @@ impl ApprovalPanel {
         let old_text = self.tool_params.get("old_text")?.as_str()?;
         apply_selected_hunks(old_text, &self.hunks, &self.hunk_accepted)
     }
+
+    /// The tool parameters to re-run with only the accepted hunks applied: the
+    /// panel's `tool_params` with `new_text` replaced by the synthesised
+    /// partial text. Returns `None` when there are no hunks, every hunk is
+    /// accepted (the caller should keep the original full-text params), or the
+    /// params can't carry the synthesised text.
+    pub fn synthesised_parameters(&self) -> Option<serde_json::Value> {
+        if self.hunks.is_empty() || self.all_hunks_accepted() {
+            return None;
+        }
+        let partial = self.synthesised_new_text()?;
+        let mut params = self.tool_params.clone();
+        let obj = params.as_object_mut()?;
+        obj.insert("new_text".to_string(), serde_json::Value::String(partial));
+        Some(params)
+    }
 }
 
 impl Default for MenuState {
