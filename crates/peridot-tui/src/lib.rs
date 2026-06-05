@@ -35,6 +35,7 @@ use ratatui::{
 use serde::{Deserialize, Serialize};
 
 mod ask_user;
+mod assistant_parse;
 mod at_picker;
 pub(crate) mod blocks;
 mod branch_picker;

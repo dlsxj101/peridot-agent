@@ -169,6 +169,13 @@ Reviewed at `claude/code-review-roadmap-tx5SA`, workspace `0.8.14`.
   imports them; three coverage unit tests were added for the
   previously-untested formatters. Behavior-preserving: fmt/clippy clean, the
   full peridot-tui suite incl. snapshot tests (206) passes.
+- **TUI assistant-parse carve-out**: a second `state.rs` pass (~3,020 → ~2,903)
+  moved the assistant-message display parser (`parse_assistant_content` +
+  `ParsedAssistant` and the JSON-action helpers `last_balanced_json_object` /
+  `is_escaped_quote`) into a new `assistant_parse.rs`, adding four coverage
+  unit tests (agent_done summary, free-form passthrough, tool-call → no line,
+  braces-inside-strings). Behavior-preserving: fmt/clippy clean, peridot-tui
+  suite (210) passes. Net: `state.rs` 3,176 → ~2,903 across the two passes.
 - **Plan for the rest**: stays opportunistic, lower priority than the
   feature track. Split the rest of `state.rs` (per-domain state, the
   debug/JSON helpers), the remaining `render` transcript/markdown helpers,
