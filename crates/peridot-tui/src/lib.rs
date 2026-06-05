@@ -44,6 +44,7 @@ mod diff_hunks;
 mod fixtures;
 mod i18n;
 mod input;
+mod input_cursor;
 mod mascot;
 mod render;
 mod session_directory;

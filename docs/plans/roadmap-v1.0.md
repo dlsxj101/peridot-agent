@@ -176,6 +176,13 @@ Reviewed at `claude/code-review-roadmap-tx5SA`, workspace `0.8.14`.
   unit tests (agent_done summary, free-form passthrough, tool-call → no line,
   braces-inside-strings). Behavior-preserving: fmt/clippy clean, peridot-tui
   suite (210) passes. Net: `state.rs` 3,176 → ~2,903 across the two passes.
+- **TUI input-cursor carve-out**: `peridot-tui/src/input.rs` (1,730 lines)
+  dropped to ~1,673 by moving the multi-line composer cursor navigation
+  (`try_move_cursor_up` / `try_move_cursor_down` and their
+  `input_cursor_line_col` / `line_start_char_offset` helpers) into a new
+  `input_cursor.rs`, with three coverage unit tests (offset clamping, column
+  preservation on up, column snap on down). Behavior-preserving: fmt/clippy
+  clean, peridot-tui suite (213) passes.
 - **Plan for the rest**: stays opportunistic, lower priority than the
   feature track. Split the rest of `state.rs` (per-domain state, the
   debug/JSON helpers), the remaining `render` transcript/markdown helpers,

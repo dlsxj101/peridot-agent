@@ -1,4 +1,5 @@
 use super::*;
+use crate::input_cursor::{try_move_cursor_down, try_move_cursor_up};
 use state::{AgentRunStatus, SessionCommandEvent, TranscriptKind};
 
 /// PageUp / PageDown jump distance, measured in transcript rows. Small enough
@@ -1541,64 +1542,6 @@ pub(super) fn record_permission_switch(state: &mut TuiState, to: PermissionMode)
 /// Computes the (line index, column-in-chars) of the input cursor inside
 /// `state.input`. Both indices are 0-based. Returns `(0, 0)` for an empty
 /// buffer or a cursor that sits at position 0.
-fn input_cursor_line_col(state: &TuiState) -> (usize, usize) {
-    let prefix: String = state.input.chars().take(state.input_cursor).collect();
-    let line = prefix.matches('\n').count();
-    let col = prefix
-        .rsplit('\n')
-        .next()
-        .map(|tail| tail.chars().count())
-        .unwrap_or(0);
-    (line, col)
-}
-
-/// Returns the character offset of the start of `target_line` (0-based)
-/// inside `state.input`. `target_line` past the end clamps to the last
-/// line so callers can dead-reckon a position even on overflow.
-fn line_start_char_offset(input: &str, target_line: usize) -> usize {
-    let mut count = 0usize;
-    let mut offset = 0usize;
-    for ch in input.chars() {
-        if count == target_line {
-            break;
-        }
-        offset += 1;
-        if ch == '\n' {
-            count += 1;
-        }
-    }
-    offset
-}
-
-/// Tries to move the cursor to the previous logical line, snapping the
-/// column to the line's length if it would overshoot. Returns `false`
-/// when the cursor is already on line 0 — callers fall back to history
-/// in that case.
-fn try_move_cursor_up(state: &mut TuiState) -> bool {
-    let (line, col) = input_cursor_line_col(state);
-    if line == 0 {
-        return false;
-    }
-    let lines: Vec<&str> = state.input.split('\n').collect();
-    let target_line = line - 1;
-    let target_col = col.min(lines[target_line].chars().count());
-    state.input_cursor = line_start_char_offset(&state.input, target_line) + target_col;
-    true
-}
-
-/// Mirror of [`try_move_cursor_up`] for the Down arrow.
-fn try_move_cursor_down(state: &mut TuiState) -> bool {
-    let (line, col) = input_cursor_line_col(state);
-    let lines: Vec<&str> = state.input.split('\n').collect();
-    if line + 1 >= lines.len() {
-        return false;
-    }
-    let target_line = line + 1;
-    let target_col = col.min(lines[target_line].chars().count());
-    state.input_cursor = line_start_char_offset(&state.input, target_line) + target_col;
-    true
-}
-
 /// Flips the Status side-panel visibility and reports the new state in the
 /// transcript so the operator gets immediate feedback. Wired to both the
 /// `Ctrl+]` / `F2` key handlers and the `/sidepanel` slash command — they
