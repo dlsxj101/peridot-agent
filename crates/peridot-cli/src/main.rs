@@ -42,8 +42,8 @@ use peridot_project::ProjectScanner;
 use peridot_tools::hooks::{HookRunner, HookVariables, lifecycle_hook_variables};
 use peridot_tools::{AskUserPort, ToolRegistry, register_builtin_tools, register_mcp_tools};
 use peridot_tui::{
-    ApprovalDecision, ApprovalGrant, ApprovalScope, CodeMapSummary, HeaderState,
-    SessionCommandEvent, SessionDirectoryItem, SkillSlashSuggestion, TuiRuntimeEvent, TuiState,
+    ApprovalDecision, ApprovalGrant, ApprovalScope, HeaderState, SessionCommandEvent,
+    SessionDirectoryItem, SkillSlashSuggestion, TuiRuntimeEvent, TuiState,
     run_interactive_with_events,
 };
 
@@ -60,6 +60,7 @@ mod run_state;
 mod session_router;
 #[cfg(test)]
 mod tests;
+mod tui_codemap;
 mod vision;
 mod worktree_cleanup;
 
@@ -1739,25 +1740,25 @@ fn apply_session_command(
             handle_scan_todos(state, project_template);
         }
         SessionCommandEvent::CodeMap => {
-            handle_code_map(state, project_template, false);
+            tui_codemap::handle_code_map(state, project_template, false);
         }
         SessionCommandEvent::CodeMapStatus => {
-            handle_code_map_status(state, project_template);
+            tui_codemap::handle_code_map_status(state, project_template);
         }
         SessionCommandEvent::CodeMapRefresh => {
-            handle_code_map(state, project_template, true);
+            tui_codemap::handle_code_map(state, project_template, true);
         }
         SessionCommandEvent::CodeMapFind(query) => {
-            handle_code_map_find(state, project_template, &query);
+            tui_codemap::handle_code_map_find(state, project_template, &query);
         }
         SessionCommandEvent::CodeMapLocate(query) => {
-            handle_code_map_locate(state, project_template, &query);
+            tui_codemap::handle_code_map_locate(state, project_template, &query);
         }
         SessionCommandEvent::CodeMapOutline(path) => {
-            handle_code_map_outline(state, project_template, &path);
+            tui_codemap::handle_code_map_outline(state, project_template, &path);
         }
         SessionCommandEvent::CodeMapRefs(query) => {
-            handle_code_map_refs(state, project_template, &query);
+            tui_codemap::handle_code_map_refs(state, project_template, &query);
         }
         SessionCommandEvent::Attach(path) => {
             handle_attach(state, project_template, &path);
@@ -2916,7 +2917,7 @@ fn handle_scan_todos(state: &mut TuiState, project_root: &Path) {
         state.push_error("todos: failed to load workspace code map index");
         return;
     };
-    state.side_panel.code_map = Some(code_map_summary_from_load(&load));
+    state.side_panel.code_map = Some(tui_codemap::code_map_summary_from_load(&load));
     let report = commands::todo_code_map_report(&load.index);
     if report.todos.is_empty() {
         state.push_transcript(format!(
@@ -2938,182 +2939,6 @@ fn handle_scan_todos(state: &mut TuiState, project_root: &Path) {
         body.push_str("(further hits truncated)");
     }
     state.push_transcript(body);
-}
-
-fn handle_code_map(state: &mut TuiState, project_root: &Path, refresh: bool) {
-    let index = if refresh {
-        commands::refresh_code_map_index(
-            project_root,
-            commands::DEFAULT_MAX_SYMBOLS,
-            commands::DEFAULT_MAX_TODOS,
-        )
-    } else {
-        commands::load_or_refresh_code_map_index(
-            project_root,
-            commands::DEFAULT_MAX_SYMBOLS,
-            commands::DEFAULT_MAX_TODOS,
-        )
-    };
-    let Ok(index) = index else {
-        state.push_error("codemap: failed to load workspace code map index");
-        return;
-    };
-    state.side_panel.code_map = Some(code_map_summary_from_index(&index, refresh));
-    let report = &index.report;
-    if report.symbols.is_empty() && report.todos.is_empty() {
-        state.push_transcript(format!(
-            "codemap: no symbols or TODO markers found (scanned {} file(s))",
-            report.walked_files
-        ));
-        return;
-    }
-    state.push_transcript(render_code_map_text(&index));
-}
-
-fn handle_code_map_status(state: &mut TuiState, project_root: &Path) {
-    match commands::code_map_status(project_root) {
-        Ok(status) => {
-            state.side_panel.code_map = Some(code_map_summary_from_status(&status));
-            state.push_transcript(render_code_map_status_text(&status));
-        }
-        Err(_) => state.push_error("codemap: failed to check workspace code map status"),
-    }
-}
-
-fn handle_code_map_find(state: &mut TuiState, project_root: &Path, query: &str) {
-    let index = commands::load_or_refresh_code_map_index(
-        project_root,
-        commands::DEFAULT_MAX_SYMBOLS,
-        commands::DEFAULT_MAX_TODOS,
-    );
-    let Ok(index) = index else {
-        state.push_error("codemap: failed to load workspace code map index");
-        return;
-    };
-    state.side_panel.code_map = Some(code_map_summary_from_index(&index, false));
-    let report = commands::search_code_map_index(&index, query);
-    if report.symbols.is_empty() && report.todos.is_empty() {
-        state.push_transcript(format!(
-            "codemap: no matches for '{query}' (indexed at {})",
-            index.generated_at_unix
-        ));
-        return;
-    }
-    state.push_transcript(render_code_map_report(
-        &report,
-        index.generated_at_unix,
-        Some(query),
-    ));
-}
-
-fn handle_code_map_locate(state: &mut TuiState, project_root: &Path, query: &str) {
-    let index = commands::load_or_refresh_code_map_index(
-        project_root,
-        commands::DEFAULT_MAX_SYMBOLS,
-        commands::DEFAULT_MAX_TODOS,
-    );
-    let Ok(index) = index else {
-        state.push_error("codemap: failed to load workspace code map index");
-        return;
-    };
-    state.side_panel.code_map = Some(code_map_summary_from_index(&index, false));
-    let report = commands::locate_code_map_symbols(&index, query);
-    if report.symbols.is_empty() {
-        state.push_transcript(format!(
-            "codemap: no symbol matches for '{query}' (indexed at {})",
-            index.generated_at_unix
-        ));
-        return;
-    }
-    state.push_transcript(render_code_map_report(
-        &report,
-        index.generated_at_unix,
-        Some(query),
-    ));
-}
-
-fn handle_code_map_outline(state: &mut TuiState, project_root: &Path, path: &str) {
-    let index = commands::load_or_refresh_code_map_index(
-        project_root,
-        commands::DEFAULT_MAX_SYMBOLS,
-        commands::DEFAULT_MAX_TODOS,
-    );
-    let Ok(index) = index else {
-        state.push_error("codemap: failed to load workspace code map index");
-        return;
-    };
-    state.side_panel.code_map = Some(code_map_summary_from_index(&index, false));
-    let report = commands::outline_code_map_file(&index, path);
-    if report.symbols.is_empty() {
-        state.push_transcript(format!(
-            "codemap: no indexed symbols for '{path}' (indexed at {})",
-            index.generated_at_unix
-        ));
-        return;
-    }
-    state.push_transcript(render_code_map_report(
-        &report,
-        index.generated_at_unix,
-        Some(path),
-    ));
-}
-
-fn handle_code_map_refs(state: &mut TuiState, project_root: &Path, query: &str) {
-    let index = commands::load_or_refresh_code_map_index(
-        project_root,
-        commands::DEFAULT_MAX_SYMBOLS,
-        commands::DEFAULT_MAX_TODOS,
-    );
-    let Ok(index) = index else {
-        state.push_error("codemap: failed to load workspace code map index");
-        return;
-    };
-    state.side_panel.code_map = Some(code_map_summary_from_index(&index, false));
-    let report = commands::find_code_map_references(project_root, &index, query, 80);
-    if report.references.is_empty() {
-        state.push_transcript(format!(
-            "codemap: no references for '{query}' (indexed at {})",
-            index.generated_at_unix
-        ));
-        return;
-    }
-    state.push_transcript(render_code_map_report(
-        &report,
-        index.generated_at_unix,
-        Some(query),
-    ));
-}
-
-fn code_map_summary_from_load(load: &commands::CodeMapIndexLoad) -> CodeMapSummary {
-    code_map_summary_from_index(&load.index, load.refreshed)
-}
-
-fn code_map_summary_from_index(index: &commands::CodeMapIndex, refreshed: bool) -> CodeMapSummary {
-    CodeMapSummary {
-        index_exists: true,
-        stale: false,
-        source_files: index.report.walked_files,
-        walked_files: index.report.walked_files,
-        symbol_count: index.report.symbols.len(),
-        todo_count: index.report.todos.len(),
-        generated_at_unix: Some(index.generated_at_unix),
-        newest_source_mtime_unix: None,
-        refreshed,
-    }
-}
-
-fn code_map_summary_from_status(status: &commands::CodeMapStatus) -> CodeMapSummary {
-    CodeMapSummary {
-        index_exists: status.index_exists,
-        stale: status.stale,
-        source_files: status.source_files,
-        walked_files: status.walked_files,
-        symbol_count: status.symbol_count,
-        todo_count: status.todo_count,
-        generated_at_unix: status.generated_at_unix,
-        newest_source_mtime_unix: status.newest_source_mtime_unix,
-        refreshed: false,
-    }
 }
 
 fn handle_attach(state: &mut TuiState, project_root: &Path, path: &str) {
@@ -3366,109 +3191,6 @@ fn render_attachments_text(artifacts: &[commands::AttachmentArtifact]) -> String
             "\n{}  {} bytes  {}  {}",
             artifact.path, artifact.bytes, artifact.media_type, mode
         ));
-    }
-    body
-}
-
-fn render_code_map_text(index: &commands::CodeMapIndex) -> String {
-    render_code_map_report(&index.report, index.generated_at_unix, None)
-}
-
-fn render_code_map_status_text(status: &commands::CodeMapStatus) -> String {
-    let state = if !status.index_exists {
-        "missing"
-    } else if status.stale {
-        "stale"
-    } else {
-        "fresh"
-    };
-    let generated = status
-        .generated_at_unix
-        .map(|ts| ts.to_string())
-        .unwrap_or_else(|| "none".to_string());
-    let newest = status
-        .newest_source_mtime_unix
-        .map(|ts| ts.to_string())
-        .unwrap_or_else(|| "none".to_string());
-    format!(
-        "codemap: index {state} (indexed at {generated}, newest source {newest})\nsource files: {} · indexed files: {} · symbols: {} · TODOs: {}{}",
-        status.source_files,
-        status.walked_files,
-        status.symbol_count,
-        status.todo_count,
-        if status.stale {
-            "\nrun /codemap refresh to rebuild the workspace code map index"
-        } else {
-            ""
-        }
-    )
-}
-
-fn render_code_map_report(
-    report: &commands::CodeMapReport,
-    generated_at_unix: u64,
-    query: Option<&str>,
-) -> String {
-    let mut body = if let Some(query) = query {
-        if report.references.is_empty() {
-            format!(
-                "codemap: {} symbol match(es), {} TODO match(es) for '{}' across {} file(s) (indexed at {})",
-                report.symbols.len(),
-                report.todos.len(),
-                query,
-                report.walked_files,
-                generated_at_unix,
-            )
-        } else {
-            format!(
-                "codemap: {} reference match(es) for '{}' across {} file(s) (indexed at {})",
-                report.references.len(),
-                query,
-                report.walked_files,
-                generated_at_unix,
-            )
-        }
-    } else {
-        format!(
-            "codemap: {} symbol(s), {} TODO marker(s) across {} file(s) (indexed at {})",
-            report.symbols.len(),
-            report.todos.len(),
-            report.walked_files,
-            generated_at_unix,
-        )
-    };
-    if !report.symbols.is_empty() {
-        body.push_str("\n\nSymbols:");
-        for symbol in report.symbols.iter().take(40) {
-            body.push_str(&format!(
-                "\n{}:{}  {}  {}",
-                symbol.path, symbol.line, symbol.kind, symbol.name
-            ));
-        }
-        if report.symbols.len() > 40 || report.symbols_truncated {
-            body.push_str("\n(symbols truncated)");
-        }
-    }
-    if !report.todos.is_empty() {
-        body.push_str("\n\nTODOs:");
-        for todo in report.todos.iter().take(20) {
-            body.push_str(&format!("\n{}:{}  {}", todo.path, todo.line, todo.text));
-        }
-        if report.todos.len() > 20 || report.todos_truncated {
-            body.push_str("\n(TODO markers truncated)");
-        }
-    }
-    if !report.references.is_empty() {
-        body.push_str("\n\nReferences:");
-        for reference in report.references.iter().take(40) {
-            body.push_str(&format!(
-                "\n{}:{}  {}  {}",
-                reference.path, reference.line, reference.symbol, reference.text
-            ));
-        }
-        if report.references.len() > 40 || report.references_truncated {
-            body.push_str("\n(references truncated)");
-        }
     }
     body
 }

@@ -183,6 +183,14 @@ Reviewed at `claude/code-review-roadmap-tx5SA`, workspace `0.8.14`.
   `input_cursor.rs`, with three coverage unit tests (offset clamping, column
   preservation on up, column snap on down). Behavior-preserving: fmt/clippy
   clean, peridot-tui suite (213) passes.
+- **CLI code-map carve-out**: `peridot-cli/src/main.rs` (4,774 lines — the
+  repo's largest) dropped to ~4,496 by moving the interactive `/codemap`
+  slash-command handlers (`handle_code_map` + status / find / locate / outline /
+  refs), the `CodeMapSummary` builders, and the report renderers into a new
+  `tui_codemap.rs` module. The `apply_session_command` dispatcher and
+  `handle_scan_todos` call the moved items via `tui_codemap::`.
+  Behavior-preserving: fmt/clippy clean, peridot-cli suite passes (the only
+  failures are pre-existing git commit-signing tests unrelated to the move).
 - **Plan for the rest**: stays opportunistic, lower priority than the
   feature track. Split the rest of `state.rs` (per-domain state, the
   debug/JSON helpers), the remaining `render` transcript/markdown helpers,
