@@ -9,14 +9,13 @@ use async_trait::async_trait;
 use clap::{Parser, Subcommand, ValueEnum};
 use commands::{
     AgentsCommand, AuthProvider, ConfigCommand, EnvCommand, McpCommand, OutputFormat,
-    SessionCommand, SessionExportArtifact, SkillCommand, export_session_artifacts,
-    load_effective_config, maybe_print_update_notice, maybe_run_first_launch_wizard,
-    move_auto_skill_to_archive, print_scan, read_notes_summary, read_session_notes,
-    read_stored_api_key, read_stored_openai_oauth_credentials, restore_archived_skill,
-    run_agents_command, run_config_command, run_doctor_command, run_env_command, run_login_command,
-    run_logout_command, run_mcp_command, run_session_command, run_setting_command,
-    run_setup_command, run_ship_command, run_skill_command, run_update_command, run_verify_command,
-    session_count_summary, session_resume_summary,
+    SessionCommand, SkillCommand, load_effective_config, maybe_print_update_notice,
+    maybe_run_first_launch_wizard, move_auto_skill_to_archive, print_scan, read_notes_summary,
+    read_session_notes, read_stored_api_key, read_stored_openai_oauth_credentials,
+    restore_archived_skill, run_agents_command, run_config_command, run_doctor_command,
+    run_env_command, run_login_command, run_logout_command, run_mcp_command, run_session_command,
+    run_setting_command, run_setup_command, run_ship_command, run_skill_command,
+    run_update_command, run_verify_command, session_count_summary, session_resume_summary,
 };
 use peridot_common::{
     AskUserAnswer, AskUserRequest, ContextConfig, ExecutionMode, MemoryConfig, PeriError,
@@ -26,8 +25,7 @@ use peridot_context::{
     ContextEntry, ContextLimits, ContextManager, ContextSource, project_context_limits,
 };
 use peridot_core::{
-    AgentRunEvent, AgentRunRequest, AgentRunSummary, AgentState, ExportArtifact, HarnessAgent,
-    StopReason,
+    AgentRunEvent, AgentRunRequest, AgentRunSummary, AgentState, HarnessAgent, StopReason,
 };
 use peridot_git::GitManager;
 use peridot_llm::{
@@ -62,6 +60,7 @@ mod session_router;
 mod tests;
 mod tui_branch;
 mod tui_codemap;
+mod tui_session_export;
 mod vision;
 mod worktree_cleanup;
 
@@ -1620,7 +1619,12 @@ fn apply_session_command(
         }
         SessionCommandEvent::SessionExport { target, artifacts } => {
             let id = resolve_session_id(state, &target).unwrap_or(target);
-            handle_session_export_for_id(state, project_template, &id, &artifacts);
+            tui_session_export::handle_session_export_for_id(
+                state,
+                project_template,
+                &id,
+                &artifacts,
+            );
         }
         SessionCommandEvent::SessionImport { from, id, force } => {
             let store = MemoryStore::new(project_template.join(".peridot/memory.db"));
@@ -1637,7 +1641,7 @@ fn apply_session_command(
                     let last_note = item.last_note.clone();
                     let attachment_paths = item.attachment_paths.clone();
                     state.sessions.push(item);
-                    state.push_transcript(render_session_import_text(
+                    state.push_transcript(tui_session_export::render_session_import_text(
                         &result,
                         notes_count,
                         last_note.as_deref(),
@@ -1771,7 +1775,7 @@ fn apply_session_command(
             handle_detach(state, project_template, &path);
         }
         SessionCommandEvent::Export(artifacts) => {
-            handle_session_export(state, project_template, &artifacts);
+            tui_session_export::handle_session_export(state, project_template, &artifacts);
         }
         SessionCommandEvent::RewindContext => {
             handle_rewind_context(state, project_template);
@@ -2768,120 +2772,6 @@ fn handle_rewind_context(state: &mut TuiState, project_root: &Path) {
         )),
         Err(err) => state.push_error(format!("rewind: failed to update context: {err}")),
     }
-}
-
-fn handle_session_export(state: &mut TuiState, project_root: &Path, artifacts: &[ExportArtifact]) {
-    if state.current_session_id.is_empty() {
-        state.push_error("export: no active session".to_string());
-        return;
-    }
-    let session_id = state.current_session_id.clone();
-    handle_session_export_for_id(state, project_root, &session_id, artifacts);
-}
-
-fn handle_session_export_for_id(
-    state: &mut TuiState,
-    project_root: &Path,
-    session_id: &str,
-    artifacts: &[ExportArtifact],
-) {
-    let selected = map_export_artifacts(artifacts);
-    let out_dir = default_session_export_dir(project_root, session_id);
-    match export_session_artifacts(project_root, session_id, &out_dir, &selected, false) {
-        Ok(report) => state.push_transcript(render_session_export_text(&report)),
-        Err(err) => state.push_error(format!("export: failed: {err}")),
-    }
-}
-
-fn default_session_export_dir(project_root: &Path, session_id: &str) -> PathBuf {
-    project_root.join(".peridot").join("exports").join(format!(
-        "{}-{}",
-        sanitize_export_segment(session_id),
-        unix_timestamp()
-    ))
-}
-
-fn sanitize_export_segment(value: &str) -> String {
-    let sanitized: String = value
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.') {
-                ch
-            } else {
-                '-'
-            }
-        })
-        .collect();
-    let trimmed = sanitized.trim_matches('-');
-    if trimmed.is_empty() {
-        "session".to_string()
-    } else {
-        trimmed.to_string()
-    }
-}
-
-fn map_export_artifacts(artifacts: &[ExportArtifact]) -> Vec<SessionExportArtifact> {
-    artifacts
-        .iter()
-        .map(|artifact| match artifact {
-            ExportArtifact::Full => SessionExportArtifact::Full,
-            ExportArtifact::Attachments => SessionExportArtifact::Attachments,
-            ExportArtifact::Notes => SessionExportArtifact::Notes,
-            ExportArtifact::Timeline => SessionExportArtifact::Timeline,
-        })
-        .collect()
-}
-
-fn render_session_export_text(report: &commands::SessionExportReport) -> String {
-    let mut body = format!(
-        "export: wrote {} artifact file(s) to {}",
-        report.artifacts.len(),
-        report.destination
-    );
-    if !report.files.is_empty() {
-        body.push_str(&format!("\nfull copy entries: {}", report.files.len()));
-        for file in &report.files {
-            body.push_str(&format!("\n  - {file}"));
-        }
-    }
-    for artifact in &report.artifacts {
-        body.push_str(&format!(
-            "\n{}  {} entries  {}",
-            artifact.path, artifact.count, artifact.class
-        ));
-    }
-    body
-}
-
-fn render_session_import_text(
-    result: &commands::SessionImportResult,
-    notes_count: usize,
-    last_note: Option<&str>,
-    attachment_paths: &[String],
-) -> String {
-    let mut body = format!(
-        "session import: imported {} from {} into {} ({} entries)",
-        result.id,
-        result.source,
-        result.destination,
-        result.files.len()
-    );
-    for file in &result.files {
-        body.push_str(&format!("\n  - {file}"));
-    }
-    if notes_count > 0 {
-        let suffix = last_note
-            .map(|note| format!("  ({note})"))
-            .unwrap_or_default();
-        body.push_str(&format!("\nnotes: {notes_count}{suffix}"));
-    }
-    if !attachment_paths.is_empty() {
-        body.push_str(&format!("\nattachments: {}", attachment_paths.len()));
-        for path in attachment_paths {
-            body.push_str(&format!("\n  - {path}"));
-        }
-    }
-    body
 }
 
 fn render_attachments_text(artifacts: &[commands::AttachmentArtifact]) -> String {

@@ -200,6 +200,13 @@ Reviewed at `claude/code-review-roadmap-tx5SA`, workspace `0.8.14`.
   `main.rs` 4,774 → ~4,207 across the two passes. Behavior-preserving:
   fmt/clippy clean, peridot-cli suite passes (same pre-existing signing-test
   failures only).
+- **CLI session-export carve-out**: a third `main.rs` pass (~4,207 → ~4,097)
+  moved the interactive `/session export` handlers + import-result renderer
+  (`handle_session_export` / `_for_id`, the export-dir / sanitize / artifact-map
+  helpers, and `render_session_export_text` / `render_session_import_text`) into
+  a new `tui_session_export.rs` module. Net: `main.rs` 4,774 → ~4,097 across the
+  three passes. Behavior-preserving: fmt/clippy clean, peridot-cli suite passes
+  (same pre-existing signing-test failures only).
 - **Plan for the rest**: stays opportunistic, lower priority than the
   feature track. Split the rest of `state.rs` (per-domain state, the
   debug/JSON helpers), the remaining `render` transcript/markdown helpers,
