@@ -223,6 +223,14 @@ Reviewed at `claude/code-review-roadmap-tx5SA`, workspace `0.8.14`.
   `tui_session_export` / `tui_notes` / `tui_skill`. Behavior-preserving:
   fmt/clippy clean, peridot-cli suite passes (same pre-existing signing-test
   failures only).
+- **Daemon command-help carve-out**: `peridot-cli/.../daemon/mod.rs` (2,552
+  lines) dropped to ~2,490 by moving the stateless slash-command help / catalog
+  RPC result builders (`command_catalog_surface`, `slash_command_catalog_result`,
+  `handle_command_help`, `slash_help_items`) into a new `daemon/command_help.rs`
+  module (alongside the existing per-area daemon submodules). The remaining
+  daemon handlers are tightly coupled to the shared `DaemonState`, so further
+  carving there is lower-value. Behavior-preserving: fmt/clippy clean,
+  peridot-cli suite passes (same pre-existing signing-test failures only).
 - **Plan for the rest**: stays opportunistic, lower priority than the
   feature track. Split the rest of `state.rs` (per-domain state, the
   debug/JSON helpers), the remaining `render` transcript/markdown helpers,

@@ -48,6 +48,7 @@ mod approval;
 mod attach;
 mod branch;
 mod codemap;
+mod command_help;
 mod inspect;
 mod mcp;
 mod notes;
@@ -393,7 +394,9 @@ async fn dispatch_request(state: &DaemonState, request: RpcRequest) -> Result<bo
             emit_response(
                 state,
                 request.id.unwrap_or(Value::Null),
-                slash_command_catalog_result(command_catalog_surface(request.params.as_ref())),
+                command_help::slash_command_catalog_result(command_help::command_catalog_surface(
+                    request.params.as_ref(),
+                )),
             )?;
         }
         "skills.list" => {
@@ -480,74 +483,6 @@ async fn dispatch_request(state: &DaemonState, request: RpcRequest) -> Result<bo
         }
     }
     Ok(false)
-}
-
-fn command_catalog_surface(params: Option<&Value>) -> Option<&str> {
-    params
-        .and_then(Value::as_object)
-        .and_then(|object| object.get("surface"))
-        .and_then(Value::as_str)
-        .filter(|surface| !surface.trim().is_empty())
-}
-
-fn slash_command_catalog_result(surface: Option<&str>) -> Value {
-    let commands: Vec<Value> = peridot_tui::slash_command_catalog()
-        .iter()
-        .filter(|spec| {
-            surface
-                .is_none_or(|surface| peridot_tui::slash_command_surfaces(spec).contains(&surface))
-        })
-        .map(|spec| {
-            serde_json::json!({
-                "name": spec.name,
-                "description": spec.description,
-                "arg_hint": spec.arg_hint,
-                "category": spec.category,
-                "surfaces": peridot_tui::slash_command_surfaces(spec),
-                "arg_options": peridot_tui::slash_command_arg_options(spec),
-            })
-        })
-        .collect();
-    serde_json::json!({ "commands": commands })
-}
-
-fn handle_command_help(raw_command: &str, surface: Option<&str>) -> Value {
-    let items = slash_help_items(surface);
-    let total = items.len();
-    let mut result = serde_json::json!({
-        "kind": "help",
-        "title": "Slash Commands",
-        "message": format!("{total} slash command(s) available"),
-        "severity": "info",
-        "command": raw_command,
-        "items": items,
-        "total": total,
-    });
-    if let Some(surface) = surface {
-        result["surface"] = Value::String(surface.to_string());
-    }
-    result
-}
-
-fn slash_help_items(surface: Option<&str>) -> Vec<Value> {
-    peridot_tui::slash_command_catalog()
-        .iter()
-        .filter(|spec| {
-            surface
-                .is_none_or(|surface| peridot_tui::slash_command_surfaces(spec).contains(&surface))
-        })
-        .map(|spec| {
-            let label = match spec.arg_hint {
-                Some(hint) => format!("{} {}", spec.name, hint),
-                None => spec.name.to_string(),
-            };
-            serde_json::json!({
-                "label": label,
-                "detail": spec.description,
-                "source": spec.category,
-            })
-        })
-        .collect()
 }
 
 fn skills_list_include_archived(params: Option<&Value>) -> bool {
@@ -1640,7 +1575,10 @@ async fn handle_session_command(
     let surface = optional_str(&params, "surface").map(str::to_string);
 
     let result = if matches!(command, SlashCommand::Help) {
-        Ok(handle_command_help(&command_text, surface.as_deref()))
+        Ok(command_help::handle_command_help(
+            &command_text,
+            surface.as_deref(),
+        ))
     } else {
         execute_session_command(state, session_id.as_deref(), &command_text, command).await
     };
@@ -1830,7 +1768,7 @@ async fn execute_session_command(
             "info",
             &state_delta,
         )),
-        SlashCommand::Help => Ok(handle_command_help(raw_command, None)),
+        SlashCommand::Help => Ok(command_help::handle_command_help(raw_command, None)),
         SlashCommand::SkillList => skills::handle_command_skill_list(state, raw_command),
         SlashCommand::SkillShow(name) => {
             skills::handle_command_skill_show(state, raw_command, &name)
