@@ -191,6 +191,15 @@ Reviewed at `claude/code-review-roadmap-tx5SA`, workspace `0.8.14`.
   `handle_scan_todos` call the moved items via `tui_codemap::`.
   Behavior-preserving: fmt/clippy clean, peridot-cli suite passes (the only
   failures are pre-existing git commit-signing tests unrelated to the move).
+- **CLI branch carve-out**: a second `main.rs` pass (~4,496 → ~4,207) moved the
+  interactive `/branch` slash-command handlers (`handle_branch_turn` / `tree` /
+  `switch` / `save` / `restore` / `list` + `validate_branch_name`) into a new
+  `tui_branch.rs` module; the shared snapshot/journal path helpers
+  (`context_snapshot_path` / `branch_journal_path`) became `pub(crate)` and the
+  `branch_snapshot_names` helper stayed in `main.rs` (the daemon uses it). Net:
+  `main.rs` 4,774 → ~4,207 across the two passes. Behavior-preserving:
+  fmt/clippy clean, peridot-cli suite passes (same pre-existing signing-test
+  failures only).
 - **Plan for the rest**: stays opportunistic, lower priority than the
   feature track. Split the rest of `state.rs` (per-domain state, the
   debug/JSON helpers), the remaining `render` transcript/markdown helpers,
