@@ -212,6 +212,17 @@ Reviewed at `claude/code-review-roadmap-tx5SA`, workspace `0.8.14`.
   into a new `tui_notes.rs` module. Net: `main.rs` 4,774 → ~4,044 across the
   four passes. Behavior-preserving: fmt/clippy clean, peridot-cli suite passes
   (same pre-existing signing-test failures only).
+- **CLI skill carve-out**: a fifth `main.rs` pass (~4,044 → ~3,773) moved the
+  interactive `/skill` handlers (load / list / show / search / archived / pin /
+  archive / restore) plus `skill_description` / `skill_plan_reminder` into a new
+  `tui_skill.rs` module; the shared `append_plan_reminder_to_context` /
+  `load_auto_skill_suggestions` helpers became `pub(crate)` (the latter calls
+  `tui_skill::skill_description`). Also dropped an orphaned doc comment left
+  behind by the earlier `/branch` move. Net: `main.rs` 4,774 → ~3,773 (−1,001,
+  −21%) across the five passes, into `tui_codemap` / `tui_branch` /
+  `tui_session_export` / `tui_notes` / `tui_skill`. Behavior-preserving:
+  fmt/clippy clean, peridot-cli suite passes (same pre-existing signing-test
+  failures only).
 - **Plan for the rest**: stays opportunistic, lower priority than the
   feature track. Split the rest of `state.rs` (per-domain state, the
   debug/JSON helpers), the remaining `render` transcript/markdown helpers,

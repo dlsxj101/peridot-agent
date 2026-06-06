@@ -69,12 +69,11 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
   submodule (with added coverage tests), and the partial-patch parameter
   synthesis became an `ApprovalPanel::synthesised_parameters` method next to the
   panel's other synthesis logic. No behavior change.
-- **`peridot-cli/src/main.rs` carved down** (~4,774 → ~4,044 lines): the
-  interactive `/codemap` slash-command handlers and report renderers moved into
-  a new `tui_codemap.rs` module, the `/branch` handlers into `tui_branch.rs`, the
-  `/session export` handlers + import-result renderer into
-  `tui_session_export.rs`, and the `/notes` handlers into `tui_notes.rs`. No
-  behavior change.
+- **`peridot-cli/src/main.rs` carved down** (~4,774 → ~3,773 lines, −21%): the
+  interactive slash-command handlers were split by command family into new
+  modules — `/codemap` → `tui_codemap.rs`, `/branch` → `tui_branch.rs`,
+  `/session export` → `tui_session_export.rs`, `/notes` → `tui_notes.rs`, and
+  `/skill` → `tui_skill.rs`. No behavior change.
 - **`symbol_references` now resolves local bindings (shadowing).** Each row
   carries a `binding` field: `local_definition` when the occurrence declares a
   parameter or local variable of the searched name, `local` when it resolves to
