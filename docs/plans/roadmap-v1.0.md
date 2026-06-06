@@ -207,6 +207,11 @@ Reviewed at `claude/code-review-roadmap-tx5SA`, workspace `0.8.14`.
   a new `tui_session_export.rs` module. Net: `main.rs` 4,774 → ~4,097 across the
   three passes. Behavior-preserving: fmt/clippy clean, peridot-cli suite passes
   (same pre-existing signing-test failures only).
+- **CLI notes carve-out**: a fourth `main.rs` pass (~4,097 → ~4,044) moved the
+  interactive `/notes` handlers (`handle_notes_list` / `handle_notes_clear`)
+  into a new `tui_notes.rs` module. Net: `main.rs` 4,774 → ~4,044 across the
+  four passes. Behavior-preserving: fmt/clippy clean, peridot-cli suite passes
+  (same pre-existing signing-test failures only).
 - **Plan for the rest**: stays opportunistic, lower priority than the
   feature track. Split the rest of `state.rs` (per-domain state, the
   debug/JSON helpers), the remaining `render` transcript/markdown helpers,

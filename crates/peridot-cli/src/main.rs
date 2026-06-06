@@ -11,11 +11,11 @@ use commands::{
     AgentsCommand, AuthProvider, ConfigCommand, EnvCommand, McpCommand, OutputFormat,
     SessionCommand, SkillCommand, load_effective_config, maybe_print_update_notice,
     maybe_run_first_launch_wizard, move_auto_skill_to_archive, print_scan, read_notes_summary,
-    read_session_notes, read_stored_api_key, read_stored_openai_oauth_credentials,
-    restore_archived_skill, run_agents_command, run_config_command, run_doctor_command,
-    run_env_command, run_login_command, run_logout_command, run_mcp_command, run_session_command,
-    run_setting_command, run_setup_command, run_ship_command, run_skill_command,
-    run_update_command, run_verify_command, session_count_summary, session_resume_summary,
+    read_stored_api_key, read_stored_openai_oauth_credentials, restore_archived_skill,
+    run_agents_command, run_config_command, run_doctor_command, run_env_command, run_login_command,
+    run_logout_command, run_mcp_command, run_session_command, run_setting_command,
+    run_setup_command, run_ship_command, run_skill_command, run_update_command, run_verify_command,
+    session_count_summary, session_resume_summary,
 };
 use peridot_common::{
     AskUserAnswer, AskUserRequest, ContextConfig, ExecutionMode, MemoryConfig, PeriError,
@@ -60,6 +60,7 @@ mod session_router;
 mod tests;
 mod tui_branch;
 mod tui_codemap;
+mod tui_notes;
 mod tui_session_export;
 mod vision;
 mod worktree_cleanup;
@@ -1808,10 +1809,10 @@ fn apply_session_command(
             handle_skill_load(state, project_template, &name, &args);
         }
         SessionCommandEvent::Notes(last) => {
-            handle_notes_list(state, project_template, last);
+            tui_notes::handle_notes_list(state, project_template, last);
         }
         SessionCommandEvent::NotesClear => {
-            handle_notes_clear(state, project_template);
+            tui_notes::handle_notes_clear(state, project_template);
         }
         SessionCommandEvent::SkillList => {
             handle_skill_list(state, project_template);
@@ -2338,60 +2339,6 @@ fn handle_skill_load(state: &mut TuiState, project_root: &Path, name: &str, args
         format!(" with args `{}`", args.trim())
     };
     state.push_transcript(format!("Loaded skill `{}`{args_note}", skill.name));
-}
-
-fn handle_notes_list(state: &mut TuiState, project_root: &Path, last: Option<usize>) {
-    let session_id = state.current_session_id.clone();
-    if session_id.is_empty() {
-        state.push_error("notes: no active session".to_string());
-        return;
-    }
-    let (notes, total) = match read_session_notes(project_root, &session_id, last) {
-        Ok(result) => result,
-        Err(err) => {
-            state.push_error(format!("notes: failed to read session notes: {err}"));
-            return;
-        }
-    };
-    let latest = notes
-        .last()
-        .and_then(|note| note["text"].as_str())
-        .map(ToString::to_string);
-    state.set_note_summary(total, latest);
-    if notes.is_empty() {
-        state.push_transcript(format!("notes: none for {session_id}"));
-        return;
-    }
-    let mut lines = vec![format!(
-        "notes: {} of {} for {session_id}",
-        notes.len(),
-        total
-    )];
-    for note in notes {
-        let ts = note["ts"].as_u64().unwrap_or_default();
-        let text = note["text"].as_str().unwrap_or("");
-        lines.push(format!("  [{ts}] {text}"));
-    }
-    state.push_transcript(lines.join("\n"));
-}
-
-fn handle_notes_clear(state: &mut TuiState, project_root: &Path) {
-    let session_id = state.current_session_id.clone();
-    if session_id.is_empty() {
-        state.push_error("notes: no active session".to_string());
-        return;
-    }
-    match commands::clear_session_notes(project_root, &session_id) {
-        Ok(true) => {
-            state.clear_note_summary();
-            state.push_transcript(format!("notes: cleared for {session_id}"));
-        }
-        Ok(false) => {
-            state.clear_note_summary();
-            state.push_transcript(format!("notes: none for {session_id}"));
-        }
-        Err(err) => state.push_error(format!("notes: failed to clear session notes: {err}")),
-    }
 }
 
 fn handle_skill_list(state: &mut TuiState, project_root: &Path) {
