@@ -225,7 +225,7 @@ export class PeridotDaemon {
     let parsed: unknown;
     try {
       parsed = JSON.parse(line);
-    } catch (err) {
+    } catch {
       console.error('[peridot] daemon emitted unparseable line:', line);
       return;
     }

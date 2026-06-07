@@ -101,7 +101,7 @@ export function highlightLite(raw: string): string {
     // Number literal (positive or negative, decimal, exponent).
     if ((ch >= '0' && ch <= '9') || (ch === '-' && raw[i + 1] >= '0' && raw[i + 1] <= '9')) {
       let j = i + 1;
-      while (j < len && /[0-9eE+.\-]/.test(raw[j])) j += 1;
+      while (j < len && /[0-9eE+.-]/.test(raw[j])) j += 1;
       out += `<span class="tok-number">${escapeHtml(raw.slice(i, j))}</span>`;
       i = j;
       continue;
