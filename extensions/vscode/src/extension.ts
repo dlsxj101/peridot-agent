@@ -352,7 +352,7 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand('peridot.hello', async () => {
       await vscode.window.showInformationMessage(
-        'Hello from Peridot Agent — extension installed correctly.',
+        vscode.l10n.t('Hello from Peridot Agent — extension installed correctly.'),
       );
     }),
   );
@@ -362,7 +362,7 @@ export function activate(context: vscode.ExtensionContext) {
       const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
       if (!folder) {
         vscode.window.showWarningMessage(
-          'Open a workspace folder before checking the Peridot daemon.',
+          vscode.l10n.t('Open a workspace folder before checking the Peridot daemon.'),
         );
         return;
       }
@@ -375,14 +375,14 @@ export function activate(context: vscode.ExtensionContext) {
             'unknown';
           await refreshStatus(output, sidebar, { force: true });
           await vscode.window.showInformationMessage(
-            `Peridot daemon ${result.version} (extension ${extensionVersion}).`,
+            vscode.l10n.t('Peridot daemon {0} (extension {1}).', result.version, extensionVersion),
           );
         } finally {
           await daemon.shutdown();
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        await vscode.window.showErrorMessage(`Peridot daemon spawn failed: ${message}`);
+        await vscode.window.showErrorMessage(vscode.l10n.t('Peridot daemon spawn failed: {0}', message));
       }
     }),
   );
@@ -761,7 +761,7 @@ export function activate(context: vscode.ExtensionContext) {
     const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
     if (!folder) {
       void vscode.window.showErrorMessage(
-        'Open a folder before editing Peridot settings — the daemon needs a project root.',
+        vscode.l10n.t('Open a folder before editing Peridot settings — the daemon needs a project root.'),
       );
       return null;
     }
@@ -961,14 +961,14 @@ async function runTask(
   const currentClientSessionId = sidebar.currentClientSessionId();
   if (currentClientSessionId && workspaceRun?.activeRuns.has(currentClientSessionId)) {
     await vscode.window.showWarningMessage(
-      'This Peridot session is already running. Switch to a new session to start another task.',
+      vscode.l10n.t('This Peridot session is already running. Switch to a new session to start another task.'),
     );
     return;
   }
 
   const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   if (!folder) {
-    vscode.window.showWarningMessage('Open a workspace folder before running Peridot.');
+    vscode.window.showWarningMessage(vscode.l10n.t('Open a workspace folder before running Peridot.'));
     sidebar.setWorkspaceProblem('Open a workspace folder before running Peridot.');
     return;
   }
@@ -1015,7 +1015,7 @@ async function runTask(
     const message = err instanceof Error ? err.message : String(err);
     output.appendLine(`[peridot] failed: ${message}`);
     sidebar.appendError(message);
-    await vscode.window.showErrorMessage(`Peridot run failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('Peridot run failed: {0}', message));
   }
 }
 
@@ -1104,7 +1104,7 @@ async function showWorkspaceCodeMap(
     const message = err instanceof Error ? err.message : String(err);
     output.appendLine(`[peridot] codemap failed: ${message}`);
     sidebar.appendError(message);
-    await vscode.window.showErrorMessage(`Peridot code map failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('Peridot code map failed: {0}', message));
   }
 }
 
@@ -1139,7 +1139,7 @@ async function showGitHubPrStatus(
     const message = err instanceof Error ? err.message : String(err);
     output.appendLine(`[peridot] gh pr status failed: ${message}`);
     sidebar.appendError(message);
-    await vscode.window.showErrorMessage(`GitHub PR status failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('GitHub PR status failed: {0}', message));
   }
 }
 
@@ -1149,7 +1149,7 @@ async function showWorkspaceCodeMapStatus(
 ): Promise<void> {
   const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   if (!folder) {
-    vscode.window.showWarningMessage('Open a workspace folder before checking the code map.');
+    vscode.window.showWarningMessage(vscode.l10n.t('Open a workspace folder before checking the code map.'));
     return;
   }
   await vscode.commands.executeCommand('peridot.chatView.focus');
@@ -1229,13 +1229,13 @@ async function locateWorkspaceCodeMapSymbol(
         folder,
       );
     } else {
-      await vscode.window.showInformationMessage(`No indexed symbol matched "${trimmed}".`);
+      await vscode.window.showInformationMessage(vscode.l10n.t('No indexed symbol matched "{0}".', trimmed));
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     output.appendLine(`[peridot] codemap locate failed: ${message}`);
     sidebar.appendError(message);
-    await vscode.window.showErrorMessage(`Peridot symbol locate failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('Peridot symbol locate failed: {0}', message));
   }
 }
 
@@ -1245,7 +1245,7 @@ async function outlineCurrentFile(
 ): Promise<void> {
   const editor = vscode.window.activeTextEditor;
   if (!editor) {
-    await vscode.window.showWarningMessage('Open a source file before outlining it with Peridot.');
+    await vscode.window.showWarningMessage(vscode.l10n.t('Open a source file before outlining it with Peridot.'));
     return;
   }
   const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
@@ -1276,7 +1276,7 @@ async function outlineCurrentFile(
     const message = err instanceof Error ? err.message : String(err);
     output.appendLine(`[peridot] codemap outline failed: ${message}`);
     sidebar.appendError(message);
-    await vscode.window.showErrorMessage(`Peridot file outline failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('Peridot file outline failed: {0}', message));
   }
 }
 
@@ -1319,7 +1319,7 @@ async function findWorkspaceSymbolReferences(
     const message = err instanceof Error ? err.message : String(err);
     output.appendLine(`[peridot] codemap refs failed: ${message}`);
     sidebar.appendError(message);
-    await vscode.window.showErrorMessage(`Peridot symbol references failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('Peridot symbol references failed: {0}', message));
   }
 }
 
@@ -1335,7 +1335,7 @@ async function attachFileToSession(
     return;
   }
   if (!sidebar.currentDaemonSessionId()) {
-    await vscode.window.showWarningMessage('Start or select a Peridot session before attaching a file.');
+    await vscode.window.showWarningMessage(vscode.l10n.t('Start or select a Peridot session before attaching a file.'));
     return;
   }
   const picked = await vscode.window.showOpenDialog({
@@ -1349,7 +1349,7 @@ async function attachFileToSession(
   if (!file) return;
   const relative = path.relative(folder, file.fsPath).replace(/\\/g, '/');
   if (relative.startsWith('..') || path.isAbsolute(relative)) {
-    await vscode.window.showWarningMessage('Peridot only attaches files inside the workspace.');
+    await vscode.window.showWarningMessage(vscode.l10n.t('Peridot only attaches files inside the workspace.'));
     return;
   }
   await vscode.commands.executeCommand('peridot.chatView.focus');
@@ -1360,7 +1360,7 @@ async function attachFileToSession(
     const message = err instanceof Error ? err.message : String(err);
     output.appendLine(`[peridot] attach failed: ${message}`);
     sidebar.appendError(message);
-    await vscode.window.showErrorMessage(`Peridot attach failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('Peridot attach failed: {0}', message));
   }
 }
 
@@ -1377,7 +1377,7 @@ async function attachInlineImageToSession(
     return;
   }
   if (!sidebar.currentDaemonSessionId()) {
-    await vscode.window.showWarningMessage('Start or select a Peridot session before attaching an image.');
+    await vscode.window.showWarningMessage(vscode.l10n.t('Start or select a Peridot session before attaching an image.'));
     return;
   }
   await vscode.commands.executeCommand('peridot.chatView.focus');
@@ -1403,7 +1403,7 @@ async function attachInlineImageToSession(
     const message = err instanceof Error ? err.message : String(err);
     output.appendLine(`[peridot] inline image attach failed: ${message}`);
     sidebar.appendError(message);
-    await vscode.window.showErrorMessage(`Peridot image attach failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('Peridot image attach failed: {0}', message));
   }
 }
 
@@ -1412,7 +1412,7 @@ async function showSessionAttachments(
   sidebar: PeridotSidebarProvider,
 ): Promise<void> {
   if (!sidebar.currentDaemonSessionId()) {
-    await vscode.window.showWarningMessage('Start or select a Peridot session before listing attachments.');
+    await vscode.window.showWarningMessage(vscode.l10n.t('Start or select a Peridot session before listing attachments.'));
     return;
   }
   await vscode.commands.executeCommand('peridot.chatView.focus');
@@ -1423,7 +1423,7 @@ async function showSessionAttachments(
     const message = err instanceof Error ? err.message : String(err);
     output.appendLine(`[peridot] attachments failed: ${message}`);
     sidebar.appendError(message);
-    await vscode.window.showErrorMessage(`Peridot attachments failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('Peridot attachments failed: {0}', message));
   }
 }
 
@@ -1459,7 +1459,7 @@ async function showSkills(
     const message = err instanceof Error ? err.message : String(err);
     output.appendLine(`[peridot] skills failed: ${message}`);
     sidebar.appendError(message);
-    await vscode.window.showErrorMessage(`Peridot skills failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('Peridot skills failed: {0}', message));
   }
 }
 
@@ -1488,7 +1488,7 @@ async function showArchivedSkills(
     const message = err instanceof Error ? err.message : String(err);
     output.appendLine(`[peridot] archived skills failed: ${message}`);
     sidebar.appendError(message);
-    await vscode.window.showErrorMessage(`Peridot archived skills failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('Peridot archived skills failed: {0}', message));
   }
 }
 
@@ -1524,7 +1524,7 @@ async function searchSkills(
     const message = err instanceof Error ? err.message : String(err);
     output.appendLine(`[peridot] skills search failed: ${message}`);
     sidebar.appendError(message);
-    await vscode.window.showErrorMessage(`Peridot skill search failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('Peridot skill search failed: {0}', message));
   }
 }
 
@@ -1560,7 +1560,7 @@ async function searchArchivedSkills(
     const message = err instanceof Error ? err.message : String(err);
     output.appendLine(`[peridot] archived skills search failed: ${message}`);
     sidebar.appendError(message);
-    await vscode.window.showErrorMessage(`Peridot archived skill search failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('Peridot archived skill search failed: {0}', message));
   }
 }
 
@@ -1591,7 +1591,7 @@ async function showSkill(
     const message = err instanceof Error ? err.message : String(err);
     output.appendLine(`[peridot] skill show failed: ${message}`);
     sidebar.appendError(message);
-    await vscode.window.showErrorMessage(`Peridot skill view failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('Peridot skill view failed: {0}', message));
   }
 }
 
@@ -1622,7 +1622,7 @@ async function useSkill(
     const message = err instanceof Error ? err.message : String(err);
     output.appendLine(`[peridot] skill use failed: ${message}`);
     sidebar.appendError(message);
-    await vscode.window.showErrorMessage(`Peridot skill use failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('Peridot skill use failed: {0}', message));
   }
 }
 
@@ -1655,7 +1655,7 @@ async function toggleSkillPin(
     const message = err instanceof Error ? err.message : String(err);
     output.appendLine(`[peridot] skill pin failed: ${message}`);
     sidebar.appendError(message);
-    await vscode.window.showErrorMessage(`Peridot skill update failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('Peridot skill update failed: {0}', message));
   }
 }
 
@@ -1667,7 +1667,7 @@ async function archiveSkill(
   const name = skillName.trim().replace(/^\/+/, '');
   if (!name) return;
   const confirmed = await vscode.window.showWarningMessage(
-    `Archive Peridot skill ${name}? It will be hidden from active skill lists.`,
+    vscode.l10n.t('Archive Peridot skill {0}? It will be hidden from active skill lists.', name),
     { modal: true },
     'Archive',
   );
@@ -1693,7 +1693,7 @@ async function archiveSkill(
     const message = err instanceof Error ? err.message : String(err);
     output.appendLine(`[peridot] skill archive failed: ${message}`);
     sidebar.appendError(message);
-    await vscode.window.showErrorMessage(`Peridot skill archive failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('Peridot skill archive failed: {0}', message));
   }
 }
 
@@ -1725,7 +1725,7 @@ async function restoreSkill(
     const message = err instanceof Error ? err.message : String(err);
     output.appendLine(`[peridot] skill restore failed: ${message}`);
     sidebar.appendError(message);
-    await vscode.window.showErrorMessage(`Peridot skill restore failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('Peridot skill restore failed: {0}', message));
   }
 }
 
@@ -1737,11 +1737,11 @@ async function detachAttachmentFromSession(
   const path = attachmentPath.trim();
   if (!path) return;
   if (!sidebar.currentDaemonSessionId()) {
-    await vscode.window.showWarningMessage('Start or select a Peridot session before detaching a file.');
+    await vscode.window.showWarningMessage(vscode.l10n.t('Start or select a Peridot session before detaching a file.'));
     return;
   }
   const confirmed = await vscode.window.showWarningMessage(
-    `Detach ${path} from this Peridot session context?`,
+    vscode.l10n.t('Detach {0} from this Peridot session context?', path),
     { modal: true },
     'Detach',
   );
@@ -1754,7 +1754,7 @@ async function detachAttachmentFromSession(
     const message = err instanceof Error ? err.message : String(err);
     output.appendLine(`[peridot] detach failed: ${message}`);
     sidebar.appendError(message);
-    await vscode.window.showErrorMessage(`Peridot detach failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('Peridot detach failed: {0}', message));
   }
 }
 
@@ -1784,7 +1784,7 @@ async function showWorkspaceTodos(
     const message = err instanceof Error ? err.message : String(err);
     output.appendLine(`[peridot] todos failed: ${message}`);
     sidebar.appendError(message);
-    await vscode.window.showErrorMessage(`Peridot TODO scan failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('Peridot TODO scan failed: {0}', message));
   }
 }
 
@@ -1794,7 +1794,7 @@ async function showContextTop(
 ): Promise<void> {
   if (!sidebar.currentDaemonSessionId()) {
     await vscode.window.showWarningMessage(
-      'Start, save, or select a Peridot session before inspecting context.',
+      vscode.l10n.t('Start, save, or select a Peridot session before inspecting context.'),
     );
     return;
   }
@@ -1811,7 +1811,7 @@ async function showContextTop(
     const message = err instanceof Error ? err.message : String(err);
     output.appendLine(`[peridot] context top failed: ${message}`);
     sidebar.appendError(message);
-    await vscode.window.showErrorMessage(`Peridot context inspection failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('Peridot context inspection failed: {0}', message));
   }
 }
 
@@ -1834,7 +1834,7 @@ async function showWorkingTreeDiff(
     const message = err instanceof Error ? err.message : String(err);
     output.appendLine(`[peridot] diff failed: ${message}`);
     sidebar.appendError(message);
-    await vscode.window.showErrorMessage(`Peridot diff failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('Peridot diff failed: {0}', message));
   }
 }
 
@@ -1950,7 +1950,7 @@ async function rewindSession(sidebar: PeridotSidebarProvider): Promise<void> {
 
 async function undoLastChange(sidebar: PeridotSidebarProvider): Promise<void> {
   const confirmation = await vscode.window.showWarningMessage(
-    'Undo the latest Peridot file checkpoint in this workspace?',
+    vscode.l10n.t('Undo the latest Peridot file checkpoint in this workspace?'),
     { modal: true },
     'Undo',
   );
@@ -2011,7 +2011,7 @@ async function saveBranchSnapshot(
     command = branchSaveSlashCommand(name);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    await vscode.window.showErrorMessage(`Peridot branch save failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('Peridot branch save failed: {0}', message));
     return;
   }
   await runBranchCommand(command, output, sidebar, 'branch save', { refreshStatus: true });
@@ -2028,7 +2028,7 @@ async function restoreBranchSnapshot(
     command = branchRestoreSlashCommand(choice.name);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    await vscode.window.showErrorMessage(`Peridot branch restore failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('Peridot branch restore failed: {0}', message));
     return;
   }
   await runBranchCommand(command, output, sidebar, 'branch restore');
@@ -2059,7 +2059,7 @@ async function forkBranchAtTurn(
     command = branchTurnSlashCommand(parseBranchTurnInput(input));
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    await vscode.window.showErrorMessage(`Peridot branch fork failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('Peridot branch fork failed: {0}', message));
     return;
   }
   await runBranchCommand(command, output, sidebar, 'branch fork');
@@ -2097,7 +2097,7 @@ async function switchBranchLimb(
     command = branchSwitchSlashCommand(parseBranchSwitchInput(input));
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    await vscode.window.showErrorMessage(`Peridot branch switch failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('Peridot branch switch failed: {0}', message));
     return;
   }
   await runBranchCommand(command, output, sidebar, 'branch switch');
@@ -2120,7 +2120,7 @@ async function runBranchCommand(
     const message = err instanceof Error ? err.message : String(err);
     output.appendLine(`[peridot] ${label} failed: ${message}`);
     sidebar.appendError(message);
-    await vscode.window.showErrorMessage(`Peridot ${label} failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('Peridot {0} failed: {1}', label, message));
   }
 }
 
@@ -2135,7 +2135,7 @@ async function pickBranchSnapshot(
     choices = branchSnapshotChoices(sidebar.currentBranchSnapshots());
   }
   if (choices.length === 0) {
-    await vscode.window.showWarningMessage('No branch snapshots are saved for this workspace.');
+    await vscode.window.showWarningMessage(vscode.l10n.t('No branch snapshots are saved for this workspace.'));
     return undefined;
   }
   if (choices.length === 1) return { name: choices[0].name };
@@ -2176,7 +2176,7 @@ async function showMcpServers(
     const message = err instanceof Error ? err.message : String(err);
     output.appendLine(`[peridot] mcp list failed: ${message}`);
     sidebar.appendError(message);
-    await vscode.window.showErrorMessage(`Peridot MCP server list failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('Peridot MCP server list failed: {0}', message));
   }
 }
 
@@ -2253,7 +2253,7 @@ async function addMcpServer(
     command = mcpAddSlashCommand(name, transport.transport, target);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    await vscode.window.showErrorMessage(`Peridot MCP server add failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('Peridot MCP server add failed: {0}', message));
     return;
   }
   await vscode.commands.executeCommand('peridot.chatView.focus');
@@ -2265,7 +2265,7 @@ async function addMcpServer(
     const message = err instanceof Error ? err.message : String(err);
     output.appendLine(`[peridot] mcp add failed: ${message}`);
     sidebar.appendError(message);
-    await vscode.window.showErrorMessage(`Peridot MCP server add failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('Peridot MCP server add failed: {0}', message));
   }
 }
 
@@ -2283,7 +2283,7 @@ async function testMcpServer(
     command = mcpTestSlashCommand(server.name);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    await vscode.window.showErrorMessage(`Peridot MCP server test failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('Peridot MCP server test failed: {0}', message));
     return;
   }
   await vscode.commands.executeCommand('peridot.chatView.focus');
@@ -2301,7 +2301,7 @@ async function testMcpServer(
     const message = err instanceof Error ? err.message : String(err);
     output.appendLine(`[peridot] mcp test failed: ${message}`);
     sidebar.appendError(message);
-    await vscode.window.showErrorMessage(`Peridot MCP server test failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('Peridot MCP server test failed: {0}', message));
   }
 }
 
@@ -2315,7 +2315,7 @@ async function removeMcpServer(
   });
   if (!server) return;
   const confirmation = await vscode.window.showWarningMessage(
-    `Remove MCP server "${server.name}" from this workspace config?`,
+    vscode.l10n.t('Remove MCP server "{0}" from this workspace config?', server.name),
     { modal: true },
     'Remove',
   );
@@ -2325,7 +2325,7 @@ async function removeMcpServer(
     command = mcpRemoveSlashCommand(server.name);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    await vscode.window.showErrorMessage(`Peridot MCP server removal failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('Peridot MCP server removal failed: {0}', message));
     return;
   }
   await vscode.commands.executeCommand('peridot.chatView.focus');
@@ -2344,7 +2344,7 @@ async function removeMcpServer(
     const message = err instanceof Error ? err.message : String(err);
     output.appendLine(`[peridot] mcp remove failed: ${message}`);
     sidebar.appendError(message);
-    await vscode.window.showErrorMessage(`Peridot MCP server removal failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('Peridot MCP server removal failed: {0}', message));
   }
 }
 
@@ -2366,7 +2366,7 @@ async function pickMcpServer(
     choices = mcpServerChoices(sidebar.currentMcpServers() ?? []);
   }
   if (choices.length === 0) {
-    await vscode.window.showWarningMessage('No MCP servers are configured for this workspace.');
+    await vscode.window.showWarningMessage(vscode.l10n.t('No MCP servers are configured for this workspace.'));
     return undefined;
   }
   if (choices.length === 1) return { name: choices[0].name };
@@ -2401,7 +2401,7 @@ async function addSessionNote(
     command = sessionNoteSlashCommand(note);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    await vscode.window.showErrorMessage(`Peridot note failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('Peridot note failed: {0}', message));
     return;
   }
   await vscode.commands.executeCommand('peridot.chatView.focus');
@@ -2412,7 +2412,7 @@ async function addSessionNote(
     const message = err instanceof Error ? err.message : String(err);
     output.appendLine(`[peridot] note failed: ${message}`);
     sidebar.appendError(message);
-    await vscode.window.showErrorMessage(`Peridot note failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('Peridot note failed: {0}', message));
   }
 }
 
@@ -2441,7 +2441,7 @@ async function showSessionNotes(
     command = sessionNotesSlashCommand(parseNotesLastInput(lastInput));
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    await vscode.window.showErrorMessage(`Peridot notes failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('Peridot notes failed: {0}', message));
     return;
   }
   await vscode.commands.executeCommand('peridot.chatView.focus');
@@ -2452,7 +2452,7 @@ async function showSessionNotes(
     const message = err instanceof Error ? err.message : String(err);
     output.appendLine(`[peridot] notes failed: ${message}`);
     sidebar.appendError(message);
-    await vscode.window.showErrorMessage(`Peridot notes failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('Peridot notes failed: {0}', message));
   }
 }
 
@@ -2462,7 +2462,7 @@ async function clearSessionNotes(
 ): Promise<void> {
   if (!(await ensureActiveNotesSession(sidebar))) return;
   const confirmed = await vscode.window.showWarningMessage(
-    'Clear all notes for the active Peridot session?',
+    vscode.l10n.t('Clear all notes for the active Peridot session?'),
     { modal: true },
     'Clear Notes',
   );
@@ -2480,14 +2480,14 @@ async function clearSessionNotes(
     const message = err instanceof Error ? err.message : String(err);
     output.appendLine(`[peridot] notes clear failed: ${message}`);
     sidebar.appendError(message);
-    await vscode.window.showErrorMessage(`Peridot notes clear failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('Peridot notes clear failed: {0}', message));
   }
 }
 
 async function ensureActiveNotesSession(sidebar: PeridotSidebarProvider): Promise<boolean> {
   if (sidebar.currentDaemonSessionId()) return true;
   await vscode.window.showWarningMessage(
-    'Start, save, or select a persisted Peridot session before using session notes.',
+    vscode.l10n.t('Start, save, or select a persisted Peridot session before using session notes.'),
   );
   return false;
 }
@@ -2521,7 +2521,7 @@ async function showSessions(
     command = sessionListSlashCommand(status.status);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    await vscode.window.showErrorMessage(`Peridot session list failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('Peridot session list failed: {0}', message));
     return;
   }
   await vscode.commands.executeCommand('peridot.chatView.focus');
@@ -2543,7 +2543,7 @@ async function showSessions(
     const message = err instanceof Error ? err.message : String(err);
     output.appendLine(`[peridot] session list failed: ${message}`);
     sidebar.appendError(message);
-    await vscode.window.showErrorMessage(`Peridot session list failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('Peridot session list failed: {0}', message));
   }
 }
 
@@ -2590,7 +2590,7 @@ async function newPersistedSession(
     const message = err instanceof Error ? err.message : String(err);
     output.appendLine(`[peridot] session new failed: ${message}`);
     sidebar.appendError(message);
-    await vscode.window.showErrorMessage(`Peridot session new failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('Peridot session new failed: {0}', message));
   }
 }
 
@@ -2611,7 +2611,7 @@ async function switchPersistedSession(
     command = sessionSwitchSlashCommand(target.id);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    await vscode.window.showErrorMessage(`Peridot session switch failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('Peridot session switch failed: {0}', message));
     return;
   }
   await vscode.commands.executeCommand('peridot.chatView.focus');
@@ -2634,7 +2634,7 @@ async function switchPersistedSession(
     const message = err instanceof Error ? err.message : String(err);
     output.appendLine(`[peridot] session switch failed: ${message}`);
     sidebar.appendError(message);
-    await vscode.window.showErrorMessage(`Peridot session switch failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('Peridot session switch failed: {0}', message));
   }
 }
 
@@ -2652,7 +2652,7 @@ async function closePersistedSession(
   if (!target) return;
   const label = target.label === target.id ? target.id : `${target.label} (${target.id})`;
   const confirmed = await vscode.window.showWarningMessage(
-    `Close Peridot session ${label}? This cancels any live run and removes its persisted record.`,
+    vscode.l10n.t('Close Peridot session {0}? This cancels any live run and removes its persisted record.', label),
     { modal: true },
     'Close Session',
   );
@@ -2662,7 +2662,7 @@ async function closePersistedSession(
     command = sessionCloseSlashCommand(target.id);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    await vscode.window.showErrorMessage(`Peridot session close failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('Peridot session close failed: {0}', message));
     return;
   }
   await vscode.commands.executeCommand('peridot.chatView.focus');
@@ -2685,7 +2685,7 @@ async function closePersistedSession(
     const message = err instanceof Error ? err.message : String(err);
     output.appendLine(`[peridot] session close failed: ${message}`);
     sidebar.appendError(message);
-    await vscode.window.showErrorMessage(`Peridot session close failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('Peridot session close failed: {0}', message));
   }
 }
 
@@ -2717,7 +2717,7 @@ async function showSessionCount(
     const message = err instanceof Error ? err.message : String(err);
     output.appendLine(`[peridot] session count failed: ${message}`);
     sidebar.appendError(message);
-    await vscode.window.showErrorMessage(`Peridot session count failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('Peridot session count failed: {0}', message));
   }
 }
 
@@ -2789,7 +2789,7 @@ async function renamePersistedSession(
     command = sessionRenameSlashCommand(target.id, title);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    await vscode.window.showErrorMessage(`Peridot session rename failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('Peridot session rename failed: {0}', message));
     return;
   }
   await vscode.commands.executeCommand('peridot.chatView.focus');
@@ -2809,7 +2809,7 @@ async function renamePersistedSession(
     const message = err instanceof Error ? err.message : String(err);
     output.appendLine(`[peridot] session rename failed: ${message}`);
     sidebar.appendError(message);
-    await vscode.window.showErrorMessage(`Peridot session rename failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('Peridot session rename failed: {0}', message));
   }
 }
 
@@ -2827,7 +2827,7 @@ async function deletePersistedSession(
   if (!target) return;
   const label = target.label === target.id ? target.id : `${target.label} (${target.id})`;
   const confirmed = await vscode.window.showWarningMessage(
-    `Delete persisted Peridot session ${label}? This cannot be undone.`,
+    vscode.l10n.t('Delete persisted Peridot session {0}? This cannot be undone.', label),
     { modal: true },
     'Delete Session',
   );
@@ -2837,7 +2837,7 @@ async function deletePersistedSession(
     command = sessionDeleteSlashCommand(target.id);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    await vscode.window.showErrorMessage(`Peridot session delete failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('Peridot session delete failed: {0}', message));
     return;
   }
   await vscode.commands.executeCommand('peridot.chatView.focus');
@@ -2860,7 +2860,7 @@ async function deletePersistedSession(
     const message = err instanceof Error ? err.message : String(err);
     output.appendLine(`[peridot] session delete failed: ${message}`);
     sidebar.appendError(message);
-    await vscode.window.showErrorMessage(`Peridot session delete failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('Peridot session delete failed: {0}', message));
   }
 }
 
@@ -2886,7 +2886,7 @@ async function inspectPersistedSession(
     command = buildCommand(target.id);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    await vscode.window.showErrorMessage(`${title} failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('{0} failed: {1}', title, message));
     return;
   }
   await vscode.commands.executeCommand('peridot.chatView.focus');
@@ -2911,7 +2911,7 @@ async function inspectPersistedSession(
     const message = err instanceof Error ? err.message : String(err);
     output.appendLine(`[peridot] ${progressLabel} failed: ${message}`);
     sidebar.appendError(message);
-    await vscode.window.showErrorMessage(`${title} failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('{0} failed: {1}', title, message));
   }
 }
 
@@ -2981,7 +2981,7 @@ async function searchSessions(
     command = sessionSearchSlashCommand(query);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    await vscode.window.showErrorMessage(`Peridot session search failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('Peridot session search failed: {0}', message));
     return;
   }
   await vscode.commands.executeCommand('peridot.chatView.focus');
@@ -3000,7 +3000,7 @@ async function searchSessions(
     const message = err instanceof Error ? err.message : String(err);
     output.appendLine(`[peridot] session search failed: ${message}`);
     sidebar.appendError(message);
-    await vscode.window.showErrorMessage(`Peridot session search failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('Peridot session search failed: {0}', message));
   }
 }
 
@@ -3053,7 +3053,7 @@ async function pruneSessions(
     pruneCommand = sessionPruneSlashCommand(options);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    await vscode.window.showErrorMessage(`Peridot session prune failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('Peridot session prune failed: {0}', message));
     return;
   }
   await vscode.commands.executeCommand('peridot.chatView.focus');
@@ -3070,11 +3070,11 @@ async function pruneSessions(
     sidebar.appendCommandResult(preview);
     const total = typeof preview.total === 'number' ? preview.total : 0;
     if (total <= 0) {
-      await vscode.window.showInformationMessage('No persisted sessions match those prune filters.');
+      await vscode.window.showInformationMessage(vscode.l10n.t('No persisted sessions match those prune filters.'));
       return;
     }
     const confirmed = await vscode.window.showWarningMessage(
-      `Remove ${total} persisted Peridot session(s)? This cannot be undone.`,
+      vscode.l10n.t('Remove {0} persisted Peridot session(s)? This cannot be undone.', total),
       { modal: true },
       'Prune Sessions',
     );
@@ -3094,7 +3094,7 @@ async function pruneSessions(
     const message = err instanceof Error ? err.message : String(err);
     output.appendLine(`[peridot] session prune failed: ${message}`);
     sidebar.appendError(message);
-    await vscode.window.showErrorMessage(`Peridot session prune failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('Peridot session prune failed: {0}', message));
   }
 }
 
@@ -3118,7 +3118,7 @@ async function replaySessionTimeline(
   }
   const choices = sessionReplayChoices(sessions);
   if (choices.length === 0) {
-    await vscode.window.showWarningMessage('Save or import a Peridot session before replaying timelines.');
+    await vscode.window.showWarningMessage(vscode.l10n.t('Save or import a Peridot session before replaying timelines.'));
     return;
   }
   const target =
@@ -3158,7 +3158,7 @@ async function replaySessionTimeline(
     command = sessionReplaySlashCommand(target.id, parseReplayLastInput(lastInput));
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    await vscode.window.showErrorMessage(`Peridot replay failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('Peridot replay failed: {0}', message));
     return;
   }
   await vscode.commands.executeCommand('peridot.chatView.focus');
@@ -3177,7 +3177,7 @@ async function replaySessionTimeline(
     const message = err instanceof Error ? err.message : String(err);
     output.appendLine(`[peridot] session replay failed: ${message}`);
     sidebar.appendError(message);
-    await vscode.window.showErrorMessage(`Peridot replay failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('Peridot replay failed: {0}', message));
   }
 }
 
@@ -3201,7 +3201,7 @@ async function exportSessionArtifacts(
   }
   const choices = sessionExportChoices(sessions, sidebar.currentDaemonSessionId());
   if (choices.length === 0) {
-    await vscode.window.showWarningMessage('Start, save, or import a Peridot session before exporting artifacts.');
+    await vscode.window.showWarningMessage(vscode.l10n.t('Start, save, or import a Peridot session before exporting artifacts.'));
     return;
   }
   const target =
@@ -3236,7 +3236,7 @@ async function exportSessionArtifacts(
   let force = false;
   if (await pathExists(destination)) {
     const confirmed = await vscode.window.showWarningMessage(
-      `${destination} already exists. Overwrite it?`,
+      vscode.l10n.t('{0} already exists. Overwrite it?', destination),
       { modal: true },
       'Overwrite',
     );
@@ -3277,7 +3277,7 @@ async function exportSessionArtifacts(
     const message = err instanceof Error ? err.message : String(err);
     output.appendLine(`[peridot] session artifact export failed: ${message}`);
     sidebar.appendError(message);
-    await vscode.window.showErrorMessage(`Peridot export failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('Peridot export failed: {0}', message));
   }
 }
 
@@ -3354,7 +3354,7 @@ async function importSessionArtifacts(
     const message = err instanceof Error ? err.message : String(err);
     output.appendLine(`[peridot] session artifact import failed: ${message}`);
     sidebar.appendError(message);
-    await vscode.window.showErrorMessage(`Peridot import failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('Peridot import failed: {0}', message));
   }
 }
 
@@ -3406,7 +3406,7 @@ async function shipChangesToPr(
     const message = err instanceof Error ? err.message : String(err);
     output.appendLine(`[peridot] ship failed: ${message}`);
     sidebar.appendError(message);
-    await vscode.window.showErrorMessage(`Peridot ship failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('Peridot ship failed: {0}', message));
   }
 }
 
@@ -3452,7 +3452,7 @@ async function mergeGitHubPr(
     const message = err instanceof Error ? err.message : String(err);
     output.appendLine(`[peridot] gh pr merge failed: ${message}`);
     sidebar.appendError(message);
-    await vscode.window.showErrorMessage(`GitHub PR merge failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('GitHub PR merge failed: {0}', message));
   }
 }
 
@@ -4150,7 +4150,7 @@ async function loginOpenAi(
 ): Promise<void> {
   if (activeRunCount() > 0) {
     await vscode.window.showWarningMessage(
-      'Cancel or wait for the current Peridot task before logging in.',
+      vscode.l10n.t('Cancel or wait for the current Peridot task before logging in.'),
     );
     return;
   }
@@ -4173,12 +4173,12 @@ async function loginOpenAi(
     sidebar.appendSystem('ChatGPT login completed');
     invalidateStatusCache();
     await refreshStatus(output, sidebar, { force: true });
-    await vscode.window.showInformationMessage('Peridot ChatGPT login completed.');
+    await vscode.window.showInformationMessage(vscode.l10n.t('Peridot ChatGPT login completed.'));
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     output.appendLine(`[peridot] login failed: ${message}`);
     sidebar.appendError(`ChatGPT login failed: ${message}`);
-    await vscode.window.showErrorMessage(`Peridot login failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('Peridot login failed: {0}', message));
   }
 }
 
@@ -4304,7 +4304,7 @@ function chatGptLoginProcessOptions(
         if (!opened) {
           output.appendLine(`[peridot] Cursor could not open browser: ${authUrl}`);
           void vscode.window.showWarningMessage(
-            'Peridot could not open the ChatGPT login page automatically. Use the login link shown in the Peridot chat.',
+            vscode.l10n.t('Peridot could not open the ChatGPT login page automatically. Use the login link shown in the Peridot chat.'),
           );
         }
       });
@@ -4318,7 +4318,7 @@ async function cancelTask(
 ): Promise<void> {
   const run = sidebar ? currentActiveRun(sidebar) : singleActiveRun();
   if (!run) {
-    await vscode.window.showInformationMessage('Peridot is not running a task.');
+    await vscode.window.showInformationMessage(vscode.l10n.t('Peridot is not running a task.'));
     return;
   }
   const sessionId = run.sessionId;
@@ -4343,7 +4343,7 @@ async function cancelTask(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     output.appendLine(`[peridot] cancel failed: ${message}`);
-    await vscode.window.showErrorMessage(`Peridot cancel failed: ${message}`);
+    await vscode.window.showErrorMessage(vscode.l10n.t('Peridot cancel failed: {0}', message));
   }
 }
 
@@ -4432,7 +4432,7 @@ async function registerProvider(
 ): Promise<void> {
   if (activeRunCount() > 0) {
     await vscode.window.showWarningMessage(
-      'Cancel or wait for the current Peridot task before switching providers.',
+      vscode.l10n.t('Cancel or wait for the current Peridot task before switching providers.'),
     );
     return;
   }
@@ -4720,7 +4720,7 @@ async function openWorkspaceFile(
 
   // Everything failed.
   output.appendLine(`[peridot] openFile failed for "${relativePath}": ${errors.join(' | ')}`);
-  void vscode.window.showWarningMessage(`파일을 열 수 없습니다: ${relativePath}`);
+  void vscode.window.showWarningMessage(vscode.l10n.t('Could not open file: {0}', relativePath));
 }
 
 async function clearExtensionSession(
