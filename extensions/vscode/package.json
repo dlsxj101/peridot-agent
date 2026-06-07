@@ -126,379 +126,379 @@
     "commands": [
       {
         "command": "peridot.hello",
-        "title": "Peridot: Hello",
+        "title": "%peridot.hello%",
         "category": "Peridot"
       },
       {
         "command": "peridot.checkVersion",
-        "title": "Peridot: Check Daemon Version",
+        "title": "%peridot.checkVersion%",
         "category": "Peridot"
       },
       {
         "command": "peridot.runTask",
-        "title": "Peridot: Run Task",
+        "title": "%peridot.runTask%",
         "category": "Peridot"
       },
       {
         "command": "peridot.cancelTask",
-        "title": "Peridot: Cancel Current Task",
+        "title": "%peridot.cancelTask%",
         "category": "Peridot"
       },
       {
         "command": "peridot.loginOpenAi",
-        "title": "Peridot: Login with ChatGPT",
+        "title": "%peridot.loginOpenAi%",
         "category": "Peridot"
       },
       {
         "command": "peridot.refreshStatus",
-        "title": "Peridot: Refresh Status",
+        "title": "%peridot.refreshStatus%",
         "category": "Peridot"
       },
       {
         "command": "peridot.setExecutionMode",
-        "title": "Peridot: Set Execution Mode",
+        "title": "%peridot.setExecutionMode%",
         "category": "Peridot",
         "icon": "$(play)"
       },
       {
         "command": "peridot.setPermissionMode",
-        "title": "Peridot: Set Permission Mode",
+        "title": "%peridot.setPermissionMode%",
         "category": "Peridot",
         "icon": "$(shield)"
       },
       {
         "command": "peridot.setReasoningEffort",
-        "title": "Peridot: Set Reasoning Effort",
+        "title": "%peridot.setReasoningEffort%",
         "category": "Peridot",
         "icon": "$(symbol-operator)"
       },
       {
         "command": "peridot.switchRuntimeProvider",
-        "title": "Peridot: Switch Runtime Provider",
+        "title": "%peridot.switchRuntimeProvider%",
         "category": "Peridot",
         "icon": "$(plug)"
       },
       {
         "command": "peridot.setRuntimeModel",
-        "title": "Peridot: Set Runtime Model",
+        "title": "%peridot.setRuntimeModel%",
         "category": "Peridot",
         "icon": "$(symbol-key)"
       },
       {
         "command": "peridot.setCommitteeMode",
-        "title": "Peridot: Set Committee Mode",
+        "title": "%peridot.setCommitteeMode%",
         "category": "Peridot",
         "icon": "$(organization)"
       },
       {
         "command": "peridot.showCodeMap",
-        "title": "Peridot: Show Workspace Code Map",
+        "title": "%peridot.showCodeMap%",
         "category": "Peridot",
         "icon": "$(symbol-misc)"
       },
       {
         "command": "peridot.showCodeMapStatus",
-        "title": "Peridot: Show Workspace Code Map Status",
+        "title": "%peridot.showCodeMapStatus%",
         "category": "Peridot",
         "icon": "$(info)"
       },
       {
         "command": "peridot.refreshCodeMap",
-        "title": "Peridot: Refresh Workspace Code Map Index",
+        "title": "%peridot.refreshCodeMap%",
         "category": "Peridot",
         "icon": "$(sync)"
       },
       {
         "command": "peridot.searchCodeMap",
-        "title": "Peridot: Search Workspace Code Map",
+        "title": "%peridot.searchCodeMap%",
         "category": "Peridot",
         "icon": "$(search)"
       },
       {
         "command": "peridot.locateCodeMapSymbol",
-        "title": "Peridot: Locate Workspace Symbol",
+        "title": "%peridot.locateCodeMapSymbol%",
         "category": "Peridot",
         "icon": "$(symbol-method)"
       },
       {
         "command": "peridot.outlineCurrentFile",
-        "title": "Peridot: Outline Current File",
+        "title": "%peridot.outlineCurrentFile%",
         "category": "Peridot",
         "icon": "$(list-tree)"
       },
       {
         "command": "peridot.findSymbolReferences",
-        "title": "Peridot: Find Workspace Symbol References",
+        "title": "%peridot.findSymbolReferences%",
         "category": "Peridot",
         "icon": "$(references)"
       },
       {
         "command": "peridot.showSkills",
-        "title": "Peridot: Show Skills",
+        "title": "%peridot.showSkills%",
         "category": "Peridot",
         "icon": "$(list-filter)"
       },
       {
         "command": "peridot.showArchivedSkills",
-        "title": "Peridot: Show Archived Skills",
+        "title": "%peridot.showArchivedSkills%",
         "category": "Peridot",
         "icon": "$(archive)"
       },
       {
         "command": "peridot.searchSkills",
-        "title": "Peridot: Search Skills",
+        "title": "%peridot.searchSkills%",
         "category": "Peridot",
         "icon": "$(search)"
       },
       {
         "command": "peridot.searchArchivedSkills",
-        "title": "Peridot: Search Archived Skills",
+        "title": "%peridot.searchArchivedSkills%",
         "category": "Peridot",
         "icon": "$(search)"
       },
       {
         "command": "peridot.attachFile",
-        "title": "Peridot: Attach File to Session",
+        "title": "%peridot.attachFile%",
         "category": "Peridot",
         "icon": "$(link)"
       },
       {
         "command": "peridot.showAttachments",
-        "title": "Peridot: Show Session Attachments",
+        "title": "%peridot.showAttachments%",
         "category": "Peridot",
         "icon": "$(references)"
       },
       {
         "command": "peridot.showTodos",
-        "title": "Peridot: Show Workspace TODOs",
+        "title": "%peridot.showTodos%",
         "category": "Peridot",
         "icon": "$(checklist)"
       },
       {
         "command": "peridot.showContextTop",
-        "title": "Peridot: Show Context Top",
+        "title": "%peridot.showContextTop%",
         "category": "Peridot",
         "icon": "$(symbol-variable)"
       },
       {
         "command": "peridot.showWorkingTreeDiff",
-        "title": "Peridot: Show Working Tree Diff",
+        "title": "%peridot.showWorkingTreeDiff%",
         "category": "Peridot",
         "icon": "$(diff)"
       },
       {
         "command": "peridot.compactContext",
-        "title": "Peridot: Compact Context",
+        "title": "%peridot.compactContext%",
         "category": "Peridot",
         "icon": "$(fold)"
       },
       {
         "command": "peridot.rewindSession",
-        "title": "Peridot: Rewind Last Exchange",
+        "title": "%peridot.rewindSession%",
         "category": "Peridot",
         "icon": "$(history)"
       },
       {
         "command": "peridot.undoLastChange",
-        "title": "Peridot: Undo Last Change",
+        "title": "%peridot.undoLastChange%",
         "category": "Peridot",
         "icon": "$(discard)"
       },
       {
         "command": "peridot.showBranchTurns",
-        "title": "Peridot: Show Branch Turns",
+        "title": "%peridot.showBranchTurns%",
         "category": "Peridot",
         "icon": "$(git-branch)"
       },
       {
         "command": "peridot.showBranchSnapshots",
-        "title": "Peridot: Show Branch Snapshots",
+        "title": "%peridot.showBranchSnapshots%",
         "category": "Peridot",
         "icon": "$(list-tree)"
       },
       {
         "command": "peridot.saveBranchSnapshot",
-        "title": "Peridot: Save Branch Snapshot",
+        "title": "%peridot.saveBranchSnapshot%",
         "category": "Peridot",
         "icon": "$(save)"
       },
       {
         "command": "peridot.restoreBranchSnapshot",
-        "title": "Peridot: Restore Branch Snapshot",
+        "title": "%peridot.restoreBranchSnapshot%",
         "category": "Peridot",
         "icon": "$(history)"
       },
       {
         "command": "peridot.forkBranchAtTurn",
-        "title": "Peridot: Fork Branch at Turn",
+        "title": "%peridot.forkBranchAtTurn%",
         "category": "Peridot",
         "icon": "$(git-branch)"
       },
       {
         "command": "peridot.showBranchTree",
-        "title": "Peridot: Show Branch Tree",
+        "title": "%peridot.showBranchTree%",
         "category": "Peridot",
         "icon": "$(list-tree)"
       },
       {
         "command": "peridot.switchBranchLimb",
-        "title": "Peridot: Switch Branch Limb",
+        "title": "%peridot.switchBranchLimb%",
         "category": "Peridot",
         "icon": "$(arrow-swap)"
       },
       {
         "command": "peridot.showMcpServers",
-        "title": "Peridot: Show MCP Servers",
+        "title": "%peridot.showMcpServers%",
         "category": "Peridot",
         "icon": "$(server-environment)"
       },
       {
         "command": "peridot.addMcpServer",
-        "title": "Peridot: Add MCP Server",
+        "title": "%peridot.addMcpServer%",
         "category": "Peridot",
         "icon": "$(add)"
       },
       {
         "command": "peridot.testMcpServer",
-        "title": "Peridot: Test MCP Server",
+        "title": "%peridot.testMcpServer%",
         "category": "Peridot",
         "icon": "$(debug-start)"
       },
       {
         "command": "peridot.removeMcpServer",
-        "title": "Peridot: Remove MCP Server",
+        "title": "%peridot.removeMcpServer%",
         "category": "Peridot",
         "icon": "$(trash)"
       },
       {
         "command": "peridot.addSessionNote",
-        "title": "Peridot: Add Session Note",
+        "title": "%peridot.addSessionNote%",
         "category": "Peridot",
         "icon": "$(note)"
       },
       {
         "command": "peridot.showSessionNotes",
-        "title": "Peridot: Show Session Notes",
+        "title": "%peridot.showSessionNotes%",
         "category": "Peridot",
         "icon": "$(notebook)"
       },
       {
         "command": "peridot.clearSessionNotes",
-        "title": "Peridot: Clear Session Notes",
+        "title": "%peridot.clearSessionNotes%",
         "category": "Peridot",
         "icon": "$(clear-all)"
       },
       {
         "command": "peridot.newPersistedSession",
-        "title": "Peridot: New Session",
+        "title": "%peridot.newPersistedSession%",
         "category": "Peridot",
         "icon": "$(add)"
       },
       {
         "command": "peridot.switchPersistedSession",
-        "title": "Peridot: Switch Session",
+        "title": "%peridot.switchPersistedSession%",
         "category": "Peridot",
         "icon": "$(arrow-swap)"
       },
       {
         "command": "peridot.closePersistedSession",
-        "title": "Peridot: Close Session",
+        "title": "%peridot.closePersistedSession%",
         "category": "Peridot",
         "icon": "$(close)"
       },
       {
         "command": "peridot.showSessionCount",
-        "title": "Peridot: Show Session Count",
+        "title": "%peridot.showSessionCount%",
         "category": "Peridot",
         "icon": "$(graph)"
       },
       {
         "command": "peridot.showPersistedSessionDetails",
-        "title": "Peridot: Show Session Details",
+        "title": "%peridot.showPersistedSessionDetails%",
         "category": "Peridot",
         "icon": "$(inspect)"
       },
       {
         "command": "peridot.locatePersistedSessionDirectory",
-        "title": "Peridot: Locate Session Directory",
+        "title": "%peridot.locatePersistedSessionDirectory%",
         "category": "Peridot",
         "icon": "$(location)"
       },
       {
         "command": "peridot.resumePersistedSession",
-        "title": "Peridot: Resume Session",
+        "title": "%peridot.resumePersistedSession%",
         "category": "Peridot",
         "icon": "$(debug-continue)"
       },
       {
         "command": "peridot.renamePersistedSession",
-        "title": "Peridot: Rename Session",
+        "title": "%peridot.renamePersistedSession%",
         "category": "Peridot",
         "icon": "$(edit)"
       },
       {
         "command": "peridot.deletePersistedSession",
-        "title": "Peridot: Delete Session",
+        "title": "%peridot.deletePersistedSession%",
         "category": "Peridot",
         "icon": "$(trash)"
       },
       {
         "command": "peridot.showSessions",
-        "title": "Peridot: Show Sessions",
+        "title": "%peridot.showSessions%",
         "category": "Peridot",
         "icon": "$(list-unordered)"
       },
       {
         "command": "peridot.searchSessions",
-        "title": "Peridot: Search Sessions",
+        "title": "%peridot.searchSessions%",
         "category": "Peridot",
         "icon": "$(search)"
       },
       {
         "command": "peridot.pruneSessions",
-        "title": "Peridot: Prune Sessions",
+        "title": "%peridot.pruneSessions%",
         "category": "Peridot",
         "icon": "$(trash)"
       },
       {
         "command": "peridot.replaySessionTimeline",
-        "title": "Peridot: Replay Session Timeline",
+        "title": "%peridot.replaySessionTimeline%",
         "category": "Peridot",
         "icon": "$(history)"
       },
       {
         "command": "peridot.exportSessionArtifacts",
-        "title": "Peridot: Export Session Artifacts",
+        "title": "%peridot.exportSessionArtifacts%",
         "category": "Peridot",
         "icon": "$(export)"
       },
       {
         "command": "peridot.importSessionArtifacts",
-        "title": "Peridot: Import Session Artifacts",
+        "title": "%peridot.importSessionArtifacts%",
         "category": "Peridot",
         "icon": "$(cloud-download)"
       },
       {
         "command": "peridot.prStatus",
-        "title": "Peridot: Show GitHub PR Status",
+        "title": "%peridot.prStatus%",
         "category": "Peridot",
         "icon": "$(github)"
       },
       {
         "command": "peridot.shipChanges",
-        "title": "Peridot: Ship Changes to PR",
+        "title": "%peridot.shipChanges%",
         "category": "Peridot",
         "icon": "$(git-pull-request-create)"
       },
       {
         "command": "peridot.mergePr",
-        "title": "Peridot: Merge GitHub PR",
+        "title": "%peridot.mergePr%",
         "category": "Peridot",
         "icon": "$(git-merge)"
       },
       {
         "command": "peridot.openSettings",
-        "title": "Peridot: Open Settings",
+        "title": "%peridot.openSettings%",
         "category": "Peridot",
         "icon": "$(gear)"
       }

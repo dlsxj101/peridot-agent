@@ -8,7 +8,7 @@ src/**
 webview/**
 scripts/**
 .gitignore
-.eslintrc.json
+eslint.config.mjs
 **/tsconfig*.json
 esbuild.config.mjs
 .todo-*.md
