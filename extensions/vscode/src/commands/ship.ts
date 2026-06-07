@@ -65,6 +65,41 @@ export async function shipChangesToPr(
   }
 }
 
+export async function showGitHubPrStatus(
+  output: vscode.OutputChannel,
+  sidebar: PeridotSidebarProvider,
+): Promise<void> {
+  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!folder) {
+    const message = 'Open a workspace folder before checking GitHub PR status.';
+    sidebar.setWorkspaceProblem(message);
+    await vscode.window.showWarningMessage(message);
+    return;
+  }
+  await vscode.commands.executeCommand('peridot.chatView.focus');
+  try {
+    const { stdout, stderr } = await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Window,
+        title: 'Peridot: checking GitHub PR status',
+      },
+      async () => execFile('gh', ['pr', 'status'], folder),
+    );
+    sidebar.appendCommandResult({
+      kind: 'pr_status',
+      title: 'GitHub PR Status',
+      message: (stdout || stderr || 'No PR status output.').trim(),
+      severity: 'info',
+      command: 'gh pr status',
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    output.appendLine(`[peridot] gh pr status failed: ${message}`);
+    sidebar.appendError(message);
+    await vscode.window.showErrorMessage(vscode.l10n.t('GitHub PR status failed: {0}', message));
+  }
+}
+
 export async function mergeGitHubPr(
   output: vscode.OutputChannel,
   sidebar: PeridotSidebarProvider,
