@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+## [0.6.0] — 2026-06-08
+
+### Changed — host entry point modularized
+
+- The slash-command handlers were split out of the monolithic
+  `extension.ts` into focused `src/commands/` modules (skills, branch,
+  runtime, MCP, notes, sessions, ship, session-transfer, codemap,
+  attachments, context, plus a shared CLI helper), roughly halving the
+  entry-point file with no behavior change.
+
+### Fixed — reliability and input validation
+
+- Daemon JSON-RPC client: per-request timeouts so a dropped response can't
+  hang the UI forever, SIGTERM → SIGKILL shutdown that resolves only on
+  actual exit (no orphaned daemons), and a capped stdout line reader.
+- Run lifecycle: coalesced daemon spawns (no duplicate-daemon leaks), a
+  stale daemon's late exit no longer reports cross-session failures, and
+  approvals route strictly by session id.
+- Login / env-set subprocesses cap captured stderr, kill the child on
+  error, and time out instead of wedging.
+- Webview & persisted state: inbound messages and restored run options are
+  validated, view listeners and timers are disposed on teardown, the CSP
+  nonce uses a CSPRNG, and the approval-diff read rejects `..` traversal.
+
 ## [0.5.21] — 2026-05-29
 
 ### Added — surface-aware slash autocomplete

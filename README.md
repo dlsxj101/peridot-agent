@@ -4,7 +4,22 @@ Peridot Agent is a Rust CLI/TUI autonomous coding agent with multi-session orche
 
 ## Status
 
-Current version: **0.8.14**
+Current version: **0.9.0**
+
+### What's new in v0.9.0
+
+- **Vision routing completion (F2).** Turns with attached images now route
+  to a configured vision-capable model on the same provider when the active
+  model is text-only, with an optional OCR text fallback (`[vision] ocr`,
+  Tesseract behind the `ocr-tesseract` feature) instead of dropping images.
+- **Semantic symbol index (F1).** Broader language coverage with a full
+  lexical scope chain and binding-level resolution (shadowing,
+  destructuring, comprehensions, and more).
+- **Extension internals hardened.** The VS Code extension's daemon
+  JSON-RPC client gained per-request timeouts and graceful→forced
+  shutdown, the run lifecycle no longer leaks daemons or mis-routes
+  approvals, and webview/persisted-state inputs are validated. The host
+  entry point was also split into focused `commands/` modules.
 
 ### What's new in v0.8.14
 

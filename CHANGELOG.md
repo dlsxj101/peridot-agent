@@ -14,6 +14,32 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 
 ## Unreleased
 
+## [0.9.0 / extension 0.6.0] — 2026-06-08
+
+### Changed — VS Code host modularized
+
+- The extension's slash-command handlers were split out of the monolithic
+  `extension.ts` into focused `commands/` modules (skills, branch, runtime,
+  MCP, notes, sessions, ship, session-transfer, codemap, attachments,
+  context, plus a shared CLI helper), roughly halving the entry-point file.
+  Behavior-preserving; verified by the existing unit tests and CI.
+
+### Fixed — extension reliability
+
+- **Daemon JSON-RPC client.** Per-request timeouts reclaim a dropped /
+  never-answered request instead of hanging the UI forever; `shutdown()`
+  escalates SIGTERM → SIGKILL and resolves only on actual exit so no
+  daemon is orphaned; the stdout reader caps a single line and resyncs.
+- **Run lifecycle.** Concurrent `ensureWorkspaceRun` spawns are coalesced
+  (no duplicate-daemon leaks); a stale daemon's late exit no longer marks
+  unrelated sessions failed; approvals route strictly by session id.
+- **Subprocess handling.** Login / env-set subprocesses now cap captured
+  stderr, kill the child on error, and time out instead of wedging.
+- **Webview & persisted state.** Inbound webview messages and restored run
+  options are validated (mode/permission clamped); view listeners and
+  debounced timers are disposed on teardown; the CSP nonce uses a CSPRNG;
+  and the approval-diff file read rejects `..` traversal.
+
 ### Added — vision routing completion (F2)
 
 - **Vision-model override (`[vision] model`).** When a turn carries attached

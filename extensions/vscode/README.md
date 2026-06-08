@@ -4,7 +4,7 @@ VS Code panel for [Peridot Agent](https://github.com/dlsxj101/peridot-agent) —
 a Rust CLI/TUI autonomous coding agent with multi-LLM committee mode,
 native tool calling, and 2-Tier context management.
 
-> **Status**: v0.5.21 brings the latest session, branch, runtime, MCP,
+> **Status**: v0.6.0 brings the latest session, branch, runtime, MCP,
 > notes, TODO, context, diff, replay, import/export, autocomplete, and
 > session-context surfaces into the VS Code/Cursor extension. The sidebar
 > includes onboarding, queued prompts, persistent chat sessions,
@@ -153,14 +153,14 @@ Install the decoded VSIX directly on the remote host:
 
 ```bash
 cd extensions/vscode
-bash scripts/install-cursor-remote.sh 0.5.21
+bash scripts/install-cursor-remote.sh 0.6.0
 ```
 
 Or run the same workaround without a checkout:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/dlsxj101/peridot-agent/main/extensions/vscode/scripts/install-cursor-remote.sh \
-  | bash -s -- 0.5.21
+  | bash -s -- 0.6.0
 ```
 
 The script downloads the Marketplace VSIX with `curl --compressed`,
@@ -210,8 +210,8 @@ Rust CLI `v*` releases. Before publishing, update
 `extensions/vscode/package.json`, then push a matching tag:
 
 ```bash
-git tag vsce/v0.5.21
-git push origin vsce/v0.5.21
+git tag vsce/v0.6.0
+git push origin vsce/v0.6.0
 ```
 
 The release workflow verifies that the tag matches the extension package
@@ -227,6 +227,10 @@ workflow requires `VSCE_PAT` and `OVSX_PAT` repository secrets.
   budget / context, inline plan panel, inline unified-diff cards,
   pre-approval diff preview for `file_write` / `file_patch`, and
   cached / reused-daemon status reads.
+- **v0.6.0** — ✅ Hardened extension internals: daemon JSON-RPC
+  per-request timeouts and graceful→forced shutdown, leak-free run
+  lifecycle with strict approval routing, validated webview/persisted
+  inputs, and the host entry point split into focused `commands/` modules.
 - **v0.5.21** — ✅ VS Code/Cursor parity for persisted-session
   management, branch workflows, runtime controls, MCP management,
   notes, TODOs, context/diff, replay, import/export, shared slash
