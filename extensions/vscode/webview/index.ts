@@ -138,8 +138,17 @@ markdownRenderer.validateLink = (url: string): boolean => {
 
 window.addEventListener('message', (event: MessageEvent<InboundMessage>) => {
   if (event.data?.type === 'state') {
-    state = event.data.state;
-    render(state);
+    const next = event.data.state;
+    // The host and webview bundle are versioned independently; guard against a
+    // malformed/partial state payload so one bad message can't throw out of the
+    // listener and freeze further rendering.
+    if (!next || typeof next !== 'object') return;
+    state = next;
+    try {
+      render(state);
+    } catch (err) {
+      console.error('[peridot] webview render failed:', err);
+    }
   }
 });
 vscode.postMessage({ type: 'ready' });
@@ -4305,15 +4314,23 @@ function modelInput(opts: RunOptions, provider?: string): HTMLInputElement {
 }
 
 function currentOptionsFromDom(): RunOptions {
-  const mode = (document.getElementById('composer-mode') as HTMLSelectElement | null)?.value ?? 'execute';
-  const permission =
+  const rawMode = (document.getElementById('composer-mode') as HTMLSelectElement | null)?.value ?? 'execute';
+  const rawPermission =
     (document.getElementById('composer-permission') as HTMLSelectElement | null)?.value ?? 'auto';
   const modelValue = (
     document.getElementById('composer-model') as HTMLInputElement | null
   )?.value.trim();
+  // Whitelist the select values rather than blind-casting, so a stale/divergent
+  // option can't post an invalid mode/permission to the host.
+  const mode: RunOptions['mode'] =
+    rawMode === 'plan' || rawMode === 'goal' || rawMode === 'execute' ? rawMode : 'execute';
+  const permission: RunOptions['permission'] =
+    rawPermission === 'safe' || rawPermission === 'yolo' || rawPermission === 'auto'
+      ? rawPermission
+      : 'auto';
   const options: RunOptions = {
-    mode: mode as RunOptions['mode'],
-    permission: permission as RunOptions['permission'],
+    mode,
+    permission,
   };
   if (modelValue) options.model = modelValue;
   if (state?.runOptions.reasoningEffort) {

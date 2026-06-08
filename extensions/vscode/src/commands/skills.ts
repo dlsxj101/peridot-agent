@@ -11,6 +11,21 @@ import * as vscode from 'vscode';
 import { refreshSlashCatalog, runSlashCommand } from '../extension';
 import type { PeridotSidebarProvider } from '../sidebar';
 
+/**
+ * Normalize a skill name (which may arrive from a webview UI action) into a
+ * bare identifier, or `undefined` if it can't be one. Skill names never carry
+ * whitespace and never begin with `-`; rejecting those keeps a `/skills …`
+ * action from smuggling extra positional args / flags and acting on a
+ * different skill than the one the user clicked.
+ */
+function normalizeSkillName(skillName: string): string | undefined {
+  const name = skillName.trim().replace(/^\/+/, '');
+  if (!name || /\s/.test(name) || name.startsWith('-')) {
+    return undefined;
+  }
+  return name;
+}
+
 export async function showSkills(
   output: vscode.OutputChannel,
   sidebar: PeridotSidebarProvider,
@@ -150,7 +165,7 @@ export async function showSkill(
   output: vscode.OutputChannel,
   sidebar: PeridotSidebarProvider,
 ): Promise<void> {
-  const name = skillName.trim().replace(/^\/+/, '');
+  const name = normalizeSkillName(skillName);
   if (!name) return;
   const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   if (!folder) {
@@ -181,7 +196,7 @@ export async function useSkill(
   output: vscode.OutputChannel,
   sidebar: PeridotSidebarProvider,
 ): Promise<void> {
-  const name = skillName.trim().replace(/^\/+/, '');
+  const name = normalizeSkillName(skillName);
   if (!name) return;
   const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   if (!folder) {
@@ -213,7 +228,7 @@ export async function toggleSkillPin(
   output: vscode.OutputChannel,
   sidebar: PeridotSidebarProvider,
 ): Promise<void> {
-  const name = skillName.trim().replace(/^\/+/, '');
+  const name = normalizeSkillName(skillName);
   if (!name) return;
   const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   if (!folder) {
@@ -245,7 +260,7 @@ export async function archiveSkill(
   output: vscode.OutputChannel,
   sidebar: PeridotSidebarProvider,
 ): Promise<void> {
-  const name = skillName.trim().replace(/^\/+/, '');
+  const name = normalizeSkillName(skillName);
   if (!name) return;
   const confirmed = await vscode.window.showWarningMessage(
     vscode.l10n.t('Archive Peridot skill {0}? It will be hidden from active skill lists.', name),
@@ -283,7 +298,7 @@ export async function restoreSkill(
   output: vscode.OutputChannel,
   sidebar: PeridotSidebarProvider,
 ): Promise<void> {
-  const name = skillName.trim().replace(/^\/+/, '');
+  const name = normalizeSkillName(skillName);
   if (!name) return;
   const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   if (!folder) {

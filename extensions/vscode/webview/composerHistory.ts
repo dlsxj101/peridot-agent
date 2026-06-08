@@ -13,6 +13,9 @@ export class ComposerHistory {
 
   constructor(snapshot?: ComposerHistorySnapshot) {
     for (const [sessionKey, entries] of Object.entries(snapshot?.entriesBySession ?? {})) {
+      // Persisted state can be corrupt or from an older shape; skip anything
+      // that isn't an array of strings rather than throwing during init.
+      if (!Array.isArray(entries)) continue;
       const sanitized = entries
         .filter((entry) => typeof entry === 'string' && entry.trim().length > 0)
         .map((entry) => entry.trim());
