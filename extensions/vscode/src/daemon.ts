@@ -5,7 +5,6 @@
 // server-pushed notifications (`method: "event"`) to listeners.
 
 import * as childProcess from 'child_process';
-import * as readline from 'readline';
 import { resolvePeridotBinary } from './peridotBin';
 import { peridotChildEnv } from './processEnv';
 
@@ -81,9 +80,28 @@ type HandshakeListener = (handshake: DaemonHandshake) => void;
  *   3. writes the line to the child's stdin,
  *   4. resolves the Promise when stdout produces a line whose id matches.
  */
+/**
+ * Default per-request timeout. The daemon answers control RPCs
+ * (`peridot.status`, `session.start`, `session.command`, …) promptly — none of
+ * them block for the lifetime of an agent run, which streams over
+ * notifications instead — so a request still outstanding after this long means
+ * the response was dropped or the daemon wedged. Rejecting reclaims the pending
+ * slot and surfaces a recoverable error instead of hanging the UI forever.
+ */
+const DEFAULT_REQUEST_TIMEOUT_MS = 300_000;
+
+/**
+ * Hard cap on a single newline-delimited stdout line. A daemon emitting one
+ * pathologically large line (runaway event, multi-MB blob) would otherwise be
+ * buffered in full in the extension host before it could be parsed; past this
+ * size the partial line is dropped and parsing resyncs at the next newline.
+ */
+const MAX_LINE_LENGTH = 16 * 1024 * 1024;
+
 export class PeridotDaemon {
   private child: childProcess.ChildProcessWithoutNullStreams;
-  private rl: readline.Interface;
+  private buffer = '';
+  private skipOversizedLine = false;
   private nextId = 1;
   private pending = new Map<
     number,
@@ -97,8 +115,8 @@ export class PeridotDaemon {
 
   private constructor(child: childProcess.ChildProcessWithoutNullStreams) {
     this.child = child;
-    this.rl = readline.createInterface({ input: child.stdout });
-    this.rl.on('line', (line) => this.handleLine(line));
+    this.child.stdout.setEncoding('utf8');
+    this.child.stdout.on('data', (chunk: string) => this.handleChunk(chunk));
     this.child.on('exit', (code, signal) => {
       this.exited = true;
       this.rejectAll(new Error('peridot daemon exited'));
@@ -136,14 +154,41 @@ export class PeridotDaemon {
    * the daemon's error message when the response carries an `error`
    * envelope.
    */
-  public send(method: string, params?: unknown): Promise<unknown> {
+  public send(
+    method: string,
+    params?: unknown,
+    timeoutMs: number = DEFAULT_REQUEST_TIMEOUT_MS,
+  ): Promise<unknown> {
     const id = this.nextId++;
     const request: RpcRequest = { jsonrpc: '2.0', id, method, params };
     const line = JSON.stringify(request) + '\n';
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const clear = () => {
+        if (timer) clearTimeout(timer);
+      };
+      this.pending.set(id, {
+        resolve: (value) => {
+          clear();
+          resolve(value);
+        },
+        reject: (err) => {
+          clear();
+          reject(err);
+        },
+      });
+      if (timeoutMs > 0 && Number.isFinite(timeoutMs)) {
+        timer = setTimeout(() => {
+          // Reclaim the slot so a late response is ignored rather than
+          // resolving an already-rejected promise.
+          if (this.pending.delete(id)) {
+            reject(new Error(`peridot daemon did not respond to "${method}" within ${timeoutMs}ms`));
+          }
+        }, timeoutMs);
+      }
       this.child.stdin.write(line, (err) => {
         if (err) {
+          clear();
           this.pending.delete(id);
           reject(err);
         }
@@ -207,15 +252,56 @@ export class PeridotDaemon {
     }
     this.child.stdin.end();
     await new Promise<void>((resolve) => {
-      const timer = setTimeout(() => {
-        this.child.kill('SIGTERM');
+      let settled = false;
+      const timers: ReturnType<typeof setTimeout>[] = [];
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        for (const timer of timers) clearTimeout(timer);
         resolve();
-      }, 2000);
-      this.child.once('exit', () => {
-        clearTimeout(timer);
-        resolve();
-      });
+      };
+      // Graceful first: give the daemon a moment to drain and exit on its own.
+      // Escalate to SIGTERM, then SIGKILL, and only resolve once the child has
+      // actually exited (or we've force-killed it) so we never leave an orphan
+      // holding the project root / DB locks.
+      this.child.once('exit', finish);
+      timers.push(setTimeout(() => this.child.kill('SIGTERM'), 2000));
+      timers.push(
+        setTimeout(() => {
+          this.child.kill('SIGKILL');
+          finish();
+        }, 5000),
+      );
     });
+  }
+
+  /**
+   * Accumulates stdout and dispatches complete newline-delimited lines. Caps
+   * the in-flight buffer at {@link MAX_LINE_LENGTH}: an oversized partial line
+   * is dropped and parsing resyncs at the next newline rather than buffering an
+   * unbounded blob.
+   */
+  private handleChunk(chunk: string) {
+    this.buffer += chunk;
+    for (;;) {
+      const idx = this.buffer.indexOf('\n');
+      if (idx < 0) {
+        if (this.buffer.length > MAX_LINE_LENGTH) {
+          console.error('[peridot] daemon stdout line exceeded cap; dropping');
+          this.buffer = '';
+          this.skipOversizedLine = true;
+        }
+        return;
+      }
+      const line = this.buffer.slice(0, idx);
+      this.buffer = this.buffer.slice(idx + 1);
+      if (this.skipOversizedLine) {
+        // This newline terminates the tail of a dropped oversized line.
+        this.skipOversizedLine = false;
+        continue;
+      }
+      this.handleLine(line);
+    }
   }
 
   private handleLine(line: string) {
@@ -314,7 +400,9 @@ function isRpcResponse(value: unknown): value is RpcResponse {
     return false;
   }
   if (value.error === undefined) {
-    return true;
+    // A success envelope must carry a `result` member (which may be null);
+    // an envelope with neither result nor error is malformed.
+    return 'result' in value;
   }
   return (
     isRecord(value.error) &&
