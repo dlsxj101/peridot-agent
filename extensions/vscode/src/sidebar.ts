@@ -1,3 +1,4 @@
+import * as crypto from 'crypto';
 import * as vscode from 'vscode';
 import {
   ApprovalResponse,
@@ -163,6 +164,9 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
   private streamCoalesceTimer: ReturnType<typeof setTimeout> | undefined;
   private streamCoalescePending = false;
   private persistTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Event subscriptions bound to the current webview view, disposed when the
+   *  view is torn down or re-created so they don't leak/fire into a stale view. */
+  private viewSubscriptions: vscode.Disposable[] = [];
   /** Last-persisted content hash per session id, so a throttled save only
    *  re-serializes sessions that actually changed (see persistState). */
   private persistedHashes = new Map<string, string>();
@@ -186,21 +190,56 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       ],
     };
     webviewView.webview.html = this.html(webviewView.webview);
-    webviewView.onDidDispose(() => {
-      if (this.view === webviewView) this.view = undefined;
-    });
-    // Flush the latest state once when the view returns to visibility, if any
-    // posts were skipped while it was hidden (see postState).
-    webviewView.onDidChangeVisibility(() => {
-      if (webviewView.visible && this.pendingHiddenPublish) {
-        this.pendingHiddenPublish = false;
-        this.postState();
-      }
-    });
-    webviewView.webview.onDidReceiveMessage((message: OutboundMessage) => {
-      void this.receive(message);
-    });
+    // Dispose any subscriptions from a prior view instance — VS Code can
+    // re-create the webview view (relayout, move) and call this again; without
+    // disposal the old view's listeners leak and keep firing into the provider.
+    this.disposeViewSubscriptions();
+    this.viewSubscriptions.push(
+      webviewView.onDidDispose(() => {
+        if (this.view === webviewView) {
+          this.view = undefined;
+        }
+        this.disposeViewSubscriptions();
+        this.clearPendingTimers();
+      }),
+      // Flush the latest state once when the view returns to visibility, if any
+      // posts were skipped while it was hidden (see postState).
+      webviewView.onDidChangeVisibility(() => {
+        if (webviewView.visible && this.pendingHiddenPublish) {
+          this.pendingHiddenPublish = false;
+          this.postState();
+        }
+      }),
+      webviewView.webview.onDidReceiveMessage((message: OutboundMessage) => {
+        void this.receive(message).catch((err: unknown) => {
+          // A malformed message or a handler throw must not become an
+          // unhandled rejection that escapes the message pump.
+          const detail = err instanceof Error ? err.message : String(err);
+          console.error('[peridot] sidebar message handling failed:', detail);
+        });
+      }),
+    );
     this.publish();
+  }
+
+  /** Dispose listeners registered against the current webview view. */
+  private disposeViewSubscriptions(): void {
+    for (const sub of this.viewSubscriptions.splice(0)) {
+      try {
+        sub.dispose();
+      } catch {
+        // best-effort
+      }
+    }
+  }
+
+  /** Clear debounced stream/persist timers (on view teardown). */
+  private clearPendingTimers(): void {
+    if (this.streamCoalesceTimer !== undefined) {
+      clearTimeout(this.streamCoalesceTimer);
+      this.streamCoalesceTimer = undefined;
+    }
+    this.flushPersist();
   }
 
   public prepareForTask(task: string, workspace: string): PreparedTask {
@@ -697,9 +736,15 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       let session = byDaemonId.get(daemonId) ?? this.sessions.get(daemonId);
       if (!session) {
         session = this.createSession(remoteSessionTitle(remote));
-        this.sessions.delete(session.id);
+        const previousId = session.id;
+        this.sessions.delete(previousId);
         session.id = daemonId;
         this.sessions.set(session.id, session);
+        // If the just-created session happened to be the active one, keep the
+        // active pointer in sync with its new (daemon) id.
+        if (this.state.activeChatId === previousId) {
+          this.state.activeChatId = daemonId;
+        }
       } else if (!session.userRenamed) {
         session.title = remoteSessionTitle(remote);
       }
@@ -1081,19 +1126,27 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
   }
 
   private async receive(message: OutboundMessage): Promise<void> {
+    // Inbound messages cross the (independently-versioned) webview boundary, so
+    // don't trust the static type: require at least a string discriminant.
+    if (!message || typeof message !== 'object' || typeof message.type !== 'string') {
+      console.warn('[peridot] ignoring malformed webview message');
+      return;
+    }
     switch (message.type) {
       case 'ready':
         this.publish();
         return;
       case 'run': {
+        if (typeof message.task !== 'string') return;
         const task = message.task.trim();
         if (task.length === 0) return;
-        this.state.runOptions = message.options;
+        const runOptions = sanitizeRunOptions(message.options, this.state.runOptions);
+        this.state.runOptions = runOptions;
         if (task.startsWith('/')) {
-          await this.handleSlashCommand(task, message.options);
+          await this.handleSlashCommand(task, runOptions);
           return;
         }
-        await this.handlers.runTask(task, message.options);
+        await this.handlers.runTask(task, runOptions);
         return;
       }
       case 'cancel':
@@ -1446,7 +1499,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
   }
 
   /** Flush any pending persistence immediately (call on session end). */
-  private flushPersist(): void {
+  public flushPersist(): void {
     if (this.persistTimer !== undefined) {
       clearTimeout(this.persistTimer);
       this.persistTimer = undefined;
@@ -1844,7 +1897,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         running: false,
         transcript: Array.isArray(raw.transcript) ? raw.transcript : [],
         hud: raw.hud ?? {},
-        runOptions: raw.runOptions ?? freshState().runOptions,
+        runOptions: sanitizeRunOptions(raw.runOptions, freshState().runOptions),
         pendingApproval: raw.pendingApproval,
         runStartedAtMs: undefined,
         lastRunElapsedMs: raw.lastRunElapsedMs,
@@ -1875,7 +1928,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         noteSummary: undefined,
       },
       queue: Array.isArray(restored.top.queue) ? restored.top.queue : [],
-      runOptions: restored.top.runOptions ?? freshState().runOptions,
+      runOptions: sanitizeRunOptions(restored.top.runOptions, freshState().runOptions),
     };
     if (this.state.activeChatId && this.sessions.has(this.state.activeChatId)) {
       this.loadSessionIntoState(this.state.activeChatId, false);
@@ -2237,6 +2290,40 @@ function isMode(value: unknown): value is RunOptions['mode'] {
 
 function isPermission(value: unknown): value is RunOptions['permission'] {
   return value === 'auto' || value === 'safe' || value === 'yolo';
+}
+
+/**
+ * Coerce an untrusted run-options value (from a webview message or restored
+ * persisted state) into a valid {@link RunOptions}, clamping the two fields
+ * that drive execution behavior — `mode` and `permission` — to known values
+ * and falling back to `fallback` for anything missing or invalid. Optional
+ * string fields are preserved when present.
+ */
+function sanitizeRunOptions(value: unknown, fallback: RunOptions): RunOptions {
+  if (!value || typeof value !== 'object') {
+    return { ...fallback };
+  }
+  const raw = value as Record<string, unknown>;
+  const result: RunOptions = {
+    mode: isMode(raw.mode) ? raw.mode : fallback.mode,
+    permission: isPermission(raw.permission) ? raw.permission : fallback.permission,
+  };
+  if (typeof raw.model === 'string' && raw.model.trim().length > 0) {
+    result.model = raw.model;
+  } else if (fallback.model) {
+    result.model = fallback.model;
+  }
+  if (typeof raw.reasoningEffort === 'string') {
+    result.reasoningEffort = raw.reasoningEffort as RunOptions['reasoningEffort'];
+  } else if (fallback.reasoningEffort) {
+    result.reasoningEffort = fallback.reasoningEffort;
+  }
+  if (typeof raw.serviceTier === 'string') {
+    result.serviceTier = raw.serviceTier as RunOptions['serviceTier'];
+  } else if (fallback.serviceTier) {
+    result.serviceTier = fallback.serviceTier;
+  }
+  return result;
 }
 
 function freshState(): SidebarState {
@@ -2649,9 +2736,11 @@ function answerLabel(answer: AskUserAnswer): string {
 
 function nonceValue(): string {
   const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  // Use a CSPRNG for the CSP nonce rather than Math.random().
+  const bytes = crypto.randomBytes(32);
   let value = '';
-  for (let i = 0; i < 32; i++) {
-    value += alphabet[Math.floor(Math.random() * alphabet.length)];
+  for (let i = 0; i < bytes.length; i++) {
+    value += alphabet[bytes[i] % alphabet.length];
   }
   return value;
 }
@@ -2687,6 +2776,13 @@ function formatElapsed(ms: number): string {
 async function readWorkspaceFile(relativePath: string): Promise<string | null> {
   const folder = vscode.workspace.workspaceFolders?.[0];
   if (!folder) return null;
+  // The path comes from a daemon-supplied approval payload; refuse anything
+  // that would escape the workspace root so the diff preview can't read
+  // arbitrary files via `..` traversal.
+  const normalized = relativePath.replace(/\\/g, '/');
+  if (normalized.split('/').some((segment) => segment === '..')) {
+    return null;
+  }
   try {
     const uri = vscode.Uri.joinPath(folder.uri, relativePath);
     const bytes = await vscode.workspace.fs.readFile(uri);

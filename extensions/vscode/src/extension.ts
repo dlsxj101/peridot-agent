@@ -189,10 +189,18 @@ interface WorkspaceRun {
 }
 
 let workspaceRun: WorkspaceRun | undefined;
+/**
+ * In-flight `ensureWorkspaceRun` spawn, keyed by folder. Concurrent callers for
+ * the same folder (e.g. a run kicked off while a status refresh or title
+ * generation is also spinning the daemon up) await this shared promise instead
+ * of each spawning their own daemon and leaking all but the last.
+ */
+let pendingWorkspaceSpawn: { folder: string; promise: Promise<WorkspaceRun> } | undefined;
 let statusCache: StatusCache<DaemonStatusResult> | undefined;
 let cachedFolder: string | undefined;
 let workspaceFileRefreshTimer: ReturnType<typeof setTimeout> | undefined;
 let codeMapStaleTimer: ReturnType<typeof setTimeout> | undefined;
+let queueDispatchTimer: ReturnType<typeof setTimeout> | undefined;
 /**
  * Module-level reference to the active sidebar provider. Set during
  * `activate()`. Helpers that need to reach the sidebar from outside the
@@ -784,6 +792,13 @@ export async function deactivate() {
     clearTimeout(codeMapStaleTimer);
     codeMapStaleTimer = undefined;
   }
+  if (queueDispatchTimer) {
+    clearTimeout(queueDispatchTimer);
+    queueDispatchTimer = undefined;
+  }
+  // Flush any pending sidebar state so the last few seconds of transcript /
+  // run state aren't lost to the debounced persist timer on a fast teardown.
+  activeSidebar?.flushPersist();
   if (workspaceRun) {
     await finishWorkspaceRun();
   }
@@ -797,6 +812,27 @@ async function ensureWorkspaceRun(
   if (workspaceRun && workspaceRun.folder === folder) {
     return workspaceRun;
   }
+  // Coalesce concurrent spawns for the same folder so we never start (and then
+  // leak) more than one daemon when several callers race here.
+  if (pendingWorkspaceSpawn && pendingWorkspaceSpawn.folder === folder) {
+    return pendingWorkspaceSpawn.promise;
+  }
+  const promise = spawnWorkspaceRun(folder, output, sidebar);
+  pendingWorkspaceSpawn = { folder, promise };
+  try {
+    return await promise;
+  } finally {
+    if (pendingWorkspaceSpawn?.promise === promise) {
+      pendingWorkspaceSpawn = undefined;
+    }
+  }
+}
+
+async function spawnWorkspaceRun(
+  folder: string,
+  output: vscode.OutputChannel,
+  sidebar: PeridotSidebarProvider,
+): Promise<WorkspaceRun> {
   if (workspaceRun) {
     await finishWorkspaceRun(output);
   }
@@ -830,15 +866,23 @@ async function ensureWorkspaceRun(
     output.appendLine(
       `[peridot] daemon exited: code=${exit.code ?? 'null'} signal=${exit.signal ?? 'null'}`,
     );
+    const isCurrent = workspaceRun?.daemon === daemon;
     const failedRuns = Array.from(run.activeRuns.values());
-    if (workspaceRun?.daemon === daemon) {
+    run.activeRuns.clear();
+    if (isCurrent) {
       workspaceRun = undefined;
     }
     disposeWorkspaceRun(run);
-    for (const active of failedRuns) {
-      sidebar.markSessionFailed(active.clientSessionId, 'Daemon exited before the session finished.');
+    // Only react for the live daemon. A stale daemon's late exit — after we
+    // deliberately tore it down or replaced it for another folder — must not
+    // mark sessions failed (its client ids may have been reused) or trigger a
+    // status refresh against the new daemon.
+    if (isCurrent) {
+      for (const active of failedRuns) {
+        sidebar.markSessionFailed(active.clientSessionId, 'Daemon exited before the session finished.');
+      }
+      void refreshStatus(output, sidebar, { force: true });
     }
-    void refreshStatus(output, sidebar, { force: true });
   });
   workspaceRun = run;
   void subscribeSessionList(run, output, sidebar);
@@ -895,7 +939,14 @@ function runForApproval(
   decision: ApprovalResponse,
   sidebar: PeridotSidebarProvider,
 ): ActiveRun | undefined {
-  return runForDaemonSession(decision.sessionId) ?? currentActiveRun(sidebar) ?? singleActiveRun();
+  // When the decision names a session, route strictly to it — never silently
+  // redirect an approval to a different ("current") run if that session has no
+  // active run, which with multiple concurrent sessions could answer the wrong
+  // prompt. Only guess (current, then sole-active) when no session id is given.
+  if (decision.sessionId) {
+    return runForDaemonSession(decision.sessionId);
+  }
+  return currentActiveRun(sidebar) ?? singleActiveRun();
 }
 
 /**
@@ -1533,7 +1584,13 @@ async function loginOpenAi(
 interface RunProcessOptions {
   env?: NodeJS.ProcessEnv;
   onStdoutLine?: (line: string) => void;
+  /** Kill the child and reject if it hasn't exited within this many ms. */
+  timeoutMs?: number;
 }
+
+/** Keep only the trailing slice of captured stderr so a chatty/hung child
+ *  can't grow the buffer without bound; the tail is all we surface anyway. */
+const RUN_PROCESS_STDERR_CAP = 64 * 1024;
 
 function runProcess(
   command: string,
@@ -1553,6 +1610,26 @@ function runProcess(
     // users won't think to open it.
     let stderrBuf = '';
     let stdoutLineBuf = '';
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const done = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      fn();
+    };
+    if (options.timeoutMs && options.timeoutMs > 0) {
+      timer = setTimeout(() => {
+        done(() => {
+          try {
+            child.kill('SIGKILL');
+          } catch {
+            // already gone
+          }
+          reject(new Error(`process timed out after ${options.timeoutMs}ms`));
+        });
+      }, options.timeoutMs);
+    }
     child.stdout.on('data', (chunk: Buffer) => {
       const text = chunk.toString();
       output.append(text);
@@ -1566,28 +1643,42 @@ function runProcess(
     child.stderr.on('data', (chunk: Buffer) => {
       const text = chunk.toString();
       stderrBuf += text;
+      if (stderrBuf.length > RUN_PROCESS_STDERR_CAP) {
+        stderrBuf = stderrBuf.slice(-RUN_PROCESS_STDERR_CAP);
+      }
       output.append(text);
     });
-    child.on('error', reject);
+    child.on('error', (err) =>
+      done(() => {
+        try {
+          child.kill('SIGKILL');
+        } catch {
+          // spawn failed; nothing to kill
+        }
+        reject(err);
+      }),
+    );
     child.on('exit', (code, signal) => {
       if (options.onStdoutLine && stdoutLineBuf.length > 0) {
         options.onStdoutLine(stdoutLineBuf);
         stdoutLineBuf = '';
       }
-      if (code === 0) {
-        resolve();
-        return;
-      }
-      // Tail the last ~6 non-blank stderr lines into the error so the
-      // sidebar surface explains *what* failed, not just *that* it did.
-      const tail = stderrBuf
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .filter((line) => line.length > 0)
-        .slice(-6)
-        .join('\n');
-      const exitLabel = `process exited with code=${code ?? 'null'} signal=${signal ?? 'null'}`;
-      reject(new Error(tail ? `${exitLabel}\n${tail}` : exitLabel));
+      done(() => {
+        if (code === 0) {
+          resolve();
+          return;
+        }
+        // Tail the last ~6 non-blank stderr lines into the error so the
+        // sidebar surface explains *what* failed, not just *that* it did.
+        const tail = stderrBuf
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .filter((line) => line.length > 0)
+          .slice(-6)
+          .join('\n');
+        const exitLabel = `process exited with code=${code ?? 'null'} signal=${signal ?? 'null'}`;
+        reject(new Error(tail ? `${exitLabel}\n${tail}` : exitLabel));
+      });
     });
   });
 }
@@ -1608,19 +1699,49 @@ function runProcessWithStdin(
       env: peridotChildEnv(),
       stdio: ['pipe', 'pipe', 'pipe'],
     });
+    let settled = false;
+    // `peridot env set` is a fast local write; if it wedges, don't hang the
+    // settings flow forever holding the (secret) stdin value.
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      try {
+        child.kill('SIGKILL');
+      } catch {
+        // already gone
+      }
+      reject(new Error('process timed out after 60000ms'));
+    }, 60_000);
+    const done = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      fn();
+    };
     child.stdout.on('data', (chunk: Buffer) => {
       output.append(chunk.toString());
     });
     child.stderr.on('data', (chunk: Buffer) => {
       output.append(chunk.toString());
     });
-    child.on('error', reject);
+    child.on('error', (err) =>
+      done(() => {
+        try {
+          child.kill('SIGKILL');
+        } catch {
+          // spawn failed; nothing to kill
+        }
+        reject(err);
+      }),
+    );
     child.on('exit', (code, signal) => {
-      if (code === 0) {
-        resolve();
-      } else {
-        reject(new Error(`process exited with code=${code ?? 'null'} signal=${signal ?? 'null'}`));
-      }
+      done(() => {
+        if (code === 0) {
+          resolve();
+        } else {
+          reject(new Error(`process exited with code=${code ?? 'null'} signal=${signal ?? 'null'}`));
+        }
+      });
     });
     child.stdin.write(stdinValue);
     child.stdin.end();
@@ -1629,7 +1750,10 @@ function runProcessWithStdin(
 
 function extractOpenAiAuthUrl(line: string): string | undefined {
   const match = line.match(/https:\/\/auth\.openai\.com\/oauth\/authorize[^\s]+/);
-  return match?.[0];
+  if (!match) return undefined;
+  // Strip trailing punctuation the URL may have picked up from surrounding log
+  // prose (e.g. a period or closing paren/bracket/quote at end of line).
+  return match[0].replace(/[).,\]}>"']+$/, '');
 }
 
 function chatGptLoginProcessOptions(
@@ -1639,6 +1763,10 @@ function chatGptLoginProcessOptions(
   let surfacedUrl: string | undefined;
   return {
     env: { PERIDOT_DISABLE_BROWSER_OPEN: '1' },
+    // The login waits on the interactive browser OAuth round-trip, so allow a
+    // generous window — but cap it so a never-completed login can't leave an
+    // orphaned `peridot login` process and a stuck "Logging in" UI forever.
+    timeoutMs: 10 * 60_000,
     onStdoutLine: (line) => {
       const authUrl = extractOpenAiAuthUrl(line);
       if (!authUrl) return;
@@ -2158,8 +2286,11 @@ function drainQueue(output: vscode.OutputChannel, sidebar: PeridotSidebarProvide
   output.appendLine(`[peridot] auto-dispatching next queued task (${next.id})`);
   // Run the next queued task on a microtask boundary so the current
   // terminal event finishes propagating to the webview first. Reuses the
-  // same RunOptions the operator picked for the previous turn.
-  setTimeout(() => {
+  // same RunOptions the operator picked for the previous turn. The handle is
+  // tracked so deactivation can cancel a pending dispatch.
+  if (queueDispatchTimer) clearTimeout(queueDispatchTimer);
+  queueDispatchTimer = setTimeout(() => {
+    queueDispatchTimer = undefined;
     void runTask(next.text, output, sidebar, sidebar.currentRunOptions());
   }, 50);
 }
