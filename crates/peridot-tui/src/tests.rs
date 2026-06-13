@@ -1269,7 +1269,10 @@ fn extract_last_code_block_returns_inner_content() {
     use crate::state::extract_last_code_block;
 
     let text = "Here is the fix:\n```rust\nfn main() {}\n```\nDone.";
-    assert_eq!(extract_last_code_block(text).as_deref(), Some("fn main() {}"));
+    assert_eq!(
+        extract_last_code_block(text).as_deref(),
+        Some("fn main() {}")
+    );
 
     // Multiple blocks: the *last* one wins.
     let two = "```\nfirst\n```\nthen\n```py\nsecond\n```";
@@ -1315,7 +1318,10 @@ fn ctrl_o_copies_last_code_block_to_pending_clipboard() {
         &mut state,
         KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL),
     );
-    assert_eq!(state.take_pending_clipboard().as_deref(), Some("cargo test"));
+    assert_eq!(
+        state.take_pending_clipboard().as_deref(),
+        Some("cargo test")
+    );
 }
 
 #[test]

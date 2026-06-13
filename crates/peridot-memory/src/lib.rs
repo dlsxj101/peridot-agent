@@ -1125,12 +1125,27 @@ fn session_record_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionR
 
 /// Writes a session blob (TUI state, context, transcript log) atomically to
 /// `<sessions_root>/<id>/<filename>` using a tempfile + rename.
+/// Defense-in-depth guard: refuses to build a session path from an id that
+/// could escape the sessions root. Callers (the daemon RPC surface) are
+/// expected to validate ids at ingress, but these helpers are public and write
+/// to / delete from the filesystem, so they re-check rather than trust.
+fn reject_unsafe_session_id(id: &str) -> PeriResult<()> {
+    if peridot_common::is_valid_session_id(id) {
+        Ok(())
+    } else {
+        Err(PeriError::Tool(format!(
+            "refusing unsafe session id: {id:?}"
+        )))
+    }
+}
+
 pub fn save_session_blob(
     sessions_root: &Path,
     id: &str,
     filename: &str,
     bytes: &[u8],
 ) -> PeriResult<()> {
+    reject_unsafe_session_id(id)?;
     let dir = sessions_root.join(id);
     fs::create_dir_all(&dir)
         .map_err(|err| PeriError::Tool(format!("failed to create {}: {err}", dir.display())))?;
@@ -1154,6 +1169,7 @@ pub fn load_session_blob(
     id: &str,
     filename: &str,
 ) -> PeriResult<Option<Vec<u8>>> {
+    reject_unsafe_session_id(id)?;
     let target = sessions_root.join(id).join(filename);
     match fs::read(&target) {
         Ok(bytes) => Ok(Some(bytes)),
@@ -1167,6 +1183,7 @@ pub fn load_session_blob(
 
 /// Deletes the per-session directory if it exists.
 pub fn remove_session_dir(sessions_root: &Path, id: &str) -> PeriResult<bool> {
+    reject_unsafe_session_id(id)?;
     let target = sessions_root.join(id);
     if !target.exists() {
         return Ok(false);

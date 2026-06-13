@@ -3204,6 +3204,30 @@ async fn session_cancel_unknown_id_returns_false() {
 }
 
 #[tokio::test]
+async fn session_start_rejects_path_traversal_session_id() {
+    // A client-supplied session_id is joined into `.peridot/sessions/<id>/`,
+    // so a traversal id must be rejected before it can escape the sessions dir.
+    let out = dispatch_and_collect(
+        r#"{"jsonrpc":"2.0","id":9,"method":"session.start","params":{"task":"x","session_id":"../../../tmp/peridot-evil"}}"#,
+    )
+    .await;
+    assert_eq!(out[0]["id"], 9);
+    assert_eq!(out[0]["error"]["code"], -32602);
+    assert!(out[0]["result"].is_null());
+}
+
+#[tokio::test]
+async fn session_command_rejects_path_traversal_session_id() {
+    let out = dispatch_and_collect(
+        r#"{"jsonrpc":"2.0","id":10,"method":"session.command","params":{"session_id":"../escape","command":"/note hi"}}"#,
+    )
+    .await;
+    assert_eq!(out[0]["id"], 10);
+    assert_eq!(out[0]["error"]["code"], -32602);
+    assert!(out[0]["result"].is_null());
+}
+
+#[tokio::test]
 async fn fast_toggle_uses_current_session_tier() {
     let (tx, _rx) = mpsc::unbounded_channel::<String>();
     let root = test_project("fast-toggle");

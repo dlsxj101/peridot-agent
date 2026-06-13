@@ -1392,8 +1392,10 @@ impl TuiState {
             .iter()
             .rev()
             .find(|entry| {
-                matches!(entry.kind, TranscriptKind::ToolOk | TranscriptKind::ToolFail)
-                    && !entry.text.starts_with("  ")
+                matches!(
+                    entry.kind,
+                    TranscriptKind::ToolOk | TranscriptKind::ToolFail
+                ) && !entry.text.starts_with("  ")
             })
             .map(|entry| entry.text.as_str())
     }
@@ -1413,7 +1415,11 @@ impl TuiState {
     /// Queues `target`'s text for the system clipboard (drained by the event
     /// loop into an OSC 52 write) and records a notice. Returns `false` and
     /// notices when there is nothing to copy.
-    pub fn copy_to_clipboard(&mut self, target: CopyTarget, locale: peridot_common::Locale) -> bool {
+    pub fn copy_to_clipboard(
+        &mut self,
+        target: CopyTarget,
+        locale: peridot_common::Locale,
+    ) -> bool {
         match self.resolve_copy_text(target) {
             Some(text) if !text.is_empty() => {
                 let chars = text.chars().count();

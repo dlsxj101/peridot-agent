@@ -866,6 +866,17 @@ async fn handle_session_start(state: &DaemonState, id: Value, params: Option<Val
         .filter(|value| !value.is_empty())
         .map(str::to_string);
     if let Some(requested) = requested_session_id.as_ref()
+        && !peridot_common::is_valid_session_id(requested)
+    {
+        emit_error(
+            state,
+            id,
+            -32602,
+            format!("invalid session_id: {requested:?}"),
+        )?;
+        return Ok(());
+    }
+    if let Some(requested) = requested_session_id.as_ref()
         && state.sessions.lock().await.contains_key(requested)
     {
         emit_error(
@@ -1503,6 +1514,15 @@ async fn handle_session_cancel(
         )?;
         return Ok(());
     };
+    if !peridot_common::is_valid_session_id(session_id) {
+        emit_error(
+            state,
+            id,
+            -32602,
+            format!("invalid session_id: {session_id:?}"),
+        )?;
+        return Ok(());
+    }
 
     let cancelled = if let Some(entry) = state.sessions.lock().await.remove(session_id) {
         entry.cancel.cancel();
@@ -1572,6 +1592,12 @@ async fn handle_session_command(
         return Ok(());
     };
     let session_id = optional_str(&params, "session_id").map(str::to_string);
+    if let Some(sid) = session_id.as_ref()
+        && !peridot_common::is_valid_session_id(sid)
+    {
+        emit_error(state, id, -32602, format!("invalid session_id: {sid:?}"))?;
+        return Ok(());
+    }
     let surface = optional_str(&params, "surface").map(str::to_string);
 
     let result = if matches!(command, SlashCommand::Help) {
