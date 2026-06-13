@@ -36,6 +36,27 @@ jobs:
           sh -n install.sh
           bash -n install.sh
 
+  security-audit:
+    name: Security audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Rust dependency advisories (cargo-deny)
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories bans sources
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Extension npm audit (production deps)
+        working-directory: extensions/vscode
+        run: npm audit --omit=dev --audit-level=high
+
   e2e:
     name: E2E
     runs-on: ubuntu-latest

@@ -1,0 +1,44 @@
+# cargo-deny configuration — dependency CVE / advisory scanning.
+#
+# Run locally with `cargo deny check advisories`. CI runs the same check on
+# every push/PR and on the weekly schedule (see .github/workflows/ci.yml).
+
+[advisories]
+version = 2
+# RustSec advisory DB. An unpatched CVE in the dependency tree fails the build.
+# Add a documented entry here (with a tracking link) only to temporarily
+# accept an advisory that has no available fix.
+ignore = []
+
+[bans]
+# The workspace pulls a few duplicated transitive versions; don't fail on that.
+multiple-versions = "allow"
+# Intra-workspace path dependencies are intentionally versionless, which
+# cargo-deny counts as wildcards, so don't gate on wildcards here. CVE coverage
+# comes from the `advisories` check.
+wildcards = "allow"
+
+[licenses]
+version = 2
+# Permissive licenses already present in the tree. `cargo deny check licenses`
+# (not run in CI by default) enforces this allowlist; extend when a new
+# permissive license legitimately appears.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "Zlib",
+    "MPL-2.0",
+    "CC0-1.0",
+    "0BSD",
+]
+
+[sources]
+# Only crates.io and the standard git registries are expected.
+unknown-registry = "deny"
+unknown-git = "deny"
