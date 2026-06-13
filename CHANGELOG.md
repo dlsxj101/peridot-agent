@@ -14,6 +14,18 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 
 ## Unreleased
 
+### Fixed — VS Code extension run-option validation
+
+- `sanitizeRunOptions` (sidebar webview / persisted-state intake) blindly cast
+  `reasoningEffort` and `serviceTier` strings with `as`, so an unrecognised
+  value from the webview or restored state would pass straight through to the
+  daemon as an invalid enum. It now routes them through the existing
+  `parseReasoningEffort` / `normalizeServiceTier` validators and falls back when
+  the value isn't recognised.
+- `answerLabel` is typed to return `string` but had no `default` arm, so a
+  malformed (untrusted) ask-user answer with an unknown `kind` returned
+  `undefined`; it now returns an empty string.
+
 ### Added — Clipboard copy (Ctrl+O / `/copy`)
 
 - Copy transcript content straight to the system clipboard, so a long code

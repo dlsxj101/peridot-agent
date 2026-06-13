@@ -2313,13 +2313,20 @@ function sanitizeRunOptions(value: unknown, fallback: RunOptions): RunOptions {
   } else if (fallback.model) {
     result.model = fallback.model;
   }
-  if (typeof raw.reasoningEffort === 'string') {
-    result.reasoningEffort = raw.reasoningEffort as RunOptions['reasoningEffort'];
+  // Validate enum-ish fields through the same parsers the rest of the module
+  // uses, rather than blindly casting an arbitrary string from the webview /
+  // persisted state. An unrecognised value falls back instead of being passed
+  // through to the daemon as an invalid enum.
+  const parsedEffort =
+    typeof raw.reasoningEffort === 'string' ? parseReasoningEffort(raw.reasoningEffort) : undefined;
+  if (parsedEffort) {
+    result.reasoningEffort = parsedEffort;
   } else if (fallback.reasoningEffort) {
     result.reasoningEffort = fallback.reasoningEffort;
   }
-  if (typeof raw.serviceTier === 'string') {
-    result.serviceTier = raw.serviceTier as RunOptions['serviceTier'];
+  const parsedTier = normalizeServiceTier(raw.serviceTier);
+  if (parsedTier) {
+    result.serviceTier = parsedTier;
   } else if (fallback.serviceTier) {
     result.serviceTier = fallback.serviceTier;
   }
@@ -2731,6 +2738,11 @@ function answerLabel(answer: AskUserAnswer): string {
       return answer.text;
     case 'cancelled':
       return 'cancelled';
+    default:
+      // The switch is exhaustive over `AskUserAnswer`, but the value can arrive
+      // from the (untrusted) webview, so guard against an unknown `kind` rather
+      // than silently returning `undefined` from a `string`-typed function.
+      return '';
   }
 }
 
