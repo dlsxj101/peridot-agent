@@ -403,20 +403,15 @@ fn workspace_mutation_snapshot(before: Option<String>, after: Option<String>) ->
 pub(crate) fn reject_hard_blocked_command(command: &str) -> PeriResult<()> {
     let normalized = command.split_whitespace().collect::<Vec<_>>().join(" ");
 
-    if normalized.contains("curl") && normalized.contains("| sh") {
+    if pipes_remote_download_into_shell(&normalized) {
         return Err(PeriError::PermissionDenied(
-            "piping remote curl output into a shell is blocked".to_string(),
-        ));
-    }
-    if normalized.contains("wget") && normalized.contains("| bash") {
-        return Err(PeriError::PermissionDenied(
-            "piping remote wget output into a shell is blocked".to_string(),
+            "piping remote download output into a shell is blocked".to_string(),
         ));
     }
     if has_recursive_force_root_remove(&normalized)
         || normalized.contains("mkfs.")
         || normalized.contains("dd if=/dev/zero")
-        || normalized.contains(":(){ :|:& };:")
+        || is_fork_bomb(&normalized)
         || normalized.contains("chmod -R 777 /")
     {
         return Err(PeriError::PermissionDenied(format!(
@@ -424,6 +419,46 @@ pub(crate) fn reject_hard_blocked_command(command: &str) -> PeriResult<()> {
         )));
     }
     Ok(())
+}
+
+/// Detects `curl|wget|fetch ... | <shell>` (and command/process substitution
+/// like `sh -c "$(curl …)"` / `bash <(curl …)`), independent of spacing or
+/// which shell receives the download — the previous check only caught the two
+/// exact `curl | sh` / `wget | bash` spellings.
+fn pipes_remote_download_into_shell(normalized: &str) -> bool {
+    const DOWNLOADERS: [&str; 3] = ["curl", "wget", "fetch"];
+    const SHELLS: [&str; 5] = ["sh", "bash", "zsh", "dash", "ash"];
+    let has_downloader = DOWNLOADERS.iter().any(|d| normalized.contains(d));
+    if !has_downloader {
+        return false;
+    }
+    // Command/process substitution feeding a shell, e.g. sh -c "$(curl …)".
+    for sub in ["$(curl", "$(wget", "$(fetch", "<(curl", "<(wget", "<(fetch"] {
+        if normalized.contains(sub) {
+            return true;
+        }
+    }
+    // A pipe whose downstream segment invokes a shell interpreter. Compare the
+    // first token of each post-pipe segment so spacing (`x|sh` vs `x | sh`) and
+    // the shell choice don't matter.
+    let mut segments = normalized.split('|');
+    let _ = segments.next(); // the producing segment (the downloader side)
+    for segment in segments {
+        if let Some(program) = segment.split_whitespace().next() {
+            let basename = program.rsplit('/').next().unwrap_or(program);
+            if SHELLS.contains(&basename) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Whitespace-insensitive classic fork-bomb detector (`:(){ :|:& };:` and its
+/// reflowed variants).
+fn is_fork_bomb(normalized: &str) -> bool {
+    let stripped: String = normalized.chars().filter(|c| !c.is_whitespace()).collect();
+    stripped.contains(":(){:|:&};:")
 }
 
 fn enforce_readonly_shell_policy(command: &str) -> PeriResult<()> {
@@ -569,7 +604,16 @@ fn update_rm_flags(token: &str, recursive: &mut bool, force: &mut bool) {
 }
 
 fn is_root_target(token: &str) -> bool {
+    // Filesystem root and globs.
     matches!(token, "/" | "/*" | "/." | "/./" | "/..")
+        // Home directory wipes.
+        || matches!(token, "~" | "~/" | "~/*" | "$HOME" | "${HOME}" | "$HOME/" | "$HOME/*")
+        // Critical system directories that should never be recursively removed.
+        || matches!(
+            token.trim_end_matches('/'),
+            "/usr" | "/etc" | "/bin" | "/sbin" | "/lib" | "/lib64" | "/var" | "/boot"
+                | "/sys" | "/proc" | "/dev" | "/root" | "/home" | "/opt" | "/srv"
+        )
 }
 
 pub(crate) fn enforce_shell_approval_policy(command: &str, ctx: &ToolContext) -> PeriResult<()> {
@@ -600,11 +644,31 @@ fn shell_command_is_approved(command: &str, ctx: &ToolContext) -> bool {
         .iter()
         .any(|approved| normalize_shell_command(approved) == command)
         || (is_destructive_shell_command(command)
-            && ctx
-                .security
-                .approved_shell_path_scopes
-                .iter()
-                .any(|path| !path.trim().is_empty() && command.contains(path.trim())))
+            && command_targets_within_scope(command, &ctx.security.approved_shell_path_scopes))
+}
+
+/// Returns true when one of `command`'s path arguments equals an approved scope
+/// or lives under it. The previous implementation used a raw whole-command
+/// `contains(scope)`, which over-approved: an approved scope of `src` would
+/// auto-approve a destructive `rm -rf src_backup` (or any command that merely
+/// mentioned the string). Matching whole path tokens (and descendants via
+/// `scope/`) keeps the approval scoped to the path the operator actually
+/// granted.
+fn command_targets_within_scope(command: &str, scopes: &[String]) -> bool {
+    let scopes: Vec<&str> = scopes
+        .iter()
+        .map(|s| s.trim().trim_end_matches('/'))
+        .filter(|s| !s.is_empty())
+        .collect();
+    if scopes.is_empty() {
+        return false;
+    }
+    command.split_whitespace().any(|raw| {
+        let token = clean_shell_token(raw).trim_end_matches('/');
+        scopes
+            .iter()
+            .any(|scope| token == *scope || token.starts_with(&format!("{scope}/")))
+    })
 }
 
 fn is_install_command(command: &str) -> bool {
