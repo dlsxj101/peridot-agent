@@ -216,7 +216,8 @@ pub enum SettingsOutcome {
 /// mutations should be discarded (the items reflect the last
 /// keystroke, not what the operator committed to save).
 pub fn run_settings_screen(items: &mut [SettingItem]) -> io::Result<SettingsOutcome> {
-    let mut terminal_guard = TerminalGuard::enter()?;
+    // The settings screen is keyboard-driven; no mouse capture needed.
+    let mut terminal_guard = TerminalGuard::enter(false)?;
     let outcome = run_loop(&mut terminal_guard.terminal, items);
     drop(terminal_guard);
     outcome

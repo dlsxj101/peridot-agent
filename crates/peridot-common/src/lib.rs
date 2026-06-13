@@ -836,8 +836,14 @@ pub struct TuiConfig {
     #[serde(default = "default_stream_speed")]
     pub stream_speed: String,
     /// Whether the Peridot deer mascot should be rendered in the side panel.
-    #[serde(default = "default_true")]
+    #[serde(default = "default_false")]
     pub show_mascot: bool,
+    /// Whether to enable terminal mouse capture so the wheel scrolls the
+    /// transcript. When on, native click-drag text selection becomes
+    /// `Shift`+drag (`Option`+drag on macOS) in virtually every modern
+    /// terminal. Default on; turn it off to prefer plain drag-to-select copy.
+    #[serde(default = "default_true")]
+    pub mouse_capture: bool,
 }
 
 impl Default for TuiConfig {
@@ -854,6 +860,9 @@ impl Default for TuiConfig {
             // Default off for a clean, Claude-Code-style chat surface. The deer
             // is opt-in via `tui.show_mascot` / the settings screen.
             show_mascot: false,
+            // Default on: wheel scrolling matches the Claude-Code feel; copy
+            // still works with Shift+drag.
+            mouse_capture: true,
         }
     }
 }

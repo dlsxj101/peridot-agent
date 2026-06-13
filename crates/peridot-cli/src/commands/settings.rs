@@ -333,6 +333,12 @@ pub(crate) fn settings_registry(config: &PeridotConfig) -> Vec<SettingItem> {
         SettingValue::Bool(config.tui.show_mascot),
         locale,
     ));
+    items.push(make_item(
+        "tui.mouse_capture",
+        surfaces_tui_only(),
+        SettingValue::Bool(config.tui.mouse_capture),
+        locale,
+    ));
 
     // === UI (cross-surface locale — replaces the legacy tui.language row) ===
     items.push(make_item(
@@ -459,6 +465,9 @@ fn apply_one(item: &SettingItem, config: &mut PeridotConfig) {
         }
         ("tui.show_mascot", SettingValue::Bool(v)) => {
             config.tui.show_mascot = *v;
+        }
+        ("tui.mouse_capture", SettingValue::Bool(v)) => {
+            config.tui.mouse_capture = *v;
         }
         ("ui.language", SettingValue::Choice { options, selected }) => {
             if let Some(label) = options.get(*selected) {

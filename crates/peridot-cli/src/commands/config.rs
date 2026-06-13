@@ -735,6 +735,9 @@ pub(crate) fn set_config_key(config: &mut PeridotConfig, key: &str, value: &str)
         "tui.show_mascot" => {
             config.tui.show_mascot = parse_bool_value("tui.show_mascot", value)?;
         }
+        "tui.mouse_capture" => {
+            config.tui.mouse_capture = parse_bool_value("tui.mouse_capture", value)?;
+        }
         "security.sandbox" => config.security.sandbox = parse_sandbox_mode(value)?,
         "security.docker_image" => config.security.docker_image = value.to_string(),
         "security.docker_network" => {

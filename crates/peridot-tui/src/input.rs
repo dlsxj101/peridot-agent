@@ -4,14 +4,33 @@ use state::{AgentRunStatus, SessionCommandEvent, TranscriptKind};
 
 /// PageUp / PageDown jump distance, measured in transcript rows. Small enough
 /// to avoid skipping past important context, large enough to traverse a long
-/// transcript without dozens of keypresses. Mouse-wheel scrolling is
-/// intentionally not supported: we leave mouse capture off so the operator
-/// can drag-select transcript text to copy.
+/// transcript without dozens of keypresses.
 const PAGE_SCROLL_STEP: usize = 10;
+
+/// Rows the transcript moves per mouse-wheel notch when `tui.mouse_capture`
+/// is on. Three lines matches the common terminal/editor convention.
+const MOUSE_SCROLL_STEP: usize = 3;
+
+/// Translates a mouse-wheel event into a transcript scroll. Other mouse events
+/// (clicks, drags, moves) are ignored so the terminal's `Shift`+drag selection
+/// keeps working. Returns `true` when the event was a wheel scroll.
+pub(crate) fn handle_mouse_scroll(state: &mut TuiState, kind: MouseEventKind) -> bool {
+    match kind {
+        MouseEventKind::ScrollUp => {
+            state.scroll_up(MOUSE_SCROLL_STEP);
+            true
+        }
+        MouseEventKind::ScrollDown => {
+            state.scroll_down(MOUSE_SCROLL_STEP);
+            true
+        }
+        _ => false,
+    }
+}
 
 /// Runs the interactive terminal UI until the user quits or submits a task.
 pub fn run_interactive(mut state: TuiState) -> io::Result<TuiExit> {
-    let mut terminal = TerminalGuard::enter()?;
+    let mut terminal = TerminalGuard::enter(state.config.mouse_capture)?;
     let (width, height) = terminal_size()?;
     state.resize(width, height);
     let mut ctrl_c_armed = false;
@@ -42,6 +61,9 @@ pub fn run_interactive(mut state: TuiState) -> io::Result<TuiExit> {
                         | TuiEventOutcome::AskUserResolved { .. }
                         | TuiEventOutcome::Interrupt => {}
                     }
+                }
+                Event::Mouse(mouse) => {
+                    handle_mouse_scroll(&mut state, mouse.kind);
                 }
                 Event::Resize(width, height) => state.resize(width, height),
                 _ => {}
@@ -88,7 +110,7 @@ pub fn run_interactive_with_events<F>(
 where
     F: FnMut(String, &mut TuiState),
 {
-    let mut terminal = TerminalGuard::enter()?;
+    let mut terminal = TerminalGuard::enter(state.config.mouse_capture)?;
     let (width, height) = terminal_size()?;
     state.resize(width, height);
     let mut other_states: std::collections::HashMap<String, TuiState> =
@@ -166,6 +188,9 @@ where
                         }
                         TuiEventOutcome::Interrupt => on_interrupt(&mut state),
                     }
+                }
+                Event::Mouse(mouse) => {
+                    handle_mouse_scroll(&mut state, mouse.kind);
                 }
                 Event::Resize(width, height) => state.resize(width, height),
                 _ => {}

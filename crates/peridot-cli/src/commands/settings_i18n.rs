@@ -274,6 +274,14 @@ fn translations(id: &str) -> Option<Bilingual> {
                 "사이드 패널의 아이들 상태 픽셀 마스코트를 토글합니다.",
             )),
         },
+        "tui.mouse_capture" => Bilingual {
+            group: BilingualText::new("TUI", "TUI"),
+            label: BilingualText::new("Mouse wheel scrolling", "마우스 휠 스크롤"),
+            help: Some(BilingualText::new(
+                "Scroll the transcript with the mouse wheel. Text selection then uses Shift+drag (Option+drag on macOS).",
+                "마우스 휠로 대화 기록을 스크롤합니다. 켜면 텍스트 선택은 Shift+드래그(맥은 Option+드래그)로 합니다.",
+            )),
+        },
 
         // ===== UI (cross-surface) =====
         "ui.language" => Bilingual {

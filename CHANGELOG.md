@@ -14,6 +14,15 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 
 ## Unreleased
 
+### Added — Mouse-wheel transcript scrolling
+
+- The TUI now scrolls the conversation transcript with the mouse wheel, gated
+  by a new `tui.mouse_capture` setting (default **on**). With capture on, native
+  click-drag text selection becomes `Shift`+drag (`Option`+drag on macOS), which
+  every modern terminal honours; turn the setting off to prefer plain
+  drag-to-select copy and fall back to PageUp/PageDown / `Shift`+↑↓ scrolling.
+  Configurable via `config set tui.mouse_capture <bool>` or the settings screen.
+
 ### Changed — Claude-Code-style TUI layout
 
 - The interactive TUI dropped its persistent top header and the

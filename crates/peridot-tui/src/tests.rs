@@ -1228,6 +1228,43 @@ fn scroll_offset_anchors_view_when_content_arrives_above_tail() {
 }
 
 #[test]
+fn mouse_wheel_scrolls_transcript_up_and_down() {
+    use crossterm::event::MouseEventKind;
+
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    for i in 0..40 {
+        state.push_transcript_entry(TranscriptKind::System, format!("line {i}"));
+    }
+
+    // Wheel up scrolls the transcript back by MOUSE_SCROLL_STEP (3) per notch.
+    assert!(crate::input::handle_mouse_scroll(
+        &mut state,
+        MouseEventKind::ScrollUp
+    ));
+    assert_eq!(state.scroll_offset, 3);
+    assert!(state.is_scrolled_back());
+
+    // Wheel down moves back toward the tail.
+    assert!(crate::input::handle_mouse_scroll(
+        &mut state,
+        MouseEventKind::ScrollDown
+    ));
+    assert_eq!(state.scroll_offset, 0);
+    assert!(!state.is_scrolled_back());
+
+    // Non-wheel mouse events (moves) are ignored so Shift+drag selection works.
+    assert!(!crate::input::handle_mouse_scroll(
+        &mut state,
+        MouseEventKind::Moved
+    ));
+    assert_eq!(state.scroll_offset, 0);
+}
+
+#[test]
 fn ctrl_t_opens_session_picker_and_switches_by_prefix() {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
