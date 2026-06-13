@@ -705,6 +705,47 @@ async fn shell_exec_dry_run_skips_execution_and_describes_invocation() {
     fs::remove_dir_all(&root).ok();
 }
 
+#[test]
+fn read_only_command_is_sandbox_wrapped() {
+    // Regression: git_*/verify_* build on run_read_only_command, which used to
+    // shell out via bare `sh -c`, ignoring SandboxMode. Under Docker the
+    // resolved invocation must be wrapped by `docker`, not run on the host.
+    use peridot_common::SandboxMode;
+    let root =
+        std::env::temp_dir().join(format!("peridot-tools-ro-sandbox-{}", std::process::id()));
+    fs::create_dir_all(&root).unwrap();
+    let ctx = ToolContext::new(&root, PermissionMode::Auto).with_security(SecurityConfig {
+        sandbox: SandboxMode::Docker,
+        shell_dry_run: true,
+        ..SecurityConfig::default()
+    });
+    let result =
+        crate::tools::command::run_read_only_command("git status --short", &ctx, "git status")
+            .unwrap();
+    assert_eq!(result.output["dry_run"], true);
+    let would = result.output["would_execute"].as_str().unwrap();
+    assert!(
+        would.contains("cmd=docker"),
+        "read-only command must be sandbox-wrapped, got: {would}"
+    );
+
+    // SandboxMode::None keeps the historical bare `sh -c` behaviour.
+    let ctx_none = ToolContext::new(&root, PermissionMode::Auto).with_security(SecurityConfig {
+        sandbox: SandboxMode::None,
+        shell_dry_run: true,
+        ..SecurityConfig::default()
+    });
+    let none = crate::tools::command::run_read_only_command("git status", &ctx_none, "git status")
+        .unwrap();
+    assert!(
+        none.output["would_execute"]
+            .as_str()
+            .unwrap()
+            .contains("cmd=sh")
+    );
+    fs::remove_dir_all(&root).ok();
+}
+
 #[tokio::test]
 async fn shell_exec_reports_git_workspace_mutation() {
     let root = std::env::temp_dir().join(format!(

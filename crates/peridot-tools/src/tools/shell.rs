@@ -649,7 +649,7 @@ fn is_destructive_shell_command(command: &str) -> bool {
         || padded.contains(" git push -f ")
 }
 
-fn shell_command(command: &str, ctx: &ToolContext) -> PeriResult<Command> {
+pub(crate) fn shell_command(command: &str, ctx: &ToolContext) -> PeriResult<Command> {
     match ctx.security.sandbox {
         SandboxMode::None => {
             let mut process = Command::new("sh");
