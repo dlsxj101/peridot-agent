@@ -3,10 +3,29 @@ import assert from 'node:assert/strict';
 
 import {
   bestWorkspaceFileMatch,
+  isPathWithinRoots,
   workspaceFileCandidatePaths,
   workspaceFindFilePatterns,
   workspaceFuzzyFindFilePatterns,
 } from '../src/workspacePath';
+
+test('isPathWithinRoots accepts the root and its descendants', () => {
+  const root = '/home/user/project';
+  assert.equal(isPathWithinRoots(root, [root]), true);
+  assert.equal(isPathWithinRoots('/home/user/project/src/main.rs', [root]), true);
+  assert.equal(isPathWithinRoots('/home/user/project/.peridot/exports/s1', [root]), true);
+});
+
+test('isPathWithinRoots rejects traversal, siblings, and absolute escapes', () => {
+  const root = '/home/user/project';
+  assert.equal(isPathWithinRoots('/home/user/project/../../../etc/passwd', [root]), false);
+  assert.equal(isPathWithinRoots('/etc/passwd', [root]), false);
+  assert.equal(isPathWithinRoots('/home/user/.ssh/id_rsa', [root]), false);
+  // Sibling sharing a prefix must not count as inside.
+  assert.equal(isPathWithinRoots('/home/user/project-evil/x', [root]), false);
+  // Undefined / empty roots are ignored.
+  assert.equal(isPathWithinRoots('/anything', [undefined, '']), false);
+});
 
 test('workspaceFileCandidatePaths keeps simple root-relative resolution', () => {
   assert.deepEqual(
