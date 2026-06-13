@@ -851,7 +851,9 @@ impl Default for TuiConfig {
             show_cache_rate: true,
             show_subagent_panel: false,
             stream_speed: default_stream_speed(),
-            show_mascot: true,
+            // Default off for a clean, Claude-Code-style chat surface. The deer
+            // is opt-in via `tui.show_mascot` / the settings screen.
+            show_mascot: false,
         }
     }
 }

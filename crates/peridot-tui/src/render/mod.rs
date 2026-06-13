@@ -19,6 +19,9 @@ pub(super) fn render_status_metrics(state: &TuiState) -> String {
     join_status_metric_parts(status_metric_parts(state).iter())
 }
 
+// Retained for the priority-truncation unit test; the live status bar moved
+// its metrics to `render_footer_line`, so this is only referenced under test.
+#[cfg(test)]
 pub(super) fn render_status_metrics_for_width(state: &TuiState, max_width: usize) -> String {
     let parts = status_metric_parts(state);
     let full = join_status_metric_parts(parts.iter());
@@ -949,23 +952,108 @@ fn render_status_bar(state: &TuiState, width: u16) -> Line<'static> {
             style,
         ));
     }
-    let metrics_prefix = "  · ";
-    let occupied_width = spans
-        .iter()
-        .map(|span| string_width(span.content.as_ref()))
-        .sum::<usize>();
-    let metrics_width =
-        usize::from(width).saturating_sub(occupied_width + string_width(metrics_prefix));
-    let metrics = render_status_metrics_for_width(state, metrics_width);
-    if !metrics.is_empty() {
+    // Run metrics (model / tokens / cost / session / steps …) moved to the
+    // footer line beneath the input box; the activity line stays focused on
+    // live state so the spinner + verb read clearly while the agent works.
+    let _ = width;
+    Line::from(spans)
+}
+
+/// Renders the dim one-line footer beneath the input box: identity (model),
+/// run metrics (mode/permission, session, steps, elapsed, subagents, tokens,
+/// cost, goal, …) and the keybind hint. This is where the data the old top
+/// header carried now lives. Width-aware: lower-priority parts (cache, keybind
+/// hint) drop first so the essentials survive on narrow terminals.
+fn render_footer_line(state: &TuiState, width: u16) -> Line<'static> {
+    // The model name leads in the theme accent colour — a small, persistent bit
+    // of brand identity now that the top PERIDOT header is gone.
+    let model = state.header.model.clone();
+    let model_span = Span::styled(
+        model.clone(),
+        Style::default()
+            .fg(sidebar::theme_accent(&state.config))
+            .add_modifier(Modifier::BOLD),
+    );
+    let sep = "  \u{00B7}  ";
+    let mut parts: Vec<StatusMetricPart> = Vec::new();
+    parts.extend(status_metric_parts(state));
+    if !state.current_session_id.is_empty() {
+        parts.push(StatusMetricPart::new(
+            format!("session {}", short_session_id(&state.current_session_id)),
+            2,
+        ));
+    }
+    if state.side_panel.stats.steps > 0 {
+        parts.push(StatusMetricPart::new(
+            format!("steps {}", state.side_panel.stats.steps),
+            2,
+        ));
+    }
+    // `status_metric_parts` only surfaces the subagent count while at least one
+    // is active. When the side panel is hidden (default) we still want a
+    // zero-state affordance here — matching what the old header showed — so add
+    // it explicitly when nothing is active to avoid double-counting.
+    if !state.config.show_subagent_panel {
+        let active = state
+            .subagents
+            .iter()
+            .filter(|item| matches!(item.status.as_str(), "running" | "starting"))
+            .count();
+        if active == 0 {
+            parts.push(StatusMetricPart::new("subagents 0".to_string(), 2));
+        }
+    }
+    if let Some(version) = state.header.update_available.as_ref() {
+        parts.push(StatusMetricPart::new(
+            format!("update {version} :update"),
+            1,
+        ));
+    }
+    parts.push(StatusMetricPart::new(
+        tr(PhraseKey::FooterKeybindHint, state.config.language).to_string(),
+        3,
+    ));
+
+    // Budget the remaining metrics against the width left after the model name
+    // and its separator, then render them dim so the accent model leads.
+    let rest_width = usize::from(width)
+        .saturating_sub(string_width(&model))
+        .saturating_sub(string_width(sep));
+    let rest = join_footer_parts_for_width(&parts, rest_width);
+    let mut spans = vec![model_span];
+    if !rest.is_empty() {
         spans.push(Span::styled(
-            format!("{metrics_prefix}{metrics}"),
+            format!("{sep}{rest}"),
             Style::default()
                 .fg(Color::DarkGray)
                 .add_modifier(Modifier::DIM),
         ));
     }
     Line::from(spans)
+}
+
+/// Joins footer parts with a `  ·  ` separator, dropping the lowest-priority
+/// parts first until the line fits in `max_width` display columns.
+fn join_footer_parts_for_width(parts: &[StatusMetricPart], max_width: usize) -> String {
+    let join = |iter: &mut dyn Iterator<Item = &StatusMetricPart>| {
+        iter.map(|part| part.text.as_str())
+            .collect::<Vec<_>>()
+            .join("  \u{00B7}  ")
+    };
+    let full = join(&mut parts.iter());
+    if string_width(&full) <= max_width {
+        return full;
+    }
+    for max_priority in (0..=3).rev() {
+        let compact = join(&mut parts.iter().filter(|part| part.priority <= max_priority));
+        if string_width(&compact) <= max_width {
+            return compact;
+        }
+    }
+    truncate_display_width(
+        parts.first().map(|part| part.text.as_str()).unwrap_or(""),
+        max_width,
+    )
 }
 
 /// Renders a token count in compact form — `48000` becomes `48k`,
@@ -1148,81 +1236,34 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1),
-            Constraint::Length(tab_height),
-            Constraint::Min(1),
-            Constraint::Length(1),
-            Constraint::Length(input_height),
+            Constraint::Length(tab_height),   // [0] session tab bar (0 when single-session)
+            Constraint::Min(1),               // [1] transcript / welcome
+            Constraint::Length(1),            // [2] activity line (spinner + verb)
+            Constraint::Length(input_height), // [3] input box
+            Constraint::Length(1),            // [4] footer: identity + metrics + hint
         ])
         .split(area);
 
-    // Header packs the identity (PERIDOT + model) plus the most useful
-    // bits the side panel used to carry — session, steps, elapsed,
-    // subagent count — so the operator can run with the side panel
-    // toggled off (default) and still see what the deer is up to.
-    let mut header_spans = vec![
-        Span::styled(
-            "PERIDOT",
-            Style::default()
-                .fg(sidebar::theme_accent(&state.config))
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw("  "),
-        Span::styled(state.header.model.clone(), Style::default().fg(Color::Gray)),
-    ];
-    let dim = Style::default()
-        .fg(Color::DarkGray)
-        .add_modifier(Modifier::DIM);
-    let mut push_dim = |label: String| {
-        header_spans.push(Span::styled(format!(" · {label}"), dim));
-    };
-    if !state.current_session_id.is_empty() {
-        push_dim(format!(
-            "session {}",
-            short_session_id(&state.current_session_id)
-        ));
-    }
-    if state.side_panel.stats.steps > 0 {
-        push_dim(format!("steps {}", state.side_panel.stats.steps));
-    }
-    if state.task_started_at_unix.is_some() || state.side_panel.stats.elapsed_seconds > 0 {
-        push_dim(state::format_duration_ms(
-            state.side_panel.stats.elapsed_seconds * 1000,
-        ));
-    }
-    let active_subagents = state
-        .subagents
-        .iter()
-        .filter(|item| matches!(item.status.as_str(), "running" | "starting"))
-        .count();
-    if active_subagents > 0 || !state.config.show_subagent_panel {
-        push_dim(format!("subagents {active_subagents}"));
-    }
-    if let Some(version) = state.header.update_available.as_ref() {
-        header_spans.push(Span::styled(
-            format!(" · update {version} :update"),
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::DIM),
-        ));
-    }
-    let header = Paragraph::new(Line::from(header_spans));
-    frame.render_widget(header, chunks[0]);
-
+    // Claude-Code-style chrome: no persistent top header. The session tab bar
+    // (multi-session only) sits at the very top; identity (PERIDOT + model),
+    // session/steps/elapsed/subagent counters and the keybind hint all live in
+    // the dim footer beneath the input box (see `render_footer_line`). This
+    // keeps the conversation transcript flush against the top of the screen
+    // like Claude Code's REPL.
     if tab_height > 0 {
-        frame.render_widget(Paragraph::new(crate::render_tab_bar(state)), chunks[1]);
+        frame.render_widget(Paragraph::new(crate::render_tab_bar(state)), chunks[0]);
     }
 
     let body_chunks = if state.layout == LayoutMode::Full && state.config.show_subagent_panel {
         Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(75), Constraint::Percentage(25)])
-            .split(chunks[2])
+            .split(chunks[1])
     } else {
         Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(100)])
-            .split(chunks[2])
+            .split(chunks[1])
     };
     // Overlays (menu, approval, branch picker, ask_user) keep the bordered
     // box look — they are modal popovers and benefit from a clear frame.
@@ -1321,25 +1362,17 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
         // transcript copy-friendly: a terminal drag-select grabs only the
         // text cells, not Unicode `│` border characters.
         let body_area = body_chunks[0];
-        // When the operator runs with the side panel toggled off, the deer
-        // mascot floats in the top-right corner of the body area and the
-        // transcript starts five rows below the body top (1 title row +
-        // 4 mascot rows). When the side panel is on, the side panel owns
-        // the mascot and the transcript spans the full body area like
-        // before. The width/height clamps below keep the floating mascot
-        // off the screen on very narrow terminals so transcript content
-        // remains readable.
+        // Optional deer mascot floats in the top-right corner of the body
+        // (opt-in via `show_mascot`, off by default). When shown we reserve a
+        // short top strip so the first transcript rows don't collide with the
+        // sprite; otherwise the transcript owns the full body. There is no
+        // title rule — the conversation reads as a clean, flush scrollback
+        // like Claude Code's REPL.
         let inline_mascot = !state.config.show_subagent_panel
             && state.config.show_mascot
             && body_area.width >= 32
             && body_area.height >= 8;
         let mascot_strip_height: u16 = if inline_mascot { 5 } else { 0 };
-        let title_line = Line::from(Span::styled(
-            format!("─── {} ", body_title(state)),
-            Style::default()
-                .fg(Color::DarkGray)
-                .add_modifier(Modifier::DIM),
-        ));
         let content_area = Rect {
             x: body_area.x + 1,
             y: body_area.y + mascot_strip_height,
@@ -1351,12 +1384,6 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
         let banner_lines = sticky_plan_banner(state);
         let following_tail = !state.is_scrolled_back();
         let mut all_lines: Vec<Line<'static>> = Vec::new();
-        if !inline_mascot {
-            // No mascot strip — keep the legacy layout: title is the very
-            // first row of the paragraph, with a blank line after it.
-            all_lines.push(title_line.clone());
-            all_lines.push(Line::from(""));
-        }
         all_lines.extend(banner_lines);
         let blocks = crate::blocks::identify_transcript_blocks(&state.transcript);
         let collapsed_indices = build_collapsed_set(state, &blocks);
@@ -1394,17 +1421,9 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
         frame.render_widget(paragraph.scroll((scroll, 0)), content_area);
 
         if inline_mascot {
-            // Title row sits to the left of the mascot, sharing body_area.y.
-            // We carve out 9 cells on the right (8 sprite + 1 padding).
+            // Mascot sprite floats in the top-right corner (8 sprite + 1 pad).
             let mascot_w: u16 = 8;
             let right_pad: u16 = 1;
-            let title_area = Rect {
-                x: body_area.x + 1,
-                y: body_area.y,
-                width: body_area.width.saturating_sub(2 + mascot_w + right_pad),
-                height: 1,
-            };
-            frame.render_widget(Paragraph::new(title_line), title_area);
             let mascot_area = Rect {
                 x: body_area.x + body_area.width.saturating_sub(mascot_w + right_pad),
                 y: body_area.y + 1,
@@ -1553,12 +1572,21 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
         frame.render_widget(Paragraph::new(side).wrap(Wrap { trim: false }), info_area);
     }
 
+    // Activity line directly above the input: mood glyph, spinner + verb while
+    // busy, queue/attention notices, and the live request-context gauge.
     frame.render_widget(
-        Paragraph::new(render_status_bar(state, chunks[3].width)),
-        chunks[3],
+        Paragraph::new(render_status_bar(state, chunks[2].width)),
+        chunks[2],
     );
 
-    let input_area = chunks[4];
+    // Footer beneath the input box carries identity + run metrics + keybind
+    // hint (the data the old top header used to show), width-truncated.
+    frame.render_widget(
+        Paragraph::new(render_footer_line(state, chunks[4].width)),
+        chunks[4],
+    );
+
+    let input_area = chunks[3];
     let prompt_glyph = "\u{276F} "; // ❯ + space, two display columns
     let prompt_style = Style::default()
         .fg(Color::Cyan)
@@ -1596,12 +1624,14 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
     }
     let char_count = state.input.chars().count();
     let line_count = state.input.split('\n').count();
+    // The keybind hint now lives in the footer line, so the input box title is
+    // just a quiet character/line counter (empty when the draft is empty).
     let title = if char_count == 0 {
-        " Enter sends · Ctrl+J newline ".to_string()
+        String::new()
     } else if line_count > 1 {
-        format!(" {char_count} chars · {line_count} lines · Ctrl+J newline ")
+        format!(" {char_count} chars · {line_count} lines ")
     } else {
-        format!(" {char_count} chars · Ctrl+J newline ")
+        format!(" {char_count} chars ")
     };
     // Inner content rows = total box height minus the two border rows.
     let visible_rows = input_area.height.saturating_sub(2);

@@ -65,6 +65,8 @@ pub enum PhraseKey {
     NotesCountSuffix,
     /// TUI side-panel latest note label.
     NotesLatestLabel,
+    /// Input footer hint: how to send / insert a newline.
+    FooterKeybindHint,
 }
 
 /// Looks up the rendered phrase for `key` in `locale`.
@@ -124,6 +126,8 @@ pub fn tr(key: PhraseKey, locale: Locale) -> &'static str {
         (PhraseKey::NotesCountSuffix, Locale::Ko) => "개 노트",
         (PhraseKey::NotesLatestLabel, Locale::En) => "latest",
         (PhraseKey::NotesLatestLabel, Locale::Ko) => "최근",
+        (PhraseKey::FooterKeybindHint, Locale::En) => "Enter sends · Ctrl+J newline",
+        (PhraseKey::FooterKeybindHint, Locale::Ko) => "Enter 전송 · Ctrl+J 줄바꿈",
     }
 }
 

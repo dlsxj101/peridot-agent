@@ -14,6 +14,27 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 
 ## Unreleased
 
+### Changed — Claude-Code-style TUI layout
+
+- The interactive TUI dropped its persistent top header and the
+  `─── Transcript` title rule. The conversation transcript is now flush
+  against the top of the screen like Claude Code's REPL, the spinner + verb
+  activity line sits directly above the input box, and the identity (accent-
+  coloured model) plus run metrics (session, steps, elapsed, subagents,
+  tokens, cost, update hint) and the keybind hint moved to a dim footer line
+  beneath the input box. The footer is width-aware: lower-priority parts drop
+  first on narrow terminals.
+- The deer mascot now defaults **off** (`tui.show_mascot = false`); it remains
+  available as an opt-in toggle.
+- The input-box keybind hint (`Enter sends · Ctrl+J newline`) is now localized
+  (`PhraseKey::FooterKeybindHint`) instead of hard-coded English.
+
+### Fixed — TUI status metrics width
+
+- The status/footer metrics budget measured the `  ·  ` separator by byte
+  length (the `·` is 2-byte UTF-8) rather than display width, truncating
+  metrics one cell early. Now measured with `string_width`.
+
 ## [0.9.0 / extension 0.6.0] — 2026-06-08
 
 ### Changed — VS Code host modularized

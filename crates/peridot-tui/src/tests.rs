@@ -421,8 +421,11 @@ fn draws_with_ratatui_backend() {
 
     let buffer = terminal.backend().buffer();
     let rendered = format!("{buffer:?}");
-    assert!(rendered.contains("PERIDOT"));
+    // The Claude-Code-style chrome drops the persistent top header, so the
+    // brand no longer appears in a live transcript view (only in the welcome
+    // splash). The transcript body and the footer chrome must still render.
     assert!(rendered.contains("hello tui"));
+    assert!(rendered.contains("\u{00B7}"), "footer chrome missing");
 }
 
 #[test]
@@ -1407,9 +1410,16 @@ fn fixture_scenarios_render_through_ratatui_backend() {
             .draw(|frame| draw(frame, &state))
             .unwrap_or_else(|_| panic!("draw failed for {scenario:?}"));
         let rendered = format!("{:?}", terminal.backend().buffer());
+        // The welcome splash leads with "Welcome back"; every other scenario is
+        // a live view whose footer chrome carries the `·`-separated metrics.
+        let needle = if scenario == TestScenario::Welcome {
+            "Welcome back"
+        } else {
+            "\u{00B7}"
+        };
         assert!(
-            rendered.contains("PERIDOT"),
-            "header missing for {scenario:?}"
+            rendered.contains(needle),
+            "expected {needle:?} in render for {scenario:?}"
         );
     }
 }
