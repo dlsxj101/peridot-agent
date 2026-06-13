@@ -954,7 +954,8 @@ fn render_status_bar(state: &TuiState, width: u16) -> Line<'static> {
         .iter()
         .map(|span| string_width(span.content.as_ref()))
         .sum::<usize>();
-    let metrics_width = usize::from(width).saturating_sub(occupied_width + metrics_prefix.len());
+    let metrics_width =
+        usize::from(width).saturating_sub(occupied_width + string_width(metrics_prefix));
     let metrics = render_status_metrics_for_width(state, metrics_width);
     if !metrics.is_empty() {
         spans.push(Span::styled(
