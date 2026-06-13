@@ -1,6 +1,6 @@
 use super::*;
 use crate::input_cursor::{try_move_cursor_down, try_move_cursor_up};
-use state::{AgentRunStatus, SessionCommandEvent, TranscriptKind};
+use state::{AgentRunStatus, CopyTarget, SessionCommandEvent, TranscriptKind};
 
 /// PageUp / PageDown jump distance, measured in transcript rows. Small enough
 /// to avoid skipping past important context, large enough to traverse a long
@@ -26,6 +26,45 @@ pub(crate) fn handle_mouse_scroll(state: &mut TuiState, kind: MouseEventKind) ->
         }
         _ => false,
     }
+}
+
+/// Writes `text` to the system clipboard via an OSC 52 escape sequence, which
+/// the terminal forwards to the OS clipboard — including over SSH and (with
+/// passthrough enabled) tmux. No native clipboard dependency is required.
+fn emit_osc52_copy(text: &str) {
+    use std::io::Write;
+    // ESC ] 52 ; c ; <base64> BEL — `c` selects the clipboard buffer.
+    let seq = format!("\u{1b}]52;c;{}\u{07}", base64_encode(text.as_bytes()));
+    let mut out = std::io::stdout();
+    let _ = out.write_all(seq.as_bytes());
+    let _ = out.flush();
+}
+
+/// Minimal standard-alphabet base64 encoder. Kept inline so `peridot-tui`
+/// doesn't pull in a base64 dependency just to build the OSC 52 payload.
+pub(crate) fn base64_encode(input: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] =
+        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
+    for chunk in input.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = *chunk.get(1).unwrap_or(&0) as u32;
+        let b2 = *chunk.get(2).unwrap_or(&0) as u32;
+        let n = (b0 << 16) | (b1 << 8) | b2;
+        out.push(ALPHABET[((n >> 18) & 63) as usize] as char);
+        out.push(ALPHABET[((n >> 12) & 63) as usize] as char);
+        out.push(if chunk.len() > 1 {
+            ALPHABET[((n >> 6) & 63) as usize] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            ALPHABET[(n & 63) as usize] as char
+        } else {
+            '='
+        });
+    }
+    out
 }
 
 /// Runs the interactive terminal UI until the user quits or submits a task.
@@ -68,6 +107,9 @@ pub fn run_interactive(mut state: TuiState) -> io::Result<TuiExit> {
                 Event::Resize(width, height) => state.resize(width, height),
                 _ => {}
             }
+        }
+        if let Some(text) = state.take_pending_clipboard() {
+            emit_osc52_copy(&text);
         }
     };
     Ok(TuiExit { state, submitted })
@@ -196,6 +238,9 @@ where
                 _ => {}
             }
         }
+        if let Some(text) = state.take_pending_clipboard() {
+            emit_osc52_copy(&text);
+        }
     }
     on_persist(&mut state);
     Ok(TuiExit {
@@ -300,6 +345,16 @@ pub fn handle_key_event(state: &mut TuiState, key: KeyEvent) -> TuiEventOutcome 
         }
         KeyCode::Char('l') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             state.transcript.clear();
+            TuiEventOutcome::Continue
+        }
+        // Ctrl+O — copy the most recent code block to the system clipboard
+        // (falls back to the whole last assistant message when it has no
+        // fenced block). Mirrors Codex's Ctrl+O "copy last output"; the actual
+        // OSC 52 write happens in the event loop, which drains
+        // `pending_clipboard`.
+        KeyCode::Char('o') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            let locale = state.config.language;
+            state.copy_to_clipboard(CopyTarget::LastCodeBlock, locale);
             TuiEventOutcome::Continue
         }
         KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -799,6 +854,20 @@ pub(super) fn submit_input(state: &mut TuiState) -> TuiEventOutcome {
         return TuiEventOutcome::Quit;
     }
     state.push_user(input.clone());
+    // `/copy [code|message|tool]` is handled here in the TUI layer (it only
+    // touches local clipboard state, never the agent), so it doesn't need a
+    // core `SlashCommand` variant. Default target is the last code block.
+    if input == "/copy" || input.starts_with("/copy ") {
+        let arg = input.strip_prefix("/copy").unwrap_or("").trim();
+        let target = match arg {
+            "message" | "msg" => CopyTarget::LastMessage,
+            "tool" | "output" => CopyTarget::LastToolOutput,
+            _ => CopyTarget::LastCodeBlock,
+        };
+        let locale = state.config.language;
+        state.copy_to_clipboard(target, locale);
+        return TuiEventOutcome::Continue;
+    }
     if let Some(command) = parse_slash_command(&input) {
         apply_slash_command(state, command);
         return TuiEventOutcome::Continue;

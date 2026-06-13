@@ -1265,6 +1265,92 @@ fn mouse_wheel_scrolls_transcript_up_and_down() {
 }
 
 #[test]
+fn extract_last_code_block_returns_inner_content() {
+    use crate::state::extract_last_code_block;
+
+    let text = "Here is the fix:\n```rust\nfn main() {}\n```\nDone.";
+    assert_eq!(extract_last_code_block(text).as_deref(), Some("fn main() {}"));
+
+    // Multiple blocks: the *last* one wins.
+    let two = "```\nfirst\n```\nthen\n```py\nsecond\n```";
+    assert_eq!(extract_last_code_block(two).as_deref(), Some("second"));
+
+    // No complete fence pair → None so the caller can fall back.
+    assert_eq!(extract_last_code_block("just prose, no fence"), None);
+}
+
+#[test]
+fn base64_encode_matches_known_vectors() {
+    assert_eq!(crate::input::base64_encode(b""), "");
+    assert_eq!(crate::input::base64_encode(b"f"), "Zg==");
+    assert_eq!(crate::input::base64_encode(b"fo"), "Zm8=");
+    assert_eq!(crate::input::base64_encode(b"foo"), "Zm9v");
+    assert_eq!(crate::input::base64_encode(b"hello"), "aGVsbG8=");
+}
+
+#[test]
+fn ctrl_o_copies_last_code_block_to_pending_clipboard() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    // Nothing to copy yet: notice, no clipboard payload.
+    handle_key_event(
+        &mut state,
+        KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL),
+    );
+    assert!(state.pending_clipboard.is_none());
+    assert!(
+        state
+            .transcript
+            .iter()
+            .any(|e| e.text.contains("nothing to copy"))
+    );
+
+    state.push_assistant("Try this:\n```sh\ncargo test\n```\nThat's it.");
+    handle_key_event(
+        &mut state,
+        KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL),
+    );
+    assert_eq!(state.take_pending_clipboard().as_deref(), Some("cargo test"));
+}
+
+#[test]
+fn copy_slash_command_targets_message_and_tool() {
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    state.push_assistant("plain answer with no code");
+    state.apply_runtime_event(TuiRuntimeEvent::ToolFinished {
+        name: "shell_exec".to_string(),
+        success: true,
+        summary: "213 passed".to_string(),
+        output: serde_json::json!({}),
+    });
+
+    state.input = "/copy message".to_string();
+    submit_input(&mut state);
+    assert_eq!(
+        state.take_pending_clipboard().as_deref(),
+        Some("plain answer with no code")
+    );
+
+    state.input = "/copy tool".to_string();
+    submit_input(&mut state);
+    assert!(
+        state
+            .take_pending_clipboard()
+            .map(|t| t.contains("shell_exec") && t.contains("213 passed"))
+            .unwrap_or(false)
+    );
+}
+
+#[test]
 fn ctrl_t_opens_session_picker_and_switches_by_prefix() {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 

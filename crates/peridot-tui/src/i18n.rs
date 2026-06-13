@@ -67,6 +67,10 @@ pub enum PhraseKey {
     NotesLatestLabel,
     /// Input footer hint: how to send / insert a newline.
     FooterKeybindHint,
+    /// Notice: content was copied to the clipboard.
+    CopyCopied,
+    /// Notice: there was nothing to copy.
+    CopyNothing,
 }
 
 /// Looks up the rendered phrase for `key` in `locale`.
@@ -128,6 +132,10 @@ pub fn tr(key: PhraseKey, locale: Locale) -> &'static str {
         (PhraseKey::NotesLatestLabel, Locale::Ko) => "최근",
         (PhraseKey::FooterKeybindHint, Locale::En) => "Enter sends · Ctrl+J newline",
         (PhraseKey::FooterKeybindHint, Locale::Ko) => "Enter 전송 · Ctrl+J 줄바꿈",
+        (PhraseKey::CopyCopied, Locale::En) => "copied to clipboard",
+        (PhraseKey::CopyCopied, Locale::Ko) => "클립보드에 복사됨",
+        (PhraseKey::CopyNothing, Locale::En) => "nothing to copy yet",
+        (PhraseKey::CopyNothing, Locale::Ko) => "복사할 내용이 없습니다",
     }
 }
 

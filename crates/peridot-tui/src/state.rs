@@ -714,6 +714,42 @@ fn default_auto_fix_max() -> u32 {
     3
 }
 
+/// What `Ctrl+O` / `/copy` grabs from the transcript for the clipboard.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CopyTarget {
+    /// The fenced code block from the most recent assistant message, falling
+    /// back to the whole message when it contains no code fence.
+    LastCodeBlock,
+    /// The full text of the most recent assistant message.
+    LastMessage,
+    /// The summary line of the most recent tool result (ok or fail).
+    LastToolOutput,
+}
+
+/// Extracts the content of the last ```` ``` ```` fenced code block in `text`
+/// (without the fence lines). Returns `None` when there is no complete pair of
+/// fences, so callers can fall back to the whole message.
+pub fn extract_last_code_block(text: &str) -> Option<String> {
+    let mut fences: Vec<usize> = Vec::new();
+    for (idx, line) in text.lines().enumerate() {
+        if line.trim_start().starts_with("```") {
+            fences.push(idx);
+        }
+    }
+    if fences.len() < 2 {
+        return None;
+    }
+    // Pair from the end: the last fence closes, the one before it opens.
+    let close = fences[fences.len() - 1];
+    let open = fences[fences.len() - 2];
+    let body: Vec<&str> = text
+        .lines()
+        .skip(open + 1)
+        .take(close.saturating_sub(open + 1))
+        .collect();
+    Some(body.join("\n"))
+}
+
 /// Main TUI state independent from the terminal backend.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TuiState {
@@ -816,6 +852,12 @@ pub struct TuiState {
     /// landed.
     #[serde(default, skip)]
     pub pending_notes: Vec<String>,
+    /// Text queued for the system clipboard by the `Ctrl+O` keybind / `/copy`
+    /// slash command. The event loop drains this every tick and writes it out
+    /// via an OSC 52 escape sequence (works locally and over SSH/tmux). Skipped
+    /// from serialisation — it is a transient side-effect request, not state.
+    #[serde(default, skip)]
+    pub pending_clipboard: Option<String>,
     /// Committee events (planner / reviewer / role-usage) queued by
     /// `apply_runtime_event`. The host drains the queue every tick and
     /// appends each entry to `<sessions>/<id>/committee.ndjson`.
@@ -1215,6 +1257,7 @@ impl TuiState {
             current_session_id: String::new(),
             pending_session_commands: Vec::new(),
             pending_notes: Vec::new(),
+            pending_clipboard: None,
             note_summary: NoteSummary::default(),
             committee_mode: peridot_common::CommitteeMode::Off,
             committee_planner_cost: 0.0,
@@ -1330,6 +1373,67 @@ impl TuiState {
     /// Records a session-router intent that the host loop will pick up next tick.
     pub fn push_pending_session_command(&mut self, command: SessionCommandEvent) {
         self.pending_session_commands.push(command);
+    }
+
+    /// Text of the most recent assistant transcript entry, if any.
+    fn last_assistant_text(&self) -> Option<&str> {
+        self.transcript
+            .iter()
+            .rev()
+            .find(|entry| entry.kind == TranscriptKind::Assistant)
+            .map(|entry| entry.text.as_str())
+    }
+
+    /// Summary line of the most recent tool result (ok or fail). Indented
+    /// detail lines (which start with two spaces) are skipped so the operator
+    /// gets the headline, not a stray preview fragment.
+    fn last_tool_output(&self) -> Option<&str> {
+        self.transcript
+            .iter()
+            .rev()
+            .find(|entry| {
+                matches!(entry.kind, TranscriptKind::ToolOk | TranscriptKind::ToolFail)
+                    && !entry.text.starts_with("  ")
+            })
+            .map(|entry| entry.text.as_str())
+    }
+
+    /// Resolves the text a [`CopyTarget`] points at, if it exists.
+    pub fn resolve_copy_text(&self, target: CopyTarget) -> Option<String> {
+        match target {
+            CopyTarget::LastCodeBlock => {
+                let text = self.last_assistant_text()?;
+                Some(extract_last_code_block(text).unwrap_or_else(|| text.to_string()))
+            }
+            CopyTarget::LastMessage => self.last_assistant_text().map(|text| text.to_string()),
+            CopyTarget::LastToolOutput => self.last_tool_output().map(|text| text.to_string()),
+        }
+    }
+
+    /// Queues `target`'s text for the system clipboard (drained by the event
+    /// loop into an OSC 52 write) and records a notice. Returns `false` and
+    /// notices when there is nothing to copy.
+    pub fn copy_to_clipboard(&mut self, target: CopyTarget, locale: peridot_common::Locale) -> bool {
+        match self.resolve_copy_text(target) {
+            Some(text) if !text.is_empty() => {
+                let chars = text.chars().count();
+                self.pending_clipboard = Some(text);
+                self.push_notice(format!(
+                    "{} ({chars} chars)",
+                    crate::tr(crate::PhraseKey::CopyCopied, locale)
+                ));
+                true
+            }
+            _ => {
+                self.push_notice(crate::tr(crate::PhraseKey::CopyNothing, locale).to_string());
+                false
+            }
+        }
+    }
+
+    /// Removes and returns any text queued for the system clipboard.
+    pub fn take_pending_clipboard(&mut self) -> Option<String> {
+        self.pending_clipboard.take()
     }
 
     /// Replaces dynamic auto-skill slash suggestions.

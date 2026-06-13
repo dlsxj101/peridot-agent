@@ -14,6 +14,20 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 
 ## Unreleased
 
+### Added — Clipboard copy (Ctrl+O / `/copy`)
+
+- Copy transcript content straight to the system clipboard, so a long code
+  block that has scrolled off-screen can be copied in full (mouse selection in
+  a full-screen TUI can only reach visible cells — the same limitation Codex
+  CLI hit, which is why both it and Claude Code expose a copy command).
+  - **`Ctrl+O`** copies the most recent fenced code block (falling back to the
+    whole last assistant message), mirroring Codex's "copy last output".
+  - **`/copy [code|message|tool]`** copies the last code block, the last
+    assistant message, or the last tool output. Discoverable in the slash
+    picker.
+  - Delivery is via an **OSC 52** escape sequence, so it works locally and over
+    SSH / tmux (with passthrough) without a native clipboard dependency.
+
 ### Added — Mouse-wheel transcript scrolling
 
 - The TUI now scrolls the conversation transcript with the mouse wheel, gated
