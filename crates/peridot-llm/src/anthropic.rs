@@ -109,6 +109,23 @@ fn pricing_for_model(model: &str) -> PricingTable {
     }
 }
 
+/// Whether `model` rejects the legacy `thinking: {type:"enabled", budget_tokens}`
+/// payload and requires adaptive thinking instead.
+///
+/// Opus 4.7, Opus 4.8, Fable 5, and Mythos 5 removed the budgeted form — sending
+/// it returns a 400 — so reasoning requests for those models must use
+/// `{type:"adaptive"}` with `output_config.effort`. Opus 4.6 / Sonnet 4.6 still
+/// accept the budgeted form (deprecated), and older models (Haiku 4.5, Sonnet
+/// 4.5, Opus 4.5 and earlier) require it, so they keep using it. New Opus
+/// families will likely also be adaptive-only — add them here when they ship.
+fn model_requires_adaptive_thinking(model: &str) -> bool {
+    let lower = model.to_ascii_lowercase();
+    lower.contains("opus-4-7")
+        || lower.contains("opus-4-8")
+        || lower.contains("fable")
+        || lower.contains("mythos")
+}
+
 #[async_trait]
 impl LlmProvider for ClaudeProvider {
     async fn complete(&self, request: CompletionRequest) -> PeriResult<CompletionResponse> {
@@ -492,11 +509,22 @@ pub(crate) fn anthropic_payload_with_cache(
     } else {
         ReasoningEffort::Off
     };
-    if let Some(budget) = effective_effort.anthropic_budget_tokens() {
-        payload["thinking"] = json!({
-            "type": "enabled",
-            "budget_tokens": budget
-        });
+    if effective_effort != ReasoningEffort::Off {
+        if model_requires_adaptive_thinking(&request.model) {
+            // Opus 4.7+/Fable/Mythos removed the budgeted form
+            // (`{type:"enabled", budget_tokens}` now 400s); adaptive is the only
+            // on-mode, with depth steered by `output_config.effort` instead of a
+            // token budget.
+            payload["thinking"] = json!({ "type": "adaptive" });
+            if let Some(label) = effective_effort.anthropic_effort_label() {
+                payload["output_config"] = json!({ "effort": label });
+            }
+        } else if let Some(budget) = effective_effort.anthropic_budget_tokens() {
+            payload["thinking"] = json!({
+                "type": "enabled",
+                "budget_tokens": budget
+            });
+        }
     }
 
     if !request.tools.is_empty() {

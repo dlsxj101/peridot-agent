@@ -657,6 +657,20 @@ impl ReasoningEffort {
             Self::XHigh => Some("xhigh"),
         }
     }
+
+    /// Label for Anthropic's `output_config.effort` field, used on models that
+    /// take adaptive thinking (`thinking: { type: "adaptive" }`) instead of a
+    /// token budget — depth is steered by effort there rather than
+    /// `budget_tokens`. `None` when reasoning is disabled.
+    pub fn anthropic_effort_label(self) -> Option<&'static str> {
+        match self {
+            Self::Off => None,
+            Self::Low => Some("low"),
+            Self::Medium => Some("medium"),
+            Self::High => Some("high"),
+            Self::XHigh => Some("xhigh"),
+        }
+    }
 }
 
 impl std::fmt::Display for ReasoningEffort {
