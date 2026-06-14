@@ -66,7 +66,7 @@ impl Tool for VerifyBuildTool {
             .map(str::to_string)
             .or(detected)
             .unwrap_or_else(|| "cargo build --workspace".to_string());
-        run_verification_command(&command_owned, ctx, "verify build", "build")
+        run_verification_command(&command_owned, ctx, "verify build", "build").await
     }
 
     fn permission_level(&self) -> PermissionLevel {
@@ -108,7 +108,7 @@ impl Tool for VerifyTestTool {
             .map(str::to_string)
             .or(detected)
             .unwrap_or_else(|| "cargo test --workspace".to_string());
-        run_verification_command(&command_owned, ctx, "verify test", "test")
+        run_verification_command(&command_owned, ctx, "verify test", "test").await
     }
 
     fn permission_level(&self) -> PermissionLevel {
@@ -150,7 +150,7 @@ impl Tool for VerifyLintTool {
             .map(str::to_string)
             .or(detected)
             .unwrap_or_else(|| "cargo clippy --workspace -- -D warnings".to_string());
-        run_verification_command(&command_owned, ctx, "verify lint", "lint")
+        run_verification_command(&command_owned, ctx, "verify lint", "lint").await
     }
 
     fn permission_level(&self) -> PermissionLevel {
@@ -175,13 +175,13 @@ fn verify_command_schema(default: &str) -> Value {
     })
 }
 
-fn run_verification_command(
+async fn run_verification_command(
     command: &str,
     ctx: &ToolContext,
     label: &str,
     stage: &str,
 ) -> PeriResult<ToolResult> {
-    let result = run_read_only_command(command, ctx, label)?;
+    let result = run_read_only_command(command, ctx, label).await?;
     let stdout = result.output["stdout"].as_str().unwrap_or_default();
     let stderr = result.output["stderr"].as_str().unwrap_or_default();
     let detail = [stdout, stderr]

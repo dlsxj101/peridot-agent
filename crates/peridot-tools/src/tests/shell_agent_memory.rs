@@ -773,8 +773,8 @@ async fn shell_exec_dry_run_skips_execution_and_describes_invocation() {
     fs::remove_dir_all(&root).ok();
 }
 
-#[test]
-fn read_only_command_is_sandbox_wrapped() {
+#[tokio::test]
+async fn read_only_command_is_sandbox_wrapped() {
     // Regression: git_*/verify_* build on run_read_only_command, which used to
     // shell out via bare `sh -c`, ignoring SandboxMode. Under Docker the
     // resolved invocation must be wrapped by `docker`, not run on the host.
@@ -789,6 +789,7 @@ fn read_only_command_is_sandbox_wrapped() {
     });
     let result =
         crate::tools::command::run_read_only_command("git status --short", &ctx, "git status")
+            .await
             .unwrap();
     assert_eq!(result.output["dry_run"], true);
     let would = result.output["would_execute"].as_str().unwrap();
@@ -804,6 +805,7 @@ fn read_only_command_is_sandbox_wrapped() {
         ..SecurityConfig::default()
     });
     let none = crate::tools::command::run_read_only_command("git status", &ctx_none, "git status")
+        .await
         .unwrap();
     assert!(
         none.output["would_execute"]
