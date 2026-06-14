@@ -2170,8 +2170,21 @@ fn write_context_snapshot(
     }
     let bytes = serde_json::to_vec(entries)
         .map_err(|err| format!("failed to serialize context snapshot: {err}"))?;
-    std::fs::write(&snapshot_path, bytes)
-        .map_err(|err| format!("failed to write {}: {err}", snapshot_path.display()))
+    // Write atomically (temp + rename), matching peridot-core's
+    // snapshot_context_to_disk. A plain write leaves a truncated, unparseable
+    // JSON snapshot if the daemon is killed mid-write or a concurrent reader
+    // (e.g. resume / read_context_snapshot) races the write — losing the
+    // session's context.
+    let temp_path = snapshot_path.with_extension("tmp");
+    std::fs::write(&temp_path, &bytes)
+        .map_err(|err| format!("failed to write {}: {err}", temp_path.display()))?;
+    std::fs::rename(&temp_path, &snapshot_path).map_err(|err| {
+        format!(
+            "failed to rename {} -> {}: {err}",
+            temp_path.display(),
+            snapshot_path.display()
+        )
+    })
 }
 
 fn append_plan_reminder_to_context(
