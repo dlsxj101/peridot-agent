@@ -103,6 +103,7 @@ pub fn run_interactive(mut state: TuiState) -> io::Result<TuiExit> {
                 Event::Mouse(mouse) => {
                     handle_mouse_scroll(&mut state, mouse.kind);
                 }
+                Event::Paste(text) => state.paste_text(&text),
                 Event::Resize(width, height) => state.resize(width, height),
                 _ => {}
             }
@@ -233,6 +234,7 @@ where
                 Event::Mouse(mouse) => {
                     handle_mouse_scroll(&mut state, mouse.kind);
                 }
+                Event::Paste(text) => state.paste_text(&text),
                 Event::Resize(width, height) => state.resize(width, height),
                 _ => {}
             }
