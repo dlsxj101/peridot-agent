@@ -999,9 +999,20 @@ async fn handle_session_generate_title(
     };
     let config = state.run_config.as_ref().clone();
     let project_root = state.project_root.as_ref().clone();
-    // Reach across into the binary crate root for the shared helper.
-    let title = crate::generate_session_title(&config, &project_root, &task).await;
-    emit_response(state, id, serde_json::json!({ "title": title }))
+    // Spawn the title generation instead of awaiting it inline. It calls the
+    // configured model (a network round-trip), and dispatch_line is awaited
+    // serially in the daemon's main loop — awaiting here froze the entire RPC
+    // surface for the duration of the LLM call, so a session.cancel or status
+    // request issued while a freshly started session's title was being
+    // generated could not be processed. The response is matched by `id` on the
+    // client, so emitting it asynchronously from the task is transparent.
+    let state_for_task = state.clone();
+    tokio::spawn(async move {
+        // Reach across into the binary crate root for the shared helper.
+        let title = crate::generate_session_title(&config, &project_root, &task).await;
+        let _ = emit_response(&state_for_task, id, serde_json::json!({ "title": title }));
+    });
+    Ok(())
 }
 
 /// Re-read `.peridot/config.toml` so the next session start picks up
