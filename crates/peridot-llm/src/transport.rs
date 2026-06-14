@@ -20,6 +20,33 @@ pub(crate) fn should_retry_status(status: reqwest::StatusCode) -> bool {
         || status.is_server_error()
 }
 
+/// Exponential backoff delay applied *before* a retry attempt. `attempt` is the
+/// upcoming attempt number (the first retry, i.e. the loop's second iteration,
+/// is `attempt = 1`). Doubles from 250ms and caps at 8s.
+///
+/// Pure and deterministic so it can be unit-tested; jitter is layered on top in
+/// [`backoff_before_retry`] from the wall clock rather than baked in here.
+pub(crate) fn retry_backoff_delay(attempt: u32) -> std::time::Duration {
+    let exp = attempt.saturating_sub(1).min(5);
+    let base_ms = 250u64.saturating_mul(1u64 << exp).min(8_000);
+    std::time::Duration::from_millis(base_ms)
+}
+
+/// Sleeps for [`retry_backoff_delay`] plus up to ~20% wall-clock jitter, so the
+/// previous behaviour (immediate `continue`, hammering a rate-limited or
+/// erroring upstream and resynchronizing concurrent sessions into a thundering
+/// herd) is replaced with backed-off, de-synchronized retries.
+pub(crate) async fn backoff_before_retry(attempt: u32) {
+    let base = retry_backoff_delay(attempt);
+    let jitter_window_ms = (base.as_millis() as u64 / 5).max(1);
+    let extra_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| u64::from(d.subsec_nanos()))
+        .unwrap_or(0)
+        % (jitter_window_ms + 1);
+    tokio::time::sleep(base + std::time::Duration::from_millis(extra_ms)).await;
+}
+
 pub(crate) async fn read_streaming_response(response: reqwest::Response) -> PeriResult<String> {
     let mut body = Vec::new();
     let mut stream = response.bytes_stream();
@@ -145,6 +172,18 @@ pub(crate) fn sse_data_events(body: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retry_backoff_doubles_and_caps() {
+        assert_eq!(retry_backoff_delay(0).as_millis(), 250); // pre-first-retry guard
+        assert_eq!(retry_backoff_delay(1).as_millis(), 250);
+        assert_eq!(retry_backoff_delay(2).as_millis(), 500);
+        assert_eq!(retry_backoff_delay(3).as_millis(), 1_000);
+        assert_eq!(retry_backoff_delay(4).as_millis(), 2_000);
+        // Caps at 8s no matter how high the attempt climbs.
+        assert_eq!(retry_backoff_delay(6).as_millis(), 8_000);
+        assert_eq!(retry_backoff_delay(50).as_millis(), 8_000);
+    }
 
     #[test]
     fn sse_drain_tolerates_utf8_split_across_chunks() {

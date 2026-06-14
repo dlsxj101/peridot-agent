@@ -6,7 +6,8 @@ use peridot_common::{PeriError, PeriResult, ReasoningEffort};
 use serde_json::{Value, json};
 
 use crate::transport::{
-    estimate_cost, read_streaming_response, should_retry_status, sse_data_events, stream_sse_events,
+    backoff_before_retry, estimate_cost, read_streaming_response, should_retry_status,
+    sse_data_events, stream_sse_events,
 };
 use crate::{
     AuthMethod, CompletionRequest, CompletionResponse, CompletionStreamChunk, LlmProvider,
@@ -95,6 +96,10 @@ impl LlmProvider for ClaudeProvider {
         let endpoint = format!("{}/v1/messages", self.base_url.trim_end_matches('/'));
         let mut last_error = None;
         for attempt in 0..=self.max_retries {
+            // Back off before every retry after the first attempt.
+            if attempt > 0 {
+                backoff_before_retry(u32::from(attempt)).await;
+            }
             let response = match self
                 .client
                 .post(&endpoint)
@@ -149,6 +154,10 @@ impl LlmProvider for ClaudeProvider {
         let endpoint = format!("{}/v1/messages", self.base_url.trim_end_matches('/'));
         let mut last_error = None;
         for attempt in 0..=self.max_retries {
+            // Back off before every retry after the first attempt.
+            if attempt > 0 {
+                backoff_before_retry(u32::from(attempt)).await;
+            }
             let response = match self
                 .client
                 .post(&endpoint)
@@ -200,6 +209,10 @@ impl LlmProvider for ClaudeProvider {
         let endpoint = format!("{}/v1/messages", self.base_url.trim_end_matches('/'));
         let mut last_error = None;
         for attempt in 0..=self.max_retries {
+            // Back off before every retry after the first attempt.
+            if attempt > 0 {
+                backoff_before_retry(u32::from(attempt)).await;
+            }
             let response = match self
                 .client
                 .post(&endpoint)
