@@ -93,6 +93,15 @@ pub(super) async fn handle_approval_respond(
         )?;
         return Ok(());
     };
+    if !peridot_common::is_valid_session_id(session_id) {
+        emit_error(
+            state,
+            id,
+            -32602,
+            format!("invalid session_id: {session_id:?}"),
+        )?;
+        return Ok(());
+    }
     let Some(approved) = params.get("approved").and_then(Value::as_bool) else {
         emit_error(
             state,

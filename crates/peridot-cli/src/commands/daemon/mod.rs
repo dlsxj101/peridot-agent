@@ -866,6 +866,17 @@ async fn handle_session_start(state: &DaemonState, id: Value, params: Option<Val
         .filter(|value| !value.is_empty())
         .map(str::to_string);
     if let Some(requested) = requested_session_id.as_ref()
+        && !peridot_common::is_valid_session_id(requested)
+    {
+        emit_error(
+            state,
+            id,
+            -32602,
+            format!("invalid session_id: {requested:?}"),
+        )?;
+        return Ok(());
+    }
+    if let Some(requested) = requested_session_id.as_ref()
         && state.sessions.lock().await.contains_key(requested)
     {
         emit_error(
@@ -988,9 +999,20 @@ async fn handle_session_generate_title(
     };
     let config = state.run_config.as_ref().clone();
     let project_root = state.project_root.as_ref().clone();
-    // Reach across into the binary crate root for the shared helper.
-    let title = crate::generate_session_title(&config, &project_root, &task).await;
-    emit_response(state, id, serde_json::json!({ "title": title }))
+    // Spawn the title generation instead of awaiting it inline. It calls the
+    // configured model (a network round-trip), and dispatch_line is awaited
+    // serially in the daemon's main loop — awaiting here froze the entire RPC
+    // surface for the duration of the LLM call, so a session.cancel or status
+    // request issued while a freshly started session's title was being
+    // generated could not be processed. The response is matched by `id` on the
+    // client, so emitting it asynchronously from the task is transparent.
+    let state_for_task = state.clone();
+    tokio::spawn(async move {
+        // Reach across into the binary crate root for the shared helper.
+        let title = crate::generate_session_title(&config, &project_root, &task).await;
+        let _ = emit_response(&state_for_task, id, serde_json::json!({ "title": title }));
+    });
+    Ok(())
 }
 
 /// Re-read `.peridot/config.toml` so the next session start picks up
@@ -1503,6 +1525,15 @@ async fn handle_session_cancel(
         )?;
         return Ok(());
     };
+    if !peridot_common::is_valid_session_id(session_id) {
+        emit_error(
+            state,
+            id,
+            -32602,
+            format!("invalid session_id: {session_id:?}"),
+        )?;
+        return Ok(());
+    }
 
     let cancelled = if let Some(entry) = state.sessions.lock().await.remove(session_id) {
         entry.cancel.cancel();
@@ -1572,6 +1603,12 @@ async fn handle_session_command(
         return Ok(());
     };
     let session_id = optional_str(&params, "session_id").map(str::to_string);
+    if let Some(sid) = session_id.as_ref()
+        && !peridot_common::is_valid_session_id(sid)
+    {
+        emit_error(state, id, -32602, format!("invalid session_id: {sid:?}"))?;
+        return Ok(());
+    }
     let surface = optional_str(&params, "surface").map(str::to_string);
 
     let result = if matches!(command, SlashCommand::Help) {
@@ -2144,8 +2181,21 @@ fn write_context_snapshot(
     }
     let bytes = serde_json::to_vec(entries)
         .map_err(|err| format!("failed to serialize context snapshot: {err}"))?;
-    std::fs::write(&snapshot_path, bytes)
-        .map_err(|err| format!("failed to write {}: {err}", snapshot_path.display()))
+    // Write atomically (temp + rename), matching peridot-core's
+    // snapshot_context_to_disk. A plain write leaves a truncated, unparseable
+    // JSON snapshot if the daemon is killed mid-write or a concurrent reader
+    // (e.g. resume / read_context_snapshot) races the write — losing the
+    // session's context.
+    let temp_path = snapshot_path.with_extension("tmp");
+    std::fs::write(&temp_path, &bytes)
+        .map_err(|err| format!("failed to write {}: {err}", temp_path.display()))?;
+    std::fs::rename(&temp_path, &snapshot_path).map_err(|err| {
+        format!(
+            "failed to rename {} -> {}: {err}",
+            temp_path.display(),
+            snapshot_path.display()
+        )
+    })
 }
 
 fn append_plan_reminder_to_context(

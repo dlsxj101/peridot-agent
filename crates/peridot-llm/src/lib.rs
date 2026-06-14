@@ -840,6 +840,38 @@ mod tests {
         );
     }
 
+    #[test]
+    fn anthropic_payload_uses_adaptive_thinking_for_opus_4_8() {
+        // Opus 4.7/4.8/Fable/Mythos 400 on the budgeted form; the provider must
+        // emit adaptive thinking + output_config.effort instead.
+        let mut request = tool_request(vec![LlmMessage::new(MessageRole::User, "hi")], Vec::new());
+        request.model = "claude-opus-4-8".to_string();
+        request.reasoning_effort = peridot_common::ReasoningEffort::High;
+
+        let payload = anthropic_payload(&request);
+
+        assert_eq!(payload["thinking"]["type"], "adaptive");
+        assert!(
+            payload["thinking"].get("budget_tokens").is_none(),
+            "Opus 4.8 must not receive budget_tokens (it 400s)"
+        );
+        assert_eq!(payload["output_config"]["effort"], "high");
+    }
+
+    #[test]
+    fn anthropic_payload_keeps_budget_tokens_for_legacy_models() {
+        // Haiku 4.5 / Sonnet 4.5 / older still require the budgeted form.
+        let mut request = tool_request(vec![LlmMessage::new(MessageRole::User, "hi")], Vec::new());
+        request.model = "claude-haiku-4-5".to_string();
+        request.reasoning_effort = peridot_common::ReasoningEffort::Medium;
+
+        let payload = anthropic_payload(&request);
+
+        assert_eq!(payload["thinking"]["type"], "enabled");
+        assert_eq!(payload["thinking"]["budget_tokens"], 4096);
+        assert!(payload.get("output_config").is_none());
+    }
+
     #[tokio::test]
     async fn openai_provider_posts_to_chat_completions_endpoint() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();

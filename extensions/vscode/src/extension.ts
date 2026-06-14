@@ -18,6 +18,7 @@ import { isTerminalAgentEvent } from './agentEventLifecycle';
 import {
   bestWorkspaceFileMatch,
   isAbsoluteWorkspacePath,
+  isPathWithinRoots,
   workspaceFileCandidatePaths,
   workspaceFindFilePatterns,
   workspaceFuzzyFindFilePatterns,
@@ -288,6 +289,14 @@ export function activate(context: vscode.ExtensionContext) {
     openFile: async (relativePath: string, line?: number, column?: number, projectRoot?: string): Promise<void> =>
       openWorkspaceFile(relativePath, output, line, column, undefined, projectRoot),
     openPath: async (targetPath: string): Promise<void> => {
+      // `targetPath` comes from daemon command results surfaced in the webview;
+      // only reveal paths inside an open workspace folder so untrusted output
+      // can't induce a reveal of arbitrary filesystem locations.
+      const roots = (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
+      if (!isPathWithinRoots(targetPath, roots)) {
+        output.appendLine(`[peridot] openPath refused — path outside workspace: ${targetPath}`);
+        return;
+      }
       await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(targetPath));
     },
     registerProvider: async (
@@ -2110,10 +2119,22 @@ export async function openWorkspaceFile(
   //
   // URI construction uses the workspace folder's scheme + authority so it
   // works correctly in remote environments (WSL, SSH, containers).
+  // Containment guard: `relativePath` originates in untrusted agent/tool
+  // output, so reject any candidate (absolute path or `..` escape) that
+  // resolves outside the daemon project root / workspace folder before it can
+  // be opened — a prompt-injected response must not be able to open
+  // `/etc/passwd` or `~/.ssh/id_rsa`.
+  const allowedRoots = [projectRoot, folder?.uri.fsPath];
   const candidateUris = workspaceFileCandidatePaths(relativePath, [projectRoot, folder?.uri.fsPath])
+    .filter((candidatePath) => isPathWithinRoots(candidatePath, allowedRoots))
     .map((candidatePath) =>
       folder ? folder.uri.with({ path: candidatePath }) : vscode.Uri.file(candidatePath),
     );
+  if (candidateUris.length === 0) {
+    output.appendLine(`[peridot] openFile refused — path escapes workspace: ${relativePath}`);
+    // Fall through: the workspace-wide search below only matches inside the
+    // workspace and already filters `..`, so it stays a safe last resort.
+  }
 
   const selectionOptions =
     typeof line === 'number'

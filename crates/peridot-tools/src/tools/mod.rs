@@ -1,5 +1,5 @@
 pub(crate) mod agent;
-mod command;
+pub(crate) mod command;
 mod file;
 mod git;
 pub(crate) mod plan;

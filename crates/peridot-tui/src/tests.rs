@@ -27,6 +27,57 @@ fn header_records_tokens_cost_and_cache_rate() {
 }
 
 #[test]
+fn bracketed_paste_inserts_multiline_text_without_submitting() {
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    state.input = "fix ".to_string();
+    state.input_cursor = state.input.chars().count();
+
+    // A multi-line paste (CRLF + bare CR) must land verbatim with normalized
+    // newlines, not split into separate Enter-submitted lines.
+    state.paste_text("line one\r\nline two\rline three");
+
+    assert_eq!(state.input, "fix line one\nline two\nline three");
+    assert_eq!(state.input_cursor, state.input.chars().count());
+}
+
+#[test]
+fn bracketed_paste_routes_to_ask_user_freeform() {
+    let mut state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ));
+    state.ask_user = Some(crate::ask_user::AskUserPanel {
+        question: "answer?".to_string(),
+        choices: Vec::new(),
+        selected_index: 0,
+        freeform: "draft ".to_string(),
+        explanation: None,
+        showing_explanation: false,
+        other_index: None,
+        explain_index: None,
+        multi_select: false,
+        selected_set: Vec::new(),
+        real_options_count: 0,
+        request_id: None,
+        request_kind: crate::ask_user::AskUserPanelKind::default(),
+    });
+
+    state.paste_text("pasted answer");
+
+    assert_eq!(
+        state.ask_user.as_ref().unwrap().freeform,
+        "draft pasted answer"
+    );
+    // Composer is untouched while the free-form prompt is active.
+    assert!(state.input.is_empty());
+}
+
+#[test]
 fn parses_input_slash_command() {
     let mut state = TuiState::new(HeaderState::new(
         ExecutionMode::Execute,
@@ -1269,7 +1320,10 @@ fn extract_last_code_block_returns_inner_content() {
     use crate::state::extract_last_code_block;
 
     let text = "Here is the fix:\n```rust\nfn main() {}\n```\nDone.";
-    assert_eq!(extract_last_code_block(text).as_deref(), Some("fn main() {}"));
+    assert_eq!(
+        extract_last_code_block(text).as_deref(),
+        Some("fn main() {}")
+    );
 
     // Multiple blocks: the *last* one wins.
     let two = "```\nfirst\n```\nthen\n```py\nsecond\n```";
@@ -1315,7 +1369,10 @@ fn ctrl_o_copies_last_code_block_to_pending_clipboard() {
         &mut state,
         KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL),
     );
-    assert_eq!(state.take_pending_clipboard().as_deref(), Some("cargo test"));
+    assert_eq!(
+        state.take_pending_clipboard().as_deref(),
+        Some("cargo test")
+    );
 }
 
 #[test]

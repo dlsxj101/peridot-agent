@@ -1236,11 +1236,11 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(tab_height),   // [0] session tab bar (0 when single-session)
-            Constraint::Min(1),               // [1] transcript / welcome
-            Constraint::Length(1),            // [2] activity line (spinner + verb)
+            Constraint::Length(tab_height), // [0] session tab bar (0 when single-session)
+            Constraint::Min(1),             // [1] transcript / welcome
+            Constraint::Length(1),          // [2] activity line (spinner + verb)
             Constraint::Length(input_height), // [3] input box
-            Constraint::Length(1),            // [4] footer: identity + metrics + hint
+            Constraint::Length(1),          // [4] footer: identity + metrics + hint
         ])
         .split(area);
 

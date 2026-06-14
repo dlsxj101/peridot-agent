@@ -1081,7 +1081,26 @@ impl MemoryStore {
     }
 
     fn connection(&self) -> PeriResult<Connection> {
-        Connection::open(&self.path).map_err(sql_error)
+        let conn = Connection::open(&self.path).map_err(sql_error)?;
+        // Concurrency hardening. A fresh connection is opened per operation
+        // and the daemon serves multiple sessions (plus the occasional CLI
+        // invocation) against the same memory.db. Under SQLite's default
+        // rollback journal with no busy handler, a second writer fails
+        // immediately with "database is locked" and readers block the writer.
+        //   - busy_timeout: contended access waits up to 5s instead of erroring.
+        //   - WAL: readers and a single writer proceed concurrently.
+        //   - synchronous=NORMAL: safe with WAL and avoids an fsync per commit.
+        conn.busy_timeout(std::time::Duration::from_secs(5))
+            .map_err(sql_error)?;
+        // journal_mode returns the resulting mode, so it must be read via a
+        // query rather than pragma_update (which rejects result-returning
+        // statements).
+        let _: String = conn
+            .query_row("PRAGMA journal_mode = WAL", [], |row| row.get(0))
+            .map_err(sql_error)?;
+        conn.pragma_update(None, "synchronous", "NORMAL")
+            .map_err(sql_error)?;
+        Ok(conn)
     }
 }
 
@@ -1125,12 +1144,27 @@ fn session_record_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionR
 
 /// Writes a session blob (TUI state, context, transcript log) atomically to
 /// `<sessions_root>/<id>/<filename>` using a tempfile + rename.
+/// Defense-in-depth guard: refuses to build a session path from an id that
+/// could escape the sessions root. Callers (the daemon RPC surface) are
+/// expected to validate ids at ingress, but these helpers are public and write
+/// to / delete from the filesystem, so they re-check rather than trust.
+fn reject_unsafe_session_id(id: &str) -> PeriResult<()> {
+    if peridot_common::is_valid_session_id(id) {
+        Ok(())
+    } else {
+        Err(PeriError::Tool(format!(
+            "refusing unsafe session id: {id:?}"
+        )))
+    }
+}
+
 pub fn save_session_blob(
     sessions_root: &Path,
     id: &str,
     filename: &str,
     bytes: &[u8],
 ) -> PeriResult<()> {
+    reject_unsafe_session_id(id)?;
     let dir = sessions_root.join(id);
     fs::create_dir_all(&dir)
         .map_err(|err| PeriError::Tool(format!("failed to create {}: {err}", dir.display())))?;
@@ -1154,6 +1188,7 @@ pub fn load_session_blob(
     id: &str,
     filename: &str,
 ) -> PeriResult<Option<Vec<u8>>> {
+    reject_unsafe_session_id(id)?;
     let target = sessions_root.join(id).join(filename);
     match fs::read(&target) {
         Ok(bytes) => Ok(Some(bytes)),
@@ -1167,6 +1202,7 @@ pub fn load_session_blob(
 
 /// Deletes the per-session directory if it exists.
 pub fn remove_session_dir(sessions_root: &Path, id: &str) -> PeriResult<bool> {
+    reject_unsafe_session_id(id)?;
     let target = sessions_root.join(id);
     if !target.exists() {
         return Ok(false);
@@ -1245,6 +1281,23 @@ fn collect_rows<T>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn connection_enables_wal_and_busy_timeout() {
+        let root = std::env::temp_dir().join(format!(
+            "peridot-memory-wal-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let store = MemoryStore::new(root.join("memory.db"));
+        store.initialize().unwrap();
+        let conn = store.connection().unwrap();
+        let mode: String = conn
+            .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(mode.to_lowercase(), "wal");
+        std::fs::remove_dir_all(&root).ok();
+    }
 
     #[test]
     fn saves_and_lists_sessions() {

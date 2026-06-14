@@ -14,6 +14,30 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 
 ## Unreleased
 
+### Security — P0 hardening pass
+
+Found during a full-codebase audit; fixed as a prioritized bundle.
+
+- **Session-id path traversal (daemon).** Client-supplied `session_id` was
+  joined directly into `.peridot/sessions/<id>/` paths and `remove_dir_all`.
+  Added `peridot_common::is_valid_session_id` (allowlist, no `..`), enforced at
+  every RPC ingress (`session.start/command/cancel`, `approval.respond`) with
+  defense-in-depth in `peridot-memory` and session import.
+- **Sandbox escape (verify/git tools).** `verify_*` and `git_*` ran via bare
+  `sh -c`, ignoring `SandboxMode`; they now route through the sandbox wrapper
+  (Docker/Firejail), with `SandboxMode::None` unchanged.
+- **Command-guard gaps.** Generalized the hard-block to catch any
+  curl/wget/fetch piped into any shell (+ command/process substitution),
+  `rm -rf` of `~`/`$HOME`/system roots, and whitespace-variant fork bombs;
+  tightened approved-path-scope matching from a whole-command substring to
+  whole path tokens (`scope` / `scope/…`).
+- **VS Code `openFile`/`openPath` containment.** Both acted on untrusted
+  webview-supplied paths; now constrained to the workspace / project root via
+  `isPathWithinRoots`.
+- **Dependency CVE scanning.** Added a `Security audit` CI job (cargo-deny
+  advisories/bans/sources + `npm audit`), a `deny.toml`, and Dependabot for
+  cargo/npm/actions.
+
 ### Fixed — VS Code extension run-option validation
 
 - `sanitizeRunOptions` (sidebar webview / persisted-state intake) blindly cast

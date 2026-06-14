@@ -1392,8 +1392,10 @@ impl TuiState {
             .iter()
             .rev()
             .find(|entry| {
-                matches!(entry.kind, TranscriptKind::ToolOk | TranscriptKind::ToolFail)
-                    && !entry.text.starts_with("  ")
+                matches!(
+                    entry.kind,
+                    TranscriptKind::ToolOk | TranscriptKind::ToolFail
+                ) && !entry.text.starts_with("  ")
             })
             .map(|entry| entry.text.as_str())
     }
@@ -1413,7 +1415,11 @@ impl TuiState {
     /// Queues `target`'s text for the system clipboard (drained by the event
     /// loop into an OSC 52 write) and records a notice. Returns `false` and
     /// notices when there is nothing to copy.
-    pub fn copy_to_clipboard(&mut self, target: CopyTarget, locale: peridot_common::Locale) -> bool {
+    pub fn copy_to_clipboard(
+        &mut self,
+        target: CopyTarget,
+        locale: peridot_common::Locale,
+    ) -> bool {
         match self.resolve_copy_text(target) {
             Some(text) if !text.is_empty() => {
                 let chars = text.chars().count();
@@ -1859,6 +1865,49 @@ impl TuiState {
         self.input_cursor += 1;
         self.input_history_cursor = None;
         self.refresh_input_pickers();
+    }
+
+    /// Inserts a string at the current input cursor (bracketed-paste). Unlike a
+    /// run of `insert_input_char` calls this refreshes the derived pickers once,
+    /// and crucially the newlines survive: without bracketed paste each line of
+    /// a multi-line paste arrived as a separate Enter key and submitted the
+    /// buffer early.
+    pub fn insert_input_str(&mut self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        let byte_index = input_byte_index(&self.input, self.input_cursor);
+        self.input.insert_str(byte_index, text);
+        self.input_cursor += text.chars().count();
+        self.input_history_cursor = None;
+        self.refresh_input_pickers();
+    }
+
+    /// Routes bracketed-paste text to whichever text field is active. Newlines
+    /// are normalized to `\n` so a multi-line paste lands verbatim. The
+    /// free-form ask-user prompt and the main composer accept text; the other
+    /// modals (menu / approval / pickers) don't, so paste is a no-op there.
+    pub fn paste_text(&mut self, text: &str) {
+        let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+        if normalized.is_empty() {
+            return;
+        }
+        if let Some(panel) = self.ask_user.as_mut() {
+            if panel.choices.is_empty() {
+                panel.freeform.push_str(&normalized);
+            }
+            return;
+        }
+        if self.menu.is_some()
+            || self.approval.is_some()
+            || self.session_picker.is_some()
+            || self.branch_picker.is_some()
+        {
+            return;
+        }
+        // Composer. The `@file` / slash pickers are derived from the composer
+        // buffer, so insert_input_str refreshes them; no special-casing needed.
+        self.insert_input_str(&normalized);
     }
 
     /// Refreshes every picker derived from the current input buffer.

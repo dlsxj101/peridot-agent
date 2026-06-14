@@ -80,7 +80,7 @@ impl Tool for GitStatusTool {
     }
 
     async fn execute(&self, _params: Value, ctx: &ToolContext) -> PeriResult<ToolResult> {
-        run_read_only_command("git status --short --branch", ctx, "git status")
+        run_read_only_command("git status --short --branch", ctx, "git status").await
     }
 
     fn permission_level(&self) -> PermissionLevel {
@@ -111,7 +111,7 @@ impl Tool for GitDiffTool {
     }
 
     async fn execute(&self, _params: Value, ctx: &ToolContext) -> PeriResult<ToolResult> {
-        run_read_only_command("git diff", ctx, "git diff")
+        run_read_only_command("git diff", ctx, "git diff").await
     }
 
     fn permission_level(&self) -> PermissionLevel {
@@ -154,7 +154,7 @@ impl Tool for GitLogTool {
 
     async fn execute(&self, params: Value, ctx: &ToolContext) -> PeriResult<ToolResult> {
         let limit = params.get("limit").and_then(Value::as_u64).unwrap_or(10);
-        run_read_only_command(&format!("git log --oneline -{limit}"), ctx, "git log")
+        run_read_only_command(&format!("git log --oneline -{limit}"), ctx, "git log").await
     }
 
     fn permission_level(&self) -> PermissionLevel {

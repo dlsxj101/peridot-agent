@@ -6,7 +6,8 @@ use peridot_common::{PeriError, PeriResult, ReasoningEffort};
 use serde_json::{Value, json};
 
 use crate::transport::{
-    estimate_cost, read_streaming_response, should_retry_status, sse_data_events, stream_sse_events,
+    backoff_before_retry, estimate_cost, read_streaming_response, should_retry_status,
+    sse_data_events, stream_sse_events,
 };
 use crate::{
     AuthMethod, CompletionRequest, CompletionResponse, CompletionStreamChunk, LlmProvider,
@@ -50,20 +51,16 @@ impl ClaudeProvider {
             .timeout(Duration::from_secs(timeout_seconds.max(1)))
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
+        let model = model.into();
         Self {
-            model: model.into(),
+            pricing: pricing_for_model(&model),
+            model,
             api_key,
             base_url: base_url.into(),
             client,
             max_retries,
-            pricing: PricingTable {
-                input_per_million: 3.0,
-                output_per_million: 15.0,
-                cache_read_per_million: 0.30,
-            },
         }
     }
-
     /// Returns the configured model name.
     pub fn model(&self) -> &str {
         &self.model
@@ -78,6 +75,55 @@ impl ClaudeProvider {
     pub fn max_retries(&self) -> u8 {
         self.max_retries
     }
+}
+
+/// Per-model Anthropic pricing, in USD per million tokens.
+///
+/// The pricing field was previously hardcoded to Sonnet's rates ($3 / $15) for
+/// every model. That under-counted Opus (true $5 / $25 — a ~1.7x output
+/// undercount) and over-counted Haiku ($1 / $5). Since `request.budget_usd` is
+/// enforced against this estimate, the budget cap was effectively too loose on
+/// Opus and too tight on Haiku. Rates are matched on the model-family substring
+/// (the same way [`crate::models`] classifies models); anything unrecognized
+/// falls back to Sonnet's rates, preserving the prior behavior.
+///
+/// cache-read is 0.1x input across the lineup. cache-write tokens are still
+/// folded into the input rate at the call sites; the ~1.25x cache-write premium
+/// is not separately modeled.
+fn pricing_for_model(model: &str) -> PricingTable {
+    let lower = model.to_ascii_lowercase();
+    let (input_per_million, output_per_million) = if lower.contains("opus") {
+        (5.0, 25.0)
+    } else if lower.contains("haiku") {
+        (1.0, 5.0)
+    } else if lower.contains("fable") || lower.contains("mythos") {
+        (10.0, 50.0)
+    } else {
+        // Sonnet and anything unrecognized.
+        (3.0, 15.0)
+    };
+    PricingTable {
+        input_per_million,
+        output_per_million,
+        cache_read_per_million: input_per_million * 0.1,
+    }
+}
+
+/// Whether `model` rejects the legacy `thinking: {type:"enabled", budget_tokens}`
+/// payload and requires adaptive thinking instead.
+///
+/// Opus 4.7, Opus 4.8, Fable 5, and Mythos 5 removed the budgeted form — sending
+/// it returns a 400 — so reasoning requests for those models must use
+/// `{type:"adaptive"}` with `output_config.effort`. Opus 4.6 / Sonnet 4.6 still
+/// accept the budgeted form (deprecated), and older models (Haiku 4.5, Sonnet
+/// 4.5, Opus 4.5 and earlier) require it, so they keep using it. New Opus
+/// families will likely also be adaptive-only — add them here when they ship.
+fn model_requires_adaptive_thinking(model: &str) -> bool {
+    let lower = model.to_ascii_lowercase();
+    lower.contains("opus-4-7")
+        || lower.contains("opus-4-8")
+        || lower.contains("fable")
+        || lower.contains("mythos")
 }
 
 #[async_trait]
@@ -95,6 +141,10 @@ impl LlmProvider for ClaudeProvider {
         let endpoint = format!("{}/v1/messages", self.base_url.trim_end_matches('/'));
         let mut last_error = None;
         for attempt in 0..=self.max_retries {
+            // Back off before every retry after the first attempt.
+            if attempt > 0 {
+                backoff_before_retry(u32::from(attempt)).await;
+            }
             let response = match self
                 .client
                 .post(&endpoint)
@@ -149,6 +199,10 @@ impl LlmProvider for ClaudeProvider {
         let endpoint = format!("{}/v1/messages", self.base_url.trim_end_matches('/'));
         let mut last_error = None;
         for attempt in 0..=self.max_retries {
+            // Back off before every retry after the first attempt.
+            if attempt > 0 {
+                backoff_before_retry(u32::from(attempt)).await;
+            }
             let response = match self
                 .client
                 .post(&endpoint)
@@ -200,6 +254,10 @@ impl LlmProvider for ClaudeProvider {
         let endpoint = format!("{}/v1/messages", self.base_url.trim_end_matches('/'));
         let mut last_error = None;
         for attempt in 0..=self.max_retries {
+            // Back off before every retry after the first attempt.
+            if attempt > 0 {
+                backoff_before_retry(u32::from(attempt)).await;
+            }
             let response = match self
                 .client
                 .post(&endpoint)
@@ -451,11 +509,22 @@ pub(crate) fn anthropic_payload_with_cache(
     } else {
         ReasoningEffort::Off
     };
-    if let Some(budget) = effective_effort.anthropic_budget_tokens() {
-        payload["thinking"] = json!({
-            "type": "enabled",
-            "budget_tokens": budget
-        });
+    if effective_effort != ReasoningEffort::Off {
+        if model_requires_adaptive_thinking(&request.model) {
+            // Opus 4.7+/Fable/Mythos removed the budgeted form
+            // (`{type:"enabled", budget_tokens}` now 400s); adaptive is the only
+            // on-mode, with depth steered by `output_config.effort` instead of a
+            // token budget.
+            payload["thinking"] = json!({ "type": "adaptive" });
+            if let Some(label) = effective_effort.anthropic_effort_label() {
+                payload["output_config"] = json!({ "effort": label });
+            }
+        } else if let Some(budget) = effective_effort.anthropic_budget_tokens() {
+            payload["thinking"] = json!({
+                "type": "enabled",
+                "budget_tokens": budget
+            });
+        }
     }
 
     if !request.tools.is_empty() {
@@ -906,4 +975,40 @@ pub(crate) fn parse_anthropic_stream(
         }),
     });
     Ok(chunks)
+}
+
+#[cfg(test)]
+mod pricing_tests {
+    use super::pricing_for_model;
+
+    #[test]
+    fn pricing_is_model_aware() {
+        // Opus: $5 / $25 (was incorrectly billed at Sonnet's $3 / $15).
+        let opus = pricing_for_model("claude-opus-4-8");
+        assert_eq!(opus.input_per_million, 5.0);
+        assert_eq!(opus.output_per_million, 25.0);
+        assert_eq!(opus.cache_read_per_million, 0.5);
+
+        // Sonnet: $3 / $15 (unchanged from the old hardcoded table).
+        let sonnet = pricing_for_model("claude-sonnet-4-6");
+        assert_eq!(sonnet.input_per_million, 3.0);
+        assert_eq!(sonnet.output_per_million, 15.0);
+
+        // Haiku: $1 / $5 (was over-counted at Sonnet's rates).
+        let haiku = pricing_for_model("claude-haiku-4-5");
+        assert_eq!(haiku.input_per_million, 1.0);
+        assert_eq!(haiku.output_per_million, 5.0);
+
+        // Fable: $10 / $50.
+        let fable = pricing_for_model("claude-fable-5");
+        assert_eq!(fable.input_per_million, 10.0);
+        assert_eq!(fable.output_per_million, 50.0);
+    }
+
+    #[test]
+    fn unknown_model_falls_back_to_sonnet_rates() {
+        let unknown = pricing_for_model("some-future-model");
+        assert_eq!(unknown.input_per_million, 3.0);
+        assert_eq!(unknown.output_per_million, 15.0);
+    }
 }

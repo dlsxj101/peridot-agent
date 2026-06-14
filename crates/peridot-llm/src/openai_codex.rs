@@ -5,7 +5,9 @@ use async_trait::async_trait;
 use peridot_common::{PeriError, PeriResult};
 use serde_json::{Value, json};
 
-use crate::transport::{estimate_cost, should_retry_status, stream_sse_events};
+use crate::transport::{
+    backoff_before_retry, estimate_cost, should_retry_status, stream_sse_events,
+};
 use crate::{
     AuthMethod, CompletionRequest, CompletionResponse, CompletionStreamChunk, LlmProvider,
     MessageRole, PricingTable, ToolChoice, ToolInvocation, Usage,
@@ -181,6 +183,10 @@ impl OpenAiCodexProvider {
         let endpoint = self.endpoint();
         let mut last_error = None;
         for attempt in 0..=self.max_retries {
+            // Back off before every retry after the first attempt.
+            if attempt > 0 {
+                backoff_before_retry(u32::from(attempt)).await;
+            }
             let response = match self
                 .client
                 .post(&endpoint)

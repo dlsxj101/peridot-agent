@@ -32,6 +32,29 @@ export function workspaceFileCandidatePaths(input: string, roots: Array<string |
   return dedupe(candidates);
 }
 
+/**
+ * Returns true when `candidate` resolves to `root` or a descendant of it.
+ *
+ * Used to keep `openFile`/`openPath` — which act on paths that originate in
+ * untrusted agent/tool output rendered in the webview — from escaping the
+ * workspace (e.g. `../../../etc/passwd` or an absolute `~/.ssh/id_rsa`). The
+ * comparison is on normalized paths with a separator boundary so that
+ * `/foo-bar` is not treated as inside `/foo`.
+ */
+export function isPathWithinRoots(candidate: string, roots: Array<string | undefined>): boolean {
+  const strip = (p: string): string => path.normalize(p).replace(/[\\/]+$/, '');
+  const target = strip(candidate);
+  for (const root of roots) {
+    if (!root || !root.trim()) continue;
+    const base = strip(root);
+    if (target === base) return true;
+    // Accept either separator: the host path module uses one, but remote
+    // (WSL/SSH/container) fsPaths normalize to POSIX `/`.
+    if (target.startsWith(base + path.sep) || target.startsWith(base + '/')) return true;
+  }
+  return false;
+}
+
 export function workspaceFindFilePatterns(input: string): string[] {
   const raw = input.trim().replace(/^file:\/\//, '');
   if (!raw || isAbsoluteWorkspacePath(raw)) return [];

@@ -871,6 +871,12 @@ pub(crate) fn import_session_artifacts(
                 )
             })?,
     };
+    if !peridot_common::is_valid_session_id(&derived_id) {
+        anyhow::bail!(
+            "refusing unsafe session id {derived_id:?}; ids must be a single path \
+             component of [A-Za-z0-9._-]"
+        );
+    }
     let destination = project_root
         .join(".peridot")
         .join("sessions")

@@ -657,6 +657,20 @@ impl ReasoningEffort {
             Self::XHigh => Some("xhigh"),
         }
     }
+
+    /// Label for Anthropic's `output_config.effort` field, used on models that
+    /// take adaptive thinking (`thinking: { type: "adaptive" }`) instead of a
+    /// token budget — depth is steered by effort there rather than
+    /// `budget_tokens`. `None` when reasoning is disabled.
+    pub fn anthropic_effort_label(self) -> Option<&'static str> {
+        match self {
+            Self::Off => None,
+            Self::Low => Some("low"),
+            Self::Medium => Some("medium"),
+            Self::High => Some("high"),
+            Self::XHigh => Some("xhigh"),
+        }
+    }
 }
 
 impl std::fmt::Display for ReasoningEffort {
@@ -1581,9 +1595,69 @@ pub enum HookFailureMode {
     Block,
 }
 
+/// Returns `true` when `id` is safe to use as a single path component under
+/// `.peridot/sessions/<id>/`.
+///
+/// Session ids arrive from clients over the daemon's JSON-RPC surface and are
+/// joined directly into filesystem paths (context snapshots, notes, blobs) and
+/// passed to `remove_dir_all`. Without validation a value like `../../etc` or
+/// an absolute path would escape the sessions directory and enable arbitrary
+/// filesystem read/write/delete. This restricts ids to a conservative
+/// allowlist — non-empty, bounded length, ASCII alphanumerics plus `-`, `_`,
+/// `.`, and never a `..` traversal or a bare `.`/`..` component. `/` and `\`
+/// are excluded by the allowlist, so an id can only ever name a single child
+/// directory of the sessions root.
+pub fn is_valid_session_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 128
+        && id != "."
+        && id != ".."
+        && !id.contains("..")
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn session_id_validation_blocks_traversal_and_separators() {
+        // Accepted: the shapes the daemon and TUI actually generate.
+        for ok in [
+            "session-1",
+            "abc123",
+            "context-session",
+            "branch_save.1",
+            "a.b-c_d",
+            "20260613T0959",
+        ] {
+            assert!(is_valid_session_id(ok), "expected valid: {ok}");
+        }
+        // Rejected: traversal, separators, absolute paths, empties, bare dots.
+        for bad in [
+            "",
+            ".",
+            "..",
+            "../etc",
+            "../../tmp/evil",
+            "a/../b",
+            "foo/bar",
+            "foo\\bar",
+            "/abs/path",
+            "C:\\win",
+            "has space",
+            "tab\tid",
+            "newline\nid",
+            "name;rm -rf",
+        ] {
+            assert!(!is_valid_session_id(bad), "expected invalid: {bad:?}");
+        }
+        // Length cap.
+        assert!(!is_valid_session_id(&"a".repeat(129)));
+        assert!(is_valid_session_id(&"a".repeat(128)));
+    }
 
     #[test]
     fn parses_mcp_config() {

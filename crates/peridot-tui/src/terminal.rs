@@ -25,6 +25,11 @@ impl TerminalGuard {
         // use `Alt+Enter` or `Ctrl+J` for newlines instead — both bypass the
         // CSI-u negotiation entirely and work on every terminal we've tried.
         execute!(stdout, EnterAlternateScreen)?;
+        // Bracketed paste: the terminal wraps pasted text in escape markers and
+        // delivers it as a single `Event::Paste(String)` instead of a stream of
+        // key events. Without it, a multi-line paste's newlines arrive as Enter
+        // keys and submit the buffer before the whole paste lands.
+        execute!(stdout, EnableBracketedPaste)?;
         if mouse_capture {
             execute!(stdout, EnableMouseCapture)?;
         }
@@ -43,6 +48,7 @@ impl Drop for TerminalGuard {
         if self.mouse_captured {
             let _ = execute!(self.terminal.backend_mut(), DisableMouseCapture);
         }
+        let _ = execute!(self.terminal.backend_mut(), DisableBracketedPaste);
         let _ = execute!(self.terminal.backend_mut(), LeaveAlternateScreen);
         let _ = self.terminal.show_cursor();
     }
