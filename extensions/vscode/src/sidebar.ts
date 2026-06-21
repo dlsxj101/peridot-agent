@@ -1360,12 +1360,14 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       case 'copyText':
         await this.handlers.copyText(message.text);
         return;
-      case 'queueAdd':
-        if (message.task.trim().length > 0) {
-          this.state.queue = [...this.state.queue, { id: queueId(), text: message.task.trim() }];
+      case 'queueAdd': {
+        const queued = typeof message.task === 'string' ? message.task.trim() : '';
+        if (queued.length > 0) {
+          this.state.queue = [...this.state.queue, { id: queueId(), text: queued }];
           this.publish();
         }
         return;
+      }
       case 'queueRemove':
         this.state.queue = this.state.queue.filter((item) => item.id !== message.id);
         this.publish();

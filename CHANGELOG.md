@@ -12,7 +12,7 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 
 ---
 
-## Unreleased
+## [0.9.0 / extension 0.6.0] — 2026-06-21
 
 ### Security — P0 hardening pass
 
@@ -49,6 +49,20 @@ Found during a full-codebase audit; fixed as a prioritized bundle.
 - `answerLabel` is typed to return `string` but had no `default` arm, so a
   malformed (untrusted) ask-user answer with an unknown `kind` returned
   `undefined`; it now returns an empty string.
+
+### Fixed — VS Code extension UI & robustness
+
+- **Undefined webview CSS variables.** `--peri-bg` and `--peri-border-subtle`
+  were referenced in six rules (risk-chip text colour, attachment/code-map
+  block borders, branch-picker background) but never declared, so those
+  declarations were dropped and the elements rendered with no colour/border.
+  Both are now defined in `:root` against the matching VS Code theme tokens.
+- **`detachAttachment` shadowed the `path` module.** The handler rebound a
+  local `const path` over `import * as path`, a latent crash for any future
+  `path.*` call in that function; renamed to `trimmed`.
+- **`queueAdd` crash on malformed webview message.** The handler called
+  `message.task.trim()` without a type guard, throwing on a non-string
+  payload crossing the webview boundary; it now validates the field first.
 
 ### Added — Clipboard copy (Ctrl+O / `/copy`)
 
@@ -93,8 +107,6 @@ Found during a full-codebase audit; fixed as a prioritized bundle.
 - The status/footer metrics budget measured the `  ·  ` separator by byte
   length (the `·` is 2-byte UTF-8) rather than display width, truncating
   metrics one cell early. Now measured with `string_width`.
-
-## [0.9.0 / extension 0.6.0] — 2026-06-08
 
 ### Changed — VS Code host modularized
 

@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-## [0.6.0] — 2026-06-08
+## [0.6.0] — 2026-06-21
 
 ### Changed — host entry point modularized
 
@@ -25,6 +25,16 @@
 - Webview & persisted state: inbound messages and restored run options are
   validated, view listeners and timers are disposed on teardown, the CSP
   nonce uses a CSPRNG, and the approval-diff read rejects `..` traversal.
+
+### Fixed — UI rendering and webview robustness
+
+- Defined the previously-missing `--peri-bg` / `--peri-border-subtle`
+  webview CSS variables, restoring the risk-chip text colour,
+  attachment/code-map block borders, and branch-picker background that had
+  been silently dropped.
+- `detachAttachment` no longer shadows the imported `path` module with a
+  local variable (latent crash), and `queueAdd` validates the inbound task
+  field before calling `.trim()` so a malformed webview message can't throw.
 
 ## [0.5.21] — 2026-05-29
 
