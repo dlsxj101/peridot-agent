@@ -12,6 +12,43 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 
 ---
 
+## Unreleased
+
+### Fixed — VS Code extension reliability (audit follow-ups)
+
+- **CLI subprocess timeout.** `execFile` / `execPeridotCli` (ship, merge,
+  `gh pr status` / `gh pr merge`, session export) ran with no timeout, so a
+  wedged `gh`/`peridot` could hang the command indefinitely. They now bound
+  the child to 120s and surface a distinct timeout error.
+- **`parseJson` no longer masks CLI errors.** A `--output json` command that
+  exited 0 but printed a non-JSON error string was treated as an empty
+  success (e.g. a ship preview with no steps the user could still confirm).
+  It now throws a clear parse error, which the existing per-command
+  try/catch reports to the user.
+- **Webview message validation.** Inbound webview messages that carry
+  untrusted string/object fields (`showSkill`/`useSkill`/skill pin·archive·
+  restore, `attachInlineImage`, `detachAttachment`, `openFile`/`openPath`,
+  `registerProvider`, `selectSession`/`renameSession`/`deleteSession`,
+  `copyText`, `queueRemove`/`queueEdit`) now type-check each field before
+  use, so a malformed payload no longer reaches a handler that assumes a
+  string.
+- **Runtime slash commands report failures.** `compact` / `rewind` / `undo`
+  and the mode/provider/model pickers wrapped no error handling around
+  `executeSlashCommand`; a rejection became a swallowed unhandled rejection.
+  They now report the error to the transcript and a notification like the
+  other command modules.
+- **Code-map status + ship status-refresh consistency.** `showCodeMapStatus`
+  now awaits its workspace warning and routes errors through
+  `appendError` + a localized message; the post-ship/merge `refreshStatus`
+  attaches a `.catch` instead of being fire-and-forget.
+
+### Added — VS Code extension keybindings
+
+- Default chord keybindings (conflict-safe `ctrl+alt+p`/`cmd+alt+p` leader)
+  for the highest-frequency commands: run task (`… r`), cancel task
+  (`… c`), open settings (`… s`), working-tree diff (`… d`), refresh status
+  (`… f`).
+
 ## [0.9.0 / extension 0.6.0] — 2026-06-21
 
 ### Security — P0 hardening pass

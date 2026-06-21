@@ -1189,27 +1189,34 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         await this.handlers.searchArchivedSkills();
         return;
       case 'showSkill':
+        if (typeof message.name !== 'string') return;
         await this.handlers.showSkill(message.name);
         return;
       case 'useSkill':
+        if (typeof message.name !== 'string') return;
         await this.handlers.useSkill(message.name);
         return;
       case 'toggleSkillPin':
-        await this.handlers.toggleSkillPin(message.name, message.pinned);
+        if (typeof message.name !== 'string') return;
+        await this.handlers.toggleSkillPin(message.name, message.pinned === true);
         return;
       case 'archiveSkill':
+        if (typeof message.name !== 'string') return;
         await this.handlers.archiveSkill(message.name);
         return;
       case 'restoreSkill':
+        if (typeof message.name !== 'string') return;
         await this.handlers.restoreSkill(message.name);
         return;
       case 'attachFile':
         await this.handlers.attachFile();
         return;
       case 'attachInlineImage':
+        if (typeof message.image !== 'object' || message.image === null) return;
         await this.handlers.attachInlineImage(message.image);
         return;
       case 'detachAttachment':
+        if (typeof message.path !== 'string') return;
         await this.handlers.detachAttachment(message.path);
         return;
       case 'showTodos':
@@ -1315,13 +1322,19 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         });
         this.resolveApproval(message.approved);
         return;
-      case 'openFile':
-        await this.handlers.openFile(message.path, message.line, message.column, this.state.context.workspace);
+      case 'openFile': {
+        if (typeof message.path !== 'string') return;
+        const line = typeof message.line === 'number' ? message.line : undefined;
+        const column = typeof message.column === 'number' ? message.column : undefined;
+        await this.handlers.openFile(message.path, line, column, this.state.context.workspace);
         return;
+      }
       case 'openPath':
+        if (typeof message.path !== 'string') return;
         await this.handlers.openPath(message.path);
         return;
       case 'registerProvider':
+        if (typeof message.provider !== 'string' || typeof message.params !== 'object' || message.params === null) return;
         await this.handlers.registerProvider(message.provider, message.params);
         return;
       case 'openSettings':
@@ -1340,14 +1353,17 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         this.createNewSession(this.state.context.workspace);
         return;
       case 'selectSession':
+        if (typeof message.id !== 'string') return;
         this.selectSession(message.id);
         return;
       case 'renameSession':
+        if (typeof message.id !== 'string' || typeof message.title !== 'string') return;
         if (!this.renameSession(message.id, message.title)) {
           this.appendError('Could not rename that session.');
         }
         return;
       case 'deleteSession': {
+        if (typeof message.id !== 'string') return;
         const session = this.sessions.get(message.id);
         if (!session) {
           this.appendError('Could not find that session.');
@@ -1358,6 +1374,7 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         return;
       }
       case 'copyText':
+        if (typeof message.text !== 'string') return;
         await this.handlers.copyText(message.text);
         return;
       case 'queueAdd': {
@@ -1369,15 +1386,19 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
         return;
       }
       case 'queueRemove':
+        if (typeof message.id !== 'string') return;
         this.state.queue = this.state.queue.filter((item) => item.id !== message.id);
         this.publish();
         return;
-      case 'queueEdit':
+      case 'queueEdit': {
+        if (typeof message.id !== 'string' || typeof message.text !== 'string') return;
+        const text = message.text;
         this.state.queue = this.state.queue.map((item) =>
-          item.id === message.id ? { ...item, text: message.text } : item,
+          item.id === message.id ? { ...item, text } : item,
         );
         this.publish();
         return;
+      }
       case 'queueClear':
         this.state.queue = [];
         this.publish();

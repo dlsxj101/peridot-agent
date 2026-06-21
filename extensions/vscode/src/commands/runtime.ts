@@ -155,5 +155,11 @@ async function runSharedSlashCommand(
     return;
   }
   await vscode.commands.executeCommand('peridot.chatView.focus');
-  await sidebar.executeSlashCommand(command);
+  try {
+    await sidebar.executeSlashCommand(command);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    sidebar.appendError(message);
+    await vscode.window.showErrorMessage(vscode.l10n.t('Peridot command failed: {0}', message));
+  }
 }
