@@ -11,10 +11,12 @@
   --peri-accent-strong: #5bd46e;
   --peri-accent-dim: #287538;
   --peri-accent-shadow: rgba(91, 212, 110, 0.18);
+  --peri-bg: var(--vscode-editor-background);
   --peri-bg-panel: var(--vscode-sideBar-background);
   --peri-bg-elev: var(--vscode-editorWidget-background);
   --peri-bg-elev-soft: var(--vscode-list-hoverBackground, rgba(127, 127, 127, 0.08));
   --peri-border: var(--vscode-panel-border, rgba(127, 127, 127, 0.18));
+  --peri-border-subtle: var(--vscode-panel-border, rgba(127, 127, 127, 0.1));
   --peri-border-strong: var(--vscode-input-border, rgba(127, 127, 127, 0.32));
   --peri-fg: var(--vscode-foreground);
   --peri-fg-muted: var(--vscode-descriptionForeground);

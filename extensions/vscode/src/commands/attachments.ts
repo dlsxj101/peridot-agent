@@ -131,21 +131,21 @@ export async function detachAttachmentFromSession(
   output: vscode.OutputChannel,
   sidebar: PeridotSidebarProvider,
 ): Promise<void> {
-  const path = attachmentPath.trim();
-  if (!path) return;
+  const trimmed = attachmentPath.trim();
+  if (!trimmed) return;
   if (!sidebar.currentDaemonSessionId()) {
     await vscode.window.showWarningMessage(vscode.l10n.t('Start or select a Peridot session before detaching a file.'));
     return;
   }
   const confirmed = await vscode.window.showWarningMessage(
-    vscode.l10n.t('Detach {0} from this Peridot session context?', path),
+    vscode.l10n.t('Detach {0} from this Peridot session context?', trimmed),
     { modal: true },
     'Detach',
   );
   if (confirmed !== 'Detach') return;
   await vscode.commands.executeCommand('peridot.chatView.focus');
   try {
-    const result = await runSlashCommand(`/detach ${path}`, output, sidebar, sidebar.currentRunOptions());
+    const result = await runSlashCommand(`/detach ${trimmed}`, output, sidebar, sidebar.currentRunOptions());
     sidebar.appendCommandResult(result);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
