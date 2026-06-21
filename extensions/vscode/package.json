@@ -787,20 +787,20 @@
     "vscode:prepublish": "npm run build:prod"
   },
   "dependencies": {
-    "@formkit/auto-animate": "^0.8.2",
+    "@formkit/auto-animate": "^0.9.0",
     "diff": "^5.2.0",
-    "markdown-it": "^14.1.1"
+    "markdown-it": "^14.2.0"
   },
   "devDependencies": {
     "@types/diff": "^5.2.3",
     "@types/markdown-it": "^14.1.2",
     "@types/node": "^20.11.0",
-    "@types/vscode": "^1.85.0",
-    "@vscode/vsce": "^3.2.0",
-    "esbuild": "^0.24.0",
+    "@types/vscode": "^1.125.0",
+    "@vscode/vsce": "^3.9.2",
+    "esbuild": "^0.28.1",
     "eslint": "^9.39.4",
     "globals": "^17.6.0",
     "typescript": "^5.4.0",
-    "typescript-eslint": "^8.60.1"
+    "typescript-eslint": "^8.61.1"
   }
 }
