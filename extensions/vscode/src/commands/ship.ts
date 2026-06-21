@@ -56,7 +56,9 @@ export async function shipChangesToPr(
       async () => execPeridotCli(buildShipArgs(options, false), folder),
     );
     sidebar.appendCommandResult(shipResultView(parseJson(result.stdout), 'Ship Changes', 'peridot ship'));
-    void refreshStatus(output, sidebar, { force: true });
+    refreshStatus(output, sidebar, { force: true }).catch((err) => {
+      output.appendLine(`[peridot] status refresh failed: ${err instanceof Error ? err.message : String(err)}`);
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     output.appendLine(`[peridot] ship failed: ${message}`);
@@ -137,7 +139,9 @@ export async function mergeGitHubPr(
       severity: 'info',
       command: `gh ${args.join(' ')}`,
     });
-    void refreshStatus(output, sidebar, { force: true });
+    refreshStatus(output, sidebar, { force: true }).catch((err) => {
+      output.appendLine(`[peridot] status refresh failed: ${err instanceof Error ? err.message : String(err)}`);
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     output.appendLine(`[peridot] gh pr merge failed: ${message}`);

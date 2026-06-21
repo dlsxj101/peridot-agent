@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+### Fixed — reliability (audit follow-ups)
+
+- CLI subprocesses (ship/merge/`gh`/export) now run with a 120s timeout so a
+  wedged child can't hang the command forever, surfacing a distinct timeout
+  error.
+- `parseJson` throws on non-JSON `--output json` results instead of returning
+  a fake empty success, so CLI errors that exit 0 are reported rather than
+  silently shown as an empty result.
+- Inbound webview messages with untrusted string/object fields (skill
+  show/use/pin/archive/restore, inline-image attach, detach, open file/path,
+  register provider, session select/rename/delete, copy text, queue
+  remove/edit) are now type-checked per field before reaching a handler.
+- Runtime slash commands (compact/rewind/undo and the mode/provider/model
+  pickers) report failures to the transcript and a notification instead of
+  swallowing the rejection.
+- `showCodeMapStatus` awaits its workspace warning and reports errors through
+  `appendError` + a localized message; the post-ship/merge status refresh
+  attaches a `.catch` instead of being fire-and-forget.
+
+### Added — keybindings
+
+- Default chord keybindings (`ctrl+alt+p`/`cmd+alt+p` leader) for run task,
+  cancel task, open settings, working-tree diff, and refresh status.
+
 ## [0.6.0] — 2026-06-21
 
 ### Changed — host entry point modularized

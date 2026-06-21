@@ -59,7 +59,9 @@ export async function showWorkspaceCodeMapStatus(
 ): Promise<void> {
   const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   if (!folder) {
-    vscode.window.showWarningMessage(vscode.l10n.t('Open a workspace folder before checking the code map.'));
+    const message = 'Open a workspace folder before checking the code map.';
+    sidebar.setWorkspaceProblem(message);
+    await vscode.window.showWarningMessage(message);
     return;
   }
   await vscode.commands.executeCommand('peridot.chatView.focus');
@@ -74,7 +76,8 @@ export async function showWorkspaceCodeMapStatus(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     output.appendLine(`[peridot] codemap status failed: ${message}`);
-    vscode.window.showErrorMessage(message);
+    sidebar.appendError(message);
+    await vscode.window.showErrorMessage(vscode.l10n.t('Peridot code map status failed: {0}', message));
   }
 }
 

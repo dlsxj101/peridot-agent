@@ -771,7 +771,34 @@
           "description": "Absolute path to the `peridot` binary. Leave empty to use a bundled binary when present or fall back to the system PATH."
         }
       }
-    }
+    },
+    "keybindings": [
+      {
+        "command": "peridot.runTask",
+        "key": "ctrl+alt+p r",
+        "mac": "cmd+alt+p r"
+      },
+      {
+        "command": "peridot.cancelTask",
+        "key": "ctrl+alt+p c",
+        "mac": "cmd+alt+p c"
+      },
+      {
+        "command": "peridot.openSettings",
+        "key": "ctrl+alt+p s",
+        "mac": "cmd+alt+p s"
+      },
+      {
+        "command": "peridot.showWorkingTreeDiff",
+        "key": "ctrl+alt+p d",
+        "mac": "cmd+alt+p d"
+      },
+      {
+        "command": "peridot.refreshStatus",
+        "key": "ctrl+alt+p f",
+        "mac": "cmd+alt+p f"
+      }
+    ]
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.webview.json",
