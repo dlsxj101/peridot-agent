@@ -227,7 +227,6 @@ export function activate(context: vscode.ExtensionContext) {
     cancelTask: async (): Promise<void> => cancelTask(output, sidebar),
     clearSession: async (options?: { skipDaemonCancel?: boolean }): Promise<void> =>
       clearExtensionSession(output, sidebar, options?.skipDaemonCancel === true),
-    loginOpenAi: async (): Promise<void> => loginOpenAi(output, sidebar),
     refreshStatus: async (): Promise<void> => refreshStatus(output, sidebar, { force: true }),
     refreshSlashCatalog: async (): Promise<void> => refreshSlashCatalog(output, sidebar),
     showCodeMap: async (): Promise<void> => showWorkspaceCodeMap(output, sidebar, false),

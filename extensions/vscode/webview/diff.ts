@@ -3,6 +3,7 @@ import { el } from './util';
 import { t, tf } from './i18n';
 
 const COLLAPSE_THRESHOLD = 24; // Lines visible before the diff collapses.
+const COLLAPSED_MAX_HEIGHT = '120px';
 
 export interface DiffStats {
   added: number;
@@ -58,15 +59,19 @@ export function renderUnifiedDiff(
   root.append(pre);
 
   if (lineCount > COLLAPSE_THRESHOLD) {
-    pre.style.maxHeight = '120px';
+    pre.style.maxHeight = COLLAPSED_MAX_HEIGHT;
+    pre.dataset.collapsed = 'true';
     const toggle = el('button', 'diff-toggle', tf('Expand ({n} lines)', '펼치기 ({n}줄)', { n: lineCount }));
     toggle.type = 'button';
     toggle.addEventListener('click', () => {
-      if (pre.style.maxHeight === '120px') {
+      const collapsed = pre.dataset.collapsed !== 'false';
+      if (collapsed) {
         pre.style.maxHeight = 'none';
+        pre.dataset.collapsed = 'false';
         toggle.textContent = t('Collapse', '접기');
       } else {
-        pre.style.maxHeight = '120px';
+        pre.style.maxHeight = COLLAPSED_MAX_HEIGHT;
+        pre.dataset.collapsed = 'true';
         toggle.textContent = tf('Expand ({n} lines)', '펼치기 ({n}줄)', { n: lineCount });
       }
     });

@@ -74,7 +74,6 @@ export interface SidebarHandlers {
   runSlashCommand: (command: string, options: RunOptions) => Promise<CommandResultView>;
   cancelTask: () => Promise<void>;
   clearSession: (options?: { skipDaemonCancel?: boolean }) => Promise<void>;
-  loginOpenAi: () => Promise<void>;
   refreshStatus: () => Promise<void>;
   refreshSlashCatalog: () => Promise<void>;
   showCodeMap: () => Promise<void>;
@@ -1151,9 +1150,6 @@ export class PeridotSidebarProvider implements vscode.WebviewViewProvider {
       }
       case 'cancel':
         await this.handlers.cancelTask();
-        return;
-      case 'loginOpenAi':
-        await this.handlers.loginOpenAi();
         return;
       case 'refreshStatus':
         await this.handlers.refreshStatus();

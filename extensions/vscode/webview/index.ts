@@ -98,11 +98,10 @@ let editingSessionDraft: string | undefined;
 let editingSessionSelectOnFocus: string | undefined;
 let deletingSessionId: string | undefined;
 let sessionMenuOpen = false;
-interface AssistantStreamSnapshot {
-  markdown: string;
-  visibleText: string;
-}
-const assistantTextByKey = new Map<string, AssistantStreamSnapshot>();
+// Tracks the ask-user prompt we've already auto-focused so a background state
+// push (which rebuilds the prompt dock) doesn't keep yanking focus back into
+// the free-text input while the user is interacting elsewhere.
+let autoFocusedAskUserRequestId: string | undefined;
 let lastComposerSessionKey = '';
 let slashPickerSelected = 0;
 let slashCommands: SlashCommandSpec[] = [];
@@ -1601,7 +1600,7 @@ function renderTranscriptInto(wrap: HTMLElement, s: SidebarState): TranscriptScr
           transcriptItemSignature(item),
           () =>
             decorateTranscriptEntry(
-              renderItem(item, `${transcriptKey}:${itemIndex}`),
+              renderItem(item),
               item,
               itemIndex >= animationStartIndex,
             ),
@@ -2108,12 +2107,12 @@ function renderEmptyState(context: SidebarContext): HTMLElement {
   return wrap;
 }
 
-function renderItem(item: TranscriptItem, itemKey?: string): HTMLElement {
+function renderItem(item: TranscriptItem): HTMLElement {
   switch (item.role) {
     case 'user':
       return renderUserBubble(item);
     case 'assistant':
-      return renderAssistantBubble(item, itemKey);
+      return renderAssistantBubble(item);
     case 'tool':
       return renderToolBlock(item);
     case 'status':
@@ -2142,12 +2141,10 @@ function renderUserBubble(item: TranscriptItem): HTMLElement {
   return wrap;
 }
 
-function renderAssistantBubble(item: TranscriptItem, itemKey?: string): HTMLElement {
+function renderAssistantBubble(item: TranscriptItem): HTMLElement {
   const wrap = el('section', 'msg msg-assistant');
   wrap.append(el('div', 'msg-label', 'Peridot'));
-  const streamKey = itemKey ?? `assistant:${item.text.length}`;
   const body = renderMarkdownBody(item.text);
-  assistantTextByKey.set(streamKey, { markdown: item.text, visibleText: body.textContent ?? '' });
   wrap.append(body);
   const footer = el('div', 'msg-footer');
   const copy = el('button', 'copy-button', '');
@@ -2420,7 +2417,22 @@ function actionButton(
     label,
   ) as HTMLButtonElement;
   button.type = 'button';
-  button.addEventListener('click', onClick);
+  button.addEventListener('click', () => {
+    // Approval / ask-user actions are one-shot: the panel is replaced on the
+    // host's next state push. Disable the whole action row on first click so a
+    // double-click (or a click during the postMessage round-trip) can't send a
+    // duplicate response.
+    if (button.disabled) return;
+    const row = button.closest('.msg-actions');
+    if (row) {
+      row.querySelectorAll('button').forEach((sibling) => {
+        (sibling as HTMLButtonElement).disabled = true;
+      });
+    } else {
+      button.disabled = true;
+    }
+    onClick();
+  });
   return button;
 }
 
@@ -2593,7 +2605,7 @@ function renderApprovalBubble(item: TranscriptItem): HTMLElement {
     'once',
   );
 
-  const approve = actionButton('primary', 'Approve', () => {
+  const approve = actionButton('primary', t('Approve', '승인'), () => {
     vscode.postMessage({
       type: 'approvalRespond',
       approved: true,
@@ -2604,7 +2616,7 @@ function renderApprovalBubble(item: TranscriptItem): HTMLElement {
       sessionId: item.approvalSessionId,
     });
   });
-  const deny = actionButton('secondary', 'Deny', () => {
+  const deny = actionButton('secondary', t('Deny', '거부'), () => {
     vscode.postMessage({
       type: 'approvalRespond',
       approved: false,
@@ -2700,7 +2712,11 @@ function renderAskUserForm(item: TranscriptItem): HTMLElement {
     input.placeholder = typeof request.hint === 'string' ? request.hint : '';
     input.dataset.freeform = 'true';
     wrap.append(input);
-    setTimeout(() => input.focus(), 0);
+    const focusKey = item.requestId ?? 'ask-user';
+    if (autoFocusedAskUserRequestId !== focusKey) {
+      autoFocusedAskUserRequestId = focusKey;
+      setTimeout(() => input.focus(), 0);
+    }
     input.addEventListener('keydown', (event) => {
       if (event.key === 'Enter' && !event.shiftKey) {
         event.preventDefault();
@@ -2717,8 +2733,8 @@ function renderAskUserForm(item: TranscriptItem): HTMLElement {
     });
   }
 
-  const send = actionButton('primary', 'Send', sendAnswer);
-  const cancel = actionButton('secondary', 'Cancel', () => {
+  const send = actionButton('primary', t('Send', '보내기'), sendAnswer);
+  const cancel = actionButton('secondary', t('Cancel', '취소'), () => {
     if (!item.requestId) return;
     vscode.postMessage({
       type: 'askUserRespond',
@@ -3738,12 +3754,17 @@ function renderQueue(s: SidebarState): HTMLElement {
 function renderQueueItem(item: QueuedMessage): HTMLElement {
   const wrap = el('div', 'queue-item');
 
+  // Set when the Remove button is pressed so the editable's blur-save (which
+  // fires first) doesn't post a queueEdit for an item that's being removed.
+  let removing = false;
+
   const text = el('div', 'queue-text', item.text);
   text.contentEditable = 'true';
   text.spellcheck = false;
   text.dataset.placeholder = t('Empty prompt — remove or fill it in', '빈 프롬프트 — 제거하거나 입력하세요');
   // Save on blur so users can refine queued prompts without a Save button.
   text.addEventListener('blur', () => {
+    if (removing) return;
     const next = text.textContent ?? '';
     if (next.trim() !== item.text.trim()) {
       vscode.postMessage({ type: 'queueEdit', id: item.id, text: next });
@@ -3775,6 +3796,11 @@ function renderQueueItem(item: QueuedMessage): HTMLElement {
   remove.type = 'button';
   remove.title = t('Remove', '제거');
   remove.innerHTML = iconSvg('remove');
+  // mousedown fires before the editable's blur, so flag the removal first to
+  // suppress a stray blur-save for the item we're about to drop.
+  remove.addEventListener('mousedown', () => {
+    removing = true;
+  });
   remove.addEventListener('click', () =>
     vscode.postMessage({ type: 'queueRemove', id: item.id }),
   );
@@ -3818,13 +3844,24 @@ function renderComposer(s: SidebarState): HTMLElement {
     updateSlashPicker(textarea, slashPicker);
   });
   textarea.addEventListener('click', () => updateSlashPicker(textarea, slashPicker));
+  textarea.addEventListener('blur', () => {
+    // Picker rows accept via mousedown+preventDefault, which keeps focus on the
+    // textarea, so a genuine blur means focus left the composer entirely —
+    // dismiss the picker instead of leaving it floating over the input.
+    if (isSlashPickerOpen(slashPicker)) {
+      slashPicker.classList.add('hidden');
+    }
+  });
   textarea.addEventListener('keyup', (event) => {
     if (['ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown'].includes(event.key)) {
       updateSlashPicker(textarea, slashPicker);
     }
   });
   textarea.addEventListener('paste', (event) => {
-    const file = firstAttachableImageFile(event.clipboardData?.files);
+    const file = firstAttachableImageFileFromTransfer(
+      event.clipboardData?.files,
+      event.clipboardData?.items,
+    );
     if (!file) return;
     event.preventDefault();
     void postInlineImageAttachment(file);
@@ -3838,7 +3875,10 @@ function renderComposer(s: SidebarState): HTMLElement {
     inputRow.classList.remove('dragging-image');
   });
   textarea.addEventListener('drop', (event) => {
-    const file = firstAttachableImageFile(event.dataTransfer?.files);
+    const file = firstAttachableImageFileFromTransfer(
+      event.dataTransfer?.files,
+      event.dataTransfer?.items,
+    );
     if (!file) return;
     event.preventDefault();
     inputRow.classList.remove('dragging-image');
@@ -4236,6 +4276,24 @@ function slashArgumentContext(input: string): SlashArgumentContext | undefined {
 function firstAttachableImageFile(files: FileList | undefined): File | undefined {
   if (!files) return undefined;
   return Array.from(files).find(isAttachableInlineImage);
+}
+
+// Pasted/dropped images on Linux/Chromium often arrive via `items` (kind
+// 'file') rather than `files`, so inspect both — mirroring hasAttachableImageFile.
+function firstAttachableImageFileFromTransfer(
+  files: FileList | undefined,
+  items: DataTransferItemList | undefined,
+): File | undefined {
+  const fromFiles = firstAttachableImageFile(files);
+  if (fromFiles) return fromFiles;
+  if (!items) return undefined;
+  for (const item of Array.from(items)) {
+    if (item.kind === 'file' && item.type.startsWith('image/')) {
+      const file = item.getAsFile();
+      if (file && isAttachableInlineImage(file)) return file;
+    }
+  }
+  return undefined;
 }
 
 function hasAttachableImageFile(

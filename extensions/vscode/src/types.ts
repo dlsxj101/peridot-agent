@@ -465,7 +465,6 @@ export type OutboundMessage =
   | { type: 'ready' }
   | { type: 'run'; task: string; options: RunOptions }
   | { type: 'cancel' }
-  | { type: 'loginOpenAi' }
   | { type: 'refreshStatus' }
   | { type: 'askUserRespond'; requestId: string; answer: AskUserAnswer }
   | {
