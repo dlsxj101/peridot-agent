@@ -119,6 +119,12 @@ impl Tool for GitDiffTool {
     }
 }
 
+/// Clamps a model-supplied `git log` commit count into the safe, schema-
+/// advertised range (1..=200) before it's interpolated into the command.
+fn clamp_log_limit(limit: u64) -> u64 {
+    limit.clamp(1, 200)
+}
+
 /// Built-in git log tool.
 #[derive(Clone, Debug)]
 pub struct GitLogTool;
@@ -153,7 +159,11 @@ impl Tool for GitLogTool {
     }
 
     async fn execute(&self, params: Value, ctx: &ToolContext) -> PeriResult<ToolResult> {
-        let limit = params.get("limit").and_then(Value::as_u64).unwrap_or(10);
+        // Clamp before interpolating into the command string. `limit` is
+        // model-controlled; an out-of-range or zero value would otherwise
+        // produce a malformed/absurd `-N` flag (e.g. `-0`, or a huge log
+        // dump). Mirrors the schema bounds (1..=200).
+        let limit = clamp_log_limit(params.get("limit").and_then(Value::as_u64).unwrap_or(10));
         run_read_only_command(&format!("git log --oneline -{limit}"), ctx, "git log").await
     }
 
@@ -564,5 +574,19 @@ impl Tool for GhPrMergeTool {
 
     fn can_run_concurrent(&self) -> bool {
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clamp_log_limit_bounds_to_safe_range() {
+        assert_eq!(clamp_log_limit(0), 1);
+        assert_eq!(clamp_log_limit(10), 10);
+        assert_eq!(clamp_log_limit(200), 200);
+        assert_eq!(clamp_log_limit(5_000), 200);
+        assert_eq!(clamp_log_limit(u64::MAX), 200);
     }
 }

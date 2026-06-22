@@ -19,6 +19,7 @@ import {
   runSlashCommand,
   runTask,
 } from '../extension';
+import { ensureWorkspaceFolder } from './cli';
 import {
   sessionCloseSlashCommand,
   sessionCountSlashCommand,
@@ -51,13 +52,8 @@ export async function showSessions(
   output: vscode.OutputChannel,
   sidebar: PeridotSidebarProvider,
 ): Promise<void> {
-  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  if (!folder) {
-    const message = 'Open a workspace folder before listing Peridot sessions.';
-    sidebar.setWorkspaceProblem(message);
-    await vscode.window.showWarningMessage(message);
-    return;
-  }
+  const folder = await ensureWorkspaceFolder(sidebar, 'Open a workspace folder before listing Peridot sessions.');
+  if (!folder) return;
   const status = await vscode.window.showQuickPick(
     sessionListStatusChoices().map((choice) => ({
       label: choice.label,
@@ -106,13 +102,8 @@ export async function newPersistedSession(
   output: vscode.OutputChannel,
   sidebar: PeridotSidebarProvider,
 ): Promise<void> {
-  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  if (!folder) {
-    const message = 'Open a workspace folder before creating Peridot sessions.';
-    sidebar.setWorkspaceProblem(message);
-    await vscode.window.showWarningMessage(message);
-    return;
-  }
+  const folder = await ensureWorkspaceFolder(sidebar, 'Open a workspace folder before creating Peridot sessions.');
+  if (!folder) return;
   const task = await vscode.window.showInputBox({
     title: 'Peridot: New Session',
     prompt: 'Optional initial task. Leave empty to open an idle persisted session.',
@@ -248,13 +239,8 @@ export async function showSessionCount(
   output: vscode.OutputChannel,
   sidebar: PeridotSidebarProvider,
 ): Promise<void> {
-  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  if (!folder) {
-    const message = 'Open a workspace folder before counting Peridot sessions.';
-    sidebar.setWorkspaceProblem(message);
-    await vscode.window.showWarningMessage(message);
-    return;
-  }
+  const folder = await ensureWorkspaceFolder(sidebar, 'Open a workspace folder before counting Peridot sessions.');
+  if (!folder) return;
   const command = sessionCountSlashCommand();
   await vscode.commands.executeCommand('peridot.chatView.focus');
   try {
@@ -477,13 +463,8 @@ async function pickPersistedSessionTarget(
   placeHolder: string,
   emptyMessage: string,
 ): Promise<SessionTargetChoice | undefined> {
-  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  if (!folder) {
-    const message = 'Open a workspace folder before selecting Peridot sessions.';
-    sidebar.setWorkspaceProblem(message);
-    await vscode.window.showWarningMessage(message);
-    return undefined;
-  }
+  const folder = await ensureWorkspaceFolder(sidebar, 'Open a workspace folder before selecting Peridot sessions.');
+  if (!folder) return undefined;
   let sessions: DaemonSessionSummary[] = [];
   try {
     sessions = normalizeDaemonSessions(await fetchSessionList(folder, output));
@@ -516,13 +497,8 @@ export async function searchSessions(
   output: vscode.OutputChannel,
   sidebar: PeridotSidebarProvider,
 ): Promise<void> {
-  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  if (!folder) {
-    const message = 'Open a workspace folder before searching Peridot sessions.';
-    sidebar.setWorkspaceProblem(message);
-    await vscode.window.showWarningMessage(message);
-    return;
-  }
+  const folder = await ensureWorkspaceFolder(sidebar, 'Open a workspace folder before searching Peridot sessions.');
+  if (!folder) return;
   const query = await vscode.window.showInputBox({
     title: 'Peridot: Search Sessions',
     prompt: 'Search persisted session transcripts.',
@@ -563,13 +539,8 @@ export async function pruneSessions(
   output: vscode.OutputChannel,
   sidebar: PeridotSidebarProvider,
 ): Promise<void> {
-  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  if (!folder) {
-    const message = 'Open a workspace folder before pruning sessions.';
-    sidebar.setWorkspaceProblem(message);
-    await vscode.window.showWarningMessage(message);
-    return;
-  }
+  const folder = await ensureWorkspaceFolder(sidebar, 'Open a workspace folder before pruning sessions.');
+  if (!folder) return;
   const status = await vscode.window.showQuickPick(
     sessionPruneStatusChoices().map((choice) => ({
       label: choice.label,
@@ -657,13 +628,8 @@ export async function replaySessionTimeline(
   output: vscode.OutputChannel,
   sidebar: PeridotSidebarProvider,
 ): Promise<void> {
-  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  if (!folder) {
-    const message = 'Open a workspace folder before replaying session timelines.';
-    sidebar.setWorkspaceProblem(message);
-    await vscode.window.showWarningMessage(message);
-    return;
-  }
+  const folder = await ensureWorkspaceFolder(sidebar, 'Open a workspace folder before replaying session timelines.');
+  if (!folder) return;
   let sessions: DaemonSessionSummary[] = [];
   try {
     sessions = normalizeDaemonSessions(await fetchSessionList(folder, output));

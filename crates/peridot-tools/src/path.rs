@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use peridot_common::{PeriError, PeriResult};
 use serde_json::Value;
@@ -9,6 +9,21 @@ pub fn ensure_within_project(root: &Path, candidate: &Path) -> PeriResult<PathBu
     let root = root
         .canonicalize()
         .map_err(|err| PeriError::PathBoundary(root.join(err.to_string())))?;
+    // Reject any candidate that contains a `..` segment outright. For a
+    // non-existent candidate we canonicalize only the deepest *existing*
+    // ancestor and re-attach the tail raw — so a `..` in that tail would
+    // survive and let `fs::write` / `create_dir_all` follow it out of the
+    // project root, defeating the lexical `starts_with(&root)` check below
+    // (which does not interpret `..`). Mirrors the guard in
+    // `tools/skill.rs`. `existing`-path canonicalisation already folds
+    // `..`, but rejecting up front keeps the boundary obvious and covers
+    // the partial-resolution path too.
+    if candidate
+        .components()
+        .any(|component| matches!(component, Component::ParentDir))
+    {
+        return Err(PeriError::PathBoundary(candidate.to_path_buf()));
+    }
     let path = if candidate.exists() {
         candidate
             .canonicalize()
@@ -26,11 +41,36 @@ pub fn ensure_within_project(root: &Path, candidate: &Path) -> PeriResult<PathBu
             .ok_or_else(|| PeriError::PathBoundary(candidate.to_path_buf()))?
     };
 
+    // Defence in depth: lexically fold any residual `.`/`..` (without
+    // touching the filesystem) before the boundary check, since
+    // `starts_with` compares components literally and would otherwise be
+    // fooled by a `..` that slipped through the partial-resolution tail.
+    let path = lexically_normalize(&path);
     if path.starts_with(&root) {
         Ok(path)
     } else {
         Err(PeriError::PathBoundary(path))
     }
+}
+
+/// Folds `.` and `..` components without consulting the filesystem. Used as
+/// a belt-and-braces normalisation before the lexical `starts_with(&root)`
+/// boundary check; `..` at the very front (which would escape above the
+/// root) is preserved so such paths still fail the boundary check.
+fn lexically_normalize(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::ParentDir => {
+                if !out.pop() {
+                    out.push(component.as_os_str());
+                }
+            }
+            Component::CurDir => {}
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
 }
 
 /// Find the deepest existing ancestor of `candidate`, canonicalize it,
@@ -169,6 +209,27 @@ mod tests {
         let result = ensure_within_project(&root, &candidate);
         assert!(matches!(result, Err(PeriError::PathBoundary(_))));
         fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn rejects_dotdot_tail_through_nonexistent_dir() {
+        // Regression: when the candidate doesn't exist, only the deepest
+        // existing ancestor was canonicalised and the `..` tail survived,
+        // so `<root>/nope/../../escaped.txt` passed the lexical boundary
+        // check and let a write escape the project root. Must be rejected.
+        let root = tmp_project("dotdot_tail");
+        let candidate = root.join("nope/../../escaped.txt");
+        let result = ensure_within_project(&root, &candidate);
+        assert!(matches!(result, Err(PeriError::PathBoundary(_))));
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn lexically_normalize_folds_dot_and_dotdot() {
+        assert_eq!(
+            lexically_normalize(Path::new("/a/b/../c/./d")),
+            PathBuf::from("/a/c/d")
+        );
     }
 }
 

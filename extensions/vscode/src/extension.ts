@@ -4,6 +4,7 @@
 // task execution over JSON-RPC.
 
 import * as childProcess from 'child_process';
+import { isRecord } from './util';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { addAttachmentPreviewUris } from './attachmentPreview';
@@ -227,7 +228,6 @@ export function activate(context: vscode.ExtensionContext) {
     cancelTask: async (): Promise<void> => cancelTask(output, sidebar),
     clearSession: async (options?: { skipDaemonCancel?: boolean }): Promise<void> =>
       clearExtensionSession(output, sidebar, options?.skipDaemonCancel === true),
-    loginOpenAi: async (): Promise<void> => loginOpenAi(output, sidebar),
     refreshStatus: async (): Promise<void> => refreshStatus(output, sidebar, { force: true }),
     refreshSlashCatalog: async (): Promise<void> => refreshSlashCatalog(output, sidebar),
     showCodeMap: async (): Promise<void> => showWorkspaceCodeMap(output, sidebar, false),
@@ -2381,9 +2381,6 @@ function isPlanDocumentPath(path: string): boolean {
   );
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}
 
 function json(value: unknown): string {
   try {

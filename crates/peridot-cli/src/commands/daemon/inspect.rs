@@ -25,19 +25,34 @@ pub(super) async fn handle_command_goal_control(
             "goal: no active session",
         ));
     };
-    let Some((goal, plan)) = ({
+    // Mutate the in-memory goal under the sessions lock, capturing the cloned
+    // goal/plan for the response and a flag describing the follow-up side
+    // effect (suspend / persist) to run *after* the lock is dropped. We must
+    // not hold `state.sessions` across the suspend/persist awaits below:
+    // `suspend_live_session` re-locks `state.sessions`, and doing persistence
+    // under the lock would needlessly serialise the daemon's RPC surface.
+    let Some((goal, plan, persist_status)) = ({
         let sessions = state.sessions.lock().await;
         sessions.get(session_id).map(|entry| {
-            let mut goal = entry.goal.lock().expect("daemon mutex (goal) poisoned");
+            let mut goal = entry
+                .goal
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             if goal.objective.is_none() && entry.spec.mode == ExecutionMode::Goal {
                 *goal = initial_live_goal(&entry.spec);
             }
+            // The status we will persist to the SessionRecord (and, for pause,
+            // the trigger to actually suspend the run). `None` means this is a
+            // read-only `/goal status` (or a pause/resume with no objective).
+            let mut persist_status: Option<GoalStatus> = None;
             match command {
                 SlashCommand::GoalPause if goal.objective.is_some() => {
                     goal.status = Some(GoalStatus::Paused);
+                    persist_status = Some(GoalStatus::Paused);
                 }
                 SlashCommand::GoalResume if goal.objective.is_some() => {
                     goal.status = Some(GoalStatus::Running);
+                    persist_status = Some(GoalStatus::Running);
                 }
                 SlashCommand::GoalClear => {
                     *goal = LiveSessionGoal {
@@ -45,8 +60,12 @@ pub(super) async fn handle_command_goal_control(
                         status: Some(GoalStatus::Cleared),
                         started_at_unix: None,
                     };
-                    *entry.plan.lock().expect("daemon mutex (plan) poisoned") =
+                    *entry
+                        .plan
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner) =
                         LiveSessionPlan::default();
+                    persist_status = Some(GoalStatus::Cleared);
                 }
                 _ => {}
             }
@@ -55,8 +74,9 @@ pub(super) async fn handle_command_goal_control(
                 entry
                     .plan
                     .lock()
-                    .expect("daemon mutex (plan) poisoned")
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .clone(),
+                persist_status,
             )
         })
     }) else {
@@ -70,17 +90,40 @@ pub(super) async fn handle_command_goal_control(
             &format!("goal: session not found: {session_id}"),
         ));
     };
+
+    // Side effects, run after the sessions lock is released (see above).
+    // `/goal pause` reuses the same graceful stop as `session.cancel`
+    // (`suspend_live_session`) so the running agent actually halts, then
+    // records `goal_status=paused`. `/goal resume` and `/goal clear` only
+    // persist their status; resuming the *run* is the caller's job via
+    // `session.start { resume: true }`, which reloads the persisted status.
+    let mut suspended = false;
+    if matches!(command, SlashCommand::GoalPause) && persist_status.is_some() {
+        suspended = suspend_live_session(state, session_id).await;
+    }
+    if let Some(status) = persist_status.as_ref() {
+        persist_goal_status(state, session_id, status).await;
+    }
+
     let done = plan.steps.iter().filter(|step| step.done).count();
     let total = plan.steps.len();
-    let status = goal
-        .status
-        .as_ref()
-        .map(goal_status_label)
-        .unwrap_or("none");
+    let status = goal.status.as_ref().map(goal_status_text).unwrap_or("none");
     let message = match command {
-        SlashCommand::GoalPause if goal.objective.is_some() => "goal: paused".to_string(),
-        SlashCommand::GoalResume if goal.objective.is_some() => "goal: resumed".to_string(),
-        SlashCommand::GoalClear => "goal: cleared".to_string(),
+        SlashCommand::GoalPause if goal.objective.is_some() => {
+            if suspended {
+                "goal: paused — suspended the running agent and persisted goal status".to_string()
+            } else {
+                "goal: paused and persisted goal status (no live run to suspend)".to_string()
+            }
+        }
+        SlashCommand::GoalResume if goal.objective.is_some() => {
+            "goal: resume requested — persisted goal status; resume the session \
+             (session.start with resume: true) to continue the run"
+                .to_string()
+        }
+        SlashCommand::GoalClear => {
+            "goal: cleared — reset the plan and persisted goal status".to_string()
+        }
         _ => format!("goal: {status} {done}/{total} steps done"),
     };
     Ok(goal_command_result(
@@ -139,15 +182,6 @@ fn goal_command_result(
     })
 }
 
-fn goal_status_label(status: &GoalStatus) -> &'static str {
-    match status {
-        GoalStatus::Running => "running",
-        GoalStatus::Paused => "paused",
-        GoalStatus::Done => "done",
-        GoalStatus::Cleared => "cleared",
-    }
-}
-
 pub(super) async fn handle_command_plan_show(
     state: &DaemonState,
     session_id: Option<&str>,
@@ -158,7 +192,7 @@ pub(super) async fn handle_command_plan_show(
             entry
                 .plan
                 .lock()
-                .expect("daemon mutex (plan) poisoned")
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .clone()
         })
     } else {
@@ -364,7 +398,7 @@ async fn cost_session_rows(state: &DaemonState) -> Result<Vec<CostSessionRow>, S
         let usage = entry
             .usage
             .lock()
-            .expect("daemon mutex (usage) poisoned")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone();
         let row = rows.entry(id.clone()).or_insert_with(|| CostSessionRow {
             id: id.clone(),
@@ -396,7 +430,7 @@ async fn current_budget_limit(state: &DaemonState, session_id: Option<&str>) -> 
         let usage = entry
             .usage
             .lock()
-            .expect("daemon mutex (usage) poisoned")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone();
         return usage.cost_limit.or_else(|| {
             (entry.spec.config.defaults.budget_usd > 0.0)

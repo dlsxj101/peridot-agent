@@ -1,4 +1,5 @@
 import type { TranscriptItem, TranscriptRole } from './types';
+import { isRecord } from './util';
 
 export function agentTranscriptItemForEvent(
   kind: string,
@@ -124,6 +125,3 @@ function numberLabel(record: Record<string, unknown>, key: string): string {
   return typeof value === 'number' ? String(value) : '?';
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}

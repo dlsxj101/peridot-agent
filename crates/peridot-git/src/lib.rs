@@ -108,8 +108,26 @@ impl GitManager {
     }
 }
 
-fn parse_status_path(line: &str) -> Option<&str> {
-    line.get(3..).map(str::trim).filter(|path| !path.is_empty())
+fn parse_status_path(line: &str) -> Option<String> {
+    let rest = line.get(3..)?.trim();
+    if rest.is_empty() {
+        return None;
+    }
+    // Renames/copies format the entry as `old -> new`; the changed path is the
+    // destination after the last `" -> "`. Git wraps unusual paths in
+    // double-quotes, which we strip.
+    let path = match rest.rsplit_once(" -> ") {
+        Some((_, new)) => new.trim(),
+        None => rest,
+    };
+    let path = path
+        .strip_prefix('"')
+        .and_then(|p| p.strip_suffix('"'))
+        .unwrap_or(path);
+    if path.is_empty() {
+        return None;
+    }
+    Some(path.to_string())
 }
 
 #[cfg(test)]
@@ -183,6 +201,25 @@ mod tests {
             ));
         }
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    }
+
+    #[test]
+    fn parse_status_path_takes_rename_destination() {
+        // Normal line: path is returned verbatim.
+        assert_eq!(
+            parse_status_path(" M src/lib.rs").as_deref(),
+            Some("src/lib.rs")
+        );
+        // Rename: only the destination after the last `" -> "` is the changed path.
+        assert_eq!(
+            parse_status_path("R  old.rs -> src/new.rs").as_deref(),
+            Some("src/new.rs")
+        );
+        // Quoted unusual paths have surrounding quotes stripped.
+        assert_eq!(
+            parse_status_path("R  \"old name.rs\" -> \"src/new name.rs\"").as_deref(),
+            Some("src/new name.rs")
+        );
     }
 
     #[test]

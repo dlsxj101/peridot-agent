@@ -803,7 +803,7 @@ impl HarnessAgent {
                     .map(|call| call.name.as_str())
                     .collect::<Vec<_>>()
                     .join(", ");
-                for invocation in &completion.tool_calls {
+                for (index, invocation) in completion.tool_calls.iter().enumerate() {
                     let tool_call_id = invocation.id.clone();
                     let tool_parameters = tool_invocation_parameters(invocation);
                     events(AgentRunEvent::ToolStarted {
@@ -840,6 +840,29 @@ impl HarnessAgent {
                                 &tool_parameters,
                                 &failure_result,
                             )?;
+                            // The assistant turn was appended with ALL tool_calls,
+                            // but only this invocation (and the ones already
+                            // executed) have a paired tool_result. Bailing now
+                            // would leave invocations index+1..end unanswered, and
+                            // Responses-style providers (OpenAI Codex) reject the
+                            // next request with `400 No tool output found for
+                            // function call <id>` — poisoning the conversation so
+                            // the recovery loop retries forever. Synthesise a
+                            // failure tool_result for every remaining invocation so
+                            // all tool_call ids are answered before bubbling.
+                            let not_executed = peridot_common::ToolResult::failure(
+                                "not executed: a prior tool in the batch failed".to_string(),
+                            );
+                            for remaining in &completion.tool_calls[index + 1..] {
+                                append_tool_result_to_context(
+                                    &mut self.context,
+                                    &request.project_root,
+                                    remaining.id.clone(),
+                                    &remaining.name,
+                                    &tool_invocation_parameters(remaining),
+                                    &not_executed,
+                                )?;
+                            }
                             return Err(err);
                         }
                     };

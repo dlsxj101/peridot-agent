@@ -6,8 +6,18 @@
 //! `agent.rs` so the on-disk checkpoint format lives in one place.
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use peridot_common::{PeriError, PeriResult};
+
+/// Process-wide monotonic counter that disambiguates checkpoint ids.
+///
+/// The wall-clock nanos prefix alone is not unique: two checkpoints created
+/// back-to-back (e.g. within one multi-tool batch) can read the same
+/// `SystemTime::now()` value and collide, overwriting the earlier rollback
+/// record on disk. Appending a strictly increasing counter guarantees a
+/// distinct id per call for the lifetime of the process.
+static CHECKPOINT_SEQ: AtomicU64 = AtomicU64::new(0);
 
 /// Snapshot captured immediately before a mutating file tool runs.
 ///
@@ -55,7 +65,8 @@ pub(crate) fn write_file_checkpoint(
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
         .unwrap_or_default();
-    let id = format!("{nanos}-{tool_name}");
+    let seq = CHECKPOINT_SEQ.fetch_add(1, Ordering::Relaxed);
+    let id = format!("{nanos}-{seq}-{tool_name}");
     let checkpoints_dir = project_root.join(".peridot/checkpoints");
     std::fs::create_dir_all(&checkpoints_dir).map_err(|err| {
         PeriError::Tool(format!(
@@ -120,6 +131,39 @@ mod tests {
         assert_eq!(value["path"], "src/lib.rs");
         assert_eq!(value["existed"], true);
         assert_eq!(value["previous_content"], "old");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn back_to_back_checkpoints_have_distinct_ids() {
+        let root = std::env::temp_dir().join(format!(
+            "peridot-file-checkpoint-distinct-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/lib.rs"), "old").unwrap();
+
+        let params = serde_json::json!({"path": "src/lib.rs"});
+        let first = write_file_checkpoint(&root, "file_patch", &params)
+            .unwrap()
+            .unwrap();
+        let second = write_file_checkpoint(&root, "file_patch", &params)
+            .unwrap()
+            .unwrap();
+
+        // Two checkpoints created back-to-back (potentially sharing a nanos
+        // reading) must not collide and overwrite each other's record.
+        assert_ne!(first.id, second.id);
+        assert!(
+            root.join(".peridot/checkpoints")
+                .join(format!("{}.json", first.id))
+                .exists()
+        );
+        assert!(
+            root.join(".peridot/checkpoints")
+                .join(format!("{}.json", second.id))
+                .exists()
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
 }

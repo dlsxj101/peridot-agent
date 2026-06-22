@@ -682,6 +682,7 @@ fn restore_latest_tui_state_uses_most_recent_persisted_session() {
                 total_tokens: 0,
                 total_cost_usd: 0.0,
                 turns_used: 0,
+                goal_status: None,
             })
             .unwrap();
     }
@@ -743,6 +744,7 @@ fn hydrate_persisted_sessions_registers_all_unclosed_sessions() {
                 total_tokens: 10,
                 total_cost_usd: 0.1,
                 turns_used: 1,
+                goal_status: None,
             })
             .unwrap();
     }
@@ -793,6 +795,7 @@ fn session_show_hydrates_current_tui_context_status() {
             total_tokens: 10,
             total_cost_usd: 0.1,
             turns_used: 1,
+            goal_status: None,
         })
         .unwrap();
     fs::write(
@@ -1037,6 +1040,7 @@ fn startup_scan_downgrades_running_sessions_to_suspended() {
         total_tokens: 0,
         total_cost_usd: 0.0,
         turns_used: 0,
+        goal_status: None,
     };
     memory.save_session_record(&record).unwrap();
 

@@ -1205,35 +1205,47 @@ fn trim_to_hard_limit(messages: &mut Vec<LlmMessage>, hard_limit_tokens: usize) 
 
 fn protocol_safe_keep_from(entries: &[ContextEntry], requested_start: usize) -> usize {
     let mut start = requested_start.min(entries.len());
-    let mut available_calls = HashSet::new();
-    for entry in entries.iter().skip(start) {
-        if entry.source == ContextSource::Assistant {
-            for call in &entry.tool_calls {
-                available_calls.insert(call.id.clone());
+    // Pulling `start` back to include an orphaned tool_result's originating
+    // assistant call can itself bring *more* tool_results into the kept region,
+    // whose own calls may still live in the (now smaller) dropped prefix. A
+    // single pass would miss those, leaving a tool_result with no matching call
+    // (a protocol violation downstream). Iterate to a fixpoint instead: each
+    // pass rebuilds the set of available calls over the current kept region and
+    // rescans it, repeating until `start` stops moving.
+    loop {
+        let mut available_calls = HashSet::new();
+        for entry in entries.iter().skip(start) {
+            if entry.source == ContextSource::Assistant {
+                for call in &entry.tool_calls {
+                    available_calls.insert(call.id.clone());
+                }
             }
         }
-    }
 
-    for entry in entries.iter().skip(start) {
-        let Some(tool_call_id) = entry.tool_call_id.as_ref() else {
-            continue;
-        };
-        if available_calls.contains(tool_call_id) {
-            continue;
+        let mut earliest = start;
+        for entry in entries.iter().skip(start) {
+            let Some(tool_call_id) = entry.tool_call_id.as_ref() else {
+                continue;
+            };
+            if available_calls.contains(tool_call_id) {
+                continue;
+            }
+            if let Some(call_index) = entries[..start].iter().rposition(|candidate| {
+                candidate.source == ContextSource::Assistant
+                    && candidate
+                        .tool_calls
+                        .iter()
+                        .any(|call| call.id == *tool_call_id)
+            }) {
+                earliest = earliest.min(call_index);
+            }
         }
-        if let Some(call_index) = entries[..start].iter().rposition(|candidate| {
-            candidate.source == ContextSource::Assistant
-                && candidate
-                    .tool_calls
-                    .iter()
-                    .any(|call| call.id == *tool_call_id)
-        }) {
-            start = start.min(call_index);
-            available_calls.insert(tool_call_id.clone());
-        }
-    }
 
-    start
+        if earliest == start {
+            return start;
+        }
+        start = earliest;
+    }
 }
 
 fn repair_tool_call_pairs(messages: &mut Vec<LlmMessage>) {
@@ -2083,6 +2095,35 @@ mod tests {
         ];
 
         assert_eq!(protocol_safe_keep_from(&entries, 2), 1);
+    }
+
+    #[test]
+    fn protocol_safe_keep_from_resolves_nested_orphans() {
+        // Pulling `start` back to recover call_1's assistant brings call_2's
+        // tool_result into the kept region, whose own assistant is even earlier.
+        // A single pass stops at index 1 and leaves call_2 orphaned; the fixpoint
+        // must keep pulling back to index 0.
+        let call = |id: &str| {
+            ContextEntry::assistant_with_tool_calls(
+                "",
+                vec![ToolInvocation {
+                    id: id.to_string(),
+                    name: "file_read".to_string(),
+                    arguments: serde_json::json!({"path": "README.md"}),
+                }],
+            )
+        };
+        let result =
+            |id: &str| ContextEntry::trusted(ContextSource::Tool, "ok").with_tool_call_id(id);
+        let entries = vec![
+            call("call_2"),                                     // 0
+            call("call_1"),                                     // 1
+            result("call_2"),                                   // 2 -> call at index 0
+            result("call_1"),                                   // 3 -> call at index 1
+            ContextEntry::trusted(ContextSource::User, "tail"), // 4
+        ];
+
+        assert_eq!(protocol_safe_keep_from(&entries, 3), 0);
     }
 
     #[test]

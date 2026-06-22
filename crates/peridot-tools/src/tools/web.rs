@@ -13,6 +13,7 @@
 //! `web_fetch` on the most relevant hit to read the page body. Each tool
 //! is `PermissionLevel::Read` — auto-approved under `Auto` permission.
 
+use std::net::{IpAddr, ToSocketAddrs};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -28,6 +29,10 @@ const DEFAULT_MAX_RESULTS: usize = 10;
 const MAX_RESULTS_CAP: u64 = 25;
 const FETCH_MAX_CHARS: usize = 50_000;
 const REQUEST_TIMEOUT_SECS: u64 = 15;
+// Hard ceiling on bytes buffered from a response body. The model fully controls
+// the fetched URL, so an unbounded `response.text()` is an OOM/DoS vector — read
+// chunk-by-chunk and stop once this many bytes have accumulated.
+const MAX_FETCH_BYTES: usize = 5 * 1024 * 1024;
 
 /// `web_search` — DuckDuckGo HTML scrape returning title/url/snippet triples.
 #[derive(Clone, Debug)]
@@ -193,8 +198,7 @@ async fn ddg_fetch_html(query: &str) -> PeriResult<String> {
             response.status()
         )));
     }
-    response
-        .text()
+    read_body_capped(response, MAX_FETCH_BYTES)
         .await
         .map_err(|err| PeriError::Tool(format!("web_search: failed to read DDG response: {err}")))
 }
@@ -212,27 +216,155 @@ async fn http_fetch_text(url: &str) -> PeriResult<String> {
             response.status()
         )));
     }
-    response
-        .text()
+    read_body_capped(response, MAX_FETCH_BYTES)
         .await
         .map_err(|err| PeriError::Tool(format!("web_fetch: failed to read body: {err}")))
 }
 
+/// Reads a response body chunk-by-chunk, stopping once `max_bytes` have
+/// accumulated, so a model-controlled URL can't force an unbounded download
+/// into memory. Returns lossy UTF-8 (bodies are fed to text extraction).
+async fn read_body_capped(response: reqwest::Response, max_bytes: usize) -> PeriResult<String> {
+    let mut response = response;
+    let mut buf: Vec<u8> = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|err| PeriError::Tool(format!("failed to read response chunk: {err}")))?
+    {
+        if buf.len() >= max_bytes {
+            break;
+        }
+        let take = chunk.len().min(max_bytes - buf.len());
+        buf.extend_from_slice(&chunk[..take]);
+    }
+    Ok(String::from_utf8_lossy(&buf).into_owned())
+}
+
 fn build_http_client() -> PeriResult<reqwest::Client> {
+    // reqwest follows redirects by default, which would let a public URL
+    // bounce us to an internal one (metadata/loopback/RFC1918) after the
+    // initial `validate_http_url` check. Re-validate every redirect hop's
+    // host and refuse to follow any that resolves to an internal address.
+    let redirect_policy = reqwest::redirect::Policy::custom(|attempt| {
+        if attempt.previous().len() >= 10 {
+            return attempt.error("web_fetch: too many redirects");
+        }
+        let url = attempt.url().as_str();
+        match validate_http_url(url) {
+            Ok(()) => attempt.follow(),
+            Err(err) => attempt.error(std::io::Error::other(err.to_string())),
+        }
+    });
     reqwest::Client::builder()
         .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
         .user_agent(USER_AGENT)
+        .redirect(redirect_policy)
         .build()
         .map_err(|err| PeriError::Tool(format!("failed to build http client: {err}")))
 }
 
 fn validate_http_url(url: &str) -> PeriResult<()> {
-    if url.starts_with("http://") || url.starts_with("https://") {
-        Ok(())
-    } else {
-        Err(PeriError::Tool(format!(
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return Err(PeriError::Tool(format!(
             "web_fetch: only http(s) urls are supported, got {url}"
-        )))
+        )));
+    }
+    // SSRF guard: resolve the host and reject any address that points at
+    // the host's own network — cloud metadata (169.254.169.254), loopback,
+    // link-local, private (RFC1918 / fc00::/7), and unspecified addresses.
+    // Without this, a model-controlled URL can read instance credentials or
+    // probe internal services.
+    let host = host_from_url(url).ok_or_else(|| {
+        PeriError::Tool(format!("web_fetch: could not parse host from url {url}"))
+    })?;
+    let addrs = resolve_host(&host)?;
+    if addrs.is_empty() {
+        return Err(PeriError::Tool(format!(
+            "web_fetch: host {host} did not resolve to any address"
+        )));
+    }
+    for addr in &addrs {
+        if is_blocked_addr(addr) {
+            return Err(PeriError::Tool(format!(
+                "web_fetch: refusing to fetch internal address {addr} (host {host})"
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Extracts the host portion (without port / userinfo) from an http(s) URL.
+fn host_from_url(url: &str) -> Option<String> {
+    let rest = url
+        .strip_prefix("http://")
+        .or_else(|| url.strip_prefix("https://"))?;
+    // Authority ends at the first '/', '?', or '#'.
+    let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let authority = &rest[..authority_end];
+    // Strip optional userinfo (user:pass@host).
+    let host_port = authority.rsplit('@').next().unwrap_or(authority);
+    if host_port.is_empty() {
+        return None;
+    }
+    // IPv6 literal: [::1]:port
+    if let Some(after) = host_port.strip_prefix('[') {
+        let end = after.find(']')?;
+        return Some(after[..end].to_string());
+    }
+    // host[:port]
+    let host = host_port.split(':').next().unwrap_or(host_port);
+    if host.is_empty() {
+        None
+    } else {
+        Some(host.to_string())
+    }
+}
+
+/// Resolves a host to its IP addresses. An IP literal resolves to itself
+/// (no DNS); a name is resolved via the system resolver. The dummy port is
+/// only there to satisfy `ToSocketAddrs`.
+fn resolve_host(host: &str) -> PeriResult<Vec<IpAddr>> {
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        return Ok(vec![ip]);
+    }
+    let addrs = (host, 0u16)
+        .to_socket_addrs()
+        .map_err(|err| PeriError::Tool(format!("web_fetch: failed to resolve {host}: {err}")))?
+        .map(|sa| sa.ip())
+        .collect();
+    Ok(addrs)
+}
+
+/// Returns true for addresses that must never be fetched: loopback,
+/// link-local (169.254/16, fe80::/10), private (10/8, 172.16/12,
+/// 192.168/16, fc00::/7), and unspecified (0.0.0.0 / ::).
+fn is_blocked_addr(addr: &IpAddr) -> bool {
+    match addr {
+        IpAddr::V4(v4) => {
+            v4.is_loopback()
+                || v4.is_private()
+                || v4.is_link_local()
+                || v4.is_unspecified()
+                || v4.is_broadcast()
+                // Carrier-grade NAT 100.64.0.0/10 and the rest of
+                // 0.0.0.0/8 ("this network") are also non-routable.
+                || v4.octets()[0] == 0
+                || (v4.octets()[0] == 100 && (64..=127).contains(&v4.octets()[1]))
+        }
+        IpAddr::V6(v6) => {
+            v6.is_loopback()
+                || v6.is_unspecified()
+                // Link-local fe80::/10.
+                || (v6.segments()[0] & 0xffc0) == 0xfe80
+                // Unique local fc00::/7.
+                || (v6.segments()[0] & 0xfe00) == 0xfc00
+                // IPv4-mapped (::ffff:a.b.c.d) — recheck the embedded v4.
+                || v6
+                    .to_ipv4_mapped()
+                    .map(|v4| is_blocked_addr(&IpAddr::V4(v4)))
+                    .unwrap_or(false)
+        }
     }
 }
 
@@ -628,11 +760,65 @@ mod tests {
     }
 
     #[test]
-    fn validate_http_url_accepts_http_and_https() {
-        assert!(validate_http_url("https://example.com").is_ok());
-        assert!(validate_http_url("http://example.com").is_ok());
+    fn validate_http_url_rejects_non_http_schemes() {
         assert!(validate_http_url("file:///etc/passwd").is_err());
         assert!(validate_http_url("javascript:alert(1)").is_err());
+        assert!(validate_http_url("ftp://example.com").is_err());
+    }
+
+    #[test]
+    fn host_from_url_extracts_host() {
+        assert_eq!(
+            host_from_url("http://example.com/path").as_deref(),
+            Some("example.com")
+        );
+        assert_eq!(
+            host_from_url("https://example.com:8443/").as_deref(),
+            Some("example.com")
+        );
+        assert_eq!(
+            host_from_url("http://user:pw@example.com/").as_deref(),
+            Some("example.com")
+        );
+        assert_eq!(host_from_url("http://[::1]:80/").as_deref(), Some("::1"));
+        assert_eq!(
+            host_from_url("http://169.254.169.254/").as_deref(),
+            Some("169.254.169.254")
+        );
+    }
+
+    #[test]
+    fn validate_http_url_blocks_ssrf_targets() {
+        // IP literals never hit DNS, so these are deterministic.
+        assert!(validate_http_url("http://169.254.169.254/latest/meta-data/").is_err());
+        assert!(validate_http_url("http://127.0.0.1/").is_err());
+        assert!(validate_http_url("http://localhost/").is_err());
+        assert!(validate_http_url("http://10.0.0.5/").is_err());
+        assert!(validate_http_url("http://172.16.0.1/").is_err());
+        assert!(validate_http_url("http://192.168.1.1/").is_err());
+        assert!(validate_http_url("http://[::1]/").is_err());
+        assert!(validate_http_url("http://0.0.0.0/").is_err());
+    }
+
+    #[test]
+    fn is_blocked_addr_classifies_internal_ranges() {
+        use std::net::{Ipv4Addr, Ipv6Addr};
+        assert!(is_blocked_addr(&IpAddr::V4(Ipv4Addr::new(
+            169, 254, 169, 254
+        ))));
+        assert!(is_blocked_addr(&IpAddr::V4(Ipv4Addr::new(10, 1, 2, 3))));
+        assert!(is_blocked_addr(&IpAddr::V4(Ipv4Addr::new(172, 16, 0, 1))));
+        assert!(is_blocked_addr(&IpAddr::V4(Ipv4Addr::new(192, 168, 0, 1))));
+        assert!(is_blocked_addr(&IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))));
+        assert!(is_blocked_addr(&IpAddr::V4(Ipv4Addr::new(100, 64, 0, 1))));
+        assert!(is_blocked_addr(&IpAddr::V6(Ipv6Addr::LOCALHOST)));
+        assert!(is_blocked_addr(&IpAddr::V6("fe80::1".parse().unwrap())));
+        assert!(is_blocked_addr(&IpAddr::V6("fc00::1".parse().unwrap())));
+        // Public addresses pass.
+        assert!(!is_blocked_addr(&IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8))));
+        assert!(!is_blocked_addr(&IpAddr::V4(Ipv4Addr::new(
+            93, 184, 216, 34
+        ))));
     }
 
     #[test]

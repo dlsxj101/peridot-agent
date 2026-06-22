@@ -23,6 +23,7 @@ import {
   reasoningSlashCommand,
 } from '../runtimeCommand';
 import type { PeridotSidebarProvider } from '../sidebar';
+import { ensureWorkspaceFolder } from './cli';
 
 export async function setExecutionMode(sidebar: PeridotSidebarProvider): Promise<void> {
   const current = sidebar.currentRunOptions().mode;
@@ -148,10 +149,7 @@ async function runSharedSlashCommand(
   command: string,
   sidebar: PeridotSidebarProvider,
 ): Promise<void> {
-  if (!vscode.workspace.workspaceFolders?.[0]?.uri.fsPath) {
-    const message = 'Open a workspace folder before running Peridot session commands.';
-    sidebar.setWorkspaceProblem(message);
-    await vscode.window.showWarningMessage(message);
+  if (!(await ensureWorkspaceFolder(sidebar, 'Open a workspace folder before running Peridot session commands.'))) {
     return;
   }
   await vscode.commands.executeCommand('peridot.chatView.focus');

@@ -21,7 +21,18 @@
 /// active even on new models.
 pub fn context_window_tokens(model: &str) -> Option<usize> {
     let lower = model.to_ascii_lowercase();
-    // Anthropic
+    // Anthropic. The 1M-context families (Opus 4.6/4.7/4.8, Sonnet 4.6, Fable 5,
+    // Mythos 5) must be matched before the generic 200K fallback, which still
+    // covers the standard-context models (Haiku 4.5, Sonnet/Opus 4.5 and older).
+    if lower.contains("opus-4-6")
+        || lower.contains("opus-4-7")
+        || lower.contains("opus-4-8")
+        || lower.contains("sonnet-4-6")
+        || lower.contains("fable")
+        || lower.contains("mythos")
+    {
+        return Some(1_000_000);
+    }
     if lower.contains("claude-opus")
         || lower.contains("claude-sonnet")
         || lower.contains("claude-haiku")
@@ -142,13 +153,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn known_claude_models_resolve_to_200k() {
-        assert_eq!(context_window_tokens("claude-sonnet-4-6"), Some(200_000));
+    fn claude_context_windows_resolve_by_family() {
+        // 1M-context families.
+        assert_eq!(context_window_tokens("claude-sonnet-4-6"), Some(1_000_000));
         assert_eq!(
             context_window_tokens("claude-opus-4-7-20251101"),
+            Some(1_000_000)
+        );
+        assert_eq!(context_window_tokens("claude-opus-4-8"), Some(1_000_000));
+        assert_eq!(context_window_tokens("claude-fable-5"), Some(1_000_000));
+        // Standard 200K-context families (Haiku 4.5, Sonnet/Opus 4.5 and older).
+        assert_eq!(context_window_tokens("claude-haiku-4-5"), Some(200_000));
+        assert_eq!(context_window_tokens("claude-sonnet-4-5"), Some(200_000));
+        assert_eq!(
+            context_window_tokens("claude-3-opus-20240229"),
             Some(200_000)
         );
-        assert_eq!(context_window_tokens("claude-haiku-4-5"), Some(200_000));
     }
 
     #[test]
@@ -175,7 +195,7 @@ mod tests {
 
     #[test]
     fn case_insensitive_match() {
-        assert_eq!(context_window_tokens("Claude-Sonnet-4-6"), Some(200_000));
+        assert_eq!(context_window_tokens("Claude-Sonnet-4-6"), Some(1_000_000));
     }
 
     #[test]

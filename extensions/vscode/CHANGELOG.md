@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+### Fixed — webview UI/UX
+
+- Slash/file-mention picker dismisses on composer blur instead of staying
+  stranded over the input when you click away.
+- Inline-image paste inspects `clipboardData.items` as well as `.files`, so
+  images pasted on Linux/Chromium are attached instead of silently dropped.
+- Approval / ask-user action rows disable on first click to prevent duplicate
+  responses from a double-click or a click during the round-trip.
+- The free-text ask-user input auto-focuses once per prompt rather than on
+  every render, so background updates no longer steal focus.
+- Removing a queued prompt no longer races its blur-save; the diff collapse
+  toggle uses a dataset flag instead of a max-height string compare.
+- Approve / Deny / Send / Cancel labels are localized via `t()`.
+
+### Changed — structure & dead code
+
+- Consolidated 10 copies of `isRecord`, the ~34-site "open a workspace folder"
+  guard (→ `ensureWorkspaceFolder`), and the prune/replay positive-integer
+  parser into shared helpers (behavior unchanged).
+- Decluttered the panel header: only high-frequency actions stay inline; the
+  rest moved into the `…` overflow menu, grouped by area.
+- Removed the write-only `assistantTextByKey` map and the unreachable
+  `loginOpenAi` webview-message path.
+
 ### Fixed — reliability (audit follow-ups)
 
 - CLI subprocesses (ship/merge/`gh`/export) now run with a 120s timeout so a

@@ -115,14 +115,16 @@ impl VerifyPipeline {
                 });
             }
             Err(err) => {
-                // Surface grader infrastructure failures as a non-passing
-                // Grader stage so the operator can see *why* grading didn't
-                // happen — but do not propagate the error, since the
-                // deterministic verdict above is still valid.
+                // Grader infrastructure failure (rate-limit/network/unparseable
+                // JSON) is NOT a verdict on the change. Record the stage as
+                // `passed: true` with a warning summary so the operator can see
+                // *why* grading didn't happen, without a transient infra error
+                // flipping `passed()` and failing an otherwise-good change.
+                // `passed: false` is reserved for a real `Ok(verdict)` fail.
                 report.stages.push(VerifyStageResult {
                     stage: VerifyStage::Grader,
-                    passed: false,
-                    summary: format!("grader unavailable: {err}"),
+                    passed: true,
+                    summary: format!("grader unavailable (skipped): {err}"),
                 });
             }
         }
@@ -309,13 +311,30 @@ impl VerifyPipeline {
         Ok(String::from_utf8_lossy(&output.stdout)
             .lines()
             .filter_map(parse_git_status_path)
-            .map(str::to_string)
             .collect())
     }
 }
 
-fn parse_git_status_path(line: &str) -> Option<&str> {
-    line.get(3..).map(str::trim).filter(|path| !path.is_empty())
+fn parse_git_status_path(line: &str) -> Option<String> {
+    let rest = line.get(3..)?.trim();
+    if rest.is_empty() {
+        return None;
+    }
+    // Renames/copies (`R`/`C`) format the entry as `old -> new`; the path that
+    // actually changed is the destination after the last `" -> "`. Git also
+    // wraps unusual paths in double-quotes, which we strip.
+    let path = match rest.rsplit_once(" -> ") {
+        Some((_, new)) => new.trim(),
+        None => rest,
+    };
+    let path = path
+        .strip_prefix('"')
+        .and_then(|p| p.strip_suffix('"'))
+        .unwrap_or(path);
+    if path.is_empty() {
+        return None;
+    }
+    Some(path.to_string())
 }
 
 fn boundary_blocks_path(boundary: &str, path: &str) -> bool {
@@ -551,11 +570,94 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    #[tokio::test]
+    async fn run_all_with_grader_err_does_not_flip_report_when_deterministic_passes() {
+        use async_trait::async_trait;
+        use peridot_common::{PeriError, PeriResult};
+        use peridot_llm::{
+            AuthMethod, CompletionRequest, CompletionResponse, LlmProvider, PricingTable,
+        };
+
+        // A grader whose infrastructure is down: `complete` returns Err, which
+        // `grade_work` propagates. This must NOT flip the overall report to
+        // failed when the deterministic stages all passed.
+        struct UnavailableGrader;
+        #[async_trait]
+        impl LlmProvider for UnavailableGrader {
+            async fn complete(&self, _req: CompletionRequest) -> PeriResult<CompletionResponse> {
+                Err(PeriError::Provider("rate limited".to_string()))
+            }
+            fn supports_cache(&self) -> bool {
+                false
+            }
+            fn supports_prefill(&self) -> bool {
+                false
+            }
+            fn supports_thinking(&self) -> bool {
+                false
+            }
+            fn pricing(&self) -> PricingTable {
+                PricingTable::default()
+            }
+            fn auth_method(&self) -> AuthMethod {
+                AuthMethod::NotConfigured
+            }
+        }
+
+        let root =
+            std::env::temp_dir().join(format!("peridot-verify-grader-err-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let provider = UnavailableGrader;
+        let report = VerifyPipeline::new(ProjectProfile::minimal(&root))
+            .run_all_with_grader(&provider, "test-model", "make a button")
+            .await
+            .unwrap();
+
+        assert!(
+            report.passed(),
+            "a transient grader infra error must not fail an otherwise-good report"
+        );
+        let grader_stage = report
+            .stages
+            .iter()
+            .find(|s| s.stage == VerifyStage::Grader)
+            .expect("grader stage must be recorded as a warning");
+        assert!(grader_stage.passed);
+        assert!(grader_stage.summary.contains("grader unavailable"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn boundary_matching_respects_path_segments() {
         assert!(boundary_blocks_path("generated/", "generated/out.txt"));
         assert!(boundary_blocks_path("generated", "generated"));
         assert!(!boundary_blocks_path("generated", "generated-old/out.txt"));
+    }
+
+    #[test]
+    fn parse_git_status_path_handles_normal_line() {
+        assert_eq!(
+            parse_git_status_path(" M src/lib.rs").as_deref(),
+            Some("src/lib.rs")
+        );
+        assert_eq!(
+            parse_git_status_path("?? new.txt").as_deref(),
+            Some("new.txt")
+        );
+    }
+
+    #[test]
+    fn parse_git_status_path_takes_rename_destination() {
+        // A file renamed INTO a protected dir must be detected as the new path.
+        assert_eq!(
+            parse_git_status_path("R  old.rs -> generated/new.rs").as_deref(),
+            Some("generated/new.rs")
+        );
+        // Quoted unusual paths have their surrounding quotes stripped.
+        assert_eq!(
+            parse_git_status_path("R  \"old name.rs\" -> \"generated/new name.rs\"").as_deref(),
+            Some("generated/new name.rs")
+        );
     }
 
     fn run_git<const N: usize>(root: &std::path::Path, args: [&str; N]) -> PeriResult<String> {

@@ -920,10 +920,10 @@ pub(crate) fn import_session_artifacts(
             .last_task
             .clone()
             .unwrap_or_else(|| format!("imported session {derived_id}"));
-        let _ = store.save_session(&SessionSummary {
+        store.save_session(&SessionSummary {
             id: derived_id.clone(),
             summary: summary_text,
-        });
+        })?;
     }
     Ok(SessionImportResult {
         id: derived_id,
@@ -1761,9 +1761,14 @@ pub(crate) fn prune_session_records(
             continue;
         }
         let sessions_root = project_root.join(".peridot").join("sessions");
-        let _ = peridot_memory::remove_session_dir(&sessions_root, &record.id);
+        // Only count a session as pruned when its on-disk blobs are actually
+        // gone (Ok(false) means the dir was already absent) AND the record row
+        // is deleted. A failed dir removal leaves transcript/attachments behind,
+        // so it must not be reported as removed. The legacy summary delete stays
+        // best-effort.
+        let dir_cleared = peridot_memory::remove_session_dir(&sessions_root, &record.id).is_ok();
         let _ = store.delete_session(&record.id);
-        if store.delete_session_record(&record.id).is_ok() {
+        if dir_cleared && store.delete_session_record(&record.id).is_ok() {
             removed.push(record.id);
         }
     }

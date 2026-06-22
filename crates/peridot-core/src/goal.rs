@@ -151,6 +151,33 @@ impl GoalController {
             self.status,
             GoalStatus::Paused | GoalStatus::Done | GoalStatus::Cleared
         ) || self.turns_used >= self.max_turns
-            || self.cost_usd >= self.budget_usd
+            || (self.budget_usd > 0.0 && self.cost_usd >= self.budget_usd)
+    }
+}
+
+#[cfg(test)]
+mod goal_controller_tests {
+    use super::*;
+
+    #[test]
+    fn unbounded_budget_does_not_stop_immediately() {
+        // 0.0 is the "unbounded" budget sentinel; a freshly created
+        // controller with no cost must not be considered over budget.
+        let controller = GoalController::new("objective", 10, 0.0);
+        assert!(!controller.should_stop());
+    }
+
+    #[test]
+    fn positive_budget_stops_at_or_over_budget() {
+        let mut controller = GoalController::new("objective", 10, 1.0);
+        assert!(!controller.should_stop());
+        controller.record_turn(0.5);
+        assert!(!controller.should_stop());
+        controller.record_turn(0.5);
+        // cost_usd == budget_usd should stop.
+        assert!(controller.should_stop());
+        controller.record_turn(0.5);
+        // cost_usd > budget_usd should also stop.
+        assert!(controller.should_stop());
     }
 }

@@ -1,3 +1,5 @@
+import { isRecord } from './util';
+
 export function formatAgentEventForOutput(sessionId: string, event: unknown): string {
   if (!isRecord(event)) {
     return `[${sessionId}] event ${json(event)}`;
@@ -32,9 +34,6 @@ function stringField(record: Record<string, unknown>, key: string): string {
   return typeof value === 'string' ? value : json(value);
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}
 
 function json(value: unknown): string {
   try {

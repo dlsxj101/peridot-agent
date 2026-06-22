@@ -337,13 +337,43 @@ fn terminate_child_tree(child: &mut Child) {
     let _ = child.kill();
 }
 
+/// Per-pipe ceiling on captured bytes. A command that emits unbounded
+/// output (`yes`, `cat /dev/zero`) would otherwise OOM the agent via an
+/// unbounded `read_to_end`. Matches the web tools' `MAX_FETCH_BYTES`.
+const MAX_PIPE_CAPTURE_BYTES: usize = 5 * 1024 * 1024;
+
 fn read_pipe_in_background<R>(mut reader: R) -> thread::JoinHandle<io::Result<Vec<u8>>>
 where
     R: io::Read + Send + 'static,
 {
     thread::spawn(move || {
+        // Read up to the cap, then keep draining to EOF (discarding the
+        // overflow) so the child isn't blocked on a full pipe — we just
+        // stop appending. A truncation marker is added so the model knows
+        // the captured output is incomplete.
         let mut output = Vec::new();
-        reader.read_to_end(&mut output)?;
+        let mut buf = [0u8; 64 * 1024];
+        let mut truncated = false;
+        loop {
+            let n = reader.read(&mut buf)?;
+            if n == 0 {
+                break;
+            }
+            if output.len() < MAX_PIPE_CAPTURE_BYTES {
+                let take = n.min(MAX_PIPE_CAPTURE_BYTES - output.len());
+                output.extend_from_slice(&buf[..take]);
+                if take < n {
+                    truncated = true;
+                }
+            } else {
+                truncated = true;
+            }
+        }
+        if truncated {
+            output.extend_from_slice(
+                format!("\n\n[output truncated at {MAX_PIPE_CAPTURE_BYTES} bytes]").as_bytes(),
+            );
+        }
         Ok(output)
     })
 }
@@ -400,6 +430,13 @@ fn workspace_mutation_snapshot(before: Option<String>, after: Option<String>) ->
     }
 }
 
+/// Deterministic, best-effort denylist for the most obviously catastrophic
+/// shell invocations. This is **defense-in-depth, not a security boundary**:
+/// a determined caller can always evade pattern matching (variable expansion,
+/// base64 piping, alternate spellings). The goal is to stop accidental
+/// foot-guns and the easy reorderings of the previous substring checks, not to
+/// sandbox untrusted input — for that, run with `SandboxMode::Docker` or
+/// `SandboxMode::Firejail`.
 pub(crate) fn reject_hard_blocked_command(command: &str) -> PeriResult<()> {
     let normalized = command.split_whitespace().collect::<Vec<_>>().join(" ");
 
@@ -409,16 +446,137 @@ pub(crate) fn reject_hard_blocked_command(command: &str) -> PeriResult<()> {
         ));
     }
     if has_recursive_force_root_remove(&normalized)
-        || normalized.contains("mkfs.")
-        || normalized.contains("dd if=/dev/zero")
         || is_fork_bomb(&normalized)
-        || normalized.contains("chmod -R 777 /")
+        || has_hard_blocked_program_invocation(&normalized)
     {
         return Err(PeriError::PermissionDenied(format!(
             "hard-blocked shell command pattern: {command}"
         )));
     }
     Ok(())
+}
+
+/// Tokenizes `normalized` and detects catastrophic invocations by program
+/// basename plus the *presence* of dangerous argument patterns, regardless of
+/// their order. This catches the reorderings the old substring checks missed
+/// (`dd bs=1M if=/dev/zero`, `chmod 777 -R /`), while keeping the original
+/// cases (`dd if=/dev/zero`, `mkfs.ext4 …`, `chmod -R 777 /`) blocked.
+///
+/// Best-effort only — see [`reject_hard_blocked_command`].
+fn has_hard_blocked_program_invocation(normalized: &str) -> bool {
+    // Split into pipeline / separator segments so per-segment program
+    // detection works even when commands are chained (`x && dd …`).
+    for segment in split_command_segments(normalized) {
+        let tokens = segment.split_whitespace().collect::<Vec<_>>();
+        if tokens.is_empty() {
+            continue;
+        }
+        // Redirect to a block device anywhere in the segment, e.g.
+        // `echo x > /dev/sda` or `cat img >/dev/nvme0n1`.
+        if segment_redirects_to_block_device(&tokens) {
+            return true;
+        }
+        let program = clean_shell_token(tokens[0]);
+        let basename = program.rsplit('/').next().unwrap_or(program);
+        let args = tokens
+            .iter()
+            .skip(1)
+            .map(|t| clean_shell_token(t))
+            .collect::<Vec<_>>();
+        match basename {
+            // `dd` writing over a device, or zeroing/randomizing from a
+            // pseudo-device source — argument order doesn't matter.
+            "dd" => {
+                if args.iter().any(|a| {
+                    a.strip_prefix("of=")
+                        .is_some_and(|target| target.starts_with("/dev/"))
+                        || matches!(*a, "if=/dev/zero" | "if=/dev/random" | "if=/dev/urandom")
+                }) {
+                    return true;
+                }
+            }
+            // `mkfs` and `mkfs.<fstype>` always format a filesystem.
+            "mkfs" => return true,
+            _ if basename.starts_with("mkfs.") => return true,
+            // `chmod`/`chown` recursively against a root-ish target, flags in
+            // any position.
+            "chmod" | "chown" => {
+                let recursive = args
+                    .iter()
+                    .any(|a| *a == "-R" || *a == "--recursive" || is_short_flag_with(a, 'R'));
+                let root_target = args.iter().any(|a| is_root_target(a));
+                if recursive && root_target {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+/// Splits a normalized command line into segments at the common shell
+/// separators (`&&`, `||`, `;`, `|`) so per-program checks aren't confused by
+/// chained commands. Best-effort: ignores quoting subtleties.
+fn split_command_segments(normalized: &str) -> Vec<String> {
+    let spaced = normalized
+        .replace("&&", " ; ")
+        .replace("||", " ; ")
+        .replace(['|', ';'], " ; ");
+    spaced
+        .split(" ; ")
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+/// True for a clustered short-flag token (`-Rf`, `-fR`) containing `flag`.
+/// Long flags (`--…`) are intentionally excluded — they're matched exactly.
+fn is_short_flag_with(token: &str, flag: char) -> bool {
+    token.starts_with('-') && !token.starts_with("--") && token.chars().skip(1).any(|c| c == flag)
+}
+
+/// Detects a redirect (`>`/`>>`) whose target is a block device under `/dev/`,
+/// e.g. `> /dev/sda`. Handles both `> /dev/sda` and `>/dev/sda` spellings.
+fn segment_redirects_to_block_device(tokens: &[&str]) -> bool {
+    for (index, raw) in tokens.iter().enumerate() {
+        let token = clean_shell_token(raw);
+        // Attached form: `>/dev/sda` or `>>/dev/sda`.
+        if let Some(rest) = token.strip_prefix(">>").or_else(|| token.strip_prefix('>'))
+            && is_block_device_path(rest)
+        {
+            return true;
+        }
+        // Detached form: `>` / `>>` then the next token is the target.
+        if (token == ">" || token == ">>")
+            && let Some(next) = tokens.get(index + 1)
+            && is_block_device_path(clean_shell_token(next))
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// True for paths that look like raw block devices (`/dev/sda`, `/dev/nvme0n1`,
+/// `/dev/vda1`, …). Pseudo-devices (`/dev/null`, `/dev/stdout`, …) are excluded
+/// so benign redirects keep working.
+fn is_block_device_path(path: &str) -> bool {
+    let Some(name) = path.strip_prefix("/dev/") else {
+        return false;
+    };
+    if name.is_empty() {
+        return false;
+    }
+    const SAFE_PSEUDO: [&str; 8] = [
+        "null", "zero", "random", "urandom", "stdin", "stdout", "stderr", "tty",
+    ];
+    if SAFE_PSEUDO.contains(&name) {
+        return false;
+    }
+    // Common block-device name prefixes.
+    const BLOCK_PREFIXES: [&str; 6] = ["sd", "hd", "vd", "nvme", "mmcblk", "xvd"];
+    BLOCK_PREFIXES.iter().any(|p| name.starts_with(p))
 }
 
 /// Detects `curl|wget|fetch ... | <shell>` (and command/process substitution
@@ -527,7 +685,47 @@ fn is_allowed_readonly_segment(segment: &str) -> bool {
                 | "describe"
         );
     }
-    if basename == "sed" && tokens.iter().any(|token| clean_shell_token(token) == "-i") {
+    // `find` is allowlisted for traversal/printing only — its action
+    // primitives let it execute or delete arbitrary files, which is not
+    // read-only. Reject any command-execution / mutation actions.
+    if basename == "find" {
+        const FIND_EXEC_ACTIONS: [&str; 7] = [
+            "-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprintf", "-fprint",
+        ];
+        if tokens
+            .iter()
+            .any(|token| FIND_EXEC_ACTIONS.contains(&clean_shell_token(token)))
+        {
+            return false;
+        }
+    }
+    // `sed` can execute shell commands (`e`), write files (`w`/`W`), and
+    // read files (`r`), in addition to in-place editing (`-i`). None of
+    // those are read-only, so reject the dangerous script commands and the
+    // in-place flags. Plain substitution / print scripts still pass.
+    if basename == "sed" {
+        if tokens.iter().any(|token| {
+            let cleaned = clean_shell_token(token);
+            cleaned == "-i"
+                || cleaned == "--in-place"
+                || cleaned.starts_with("-i")
+                || cleaned.starts_with("--in-place=")
+        }) {
+            return false;
+        }
+        if tokens
+            .iter()
+            .any(|token| sed_script_has_dangerous_command(clean_shell_token(token)))
+        {
+            return false;
+        }
+    }
+    // `awk` (and gawk/mawk) can shell out via `system(...)`, read commands
+    // through a pipe, and write to files via output redirection inside the
+    // program text. There's no safe-subset parse here, so drop them from
+    // the allowlist entirely — the model can use `rg`/`grep`/`cut` instead,
+    // or fall back to `shell_exec` for genuine awk needs.
+    if matches!(basename, "awk" | "gawk" | "mawk" | "nawk") {
         return false;
     }
     matches!(
@@ -541,12 +739,44 @@ fn is_allowed_readonly_segment(segment: &str) -> bool {
             | "head"
             | "tail"
             | "sed"
-            | "awk"
             | "wc"
             | "sort"
             | "uniq"
             | "cut"
     )
+}
+
+/// Detects sed script tokens that step outside read-only behaviour: the
+/// `e` (execute), `w`/`W` (write file), and `r`/`R` (read file) commands.
+/// Conservative scan over the script text — flags the command letters when
+/// they appear as standalone sed commands (optionally after an address /
+/// separator). Plain `s/a/b/`, `p`, `d`, `-n`, etc. are unaffected.
+fn sed_script_has_dangerous_command(script: &str) -> bool {
+    // Skip option flags — those are handled separately.
+    if script.starts_with('-') {
+        return false;
+    }
+    let bytes = script.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        let c = bytes[i] as char;
+        if matches!(c, 'e' | 'w' | 'W' | 'r' | 'R') {
+            // Only treat it as a command when it begins a command slot:
+            // start of string or immediately after a command separator
+            // (`;`, newline, `{`). This avoids flagging the letter when it
+            // appears inside a substitution pattern/replacement.
+            let prev = if i == 0 {
+                None
+            } else {
+                Some(bytes[i - 1] as char)
+            };
+            if matches!(prev, None | Some(';') | Some('\n') | Some('{') | Some(' ')) {
+                return true;
+            }
+        }
+        i += 1;
+    }
+    false
 }
 
 fn has_recursive_force_root_remove(command: &str) -> bool {
@@ -700,22 +930,110 @@ fn is_install_command(command: &str) -> bool {
     .any(|pattern| padded.contains(pattern))
 }
 
+/// Advisory, best-effort classifier for commands that destroy or discard work.
+/// This only gates the *approval prompt* (a second layer on top of the hard
+/// denylist), so over-inclusion merely prompts the operator more often — it is
+/// deliberately conservative-leaning toward catching more, and tolerant of
+/// argument order and command separators. Not a security boundary.
 fn is_destructive_shell_command(command: &str) -> bool {
     let padded = format!(" {command} ");
-    command.starts_with("rm ")
+    // Keep the original `rm` / `find -delete` / force-push heuristics.
+    let legacy = command.starts_with("rm ")
         || padded.contains(" && rm ")
         || padded.contains(" ; rm ")
         || padded.contains(" | xargs rm ")
         || padded.contains(" find ") && padded.contains(" -delete ")
-        || padded.contains(" git clean ")
-        || padded.contains(" git reset --hard ")
         || padded.contains(" git push --force ")
-        || padded.contains(" git push -f ")
+        || padded.contains(" git push -f ");
+    if legacy {
+        return true;
+    }
+    // Per-segment, order-tolerant detection for the broadened set.
+    split_command_segments(command)
+        .iter()
+        .any(|segment| segment_is_destructive(segment))
+}
+
+/// Per-segment destructive-command detection (order/flag tolerant).
+fn segment_is_destructive(segment: &str) -> bool {
+    let tokens = segment.split_whitespace().collect::<Vec<_>>();
+    let Some(first) = tokens.first().map(|t| clean_shell_token(t)) else {
+        return false;
+    };
+    let basename = first.rsplit('/').next().unwrap_or(first);
+    let args = tokens
+        .iter()
+        .skip(1)
+        .map(|t| clean_shell_token(t))
+        .collect::<Vec<_>>();
+    match basename {
+        // Whole-file truncation / secure-erase.
+        "truncate" | "shred" => return true,
+        // `dd of=…` overwrites its target.
+        "dd" if args.iter().any(|a| a.starts_with("of=")) => return true,
+        // `mv <src> /dev/null` discards the source.
+        "mv" if args.contains(&"/dev/null") => return true,
+        "git" if git_subcommand_is_destructive(&args) => return true,
+        _ => {}
+    }
+    // Generic output redirects (`>`) are ordinary file-writing, not destructive
+    // commands, so they don't gate the approval prompt here — flagging every
+    // `echo x > file` would be noise. Block-device clobbers (`> /dev/sda`) are
+    // caught by the hard-block layer instead.
+    false
+}
+
+/// Destructive git subcommands that discard committed or working-tree state.
+fn git_subcommand_is_destructive(args: &[&str]) -> bool {
+    let Some(sub) = args.first() else {
+        return false;
+    };
+    let rest = &args[1..];
+    match *sub {
+        // `git clean` only deletes with one of -f/-d/-x present.
+        "clean" => rest.iter().any(|a| {
+            matches!(*a, "-f" | "-d" | "-x" | "-fd" | "-fdx" | "-xdf") || is_clean_flag(a)
+        }),
+        // `git reset --hard` throws away working-tree changes.
+        "reset" => rest.contains(&"--hard"),
+        // `git restore` discards working-tree (and possibly staged) changes.
+        "restore" => true,
+        // `git checkout --` / `git checkout .` discards file changes.
+        "checkout" => rest.iter().any(|a| *a == "--" || *a == "."),
+        _ => false,
+    }
+}
+
+/// True for a clustered `git clean` short-flag token containing one of f/d/x.
+fn is_clean_flag(token: &str) -> bool {
+    is_short_flag_with(token, 'f')
+        || is_short_flag_with(token, 'd')
+        || is_short_flag_with(token, 'x')
+}
+
+/// Emits a single process-lifetime warning the first time a shell command is
+/// about to run with `SandboxMode::None`. Commands run directly on the host
+/// with the agent's full privileges; the hard denylist and approval prompts
+/// are best-effort, not a containment boundary. This crate has no `tracing` /
+/// `log` dependency, so we gate a `eprintln!` behind `std::sync::Once` to keep
+/// it visible but non-spammy.
+fn warn_unsandboxed_execution_once() {
+    static WARNED: std::sync::Once = std::sync::Once::new();
+    WARNED.call_once(|| {
+        eprintln!(
+            "warning: shell commands are running UNSANDBOXED on the host \
+             (security.sandbox = none). The deterministic command checks are \
+             best-effort defense-in-depth, not a security boundary. For \
+             autonomous use, configure SandboxMode::Docker or \
+             SandboxMode::Firejail."
+        );
+    });
 }
 
 pub(crate) fn shell_command(command: &str, ctx: &ToolContext) -> PeriResult<Command> {
     match ctx.security.sandbox {
         SandboxMode::None => {
+            warn_unsandboxed_execution_once();
             let mut process = Command::new("sh");
             process
                 .arg("-c")
@@ -824,4 +1142,241 @@ pub(crate) fn describe_shell_command(command: &std::process::Command) -> String 
         .map(|p| p.display().to_string())
         .unwrap_or_else(|| "<inherited>".to_string());
     format!("[dry-run] cwd={cwd} cmd={program} args={args:?}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+
+    #[test]
+    fn readonly_allows_plain_inspection_commands() {
+        assert!(enforce_readonly_shell_policy("find . -name x").is_ok());
+        assert!(enforce_readonly_shell_policy("sed 's/a/b/' f").is_ok());
+        assert!(enforce_readonly_shell_policy("sed -n '1,5p' f").is_ok());
+        assert!(enforce_readonly_shell_policy("rg pattern src").is_ok());
+        assert!(enforce_readonly_shell_policy("cat README.md").is_ok());
+        assert!(enforce_readonly_shell_policy("git log").is_ok());
+    }
+
+    #[test]
+    fn readonly_rejects_find_exec_family() {
+        // `+`-terminated forms avoid the `;` separator so the find-specific
+        // action allowlist (not the generic write-syntax check) is what
+        // rejects them.
+        for cmd in [
+            "find . -exec rm {} +",
+            "find . -execdir cat {} +",
+            "find . -delete",
+            "find . -fprintf /tmp/x %p",
+            "find . -fprint /tmp/x",
+        ] {
+            assert!(
+                enforce_readonly_shell_policy(cmd).is_err(),
+                "expected rejection: {cmd}"
+            );
+        }
+    }
+
+    #[test]
+    fn is_allowed_readonly_segment_rejects_find_actions_directly() {
+        // Exercises the find branch in isolation, independent of the
+        // generic shell-write-syntax pre-check.
+        assert!(!is_allowed_readonly_segment("find . -exec rm {} +"));
+        assert!(!is_allowed_readonly_segment("find . -ok rm {} +"));
+        assert!(!is_allowed_readonly_segment("find . -delete"));
+        assert!(is_allowed_readonly_segment("find . -name x"));
+    }
+
+    #[test]
+    fn readonly_rejects_sed_exec_write_read_and_inplace() {
+        for cmd in [
+            "sed -i s/a/b/ f",
+            "sed --in-place s/a/b/ f",
+            "sed 'e cat /etc/passwd' f",
+            "sed 'w /tmp/out' f",
+            "sed 'r /etc/passwd' f",
+        ] {
+            assert!(
+                enforce_readonly_shell_policy(cmd).is_err(),
+                "expected rejection: {cmd}"
+            );
+        }
+    }
+
+    #[test]
+    fn readonly_rejects_awk_family() {
+        // awk/gawk/mawk are removed from the allowlist entirely.
+        assert!(!is_allowed_readonly_segment("awk 'BEGIN{system(\"id\")}'"));
+        assert!(!is_allowed_readonly_segment("gawk '{print}'"));
+        assert!(!is_allowed_readonly_segment("mawk '{print}'"));
+        assert!(!is_allowed_readonly_segment("nawk '{print}'"));
+        // Even a benign-looking awk invocation is now rejected end-to-end.
+        assert!(enforce_readonly_shell_policy("awk '{print $1}' f").is_err());
+    }
+
+    #[test]
+    fn pipe_reader_caps_and_marks_truncation() {
+        let big = vec![b'a'; MAX_PIPE_CAPTURE_BYTES + 1024];
+        let handle = read_pipe_in_background(Cursor::new(big));
+        let out = handle.join().unwrap().unwrap();
+        // Captured bytes are capped (plus the appended truncation marker),
+        // never the full oversized input.
+        assert!(out.len() < MAX_PIPE_CAPTURE_BYTES + 1024);
+        let tail = String::from_utf8_lossy(&out);
+        assert!(tail.contains("[output truncated"));
+    }
+
+    #[test]
+    fn pipe_reader_passthrough_when_small() {
+        let handle = read_pipe_in_background(Cursor::new(b"hello".to_vec()));
+        let out = handle.join().unwrap().unwrap();
+        assert_eq!(out, b"hello");
+    }
+
+    // ----- hard-blocked command, argument-aware detection -----
+
+    #[test]
+    fn hard_block_keeps_original_cases() {
+        for cmd in [
+            "dd if=/dev/zero of=/dev/sda",
+            "mkfs.ext4 /dev/sda1",
+            "chmod -R 777 /",
+            ":(){ :|:& };:",
+            "rm -rf /",
+        ] {
+            assert!(
+                reject_hard_blocked_command(cmd).is_err(),
+                "expected hard block: {cmd}"
+            );
+        }
+    }
+
+    #[test]
+    fn hard_block_catches_reordered_bypasses() {
+        // The substring-only checks were evaded by these reorderings.
+        for cmd in [
+            "dd bs=1M if=/dev/zero of=/tmp/x", // if=/dev/zero not at the front
+            "dd bs=4M of=/dev/sda if=img.bin", // of=/dev/sda after other args
+            "chmod 777 -R /",                  // recursive flag after the mode
+            "chmod -fR 777 /*",                // clustered flags + glob root
+            "chown -R root /",                 // chown recursive against root
+            "mkfs -t ext4 /dev/sdb",           // bare mkfs (no dot suffix)
+            "mkfs.xfs /dev/sdb1",              // mkfs.<fstype>
+            "echo boom > /dev/sda",            // detached redirect to block dev
+            "cat img >/dev/nvme0n1",           // attached redirect to block dev
+        ] {
+            assert!(
+                reject_hard_blocked_command(cmd).is_err(),
+                "expected hard block for reordered bypass: {cmd}"
+            );
+        }
+    }
+
+    #[test]
+    fn hard_block_allows_benign_commands() {
+        for cmd in [
+            "dd if=input.bin of=output.bin", // file-to-file copy
+            "echo hi > /dev/null",           // pseudo-device, not a block dev
+            "echo log >> notes.txt",         // append to a file
+            "chmod 644 file.txt",            // non-recursive, non-root
+            "chmod -R 755 ./src",            // recursive but scoped target
+            "chown user:user file.txt",
+            "mkfsck.sh", // not actually mkfs
+            "ls -la /",
+            "cat /dev/stdin > out.txt",
+        ] {
+            assert!(
+                reject_hard_blocked_command(cmd).is_ok(),
+                "expected benign command to pass: {cmd}"
+            );
+        }
+    }
+
+    #[test]
+    fn hard_block_detects_in_chained_segment() {
+        assert!(reject_hard_blocked_command("cd /tmp && dd if=/dev/zero of=/dev/sda").is_err());
+        assert!(reject_hard_blocked_command("true ; chmod 777 -R /").is_err());
+    }
+
+    // ----- destructive command classifier (approval gate) -----
+
+    #[test]
+    fn destructive_keeps_legacy_cases() {
+        for cmd in [
+            "rm file",
+            "foo && rm bar",
+            "find . -delete",
+            "git push --force origin main",
+            "git push -f",
+        ] {
+            assert!(
+                is_destructive_shell_command(&normalize_shell_command(cmd)),
+                "expected destructive: {cmd}"
+            );
+        }
+    }
+
+    #[test]
+    fn destructive_catches_broadened_set() {
+        for cmd in [
+            "truncate -s 0 important.log",
+            "shred -u secret.key",
+            "dd if=in.bin of=out.bin", // dd of= (overwrite)
+            "mv data.db /dev/null",
+            "git clean -fdx",
+            "git clean -f -d",
+            "git checkout -- src/main.rs",
+            "git checkout .",
+            "git restore src/lib.rs",
+            "git reset --hard HEAD~1",
+        ] {
+            assert!(
+                is_destructive_shell_command(&normalize_shell_command(cmd)),
+                "expected destructive: {cmd}"
+            );
+        }
+    }
+
+    #[test]
+    fn destructive_classifier_tolerates_order_and_separators() {
+        assert!(is_destructive_shell_command(&normalize_shell_command(
+            "echo go ; git reset --hard"
+        )));
+        assert!(is_destructive_shell_command(&normalize_shell_command(
+            "make build || git clean -fd"
+        )));
+    }
+
+    #[test]
+    fn destructive_allows_benign_commands() {
+        for cmd in [
+            "git status",
+            "git log --oneline",
+            "git checkout -b feature", // creating a branch, not discarding
+            "git clean -n",            // dry-run, no -f/-d/-x
+            "git push origin main",
+            "echo hi >> append.log",  // append, not clobber
+            "echo hi > /dev/null",    // pseudo-device
+            "echo data > output.txt", // plain file write is not destructive
+            "cat file.txt",
+            "mv a.txt b.txt", // ordinary rename
+            "cargo build",
+        ] {
+            assert!(
+                !is_destructive_shell_command(&normalize_shell_command(cmd)),
+                "expected benign (no approval gate): {cmd}"
+            );
+        }
+    }
+
+    #[test]
+    fn block_device_path_discriminates_pseudo_devices() {
+        assert!(is_block_device_path("/dev/sda"));
+        assert!(is_block_device_path("/dev/nvme0n1"));
+        assert!(is_block_device_path("/dev/vda1"));
+        assert!(!is_block_device_path("/dev/null"));
+        assert!(!is_block_device_path("/dev/stdout"));
+        assert!(!is_block_device_path("/tmp/file"));
+    }
 }

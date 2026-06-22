@@ -10,18 +10,14 @@ import * as vscode from 'vscode';
 
 import { runSlashCommand } from '../extension';
 import type { PeridotSidebarProvider } from '../sidebar';
+import { ensureWorkspaceFolder } from './cli';
 
 export async function showWorkspaceTodos(
   output: vscode.OutputChannel,
   sidebar: PeridotSidebarProvider,
 ): Promise<void> {
-  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  if (!folder) {
-    const message = 'Open a workspace folder before scanning TODO markers.';
-    sidebar.setWorkspaceProblem(message);
-    await vscode.window.showWarningMessage(message);
-    return;
-  }
+  const folder = await ensureWorkspaceFolder(sidebar, 'Open a workspace folder before scanning TODO markers.');
+  if (!folder) return;
   await vscode.commands.executeCommand('peridot.chatView.focus');
   try {
     const result = await vscode.window.withProgress(
@@ -72,13 +68,8 @@ export async function showWorkingTreeDiff(
   output: vscode.OutputChannel,
   sidebar: PeridotSidebarProvider,
 ): Promise<void> {
-  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  if (!folder) {
-    const message = 'Open a workspace folder before showing the working tree diff.';
-    sidebar.setWorkspaceProblem(message);
-    await vscode.window.showWarningMessage(message);
-    return;
-  }
+  const folder = await ensureWorkspaceFolder(sidebar, 'Open a workspace folder before showing the working tree diff.');
+  if (!folder) return;
   await vscode.commands.executeCommand('peridot.chatView.focus');
   try {
     const result = await runSlashCommand('/diff', output, sidebar, sidebar.currentRunOptions());

@@ -68,6 +68,12 @@ struct DaemonState {
     run_config: Arc<PeridotConfig>,
     run_template: Arc<AgentTaskOptions>,
     session_list_subscribed: Arc<AtomicBool>,
+    /// Raised by `writer_task` when stdout errors (a half-open pipe). Once
+    /// set, the stdout consumer is gone, so any further `state.out.send`
+    /// would silently queue into the unbounded channel forever — the main
+    /// loop checks this flag and tears the daemon down instead of letting
+    /// producers grow memory without bound.
+    shutdown: Arc<AtomicBool>,
     /// Filesystem watcher that invalidates the symbol-cache on file changes
     /// (feature F1). Kept alive for the daemon's lifetime via the shared Arc;
     /// `None` when a watcher couldn't be started (the cache still works,
@@ -95,6 +101,7 @@ impl DaemonState {
             run_config: Arc::new(run_config),
             run_template: Arc::new(run_template),
             session_list_subscribed: Arc::new(AtomicBool::new(false)),
+            shutdown: Arc::new(AtomicBool::new(false)),
             _symbol_cache_watcher: symbol_cache_watcher,
         }
     }
@@ -161,11 +168,13 @@ impl LiveSessionUsage {
             } => match role.as_str() {
                 "planner" => {
                     self.committee_planner_cost_usd += *cost_usd;
-                    self.committee_planner_tokens += *tokens;
+                    self.committee_planner_tokens =
+                        self.committee_planner_tokens.saturating_add(*tokens);
                 }
                 "reviewer" => {
                     self.committee_reviewer_cost_usd += *cost_usd;
-                    self.committee_reviewer_tokens += *tokens;
+                    self.committee_reviewer_tokens =
+                        self.committee_reviewer_tokens.saturating_add(*tokens);
                 }
                 _ => {}
             },
@@ -272,13 +281,16 @@ pub(crate) async fn run_daemon_command(
     template: AgentTaskOptions,
 ) -> Result<()> {
     let (out_tx, out_rx) = mpsc::unbounded_channel::<String>();
-    let writer = tokio::spawn(writer_task(out_rx));
     let state = DaemonState::new(
         project_root.to_path_buf(),
         config.clone(),
         template,
         out_tx.clone(),
     );
+    // Spawn the writer with a clone of the daemon's shutdown flag. When stdout
+    // errors (a half-open pipe) the writer raises it so the main loop stops
+    // feeding the now-orphaned unbounded channel and tears the daemon down.
+    let writer = tokio::spawn(writer_task(out_rx, state.shutdown.clone()));
     // Emit the handshake notification before reading any client traffic so an
     // editor can detect version skew on the very first daemon line, before it
     // sends `session.start` or any other request.
@@ -311,6 +323,12 @@ pub(crate) async fn run_daemon_command(
         if dispatch_line(&state, &line).await? {
             break;
         }
+        // The writer task signals here when stdout closed (a half-open
+        // pipe). Without this check, producers would keep enqueueing onto
+        // the unbounded channel with no consumer, growing memory unbounded.
+        if state.shutdown.load(Ordering::Relaxed) {
+            break;
+        }
     }
 
     shutdown_sessions(&state).await;
@@ -321,7 +339,7 @@ pub(crate) async fn run_daemon_command(
     Ok(())
 }
 
-async fn writer_task(mut rx: mpsc::UnboundedReceiver<String>) {
+async fn writer_task(mut rx: mpsc::UnboundedReceiver<String>, shutdown: Arc<AtomicBool>) {
     let mut stdout = tokio::io::stdout();
     while let Some(line) = rx.recv().await {
         if stdout.write_all(line.as_bytes()).await.is_err() {
@@ -334,6 +352,11 @@ async fn writer_task(mut rx: mpsc::UnboundedReceiver<String>) {
             break;
         }
     }
+    // Reaching here means stdout errored or the channel closed. Either way the
+    // consumer is gone — signal the main loop so producers stop enqueueing onto
+    // the now-orphaned unbounded channel (a half-open pipe would otherwise grow
+    // memory without bound).
+    shutdown.store(true, Ordering::Relaxed);
 }
 
 async fn shutdown_sessions(state: &DaemonState) {
@@ -350,7 +373,7 @@ async fn shutdown_sessions(state: &DaemonState) {
     *state
         .router
         .lock()
-        .expect("daemon session router mutex poisoned") = SessionRouter::new();
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = SessionRouter::new();
 }
 
 async fn dispatch_line(state: &DaemonState, line: &str) -> Result<bool> {
@@ -887,6 +910,32 @@ async fn handle_session_start(state: &DaemonState, id: Value, params: Option<Val
         )?;
         return Ok(());
     }
+    // A `requested_session_id` that is not running but already has a persisted
+    // SessionRecord or context snapshot on disk is reused state, not a fresh
+    // id. Accepting it here would let `run_session_task` overwrite that
+    // session's `context.bin` (via `context_snapshot_path`) and clobber its
+    // SessionRecord (via `save_daemon_session_record`) — silent data loss.
+    // Require an explicit resume (`resume: true`) so the caller acknowledges
+    // it is continuing an existing session rather than colliding by accident.
+    let resume_requested = params
+        .get("resume")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if let Some(requested) = requested_session_id.as_ref()
+        && !resume_requested
+        && persisted_session_exists(state, requested)
+    {
+        emit_error(
+            state,
+            id,
+            -32602,
+            format!(
+                "session_id is in use by a persisted session: {requested}. \
+                 Pass `resume: true` to continue it, or use a different session_id."
+            ),
+        )?;
+        return Ok(());
+    }
 
     let session_id = match requested_session_id {
         Some(session_id) => session_id,
@@ -912,7 +961,17 @@ async fn handle_session_start(state: &DaemonState, id: Value, params: Option<Val
     let usage_for_task = usage.clone();
     let plan = Arc::new(StdMutex::new(LiveSessionPlan::default()));
     let plan_for_task = plan.clone();
-    let goal = Arc::new(StdMutex::new(initial_live_goal(&spec)));
+    // Seed the live goal from the spec, then overlay any persisted
+    // `goal_status` so a `/goal pause|resume|clear` survives a daemon
+    // restart / session resume. The persisted text is authoritative for
+    // the *status*; the objective/started-at still come from the spec.
+    let mut initial_goal = initial_live_goal(&spec);
+    if let Some(persisted) = persisted_goal_status(state, &session_id)
+        && initial_goal.objective.is_some()
+    {
+        initial_goal.status = Some(persisted);
+    }
+    let goal = Arc::new(StdMutex::new(initial_goal));
     let (start_tx, start_rx) = oneshot::channel::<()>();
 
     let handle = tokio::spawn(async move {
@@ -946,7 +1005,7 @@ async fn handle_session_start(state: &DaemonState, id: Value, params: Option<Val
     state
         .router
         .lock()
-        .expect("daemon session router mutex poisoned")
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
         .register(SessionHandle::new(
             session_id.clone(),
             state.project_root.as_ref().clone(),
@@ -1029,6 +1088,39 @@ fn reload_run_config_from_disk(state: &DaemonState) -> Option<PeridotConfig> {
     toml::from_str(&raw).ok()
 }
 
+/// Returns true when `session_id` already has persisted state on disk — a
+/// SessionRecord in `memory.db` or a written `context.bin` snapshot. Used by
+/// `handle_session_start` to reject a `requested_session_id` that collides
+/// with a non-running but persisted session unless the caller explicitly
+/// resumes it, so a fresh run can't silently overwrite that state.
+fn persisted_session_exists(state: &DaemonState, session_id: &str) -> bool {
+    let store = MemoryStore::new(state.project_root.join(".peridot/memory.db"));
+    if store
+        .get_session_record(session_id)
+        .ok()
+        .flatten()
+        .is_some()
+    {
+        return true;
+    }
+    context_snapshot_path(state, session_id).exists()
+}
+
+/// Read the persisted `SessionRecord::goal_status` for `session_id` and parse
+/// it into a [`GoalStatus`]. Returns `None` when there is no record, no
+/// recorded status, or the text is unrecognised. Used on session start/resume
+/// so the live goal reflects a previously persisted `/goal pause|resume|clear`.
+fn persisted_goal_status(state: &DaemonState, session_id: &str) -> Option<GoalStatus> {
+    let store = MemoryStore::new(state.project_root.join(".peridot/memory.db"));
+    store
+        .get_session_record(session_id)
+        .ok()
+        .flatten()
+        .and_then(|record| record.goal_status)
+        .as_deref()
+        .and_then(goal_status_from_label)
+}
+
 async fn save_daemon_session_record(
     state: &DaemonState,
     session_id: &str,
@@ -1085,7 +1177,7 @@ async fn live_session_usage_snapshot(
         entry
             .usage
             .lock()
-            .expect("daemon mutex (usage) poisoned")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
     })
 }
@@ -1109,6 +1201,45 @@ async fn update_daemon_session_lifecycle(
 ) {
     let store = MemoryStore::new(state.project_root.join(".peridot/memory.db"));
     let _ = store.update_session_lifecycle(session_id, status, crate::run_state::unix_timestamp());
+}
+
+/// Map a [`GoalStatus`] to the textual label persisted in
+/// `SessionRecord::goal_status` and reported by the goal-control commands.
+/// Inverse of [`goal_status_from_label`].
+fn goal_status_text(status: &GoalStatus) -> &'static str {
+    match status {
+        GoalStatus::Running => "running",
+        GoalStatus::Paused => "paused",
+        GoalStatus::Done => "done",
+        GoalStatus::Cleared => "cleared",
+    }
+}
+
+/// Parse the persisted `SessionRecord::goal_status` text back into a
+/// [`GoalStatus`]. Unknown text yields `None` so a future/foreign value is
+/// treated as "no recorded status" rather than crashing.
+fn goal_status_from_label(label: &str) -> Option<GoalStatus> {
+    match label {
+        "running" => Some(GoalStatus::Running),
+        "paused" => Some(GoalStatus::Paused),
+        "done" => Some(GoalStatus::Done),
+        "cleared" => Some(GoalStatus::Cleared),
+        _ => None,
+    }
+}
+
+/// Read-modify-write the session's [`SessionRecord`] to record `goal_status`,
+/// leaving every other field intact. Used by `/goal pause|resume|clear` to make
+/// the goal control durable across daemon restarts. Best-effort: a missing
+/// record or a store error is silently ignored, matching the other
+/// persistence helpers here (the in-memory state still reflects the change).
+async fn persist_goal_status(state: &DaemonState, session_id: &str, status: &GoalStatus) {
+    let store = MemoryStore::new(state.project_root.join(".peridot/memory.db"));
+    if let Ok(Some(mut record)) = store.get_session_record(session_id) {
+        record.goal_status = Some(goal_status_text(status).to_string());
+        record.updated_at_unix = crate::run_state::unix_timestamp();
+        let _ = store.save_session_record(&record);
+    }
 }
 
 async fn emit_session_list_changed(state: &DaemonState) {
@@ -1352,7 +1483,7 @@ async fn run_session_task(
             {
                 *approval_snapshot_for_events
                     .lock()
-                    .expect("daemon mutex (approval_snapshot_for_events) poisoned") =
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) =
                     Some(ApprovalRequestSnapshot {
                         tool_name: tool_name.clone(),
                         reason: reason.clone(),
@@ -1362,12 +1493,12 @@ async fn run_session_task(
             }
             usage_for_events
                 .lock()
-                .expect("daemon mutex (usage_for_events) poisoned")
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .record_event(&event);
             if let AgentRunEvent::PlanUpdated { steps, current } = &event {
                 *plan_for_events
                     .lock()
-                    .expect("daemon mutex (plan_for_events) poisoned") = LiveSessionPlan {
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = LiveSessionPlan {
                     steps: steps.clone(),
                     current: *current,
                 };
@@ -1383,7 +1514,7 @@ async fn run_session_task(
             if summary.stopped_reason == StopReason::ApprovalRequired {
                 let approval = approval_snapshot
                     .lock()
-                    .expect("daemon mutex (approval_snapshot) poisoned")
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .clone();
                 approval::mark_session_waiting_approval(&state, &session_id, approval.clone())
                     .await;
@@ -1413,7 +1544,7 @@ async fn run_session_task(
         Err(err) => {
             let approval = approval_snapshot
                 .lock()
-                .expect("daemon mutex (approval_snapshot) poisoned")
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .clone();
             if approval.is_some() && approval::is_approval_required_error(&err) {
                 approval::mark_session_waiting_approval(&state, &session_id, approval.clone())
@@ -1444,7 +1575,7 @@ async fn run_session_task(
     state
         .router
         .lock()
-        .expect("daemon session router mutex poisoned")
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
         .close(&session_id);
     approval::clear_pending_ask_user_for_session(&state, &session_id);
     emit_session_list_changed(&state).await;
@@ -1486,7 +1617,7 @@ impl AskUserPort for DaemonAskUserPort {
                 .state
                 .ask_user_pending
                 .lock()
-                .expect("daemon mutex (ask_user_pending) poisoned");
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             pending.insert(request_id.clone(), tx);
         }
         emit_event(
@@ -1499,6 +1630,36 @@ impl AskUserPort for DaemonAskUserPort {
             }),
         );
         rx.await.unwrap_or(AskUserAnswer::Cancelled)
+    }
+}
+
+/// Gracefully stop a live session and mark it `Suspended`.
+///
+/// This is the single suspend path shared by `session.cancel` and
+/// `/goal pause`: it removes the in-memory [`SessionEntry`], cancels its
+/// [`CancelToken`] (so the agent loop halts at the next checkpoint), aborts the
+/// task handle, closes the router entry, clears any pending ask-user request,
+/// and persists `SessionLifecycle::Suspended`. Returns `true` when a live
+/// session was actually suspended, `false` when none was running.
+///
+/// Callers must NOT hold `state.sessions` when invoking this — it locks
+/// `state.sessions` itself.
+async fn suspend_live_session(state: &DaemonState, session_id: &str) -> bool {
+    if let Some(entry) = state.sessions.lock().await.remove(session_id) {
+        entry.cancel.cancel();
+        if let Some(task) = entry.task {
+            task.abort();
+        }
+        state
+            .router
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .close(session_id);
+        approval::clear_pending_ask_user_for_session(state, session_id);
+        update_daemon_session_lifecycle(state, session_id, SessionLifecycle::Suspended).await;
+        true
+    } else {
+        false
     }
 }
 
@@ -1535,22 +1696,7 @@ async fn handle_session_cancel(
         return Ok(());
     }
 
-    let cancelled = if let Some(entry) = state.sessions.lock().await.remove(session_id) {
-        entry.cancel.cancel();
-        if let Some(task) = entry.task {
-            task.abort();
-        }
-        state
-            .router
-            .lock()
-            .expect("daemon session router mutex poisoned")
-            .close(session_id);
-        approval::clear_pending_ask_user_for_session(state, session_id);
-        update_daemon_session_lifecycle(state, session_id, SessionLifecycle::Suspended).await;
-        true
-    } else {
-        false
-    };
+    let cancelled = suspend_live_session(state, session_id).await;
     emit_response(
         state,
         id,

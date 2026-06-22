@@ -57,6 +57,15 @@ where
             if chunk.done {
                 saw_done = true;
             }
+            // Last-chunk-wins is deliberate and assumes providers report
+            // *cumulative* usage: each chunk's `usage`, when present, restates
+            // the running total for the whole response (typically only the
+            // terminal/done chunk carries it). Overwriting therefore lands on
+            // the final cumulative figure. Do NOT switch this to accumulation —
+            // for a cumulative provider that would double-count earlier totals.
+            // A provider that sends genuinely incremental per-chunk deltas would
+            // be undercounted here; none in use today does, so this stays
+            // last-chunk-wins until one requires otherwise.
             if let Some(chunk_usage) = chunk.usage {
                 usage = chunk_usage;
             }

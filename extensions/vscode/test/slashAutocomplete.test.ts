@@ -545,6 +545,35 @@ test('slashArgumentContext filters model-name arguments', () => {
   );
 });
 
+test('slashArgumentContext closes the picker for a fully-typed option that also prefixes another', () => {
+  // `gpt-5.4` is both an exact option and a prefix of `gpt-5.4-mini`/`-fast`.
+  // The exact match must still drop the argument context so the picker closes
+  // and Enter submits in one keystroke — rather than re-accepting a suggestion
+  // (which, if the highlighted row isn't the exact text, would run a different
+  // model than the user typed).
+  const overlappingModels = ['gpt-5.4', 'gpt-5.4-mini', 'gpt-5.4-fast'];
+  assert.equal(
+    slashArgumentContext('/model gpt-5.4', commands, [], [], overlappingModels),
+    undefined,
+  );
+  // A partial value that is not itself an option keeps the picker open.
+  assert.deepEqual(
+    slashArgumentContext('/model gpt-5.4-', commands, [], [], overlappingModels)?.options,
+    ['gpt-5.4-fast', 'gpt-5.4-mini'],
+  );
+
+  // Same protection for branch snapshots.
+  const overlappingBranches = ['release', 'release-1', 'release-2'];
+  assert.equal(
+    slashArgumentContext('/branch restore release', commands, [], [], [], overlappingBranches),
+    undefined,
+  );
+  assert.deepEqual(
+    slashArgumentContext('/branch restore release-', commands, [], [], [], overlappingBranches)?.options,
+    ['release-1', 'release-2'],
+  );
+});
+
 test('slashArgumentContext filters branch snapshot arguments', () => {
   const context = slashArgumentContext(
     '/branch restore rel',

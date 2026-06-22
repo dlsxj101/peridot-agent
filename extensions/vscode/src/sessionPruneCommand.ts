@@ -1,3 +1,5 @@
+import { parsePositiveInteger } from './util';
+
 export const SESSION_PRUNE_STATUSES = ['idle', 'running', 'suspended', 'done', 'failed'] as const;
 
 export type SessionPruneStatus = (typeof SESSION_PRUNE_STATUSES)[number];
@@ -47,13 +49,7 @@ export function sessionPruneSlashCommand(options: SessionPruneOptions = {}): str
 }
 
 export function parsePruneOlderThanDaysInput(value: string): number | undefined {
-  const trimmed = value.trim();
-  if (!trimmed) return undefined;
-  const parsed = Number(trimmed);
-  if (!Number.isInteger(parsed) || parsed <= 0) {
-    throw new Error('Enter a positive whole number, or leave empty for no age filter.');
-  }
-  return parsed;
+  return parsePositiveInteger(value, 'Enter a positive whole number, or leave empty for no age filter.');
 }
 
 function isSessionPruneStatus(value: string): value is SessionPruneStatus {

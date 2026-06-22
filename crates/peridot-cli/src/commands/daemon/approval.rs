@@ -54,7 +54,7 @@ pub(super) async fn handle_interaction_respond(
         let sender = state
             .ask_user_pending
             .lock()
-            .expect("daemon mutex (ask_user_pending) poisoned")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .remove(request_id);
         sender
             .map(|sender| sender.send(answer).is_ok())
@@ -133,7 +133,7 @@ pub(super) async fn handle_approval_respond(
             state
                 .router
                 .lock()
-                .expect("daemon session router mutex poisoned")
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .close(session_id);
             true
         } else {
@@ -205,7 +205,7 @@ pub(super) async fn handle_approval_respond(
         if let Some(handle) = state
             .router
             .lock()
-            .expect("daemon session router mutex poisoned")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get_mut(session_id)
         {
             handle.cancel = cancel.clone();
@@ -271,7 +271,7 @@ pub(super) fn clear_pending_ask_user_for_session(state: &DaemonState, session_id
     let mut pending = state
         .ask_user_pending
         .lock()
-        .expect("daemon mutex (ask_user_pending) poisoned");
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     pending.retain(|request_id, _| !request_id.starts_with(&prefix));
 }
 

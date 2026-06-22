@@ -5,6 +5,7 @@
 // server-pushed notifications (`method: "event"`) to listeners.
 
 import * as childProcess from 'child_process';
+import { isRecord } from './util';
 import { resolvePeridotBinary } from './peridotBin';
 import { peridotChildEnv } from './processEnv';
 
@@ -368,9 +369,6 @@ export class PeridotDaemon {
   }
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}
 
 function isRpcNotification(value: unknown): value is RpcNotification {
   return (

@@ -11,6 +11,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 
 import { runSlashCommand } from '../extension';
+import { ensureWorkspaceFolder } from './cli';
 import { decodeInlineImageAttachment } from '../inlineImageAttachment';
 import type { PeridotSidebarProvider } from '../sidebar';
 import type { InlineImageAttachmentPayload } from '../types';
@@ -19,13 +20,8 @@ export async function attachFileToSession(
   output: vscode.OutputChannel,
   sidebar: PeridotSidebarProvider,
 ): Promise<void> {
-  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  if (!folder) {
-    const message = 'Open a workspace folder before attaching a file.';
-    sidebar.setWorkspaceProblem(message);
-    await vscode.window.showWarningMessage(message);
-    return;
-  }
+  const folder = await ensureWorkspaceFolder(sidebar, 'Open a workspace folder before attaching a file.');
+  if (!folder) return;
   if (!sidebar.currentDaemonSessionId()) {
     await vscode.window.showWarningMessage(vscode.l10n.t('Start or select a Peridot session before attaching a file.'));
     return;
@@ -61,13 +57,8 @@ export async function attachInlineImageToSession(
   output: vscode.OutputChannel,
   sidebar: PeridotSidebarProvider,
 ): Promise<void> {
-  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  if (!folder) {
-    const message = 'Open a workspace folder before attaching an image.';
-    sidebar.setWorkspaceProblem(message);
-    await vscode.window.showWarningMessage(message);
-    return;
-  }
+  const folder = await ensureWorkspaceFolder(sidebar, 'Open a workspace folder before attaching an image.');
+  if (!folder) return;
   if (!sidebar.currentDaemonSessionId()) {
     await vscode.window.showWarningMessage(vscode.l10n.t('Start or select a Peridot session before attaching an image.'));
     return;

@@ -477,6 +477,101 @@ async fn parallel_read_only_tool_calls_record_all_outputs_in_context() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+/// When a tool fails midway through a read-only batch, the assistant turn was
+/// already appended with ALL tool_calls. The harness must answer EVERY
+/// tool_call id — the failing one plus every not-yet-executed one — before
+/// bubbling the error, or Responses-style providers (OpenAI Codex) reject the
+/// next request with `400 No tool output found for function call <id>` and the
+/// recovery loop retries on a permanently-broken conversation.
+#[tokio::test]
+async fn mid_batch_tool_failure_answers_every_tool_call_id() {
+    let root = std::env::temp_dir().join(format!(
+        "peridot-core-multi-tool-failure-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let mut registry = ToolRegistry::new();
+    register_builtin_tools(&mut registry).unwrap();
+    let mut agent = HarnessAgent::new(
+        AgentState::new(ExecutionMode::Execute, PermissionMode::Auto),
+        ContextManager::new(),
+        registry,
+    );
+    // First read-only call reads a missing file → execution returns `Err`,
+    // hitting the batch error arm. The remaining read-only calls never run,
+    // but their tool_call ids must still be answered.
+    let provider = StaticProvider::new_custom_completion(
+        String::new(),
+        vec![
+            ToolInvocation {
+                id: "call_missing_read".to_string(),
+                name: "file_read".to_string(),
+                arguments: json!({"path": "does-not-exist.txt"}),
+            },
+            ToolInvocation {
+                id: "call_skipped_list".to_string(),
+                name: "file_list".to_string(),
+                arguments: json!({"path": "."}),
+            },
+            ToolInvocation {
+                id: "call_skipped_read".to_string(),
+                name: "file_read".to_string(),
+                arguments: json!({"path": "does-not-exist-2.txt"}),
+            },
+        ],
+    );
+
+    let result = agent
+        .run_turn(
+            &provider,
+            AgentTurnRequest {
+                user_input: Some("inspect files".to_string()),
+                model: "mock".to_string(),
+                max_tokens: 512,
+                reasoning_effort: peridot_common::ReasoningEffort::Off,
+                service_tier: None,
+                project_root: root.clone(),
+                denied_paths: Vec::new(),
+                hooks: HooksConfig::default(),
+                security: SecurityConfig::default(),
+            },
+        )
+        .await;
+
+    // The turn surfaces the underlying error.
+    assert!(result.is_err(), "mid-batch failure should bubble an error");
+
+    // Every tool_call id in the assistant turn must have a matching
+    // tool_result entry in the context — none left dangling.
+    let assistant_entry = agent
+        .context()
+        .entries()
+        .iter()
+        .find(|entry| entry.source == ContextSource::Assistant)
+        .expect("assistant tool-call entry");
+    let mut call_ids = assistant_entry
+        .tool_calls
+        .iter()
+        .map(|call| call.id.clone())
+        .collect::<Vec<_>>();
+    call_ids.sort();
+
+    let mut answered_ids = agent
+        .context()
+        .entries()
+        .iter()
+        .filter(|entry| entry.source == ContextSource::Tool)
+        .filter_map(|entry| entry.tool_call_id.clone())
+        .collect::<Vec<_>>();
+    answered_ids.sort();
+
+    assert_eq!(
+        call_ids, answered_ids,
+        "every assistant tool_call id must be paired with a tool_result"
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 #[tokio::test]
 async fn permission_denied_tool_emits_approval_event() {
     let root = std::env::temp_dir().join(format!(

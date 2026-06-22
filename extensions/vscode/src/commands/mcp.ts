@@ -10,6 +10,7 @@
 import * as vscode from 'vscode';
 
 import { refreshStatus, runSlashCommand } from '../extension';
+import { ensureWorkspaceFolder } from './cli';
 import {
   mcpAddSlashCommand,
   mcpRemoveSlashCommand,
@@ -24,13 +25,8 @@ export async function showMcpServers(
   output: vscode.OutputChannel,
   sidebar: PeridotSidebarProvider,
 ): Promise<void> {
-  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  if (!folder) {
-    const message = 'Open a workspace folder before showing MCP servers.';
-    sidebar.setWorkspaceProblem(message);
-    await vscode.window.showWarningMessage(message);
-    return;
-  }
+  const folder = await ensureWorkspaceFolder(sidebar, 'Open a workspace folder before showing MCP servers.');
+  if (!folder) return;
   await vscode.commands.executeCommand('peridot.chatView.focus');
   try {
     const result = await runSlashCommand('/mcp list', output, sidebar, sidebar.currentRunOptions());
@@ -47,13 +43,8 @@ export async function addMcpServer(
   output: vscode.OutputChannel,
   sidebar: PeridotSidebarProvider,
 ): Promise<void> {
-  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  if (!folder) {
-    const message = 'Open a workspace folder before adding MCP servers.';
-    sidebar.setWorkspaceProblem(message);
-    await vscode.window.showWarningMessage(message);
-    return;
-  }
+  const folder = await ensureWorkspaceFolder(sidebar, 'Open a workspace folder before adding MCP servers.');
+  if (!folder) return;
   const existingNames = new Set(sidebar.currentMcpServers().map((server) => server.name));
   const name = await vscode.window.showInputBox({
     title: 'Peridot: Add MCP Server',
@@ -216,13 +207,8 @@ async function pickMcpServer(
   sidebar: PeridotSidebarProvider,
   options: { title: string; placeHolder: string },
 ): Promise<McpServerSummary | undefined> {
-  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  if (!folder) {
-    const message = 'Open a workspace folder before selecting MCP servers.';
-    sidebar.setWorkspaceProblem(message);
-    await vscode.window.showWarningMessage(message);
-    return undefined;
-  }
+  const folder = await ensureWorkspaceFolder(sidebar, 'Open a workspace folder before selecting MCP servers.');
+  if (!folder) return undefined;
   let choices = mcpServerChoices(sidebar.currentMcpServers() ?? []);
   if (choices.length === 0) {
     await refreshStatus(output, sidebar, { force: true });

@@ -1,4 +1,5 @@
 import type { AgentsSummary, McpServerSummary } from './types';
+import { isRecord } from './util';
 
 export function agentsSummaryForLoadedEvent(
   event: Record<string, unknown>,
@@ -54,6 +55,3 @@ function booleanField(record: Record<string, unknown>, key: string): boolean | u
   return typeof value === 'boolean' ? value : undefined;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}
