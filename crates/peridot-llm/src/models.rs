@@ -21,7 +21,18 @@
 /// active even on new models.
 pub fn context_window_tokens(model: &str) -> Option<usize> {
     let lower = model.to_ascii_lowercase();
-    // Anthropic
+    // Anthropic. The 1M-context families (Opus 4.6/4.7/4.8, Sonnet 4.6, Fable 5,
+    // Mythos 5) must be matched before the generic 200K fallback, which still
+    // covers the standard-context models (Haiku 4.5, Sonnet/Opus 4.5 and older).
+    if lower.contains("opus-4-6")
+        || lower.contains("opus-4-7")
+        || lower.contains("opus-4-8")
+        || lower.contains("sonnet-4-6")
+        || lower.contains("fable")
+        || lower.contains("mythos")
+    {
+        return Some(1_000_000);
+    }
     if lower.contains("claude-opus")
         || lower.contains("claude-sonnet")
         || lower.contains("claude-haiku")

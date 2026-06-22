@@ -20,6 +20,18 @@ pub(crate) fn should_retry_status(status: reqwest::StatusCode) -> bool {
         || status.is_server_error()
 }
 
+/// Parses a `Retry-After` response header in the integer-seconds form (what
+/// Anthropic and OpenAI send on 429/503). The HTTP-date form is not parsed
+/// (returns `None`) — the local exponential backoff covers that case. Capped at
+/// 60s so a malformed or hostile value can't wedge a retry for minutes.
+pub(crate) fn parse_retry_after(
+    headers: &reqwest::header::HeaderMap,
+) -> Option<std::time::Duration> {
+    let raw = headers.get(reqwest::header::RETRY_AFTER)?.to_str().ok()?;
+    let secs: u64 = raw.trim().parse().ok()?;
+    Some(std::time::Duration::from_secs(secs.min(60)))
+}
+
 /// Exponential backoff delay applied *before* a retry attempt. `attempt` is the
 /// upcoming attempt number (the first retry, i.e. the loop's second iteration,
 /// is `attempt = 1`). Doubles from 250ms and caps at 8s.
@@ -36,7 +48,12 @@ pub(crate) fn retry_backoff_delay(attempt: u32) -> std::time::Duration {
 /// previous behaviour (immediate `continue`, hammering a rate-limited or
 /// erroring upstream and resynchronizing concurrent sessions into a thundering
 /// herd) is replaced with backed-off, de-synchronized retries.
-pub(crate) async fn backoff_before_retry(attempt: u32) {
+///
+/// When the upstream returned a `Retry-After` hint (see [`parse_retry_after`])
+/// asking for a *longer* wait than the local schedule, that hint wins — we never
+/// retry sooner than the server asked. A shorter or absent hint leaves the
+/// backed-off, jittered delay untouched.
+pub(crate) async fn backoff_before_retry(attempt: u32, retry_after: Option<std::time::Duration>) {
     let base = retry_backoff_delay(attempt);
     let jitter_window_ms = (base.as_millis() as u64 / 5).max(1);
     let extra_ms = std::time::SystemTime::now()
@@ -44,7 +61,9 @@ pub(crate) async fn backoff_before_retry(attempt: u32) {
         .map(|d| u64::from(d.subsec_nanos()))
         .unwrap_or(0)
         % (jitter_window_ms + 1);
-    tokio::time::sleep(base + std::time::Duration::from_millis(extra_ms)).await;
+    let computed = base + std::time::Duration::from_millis(extra_ms);
+    let delay = retry_after.map_or(computed, |hint| hint.max(computed));
+    tokio::time::sleep(delay).await;
 }
 
 pub(crate) async fn read_streaming_response(response: reqwest::Response) -> PeriResult<String> {

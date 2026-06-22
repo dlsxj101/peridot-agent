@@ -793,7 +793,9 @@ mod tests {
         );
         request.model = "claude-sonnet-4-6".to_string();
         request.system = Some("system".to_string());
-        request.max_tokens = Some(512);
+        // max_tokens must exceed the Low tier budget (1024); the API rejects
+        // `budget_tokens >= max_tokens`.
+        request.max_tokens = Some(4096);
         request.reasoning_effort = peridot_common::ReasoningEffort::Low;
         request.tool_choice = ToolChoice::None;
 
@@ -801,7 +803,7 @@ mod tests {
             &anthropic_stream_payload(&request),
             r#"
 {
-  "max_tokens": 512,
+  "max_tokens": 4096,
   "messages": [
     {
       "content": "read README",
@@ -864,12 +866,46 @@ mod tests {
         let mut request = tool_request(vec![LlmMessage::new(MessageRole::User, "hi")], Vec::new());
         request.model = "claude-haiku-4-5".to_string();
         request.reasoning_effort = peridot_common::ReasoningEffort::Medium;
+        // max_tokens must leave room above the Medium tier budget (4096).
+        request.max_tokens = Some(8192);
 
         let payload = anthropic_payload(&request);
 
         assert_eq!(payload["thinking"]["type"], "enabled");
         assert_eq!(payload["thinking"]["budget_tokens"], 4096);
         assert!(payload.get("output_config").is_none());
+    }
+
+    #[test]
+    fn anthropic_payload_clamps_budget_below_max_tokens() {
+        // The tier budget (XHigh = 32768) exceeds max_tokens; it must be clamped
+        // to `max_tokens - 1` so the request doesn't 400 on `budget >= max_tokens`.
+        let mut request = tool_request(vec![LlmMessage::new(MessageRole::User, "hi")], Vec::new());
+        request.model = "claude-sonnet-4-6".to_string();
+        request.reasoning_effort = peridot_common::ReasoningEffort::XHigh;
+        request.max_tokens = Some(8192);
+
+        let payload = anthropic_payload(&request);
+
+        assert_eq!(payload["thinking"]["type"], "enabled");
+        assert_eq!(payload["thinking"]["budget_tokens"], 8191);
+    }
+
+    #[test]
+    fn anthropic_payload_omits_thinking_when_max_tokens_too_small() {
+        // No room for the 1024 budget floor below max_tokens → emit no thinking
+        // block rather than a request the API rejects.
+        let mut request = tool_request(vec![LlmMessage::new(MessageRole::User, "hi")], Vec::new());
+        request.model = "claude-haiku-4-5".to_string();
+        request.reasoning_effort = peridot_common::ReasoningEffort::Low;
+        request.max_tokens = Some(512);
+
+        let payload = anthropic_payload(&request);
+
+        assert!(
+            payload.get("thinking").is_none(),
+            "thinking must be omitted when max_tokens leaves no room for the 1024 floor"
+        );
     }
 
     #[tokio::test]

@@ -6,7 +6,7 @@ use peridot_common::{PeriError, PeriResult};
 use serde_json::{Value, json};
 
 use crate::transport::{
-    backoff_before_retry, estimate_cost, should_retry_status, stream_sse_events,
+    backoff_before_retry, estimate_cost, parse_retry_after, should_retry_status, stream_sse_events,
 };
 use crate::{
     AuthMethod, CompletionRequest, CompletionResponse, CompletionStreamChunk, LlmProvider,
@@ -182,10 +182,11 @@ impl OpenAiCodexProvider {
         let payload = openai_codex_payload(&request);
         let endpoint = self.endpoint();
         let mut last_error = None;
+        let mut retry_after_hint = None;
         for attempt in 0..=self.max_retries {
             // Back off before every retry after the first attempt.
             if attempt > 0 {
-                backoff_before_retry(u32::from(attempt)).await;
+                backoff_before_retry(u32::from(attempt), retry_after_hint.take()).await;
             }
             let response = match self
                 .client
@@ -211,12 +212,14 @@ impl OpenAiCodexProvider {
             };
 
             let status = response.status();
+            let retry_after = parse_retry_after(response.headers());
             if status.is_success() {
                 return Ok(response);
             }
             let body = response.text().await.unwrap_or_default();
             last_error = Some(format_openai_codex_error(status, &body));
             if attempt < self.max_retries && should_retry_status(status) {
+                retry_after_hint = retry_after;
                 continue;
             }
             break;

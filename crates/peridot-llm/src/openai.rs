@@ -6,8 +6,8 @@ use peridot_common::{PeriError, PeriResult};
 use serde_json::{Value, json};
 
 use crate::transport::{
-    backoff_before_retry, estimate_cost, read_streaming_response, should_retry_status,
-    sse_data_events, stream_sse_events,
+    backoff_before_retry, estimate_cost, parse_retry_after, read_streaming_response,
+    should_retry_status, sse_data_events, stream_sse_events,
 };
 use crate::{
     AuthMethod, CompletionRequest, CompletionResponse, CompletionStreamChunk, LlmProvider,
@@ -97,10 +97,11 @@ impl LlmProvider for OpenAiProvider {
             self.base_url.trim_end_matches('/')
         );
         let mut last_error = None;
+        let mut retry_after_hint = None;
         for attempt in 0..=self.max_retries {
             // Back off before every retry after the first attempt.
             if attempt > 0 {
-                backoff_before_retry(u32::from(attempt)).await;
+                backoff_before_retry(u32::from(attempt), retry_after_hint.take()).await;
             }
             let response = match self
                 .client
@@ -122,6 +123,7 @@ impl LlmProvider for OpenAiProvider {
             };
 
             let status = response.status();
+            let retry_after = parse_retry_after(response.headers());
             let body = match response.text().await {
                 Ok(body) => body,
                 Err(err) => {
@@ -137,6 +139,7 @@ impl LlmProvider for OpenAiProvider {
             }
             last_error = Some(format!("OpenAI request returned {status}: {body}"));
             if attempt < self.max_retries && should_retry_status(status) {
+                retry_after_hint = retry_after;
                 continue;
             }
             break;
@@ -157,10 +160,11 @@ impl LlmProvider for OpenAiProvider {
             self.base_url.trim_end_matches('/')
         );
         let mut last_error = None;
+        let mut retry_after_hint = None;
         for attempt in 0..=self.max_retries {
             // Back off before every retry after the first attempt.
             if attempt > 0 {
-                backoff_before_retry(u32::from(attempt)).await;
+                backoff_before_retry(u32::from(attempt), retry_after_hint.take()).await;
             }
             let response = match self
                 .client
@@ -183,6 +187,7 @@ impl LlmProvider for OpenAiProvider {
             };
 
             let status = response.status();
+            let retry_after = parse_retry_after(response.headers());
             if status.is_success() {
                 let body = read_streaming_response(response).await?;
                 return parse_openai_stream(&body, self.pricing);
@@ -190,6 +195,7 @@ impl LlmProvider for OpenAiProvider {
             let body = response.text().await.unwrap_or_default();
             last_error = Some(format!("OpenAI stream returned {status}: {body}"));
             if attempt < self.max_retries && should_retry_status(status) {
+                retry_after_hint = retry_after;
                 continue;
             }
             break;
@@ -214,10 +220,11 @@ impl LlmProvider for OpenAiProvider {
             self.base_url.trim_end_matches('/')
         );
         let mut last_error = None;
+        let mut retry_after_hint = None;
         for attempt in 0..=self.max_retries {
             // Back off before every retry after the first attempt.
             if attempt > 0 {
-                backoff_before_retry(u32::from(attempt)).await;
+                backoff_before_retry(u32::from(attempt), retry_after_hint.take()).await;
             }
             let response = match self
                 .client
@@ -239,12 +246,14 @@ impl LlmProvider for OpenAiProvider {
                 }
             };
             let status = response.status();
+            let retry_after = parse_retry_after(response.headers());
             if status.is_success() {
                 return drive_openai_stream(response, self.pricing, sender).await;
             }
             let body = response.text().await.unwrap_or_default();
             last_error = Some(format!("OpenAI stream returned {status}: {body}"));
             if attempt < self.max_retries && should_retry_status(status) {
+                retry_after_hint = retry_after;
                 continue;
             }
             break;

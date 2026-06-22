@@ -6,8 +6,8 @@ use peridot_common::{PeriError, PeriResult, ReasoningEffort};
 use serde_json::{Value, json};
 
 use crate::transport::{
-    backoff_before_retry, estimate_cost, read_streaming_response, should_retry_status,
-    sse_data_events, stream_sse_events,
+    backoff_before_retry, estimate_cost, parse_retry_after, read_streaming_response,
+    should_retry_status, sse_data_events, stream_sse_events,
 };
 use crate::{
     AuthMethod, CompletionRequest, CompletionResponse, CompletionStreamChunk, LlmProvider,
@@ -140,10 +140,11 @@ impl LlmProvider for ClaudeProvider {
         let payload = anthropic_payload_with_cache(&request, self.supports_cache());
         let endpoint = format!("{}/v1/messages", self.base_url.trim_end_matches('/'));
         let mut last_error = None;
+        let mut retry_after_hint = None;
         for attempt in 0..=self.max_retries {
             // Back off before every retry after the first attempt.
             if attempt > 0 {
-                backoff_before_retry(u32::from(attempt)).await;
+                backoff_before_retry(u32::from(attempt), retry_after_hint.take()).await;
             }
             let response = match self
                 .client
@@ -166,6 +167,7 @@ impl LlmProvider for ClaudeProvider {
             };
 
             let status = response.status();
+            let retry_after = parse_retry_after(response.headers());
             let body = match response.text().await {
                 Ok(body) => body,
                 Err(err) => {
@@ -181,6 +183,7 @@ impl LlmProvider for ClaudeProvider {
             }
             last_error = Some(format!("Anthropic request returned {status}: {body}"));
             if attempt < self.max_retries && should_retry_status(status) {
+                retry_after_hint = retry_after;
                 continue;
             }
             break;
@@ -198,10 +201,11 @@ impl LlmProvider for ClaudeProvider {
         let payload = anthropic_stream_payload_with_cache(&request, self.supports_cache());
         let endpoint = format!("{}/v1/messages", self.base_url.trim_end_matches('/'));
         let mut last_error = None;
+        let mut retry_after_hint = None;
         for attempt in 0..=self.max_retries {
             // Back off before every retry after the first attempt.
             if attempt > 0 {
-                backoff_before_retry(u32::from(attempt)).await;
+                backoff_before_retry(u32::from(attempt), retry_after_hint.take()).await;
             }
             let response = match self
                 .client
@@ -225,6 +229,7 @@ impl LlmProvider for ClaudeProvider {
             };
 
             let status = response.status();
+            let retry_after = parse_retry_after(response.headers());
             if status.is_success() {
                 let body = read_streaming_response(response).await?;
                 return parse_anthropic_stream(&body, self.pricing);
@@ -232,6 +237,7 @@ impl LlmProvider for ClaudeProvider {
             let body = response.text().await.unwrap_or_default();
             last_error = Some(format!("Anthropic stream returned {status}: {body}"));
             if attempt < self.max_retries && should_retry_status(status) {
+                retry_after_hint = retry_after;
                 continue;
             }
             break;
@@ -253,10 +259,11 @@ impl LlmProvider for ClaudeProvider {
         let payload = anthropic_stream_payload_with_cache(&request, self.supports_cache());
         let endpoint = format!("{}/v1/messages", self.base_url.trim_end_matches('/'));
         let mut last_error = None;
+        let mut retry_after_hint = None;
         for attempt in 0..=self.max_retries {
             // Back off before every retry after the first attempt.
             if attempt > 0 {
-                backoff_before_retry(u32::from(attempt)).await;
+                backoff_before_retry(u32::from(attempt), retry_after_hint.take()).await;
             }
             let response = match self
                 .client
@@ -279,12 +286,14 @@ impl LlmProvider for ClaudeProvider {
                 }
             };
             let status = response.status();
+            let retry_after = parse_retry_after(response.headers());
             if status.is_success() {
                 return drive_anthropic_stream(response, self.pricing, sender).await;
             }
             let body = response.text().await.unwrap_or_default();
             last_error = Some(format!("Anthropic stream returned {status}: {body}"));
             if attempt < self.max_retries && should_retry_status(status) {
+                retry_after_hint = retry_after;
                 continue;
             }
             break;
@@ -520,10 +529,19 @@ pub(crate) fn anthropic_payload_with_cache(
                 payload["output_config"] = json!({ "effort": label });
             }
         } else if let Some(budget) = effective_effort.anthropic_budget_tokens() {
-            payload["thinking"] = json!({
-                "type": "enabled",
-                "budget_tokens": budget
-            });
+            // The API requires `budget_tokens < max_tokens` (with a 1024 floor).
+            // The tier budgets (up to 32768) routinely exceed the request's
+            // max_tokens (default 4096), which the API rejects with a 400 — so
+            // clamp the budget below max_tokens. If there isn't room for the 1024
+            // minimum, leave thinking off rather than emit a request that 400s.
+            let max_tokens = request.max_tokens.unwrap_or(4096);
+            let budget = budget.min(max_tokens.saturating_sub(1));
+            if budget >= 1024 {
+                payload["thinking"] = json!({
+                    "type": "enabled",
+                    "budget_tokens": budget
+                });
+            }
         }
     }
 
