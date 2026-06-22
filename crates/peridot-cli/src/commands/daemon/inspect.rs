@@ -28,7 +28,7 @@ pub(super) async fn handle_command_goal_control(
     let Some((goal, plan)) = ({
         let sessions = state.sessions.lock().await;
         sessions.get(session_id).map(|entry| {
-            let mut goal = entry.goal.lock().expect("daemon mutex (goal) poisoned");
+            let mut goal = entry.goal.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             if goal.objective.is_none() && entry.spec.mode == ExecutionMode::Goal {
                 *goal = initial_live_goal(&entry.spec);
             }
@@ -45,7 +45,7 @@ pub(super) async fn handle_command_goal_control(
                         status: Some(GoalStatus::Cleared),
                         started_at_unix: None,
                     };
-                    *entry.plan.lock().expect("daemon mutex (plan) poisoned") =
+                    *entry.plan.lock().unwrap_or_else(std::sync::PoisonError::into_inner) =
                         LiveSessionPlan::default();
                 }
                 _ => {}
@@ -55,7 +55,7 @@ pub(super) async fn handle_command_goal_control(
                 entry
                     .plan
                     .lock()
-                    .expect("daemon mutex (plan) poisoned")
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .clone(),
             )
         })
@@ -158,7 +158,7 @@ pub(super) async fn handle_command_plan_show(
             entry
                 .plan
                 .lock()
-                .expect("daemon mutex (plan) poisoned")
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .clone()
         })
     } else {
@@ -364,7 +364,7 @@ async fn cost_session_rows(state: &DaemonState) -> Result<Vec<CostSessionRow>, S
         let usage = entry
             .usage
             .lock()
-            .expect("daemon mutex (usage) poisoned")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone();
         let row = rows.entry(id.clone()).or_insert_with(|| CostSessionRow {
             id: id.clone(),
@@ -396,7 +396,7 @@ async fn current_budget_limit(state: &DaemonState, session_id: Option<&str>) -> 
         let usage = entry
             .usage
             .lock()
-            .expect("daemon mutex (usage) poisoned")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone();
         return usage.cost_limit.or_else(|| {
             (entry.spec.config.defaults.budget_usd > 0.0)

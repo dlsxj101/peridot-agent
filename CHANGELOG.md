@@ -14,6 +14,27 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 
 ## Unreleased
 
+### Fixed — Rust core robustness & DoS hardening (audit follow-ups)
+
+- **`web_fetch` / `web_search` body size cap.** `response.text()` buffered the
+  entire (model-controlled) response into memory before the 50k-char truncation
+  — an OOM/DoS vector. Bodies are now read chunk-by-chunk and capped at 5 MiB.
+- **Committee usage counters can't overflow.** The per-role token accumulators
+  used `+=` on `u64` values taken from provider responses (debug panic /
+  release wrap on a very long committee session); they now use `saturating_add`.
+- **Session import surfaces a failed registration.** A discarded
+  `store.save_session(...)` meant a half-imported session could report success
+  yet never appear in `session list`; the write is now propagated.
+- **Session prune reports only truly-removed sessions.** Blob-directory removal
+  failures were swallowed while the record was still counted as pruned (leaving
+  orphaned transcript/attachments on disk). A session now counts as removed only
+  when its on-disk blobs are gone *and* its record row is deleted.
+- **Per-session daemon mutexes recover from poisoning.** The usage / plan /
+  approval-snapshot / ask-user / goal `std::sync::Mutex` locks used
+  `.expect("… poisoned")`, so one session's panic-while-locked would cascade and
+  take down the whole daemon; they now recover the guard via
+  `PoisonError::into_inner` so the blast radius stays within the one session.
+
 ### Fixed — VS Code webview UI/UX (audit follow-ups)
 
 - **Slash picker dismissal.** The composer slash/file-mention picker now hides

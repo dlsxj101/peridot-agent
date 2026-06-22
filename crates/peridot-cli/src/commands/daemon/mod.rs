@@ -161,11 +161,13 @@ impl LiveSessionUsage {
             } => match role.as_str() {
                 "planner" => {
                     self.committee_planner_cost_usd += *cost_usd;
-                    self.committee_planner_tokens += *tokens;
+                    self.committee_planner_tokens =
+                        self.committee_planner_tokens.saturating_add(*tokens);
                 }
                 "reviewer" => {
                     self.committee_reviewer_cost_usd += *cost_usd;
-                    self.committee_reviewer_tokens += *tokens;
+                    self.committee_reviewer_tokens =
+                        self.committee_reviewer_tokens.saturating_add(*tokens);
                 }
                 _ => {}
             },
@@ -1085,7 +1087,7 @@ async fn live_session_usage_snapshot(
         entry
             .usage
             .lock()
-            .expect("daemon mutex (usage) poisoned")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
     })
 }
@@ -1352,7 +1354,7 @@ async fn run_session_task(
             {
                 *approval_snapshot_for_events
                     .lock()
-                    .expect("daemon mutex (approval_snapshot_for_events) poisoned") =
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) =
                     Some(ApprovalRequestSnapshot {
                         tool_name: tool_name.clone(),
                         reason: reason.clone(),
@@ -1362,12 +1364,12 @@ async fn run_session_task(
             }
             usage_for_events
                 .lock()
-                .expect("daemon mutex (usage_for_events) poisoned")
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .record_event(&event);
             if let AgentRunEvent::PlanUpdated { steps, current } = &event {
                 *plan_for_events
                     .lock()
-                    .expect("daemon mutex (plan_for_events) poisoned") = LiveSessionPlan {
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = LiveSessionPlan {
                     steps: steps.clone(),
                     current: *current,
                 };
@@ -1383,7 +1385,7 @@ async fn run_session_task(
             if summary.stopped_reason == StopReason::ApprovalRequired {
                 let approval = approval_snapshot
                     .lock()
-                    .expect("daemon mutex (approval_snapshot) poisoned")
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .clone();
                 approval::mark_session_waiting_approval(&state, &session_id, approval.clone())
                     .await;
@@ -1413,7 +1415,7 @@ async fn run_session_task(
         Err(err) => {
             let approval = approval_snapshot
                 .lock()
-                .expect("daemon mutex (approval_snapshot) poisoned")
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .clone();
             if approval.is_some() && approval::is_approval_required_error(&err) {
                 approval::mark_session_waiting_approval(&state, &session_id, approval.clone())
@@ -1486,7 +1488,7 @@ impl AskUserPort for DaemonAskUserPort {
                 .state
                 .ask_user_pending
                 .lock()
-                .expect("daemon mutex (ask_user_pending) poisoned");
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             pending.insert(request_id.clone(), tx);
         }
         emit_event(

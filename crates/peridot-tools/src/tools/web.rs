@@ -28,6 +28,10 @@ const DEFAULT_MAX_RESULTS: usize = 10;
 const MAX_RESULTS_CAP: u64 = 25;
 const FETCH_MAX_CHARS: usize = 50_000;
 const REQUEST_TIMEOUT_SECS: u64 = 15;
+// Hard ceiling on bytes buffered from a response body. The model fully controls
+// the fetched URL, so an unbounded `response.text()` is an OOM/DoS vector — read
+// chunk-by-chunk and stop once this many bytes have accumulated.
+const MAX_FETCH_BYTES: usize = 5 * 1024 * 1024;
 
 /// `web_search` — DuckDuckGo HTML scrape returning title/url/snippet triples.
 #[derive(Clone, Debug)]
@@ -193,8 +197,7 @@ async fn ddg_fetch_html(query: &str) -> PeriResult<String> {
             response.status()
         )));
     }
-    response
-        .text()
+    read_body_capped(response, MAX_FETCH_BYTES)
         .await
         .map_err(|err| PeriError::Tool(format!("web_search: failed to read DDG response: {err}")))
 }
@@ -212,10 +215,29 @@ async fn http_fetch_text(url: &str) -> PeriResult<String> {
             response.status()
         )));
     }
-    response
-        .text()
+    read_body_capped(response, MAX_FETCH_BYTES)
         .await
         .map_err(|err| PeriError::Tool(format!("web_fetch: failed to read body: {err}")))
+}
+
+/// Reads a response body chunk-by-chunk, stopping once `max_bytes` have
+/// accumulated, so a model-controlled URL can't force an unbounded download
+/// into memory. Returns lossy UTF-8 (bodies are fed to text extraction).
+async fn read_body_capped(response: reqwest::Response, max_bytes: usize) -> PeriResult<String> {
+    let mut response = response;
+    let mut buf: Vec<u8> = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|err| PeriError::Tool(format!("failed to read response chunk: {err}")))?
+    {
+        if buf.len() >= max_bytes {
+            break;
+        }
+        let take = chunk.len().min(max_bytes - buf.len());
+        buf.extend_from_slice(&chunk[..take]);
+    }
+    Ok(String::from_utf8_lossy(&buf).into_owned())
 }
 
 fn build_http_client() -> PeriResult<reqwest::Client> {

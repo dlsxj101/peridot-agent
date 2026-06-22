@@ -54,7 +54,7 @@ pub(super) async fn handle_interaction_respond(
         let sender = state
             .ask_user_pending
             .lock()
-            .expect("daemon mutex (ask_user_pending) poisoned")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .remove(request_id);
         sender
             .map(|sender| sender.send(answer).is_ok())
@@ -271,7 +271,7 @@ pub(super) fn clear_pending_ask_user_for_session(state: &DaemonState, session_id
     let mut pending = state
         .ask_user_pending
         .lock()
-        .expect("daemon mutex (ask_user_pending) poisoned");
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     pending.retain(|request_id, _| !request_id.starts_with(&prefix));
 }
 
