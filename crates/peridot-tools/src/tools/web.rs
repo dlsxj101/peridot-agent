@@ -300,9 +300,7 @@ fn host_from_url(url: &str) -> Option<String> {
         .strip_prefix("http://")
         .or_else(|| url.strip_prefix("https://"))?;
     // Authority ends at the first '/', '?', or '#'.
-    let authority_end = rest
-        .find(['/', '?', '#'])
-        .unwrap_or(rest.len());
+    let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
     let authority = &rest[..authority_end];
     // Strip optional userinfo (user:pass@host).
     let host_port = authority.rsplit('@').next().unwrap_or(authority);
@@ -770,11 +768,23 @@ mod tests {
 
     #[test]
     fn host_from_url_extracts_host() {
-        assert_eq!(host_from_url("http://example.com/path").as_deref(), Some("example.com"));
-        assert_eq!(host_from_url("https://example.com:8443/").as_deref(), Some("example.com"));
-        assert_eq!(host_from_url("http://user:pw@example.com/").as_deref(), Some("example.com"));
+        assert_eq!(
+            host_from_url("http://example.com/path").as_deref(),
+            Some("example.com")
+        );
+        assert_eq!(
+            host_from_url("https://example.com:8443/").as_deref(),
+            Some("example.com")
+        );
+        assert_eq!(
+            host_from_url("http://user:pw@example.com/").as_deref(),
+            Some("example.com")
+        );
         assert_eq!(host_from_url("http://[::1]:80/").as_deref(), Some("::1"));
-        assert_eq!(host_from_url("http://169.254.169.254/").as_deref(), Some("169.254.169.254"));
+        assert_eq!(
+            host_from_url("http://169.254.169.254/").as_deref(),
+            Some("169.254.169.254")
+        );
     }
 
     #[test]
@@ -793,7 +803,9 @@ mod tests {
     #[test]
     fn is_blocked_addr_classifies_internal_ranges() {
         use std::net::{Ipv4Addr, Ipv6Addr};
-        assert!(is_blocked_addr(&IpAddr::V4(Ipv4Addr::new(169, 254, 169, 254))));
+        assert!(is_blocked_addr(&IpAddr::V4(Ipv4Addr::new(
+            169, 254, 169, 254
+        ))));
         assert!(is_blocked_addr(&IpAddr::V4(Ipv4Addr::new(10, 1, 2, 3))));
         assert!(is_blocked_addr(&IpAddr::V4(Ipv4Addr::new(172, 16, 0, 1))));
         assert!(is_blocked_addr(&IpAddr::V4(Ipv4Addr::new(192, 168, 0, 1))));
@@ -804,7 +816,9 @@ mod tests {
         assert!(is_blocked_addr(&IpAddr::V6("fc00::1".parse().unwrap())));
         // Public addresses pass.
         assert!(!is_blocked_addr(&IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8))));
-        assert!(!is_blocked_addr(&IpAddr::V4(Ipv4Addr::new(93, 184, 216, 34))));
+        assert!(!is_blocked_addr(&IpAddr::V4(Ipv4Addr::new(
+            93, 184, 216, 34
+        ))));
     }
 
     #[test]

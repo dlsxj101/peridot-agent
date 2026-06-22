@@ -1719,7 +1719,10 @@ mod tests {
         // Serialises to the same spelling Display/parse use.
         let serialized = serde_json::to_string(&ReasoningEffort::XHigh).unwrap();
         assert_eq!(serialized, "\"xhigh\"");
-        assert_eq!(serialized.trim_matches('"'), ReasoningEffort::XHigh.to_string());
+        assert_eq!(
+            serialized.trim_matches('"'),
+            ReasoningEffort::XHigh.to_string()
+        );
 
         // Deserialises from the canonical spelling and the snake_case alias.
         assert_eq!(
@@ -1733,7 +1736,10 @@ mod tests {
 
         // The serialised form is what parse/Display accept.
         let display = ReasoningEffort::XHigh.to_string();
-        assert_eq!(ReasoningEffort::parse(&display), Some(ReasoningEffort::XHigh));
+        assert_eq!(
+            ReasoningEffort::parse(&display),
+            Some(ReasoningEffort::XHigh)
+        );
     }
 
     #[test]

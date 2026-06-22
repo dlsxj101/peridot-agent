@@ -856,13 +856,20 @@ impl MemoryStore {
         now_unix: u64,
     ) -> PeriResult<()> {
         self.initialize()?;
-        let connection = self.connection()?;
+        let mut connection = self.connection()?;
+        // Wrap the sequence upsert and all per-window n-gram upserts in a
+        // single transaction. Run as separate auto-commit statements, a crash
+        // mid-loop would leave the sequence row written but only some n-grams
+        // bumped; a re-run (which is idempotent only on `session_id`) would
+        // then double-count those n-grams. The transaction makes the whole
+        // method all-or-nothing.
+        let transaction = connection.transaction().map_err(sql_error)?;
         // Tool names are ASCII identifiers (`file_write`, `git_push`,
         // …) so a pipe-delimited line is a fine on-disk format. Avoids
         // pulling serde_json into the memory crate just for an audit
         // trail blob.
         let sequence_blob = tools.join("|");
-        connection
+        transaction
             .execute(
                 "INSERT INTO tool_sequences (session_id, sequence_json, task_summary, created_at_unix) \
                  VALUES (?1, ?2, ?3, ?4) \
@@ -916,7 +923,7 @@ impl MemoryStore {
             let hash = ngram_hash(&window);
             let ngram_tools = window.join("|");
             let ngram_length = window.len() as i64;
-            connection
+            transaction
                 .execute(
                     "INSERT INTO tool_ngrams ( \
                         ngram_hash, ngram_tools, ngram_length, occurrence_count, \
@@ -938,6 +945,7 @@ impl MemoryStore {
                 )
                 .map_err(sql_error)?;
         }
+        transaction.commit().map_err(sql_error)?;
         Ok(())
     }
 
@@ -1674,6 +1682,23 @@ mod tests {
         let candidates = store.list_promotion_candidates(1, 10).unwrap();
         assert_eq!(candidates.len(), 3);
         assert!(candidates.iter().all(|c| c.occurrence_count == 1));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn save_tool_sequence_commits_sequence_and_ngrams_atomically() {
+        // The whole method runs inside one transaction; after a successful
+        // call both the sequence row and the derived n-grams must be visible.
+        let (root, store) = fresh_store("atomic");
+        let seq = tools(&["file_read", "verify_build", "git_commit"]);
+        store
+            .save_tool_sequence("sess-atomic", &seq, "ship the change", 3, 1_700_000_000)
+            .unwrap();
+
+        let sequences = store.recent_tool_sequences(10, 0).unwrap();
+        assert_eq!(sequences, vec![seq]);
+        let candidates = store.list_promotion_candidates(1, 10).unwrap();
+        assert_eq!(candidates.len(), 3);
         fs::remove_dir_all(root).unwrap();
     }
 

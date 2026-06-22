@@ -1309,6 +1309,86 @@ async fn session_command_locate_resolves_persisted_title() {
 }
 
 #[tokio::test]
+async fn session_start_rejects_collision_with_persisted_session() {
+    // A requested_session_id that already has a persisted SessionRecord but is
+    // not running must be rejected, otherwise the fresh run would overwrite the
+    // persisted session's context and record (silent data loss).
+    let root = test_project("session-start-persisted-collision");
+    let store = MemoryStore::new(root.join(".peridot/memory.db"));
+    let mut record = SessionRecord::new("persisted-session", &root);
+    record.summary = "earlier work".into();
+    store.save_session_record(&record).unwrap();
+    let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+    let state = DaemonState::new(
+        root.clone(),
+        PeridotConfig::default(),
+        test_options(None),
+        tx,
+    );
+
+    handle_session_start(
+        &state,
+        Value::from(7),
+        Some(serde_json::json!({
+            "task": "do something new",
+            "session_id": "persisted-session",
+        })),
+    )
+    .await
+    .unwrap();
+
+    let response: Value = serde_json::from_str(&rx.try_recv().unwrap()).unwrap();
+    assert_eq!(response["id"], 7);
+    assert_eq!(response["error"]["code"], -32602);
+    assert!(
+        response["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("in use by a persisted session")
+    );
+    // No session should have been registered.
+    assert!(state.sessions.lock().await.is_empty());
+    shutdown_sessions(&state).await;
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn session_start_allows_persisted_collision_with_resume_flag() {
+    // The same collision is allowed when the caller explicitly resumes, since
+    // they have acknowledged they are continuing the persisted session.
+    let root = test_project("session-start-persisted-resume");
+    let store = MemoryStore::new(root.join(".peridot/memory.db"));
+    let mut record = SessionRecord::new("persisted-session", &root);
+    record.summary = "earlier work".into();
+    store.save_session_record(&record).unwrap();
+    let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+    let state = DaemonState::new(
+        root.clone(),
+        PeridotConfig::default(),
+        test_options(None),
+        tx,
+    );
+
+    handle_session_start(
+        &state,
+        Value::from(8),
+        Some(serde_json::json!({
+            "task": "continue the work",
+            "session_id": "persisted-session",
+            "resume": true,
+        })),
+    )
+    .await
+    .unwrap();
+
+    let response: Value = serde_json::from_str(&rx.try_recv().unwrap()).unwrap();
+    assert_eq!(response["id"], 8);
+    assert_eq!(response["result"]["session_id"], "persisted-session");
+    shutdown_sessions(&state).await;
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[tokio::test]
 async fn session_command_resume_returns_start_task() {
     let root = test_project("session-command-resume");
     let store = MemoryStore::new(root.join(".peridot/memory.db"));

@@ -371,10 +371,7 @@ where
         }
         if truncated {
             output.extend_from_slice(
-                format!(
-                    "\n\n[output truncated at {MAX_PIPE_CAPTURE_BYTES} bytes]"
-                )
-                .as_bytes(),
+                format!("\n\n[output truncated at {MAX_PIPE_CAPTURE_BYTES} bytes]").as_bytes(),
             );
         }
         Ok(output)
@@ -565,13 +562,7 @@ fn is_allowed_readonly_segment(segment: &str) -> bool {
     // read-only. Reject any command-execution / mutation actions.
     if basename == "find" {
         const FIND_EXEC_ACTIONS: [&str; 7] = [
-            "-exec",
-            "-execdir",
-            "-ok",
-            "-okdir",
-            "-delete",
-            "-fprintf",
-            "-fprint",
+            "-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprintf", "-fprint",
         ];
         if tokens
             .iter()
@@ -646,7 +637,11 @@ fn sed_script_has_dangerous_command(script: &str) -> bool {
             // start of string or immediately after a command separator
             // (`;`, newline, `{`). This avoids flagging the letter when it
             // appears inside a substitution pattern/replacement.
-            let prev = if i == 0 { None } else { Some(bytes[i - 1] as char) };
+            let prev = if i == 0 {
+                None
+            } else {
+                Some(bytes[i - 1] as char)
+            };
             if matches!(prev, None | Some(';') | Some('\n') | Some('{') | Some(' ')) {
                 return true;
             }

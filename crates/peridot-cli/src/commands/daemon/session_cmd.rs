@@ -828,7 +828,7 @@ async fn remove_live_daemon_session(
         state
             .router
             .lock()
-            .expect("daemon session router mutex poisoned")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .close(session_id);
         approval::clear_pending_ask_user_for_session(state, session_id);
         update_daemon_session_lifecycle(state, session_id, lifecycle).await;

@@ -154,14 +154,16 @@ mod tests {
         // Two checkpoints created back-to-back (potentially sharing a nanos
         // reading) must not collide and overwrite each other's record.
         assert_ne!(first.id, second.id);
-        assert!(root
-            .join(".peridot/checkpoints")
-            .join(format!("{}.json", first.id))
-            .exists());
-        assert!(root
-            .join(".peridot/checkpoints")
-            .join(format!("{}.json", second.id))
-            .exists());
+        assert!(
+            root.join(".peridot/checkpoints")
+                .join(format!("{}.json", first.id))
+                .exists()
+        );
+        assert!(
+            root.join(".peridot/checkpoints")
+                .join(format!("{}.json", second.id))
+                .exists()
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
 }

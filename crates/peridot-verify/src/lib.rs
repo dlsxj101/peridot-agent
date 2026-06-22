@@ -327,7 +327,10 @@ fn parse_git_status_path(line: &str) -> Option<String> {
         Some((_, new)) => new.trim(),
         None => rest,
     };
-    let path = path.strip_prefix('"').and_then(|p| p.strip_suffix('"')).unwrap_or(path);
+    let path = path
+        .strip_prefix('"')
+        .and_then(|p| p.strip_suffix('"'))
+        .unwrap_or(path);
     if path.is_empty() {
         return None;
     }

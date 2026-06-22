@@ -120,7 +120,10 @@ fn parse_status_path(line: &str) -> Option<String> {
         Some((_, new)) => new.trim(),
         None => rest,
     };
-    let path = path.strip_prefix('"').and_then(|p| p.strip_suffix('"')).unwrap_or(path);
+    let path = path
+        .strip_prefix('"')
+        .and_then(|p| p.strip_suffix('"'))
+        .unwrap_or(path);
     if path.is_empty() {
         return None;
     }
@@ -203,7 +206,10 @@ mod tests {
     #[test]
     fn parse_status_path_takes_rename_destination() {
         // Normal line: path is returned verbatim.
-        assert_eq!(parse_status_path(" M src/lib.rs").as_deref(), Some("src/lib.rs"));
+        assert_eq!(
+            parse_status_path(" M src/lib.rs").as_deref(),
+            Some("src/lib.rs")
+        );
         // Rename: only the destination after the last `" -> "` is the changed path.
         assert_eq!(
             parse_status_path("R  old.rs -> src/new.rs").as_deref(),

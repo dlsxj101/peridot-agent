@@ -291,14 +291,20 @@ impl RouterMessageBus {
     }
 
     fn push_to(&self, target: &str, body: InboxMessage) -> PeriResult<()> {
-        let router = self.router.lock().expect("session router mutex poisoned");
+        let router = self
+            .router
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let Some(inbox) = router.inbox_handle(target) else {
             return Err(peridot_common::PeriError::Tool(format!(
                 "agent_message: no session named `{target}` to deliver to"
             )));
         };
         drop(router);
-        inbox.lock().expect("inbox mutex poisoned").push_back(body);
+        inbox
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push_back(body);
         Ok(())
     }
 }
@@ -311,7 +317,10 @@ impl AgentMessageBus for RouterMessageBus {
 
     async fn send_to_parent(&self, from_session: &str, message: &str) -> PeriResult<String> {
         let parent_id = {
-            let router = self.router.lock().expect("session router mutex poisoned");
+            let router = self
+                .router
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             router.parent_of(from_session)
         };
         let parent_id = parent_id.ok_or_else(|| {
@@ -337,7 +346,10 @@ impl AgentMessageBus for RouterMessageBus {
         message: &str,
     ) -> PeriResult<()> {
         let is_child = {
-            let router = self.router.lock().expect("session router mutex poisoned");
+            let router = self
+                .router
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             router.is_child_of(from_session, child_session)
         };
         if !is_child {
@@ -357,13 +369,18 @@ impl AgentMessageBus for RouterMessageBus {
 
     async fn drain_inbox(&self, session: &str) -> Vec<InboxMessage> {
         let inbox = {
-            let router = self.router.lock().expect("session router mutex poisoned");
+            let router = self
+                .router
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             router.inbox_handle(session)
         };
         let Some(inbox) = inbox else {
             return Vec::new();
         };
-        let mut guard = inbox.lock().expect("inbox mutex poisoned");
+        let mut guard = inbox
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         guard.drain(..).collect()
     }
 }

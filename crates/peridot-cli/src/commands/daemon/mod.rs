@@ -68,6 +68,12 @@ struct DaemonState {
     run_config: Arc<PeridotConfig>,
     run_template: Arc<AgentTaskOptions>,
     session_list_subscribed: Arc<AtomicBool>,
+    /// Raised by `writer_task` when stdout errors (a half-open pipe). Once
+    /// set, the stdout consumer is gone, so any further `state.out.send`
+    /// would silently queue into the unbounded channel forever — the main
+    /// loop checks this flag and tears the daemon down instead of letting
+    /// producers grow memory without bound.
+    shutdown: Arc<AtomicBool>,
     /// Filesystem watcher that invalidates the symbol-cache on file changes
     /// (feature F1). Kept alive for the daemon's lifetime via the shared Arc;
     /// `None` when a watcher couldn't be started (the cache still works,
@@ -95,6 +101,7 @@ impl DaemonState {
             run_config: Arc::new(run_config),
             run_template: Arc::new(run_template),
             session_list_subscribed: Arc::new(AtomicBool::new(false)),
+            shutdown: Arc::new(AtomicBool::new(false)),
             _symbol_cache_watcher: symbol_cache_watcher,
         }
     }
@@ -274,13 +281,16 @@ pub(crate) async fn run_daemon_command(
     template: AgentTaskOptions,
 ) -> Result<()> {
     let (out_tx, out_rx) = mpsc::unbounded_channel::<String>();
-    let writer = tokio::spawn(writer_task(out_rx));
     let state = DaemonState::new(
         project_root.to_path_buf(),
         config.clone(),
         template,
         out_tx.clone(),
     );
+    // Spawn the writer with a clone of the daemon's shutdown flag. When stdout
+    // errors (a half-open pipe) the writer raises it so the main loop stops
+    // feeding the now-orphaned unbounded channel and tears the daemon down.
+    let writer = tokio::spawn(writer_task(out_rx, state.shutdown.clone()));
     // Emit the handshake notification before reading any client traffic so an
     // editor can detect version skew on the very first daemon line, before it
     // sends `session.start` or any other request.
@@ -313,6 +323,12 @@ pub(crate) async fn run_daemon_command(
         if dispatch_line(&state, &line).await? {
             break;
         }
+        // The writer task signals here when stdout closed (a half-open
+        // pipe). Without this check, producers would keep enqueueing onto
+        // the unbounded channel with no consumer, growing memory unbounded.
+        if state.shutdown.load(Ordering::Relaxed) {
+            break;
+        }
     }
 
     shutdown_sessions(&state).await;
@@ -323,7 +339,7 @@ pub(crate) async fn run_daemon_command(
     Ok(())
 }
 
-async fn writer_task(mut rx: mpsc::UnboundedReceiver<String>) {
+async fn writer_task(mut rx: mpsc::UnboundedReceiver<String>, shutdown: Arc<AtomicBool>) {
     let mut stdout = tokio::io::stdout();
     while let Some(line) = rx.recv().await {
         if stdout.write_all(line.as_bytes()).await.is_err() {
@@ -336,6 +352,11 @@ async fn writer_task(mut rx: mpsc::UnboundedReceiver<String>) {
             break;
         }
     }
+    // Reaching here means stdout errored or the channel closed. Either way the
+    // consumer is gone — signal the main loop so producers stop enqueueing onto
+    // the now-orphaned unbounded channel (a half-open pipe would otherwise grow
+    // memory without bound).
+    shutdown.store(true, Ordering::Relaxed);
 }
 
 async fn shutdown_sessions(state: &DaemonState) {
@@ -352,7 +373,7 @@ async fn shutdown_sessions(state: &DaemonState) {
     *state
         .router
         .lock()
-        .expect("daemon session router mutex poisoned") = SessionRouter::new();
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = SessionRouter::new();
 }
 
 async fn dispatch_line(state: &DaemonState, line: &str) -> Result<bool> {
@@ -889,6 +910,32 @@ async fn handle_session_start(state: &DaemonState, id: Value, params: Option<Val
         )?;
         return Ok(());
     }
+    // A `requested_session_id` that is not running but already has a persisted
+    // SessionRecord or context snapshot on disk is reused state, not a fresh
+    // id. Accepting it here would let `run_session_task` overwrite that
+    // session's `context.bin` (via `context_snapshot_path`) and clobber its
+    // SessionRecord (via `save_daemon_session_record`) — silent data loss.
+    // Require an explicit resume (`resume: true`) so the caller acknowledges
+    // it is continuing an existing session rather than colliding by accident.
+    let resume_requested = params
+        .get("resume")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if let Some(requested) = requested_session_id.as_ref()
+        && !resume_requested
+        && persisted_session_exists(state, requested)
+    {
+        emit_error(
+            state,
+            id,
+            -32602,
+            format!(
+                "session_id is in use by a persisted session: {requested}. \
+                 Pass `resume: true` to continue it, or use a different session_id."
+            ),
+        )?;
+        return Ok(());
+    }
 
     let session_id = match requested_session_id {
         Some(session_id) => session_id,
@@ -948,7 +995,7 @@ async fn handle_session_start(state: &DaemonState, id: Value, params: Option<Val
     state
         .router
         .lock()
-        .expect("daemon session router mutex poisoned")
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
         .register(SessionHandle::new(
             session_id.clone(),
             state.project_root.as_ref().clone(),
@@ -1029,6 +1076,24 @@ fn reload_run_config_from_disk(state: &DaemonState) -> Option<PeridotConfig> {
     let path = state.project_root.join(".peridot").join("config.toml");
     let raw = fs::read_to_string(&path).ok()?;
     toml::from_str(&raw).ok()
+}
+
+/// Returns true when `session_id` already has persisted state on disk — a
+/// SessionRecord in `memory.db` or a written `context.bin` snapshot. Used by
+/// `handle_session_start` to reject a `requested_session_id` that collides
+/// with a non-running but persisted session unless the caller explicitly
+/// resumes it, so a fresh run can't silently overwrite that state.
+fn persisted_session_exists(state: &DaemonState, session_id: &str) -> bool {
+    let store = MemoryStore::new(state.project_root.join(".peridot/memory.db"));
+    if store
+        .get_session_record(session_id)
+        .ok()
+        .flatten()
+        .is_some()
+    {
+        return true;
+    }
+    context_snapshot_path(state, session_id).exists()
 }
 
 async fn save_daemon_session_record(
@@ -1446,7 +1511,7 @@ async fn run_session_task(
     state
         .router
         .lock()
-        .expect("daemon session router mutex poisoned")
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
         .close(&session_id);
     approval::clear_pending_ask_user_for_session(&state, &session_id);
     emit_session_list_changed(&state).await;
@@ -1545,7 +1610,7 @@ async fn handle_session_cancel(
         state
             .router
             .lock()
-            .expect("daemon session router mutex poisoned")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .close(session_id);
         approval::clear_pending_ask_user_for_session(state, session_id);
         update_daemon_session_lifecycle(state, session_id, SessionLifecycle::Suspended).await;

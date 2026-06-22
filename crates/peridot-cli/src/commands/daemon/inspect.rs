@@ -83,10 +83,23 @@ pub(super) async fn handle_command_goal_control(
         .as_ref()
         .map(goal_status_label)
         .unwrap_or("none");
+    // The pause/resume/clear handlers above only mutate the daemon's in-memory
+    // `LiveSessionGoal`, which is *not* read by the live agent loop (that reads
+    // `agent.state().goal` in run_loop) nor persisted to the SessionRecord
+    // (which has no goal-status field). So these controls are advisory: they
+    // update the status reported by `/goal status`, `/cost`, and `/info`, but
+    // they do not actually halt or resume the running agent. The messages say
+    // so rather than falsely claiming the run was paused/resumed/cleared.
     let message = match command {
-        SlashCommand::GoalPause if goal.objective.is_some() => "goal: paused".to_string(),
-        SlashCommand::GoalResume if goal.objective.is_some() => "goal: resumed".to_string(),
-        SlashCommand::GoalClear => "goal: cleared".to_string(),
+        SlashCommand::GoalPause if goal.objective.is_some() => {
+            "goal: marked paused (advisory; does not halt the running agent)".to_string()
+        }
+        SlashCommand::GoalResume if goal.objective.is_some() => {
+            "goal: marked running (advisory; does not affect the running agent)".to_string()
+        }
+        SlashCommand::GoalClear => {
+            "goal: marked cleared (advisory; does not stop the running agent)".to_string()
+        }
         _ => format!("goal: {status} {done}/{total} steps done"),
     };
     Ok(goal_command_result(

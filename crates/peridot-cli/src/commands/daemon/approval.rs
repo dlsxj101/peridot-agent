@@ -133,7 +133,7 @@ pub(super) async fn handle_approval_respond(
             state
                 .router
                 .lock()
-                .expect("daemon session router mutex poisoned")
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .close(session_id);
             true
         } else {
@@ -205,7 +205,7 @@ pub(super) async fn handle_approval_respond(
         if let Some(handle) = state
             .router
             .lock()
-            .expect("daemon session router mutex poisoned")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get_mut(session_id)
         {
             handle.cancel = cancel.clone();
