@@ -522,8 +522,7 @@ fn split_command_segments(normalized: &str) -> Vec<String> {
     let spaced = normalized
         .replace("&&", " ; ")
         .replace("||", " ; ")
-        .replace('|', " ; ")
-        .replace(';', " ; ");
+        .replace(['|', ';'], " ; ");
     spaced
         .split(" ; ")
         .map(|s| s.trim().to_string())
@@ -971,22 +970,10 @@ fn segment_is_destructive(segment: &str) -> bool {
         // Whole-file truncation / secure-erase.
         "truncate" | "shred" => return true,
         // `dd of=…` overwrites its target.
-        "dd" => {
-            if args.iter().any(|a| a.starts_with("of=")) {
-                return true;
-            }
-        }
+        "dd" if args.iter().any(|a| a.starts_with("of=")) => return true,
         // `mv <src> /dev/null` discards the source.
-        "mv" => {
-            if args.iter().any(|a| *a == "/dev/null") {
-                return true;
-            }
-        }
-        "git" => {
-            if git_subcommand_is_destructive(&args) {
-                return true;
-            }
-        }
+        "mv" if args.contains(&"/dev/null") => return true,
+        "git" if git_subcommand_is_destructive(&args) => return true,
         _ => {}
     }
     // A clobbering redirect (`>`/`:>`) to something that looks like a real
@@ -1007,7 +994,7 @@ fn git_subcommand_is_destructive(args: &[&str]) -> bool {
             matches!(*a, "-f" | "-d" | "-x" | "-fd" | "-fdx" | "-xdf") || is_clean_flag(a)
         }),
         // `git reset --hard` throws away working-tree changes.
-        "reset" => rest.iter().any(|a| *a == "--hard"),
+        "reset" => rest.contains(&"--hard"),
         // `git restore` discards working-tree (and possibly staged) changes.
         "restore" => true,
         // `git checkout --` / `git checkout .` discards file changes.
