@@ -976,10 +976,11 @@ fn segment_is_destructive(segment: &str) -> bool {
         "git" if git_subcommand_is_destructive(&args) => return true,
         _ => {}
     }
-    // A clobbering redirect (`>`/`:>`) to something that looks like a real
-    // path target (not a pseudo-device write that's already covered, and not
-    // an appending `>>`).
-    segment_has_clobbering_redirect(&tokens)
+    // Generic output redirects (`>`) are ordinary file-writing, not destructive
+    // commands, so they don't gate the approval prompt here — flagging every
+    // `echo x > file` would be noise. Block-device clobbers (`> /dev/sda`) are
+    // caught by the hard-block layer instead.
+    false
 }
 
 /// Destructive git subcommands that discard committed or working-tree state.
@@ -1008,50 +1009,6 @@ fn is_clean_flag(token: &str) -> bool {
     is_short_flag_with(token, 'f')
         || is_short_flag_with(token, 'd')
         || is_short_flag_with(token, 'x')
-}
-
-/// Detects a clobbering output redirect: `>` or `:>` to a path-looking target.
-/// Appending redirects (`>>`) are not destructive and are excluded. Writes to
-/// the standard pseudo-devices are ignored (not clobbering real files).
-fn segment_has_clobbering_redirect(tokens: &[&str]) -> bool {
-    for (index, raw) in tokens.iter().enumerate() {
-        let token = clean_shell_token(raw);
-        // Skip appends; only single `>` / `:>` clobber.
-        if token.contains(">>") {
-            continue;
-        }
-        // Attached form: `>path` or `:>path`.
-        let attached = token.strip_prefix(":>").or_else(|| token.strip_prefix('>'));
-        if let Some(rest) = attached
-            && !rest.is_empty()
-            && looks_like_clobber_target(rest)
-        {
-            return true;
-        }
-        // Detached form: `>` / `:>` then the next token is the target.
-        if (token == ">" || token == ":>")
-            && let Some(next) = tokens.get(index + 1)
-            && looks_like_clobber_target(clean_shell_token(next))
-        {
-            return true;
-        }
-    }
-    false
-}
-
-/// True when a redirect target looks like a real on-disk path worth warning
-/// about, rather than a pseudo-device. Conservative: any non-`/dev/null`-style
-/// target counts.
-fn looks_like_clobber_target(target: &str) -> bool {
-    if target.is_empty() {
-        return false;
-    }
-    // Ignore the standard pseudo-devices — redirecting there isn't clobbering
-    // a file the operator cares about.
-    !matches!(
-        target,
-        "/dev/null" | "/dev/stdout" | "/dev/stderr" | "/dev/tty"
-    )
 }
 
 /// Emits a single process-lifetime warning the first time a shell command is
@@ -1373,8 +1330,6 @@ mod tests {
             "git checkout .",
             "git restore src/lib.rs",
             "git reset --hard HEAD~1",
-            "echo overwrite > existing.txt", // clobbering redirect
-            "cmd :> existing.txt",           // :> clobber
         ] {
             assert!(
                 is_destructive_shell_command(&normalize_shell_command(cmd)),
@@ -1401,8 +1356,9 @@ mod tests {
             "git checkout -b feature", // creating a branch, not discarding
             "git clean -n",            // dry-run, no -f/-d/-x
             "git push origin main",
-            "echo hi >> append.log", // append, not clobber
-            "echo hi > /dev/null",   // pseudo-device
+            "echo hi >> append.log",  // append, not clobber
+            "echo hi > /dev/null",    // pseudo-device
+            "echo data > output.txt", // plain file write is not destructive
             "cat file.txt",
             "mv a.txt b.txt", // ordinary rename
             "cargo build",
