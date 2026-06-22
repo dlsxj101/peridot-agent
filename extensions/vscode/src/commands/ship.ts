@@ -11,19 +11,14 @@ import * as vscode from 'vscode';
 import { refreshStatus } from '../extension';
 import type { PeridotSidebarProvider } from '../sidebar';
 import type { CommandResultView } from '../types';
-import { execFile, execPeridotCli, nonEmpty, parseJson } from './cli';
+import { ensureWorkspaceFolder, execFile, execPeridotCli, nonEmpty, parseJson } from './cli';
 
 export async function shipChangesToPr(
   output: vscode.OutputChannel,
   sidebar: PeridotSidebarProvider,
 ): Promise<void> {
-  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  if (!folder) {
-    const message = 'Open a workspace folder before shipping changes.';
-    sidebar.setWorkspaceProblem(message);
-    await vscode.window.showWarningMessage(message);
-    return;
-  }
+  const folder = await ensureWorkspaceFolder(sidebar, 'Open a workspace folder before shipping changes.');
+  if (!folder) return;
   const options = await promptShipOptions();
   if (!options) return;
 
@@ -71,13 +66,8 @@ export async function showGitHubPrStatus(
   output: vscode.OutputChannel,
   sidebar: PeridotSidebarProvider,
 ): Promise<void> {
-  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  if (!folder) {
-    const message = 'Open a workspace folder before checking GitHub PR status.';
-    sidebar.setWorkspaceProblem(message);
-    await vscode.window.showWarningMessage(message);
-    return;
-  }
+  const folder = await ensureWorkspaceFolder(sidebar, 'Open a workspace folder before checking GitHub PR status.');
+  if (!folder) return;
   await vscode.commands.executeCommand('peridot.chatView.focus');
   try {
     const { stdout, stderr } = await vscode.window.withProgress(
@@ -106,13 +96,8 @@ export async function mergeGitHubPr(
   output: vscode.OutputChannel,
   sidebar: PeridotSidebarProvider,
 ): Promise<void> {
-  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  if (!folder) {
-    const message = 'Open a workspace folder before merging a GitHub PR.';
-    sidebar.setWorkspaceProblem(message);
-    await vscode.window.showWarningMessage(message);
-    return;
-  }
+  const folder = await ensureWorkspaceFolder(sidebar, 'Open a workspace folder before merging a GitHub PR.');
+  if (!folder) return;
   const options = await promptMergeOptions();
   if (!options) return;
   const args = buildMergeArgs(options);

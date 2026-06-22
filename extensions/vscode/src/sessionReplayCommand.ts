@@ -1,6 +1,7 @@
 import type { DaemonSessionSummary } from './types';
 import { sessionContextDetail } from './sessionContextDetail';
 import { sessionUsageDescription } from './sessionUsage';
+import { parsePositiveInteger } from './util';
 
 export interface SessionReplayChoice {
   id: string;
@@ -47,13 +48,7 @@ export function sessionReplaySlashCommand(target: string, last?: number): string
 }
 
 export function parseReplayLastInput(value: string): number | undefined {
-  const trimmed = value.trim();
-  if (!trimmed) return undefined;
-  const parsed = Number(trimmed);
-  if (!Number.isInteger(parsed) || parsed <= 0) {
-    throw new Error('Enter a positive whole number, or leave empty for the full replay.');
-  }
-  return parsed;
+  return parsePositiveInteger(value, 'Enter a positive whole number, or leave empty for the full replay.');
 }
 
 function sessionTitle(session: DaemonSessionSummary): string | undefined {

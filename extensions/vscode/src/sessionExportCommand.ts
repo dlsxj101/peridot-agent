@@ -1,4 +1,5 @@
 import type { CommandResultView, DaemonSessionSummary, ExportedArtifactView } from './types';
+import { isRecord } from './util';
 import { sessionContextDetail } from './sessionContextDetail';
 import { activeSessionUsageDescription, sessionUsageDescription } from './sessionUsage';
 
@@ -111,6 +112,3 @@ function sessionDescription(session: DaemonSessionSummary): string | undefined {
   return sessionUsageDescription(session);
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}

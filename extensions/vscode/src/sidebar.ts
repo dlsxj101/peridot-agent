@@ -1,5 +1,7 @@
 import * as crypto from 'crypto';
 import * as vscode from 'vscode';
+
+import { isRecord } from './util';
 import {
   ApprovalResponse,
   AskUserAnswer,
@@ -2734,9 +2736,6 @@ function pickNumber(value: unknown, key: string): number | undefined {
   return typeof inner === 'number' && Number.isFinite(inner) ? inner : undefined;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}
 
 function json(value: unknown): string {
   try {

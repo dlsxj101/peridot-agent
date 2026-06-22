@@ -1,4 +1,5 @@
 import type { CommandResultItem, CommandResultView, DaemonSessionSummary, NoteSummary } from './types';
+import { isRecord } from './util';
 
 export function noteSummaryFromCommandResult(
   result: CommandResultView,
@@ -89,6 +90,3 @@ function stringField(value: unknown): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}

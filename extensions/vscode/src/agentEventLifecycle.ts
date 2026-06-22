@@ -1,3 +1,5 @@
+import { isRecord } from './util';
+
 export function isTerminalAgentEvent(event: unknown): boolean {
   if (!isRecord(event)) return false;
   return (
@@ -19,6 +21,3 @@ export function isAskUserWaitingEvent(event: unknown): boolean {
   return isRecord(event) && event.kind === 'ask_user_requested';
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}

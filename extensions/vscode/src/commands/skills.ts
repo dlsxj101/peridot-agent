@@ -10,6 +10,7 @@ import * as vscode from 'vscode';
 
 import { refreshSlashCatalog, runSlashCommand } from '../extension';
 import type { PeridotSidebarProvider } from '../sidebar';
+import { ensureWorkspaceFolder } from './cli';
 
 /**
  * Normalize a skill name (which may arrive from a webview UI action) into a
@@ -30,13 +31,8 @@ export async function showSkills(
   output: vscode.OutputChannel,
   sidebar: PeridotSidebarProvider,
 ): Promise<void> {
-  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  if (!folder) {
-    const message = 'Open a workspace folder before listing Peridot skills.';
-    sidebar.setWorkspaceProblem(message);
-    await vscode.window.showWarningMessage(message);
-    return;
-  }
+  const folder = await ensureWorkspaceFolder(sidebar, 'Open a workspace folder before listing Peridot skills.');
+  if (!folder) return;
   await vscode.commands.executeCommand('peridot.chatView.focus');
   try {
     const result = await vscode.window.withProgress(
@@ -59,13 +55,8 @@ export async function showArchivedSkills(
   output: vscode.OutputChannel,
   sidebar: PeridotSidebarProvider,
 ): Promise<void> {
-  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  if (!folder) {
-    const message = 'Open a workspace folder before listing archived Peridot skills.';
-    sidebar.setWorkspaceProblem(message);
-    await vscode.window.showWarningMessage(message);
-    return;
-  }
+  const folder = await ensureWorkspaceFolder(sidebar, 'Open a workspace folder before listing archived Peridot skills.');
+  if (!folder) return;
   await vscode.commands.executeCommand('peridot.chatView.focus');
   try {
     const result = await vscode.window.withProgress(
@@ -98,13 +89,8 @@ export async function searchSkills(
   });
   const trimmed = query?.trim();
   if (!trimmed) return;
-  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  if (!folder) {
-    const message = 'Open a workspace folder before searching Peridot skills.';
-    sidebar.setWorkspaceProblem(message);
-    await vscode.window.showWarningMessage(message);
-    return;
-  }
+  const folder = await ensureWorkspaceFolder(sidebar, 'Open a workspace folder before searching Peridot skills.');
+  if (!folder) return;
   await vscode.commands.executeCommand('peridot.chatView.focus');
   try {
     const result = await runSlashCommand(
@@ -134,13 +120,8 @@ export async function searchArchivedSkills(
   });
   const trimmed = query?.trim();
   if (!trimmed) return;
-  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  if (!folder) {
-    const message = 'Open a workspace folder before searching archived Peridot skills.';
-    sidebar.setWorkspaceProblem(message);
-    await vscode.window.showWarningMessage(message);
-    return;
-  }
+  const folder = await ensureWorkspaceFolder(sidebar, 'Open a workspace folder before searching archived Peridot skills.');
+  if (!folder) return;
   await vscode.commands.executeCommand('peridot.chatView.focus');
   try {
     const result = await runSlashCommand(
@@ -167,13 +148,8 @@ export async function showSkill(
 ): Promise<void> {
   const name = normalizeSkillName(skillName);
   if (!name) return;
-  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  if (!folder) {
-    const message = 'Open a workspace folder before viewing Peridot skills.';
-    sidebar.setWorkspaceProblem(message);
-    await vscode.window.showWarningMessage(message);
-    return;
-  }
+  const folder = await ensureWorkspaceFolder(sidebar, 'Open a workspace folder before viewing Peridot skills.');
+  if (!folder) return;
   await vscode.commands.executeCommand('peridot.chatView.focus');
   try {
     const result = await runSlashCommand(
@@ -198,13 +174,8 @@ export async function useSkill(
 ): Promise<void> {
   const name = normalizeSkillName(skillName);
   if (!name) return;
-  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  if (!folder) {
-    const message = 'Open a workspace folder before using Peridot skills.';
-    sidebar.setWorkspaceProblem(message);
-    await vscode.window.showWarningMessage(message);
-    return;
-  }
+  const folder = await ensureWorkspaceFolder(sidebar, 'Open a workspace folder before using Peridot skills.');
+  if (!folder) return;
   await vscode.commands.executeCommand('peridot.chatView.focus');
   try {
     const result = await runSlashCommand(
@@ -230,13 +201,8 @@ export async function toggleSkillPin(
 ): Promise<void> {
   const name = normalizeSkillName(skillName);
   if (!name) return;
-  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  if (!folder) {
-    const message = 'Open a workspace folder before updating Peridot skills.';
-    sidebar.setWorkspaceProblem(message);
-    await vscode.window.showWarningMessage(message);
-    return;
-  }
+  const folder = await ensureWorkspaceFolder(sidebar, 'Open a workspace folder before updating Peridot skills.');
+  if (!folder) return;
   await vscode.commands.executeCommand('peridot.chatView.focus');
   try {
     const action = pinned ? 'pin' : 'unpin';
@@ -268,13 +234,8 @@ export async function archiveSkill(
     'Archive',
   );
   if (confirmed !== 'Archive') return;
-  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  if (!folder) {
-    const message = 'Open a workspace folder before archiving Peridot skills.';
-    sidebar.setWorkspaceProblem(message);
-    await vscode.window.showWarningMessage(message);
-    return;
-  }
+  const folder = await ensureWorkspaceFolder(sidebar, 'Open a workspace folder before archiving Peridot skills.');
+  if (!folder) return;
   await vscode.commands.executeCommand('peridot.chatView.focus');
   try {
     const result = await runSlashCommand(
@@ -300,13 +261,8 @@ export async function restoreSkill(
 ): Promise<void> {
   const name = normalizeSkillName(skillName);
   if (!name) return;
-  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  if (!folder) {
-    const message = 'Open a workspace folder before restoring Peridot skills.';
-    sidebar.setWorkspaceProblem(message);
-    await vscode.window.showWarningMessage(message);
-    return;
-  }
+  const folder = await ensureWorkspaceFolder(sidebar, 'Open a workspace folder before restoring Peridot skills.');
+  if (!folder) return;
   await vscode.commands.executeCommand('peridot.chatView.focus');
   try {
     const result = await runSlashCommand(

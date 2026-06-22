@@ -18,19 +18,14 @@ import {
 import { sessionImportSlashCommand } from '../sessionImportCommand';
 import type { PeridotSidebarProvider } from '../sidebar';
 import type { DaemonSessionSummary } from '../types';
-import { execPeridotCli, nonEmpty, parseJson, pathExists, sanitizePathSegment } from './cli';
+import { ensureWorkspaceFolder, execPeridotCli, nonEmpty, parseJson, pathExists, sanitizePathSegment } from './cli';
 
 export async function exportSessionArtifacts(
   output: vscode.OutputChannel,
   sidebar: PeridotSidebarProvider,
 ): Promise<void> {
-  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  if (!folder) {
-    const message = 'Open a workspace folder before exporting session artifacts.';
-    sidebar.setWorkspaceProblem(message);
-    await vscode.window.showWarningMessage(message);
-    return;
-  }
+  const folder = await ensureWorkspaceFolder(sidebar, 'Open a workspace folder before exporting session artifacts.');
+  if (!folder) return;
   let sessions: DaemonSessionSummary[] = [];
   try {
     sessions = normalizeDaemonSessions(await fetchSessionList(folder, output));
@@ -124,13 +119,8 @@ export async function importSessionArtifacts(
   output: vscode.OutputChannel,
   sidebar: PeridotSidebarProvider,
 ): Promise<void> {
-  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  if (!folder) {
-    const message = 'Open a workspace folder before importing session artifacts.';
-    sidebar.setWorkspaceProblem(message);
-    await vscode.window.showWarningMessage(message);
-    return;
-  }
+  const folder = await ensureWorkspaceFolder(sidebar, 'Open a workspace folder before importing session artifacts.');
+  if (!folder) return;
   const picked = await vscode.window.showOpenDialog({
     title: 'Peridot: Import Session Artifacts',
     canSelectFiles: false,

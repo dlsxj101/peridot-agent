@@ -516,249 +516,249 @@
           "group": "navigation@2"
         },
         {
-          "command": "peridot.showCodeMapStatus",
-          "when": "view == peridot.chatView",
-          "group": "navigation@2.5"
-        },
-        {
-          "command": "peridot.refreshCodeMap",
+          "command": "peridot.searchCodeMap",
           "when": "view == peridot.chatView",
           "group": "navigation@3"
         },
         {
-          "command": "peridot.searchCodeMap",
+          "command": "peridot.showWorkingTreeDiff",
           "when": "view == peridot.chatView",
           "group": "navigation@4"
         },
         {
-          "command": "peridot.locateCodeMapSymbol",
+          "command": "peridot.showTodos",
           "when": "view == peridot.chatView",
-          "group": "navigation@4.5"
-        },
-        {
-          "command": "peridot.outlineCurrentFile",
-          "when": "view == peridot.chatView",
-          "group": "navigation@4.6"
-        },
-        {
-          "command": "peridot.findSymbolReferences",
-          "when": "view == peridot.chatView",
-          "group": "navigation@4.7"
-        },
-        {
-          "command": "peridot.showSkills",
-          "when": "view == peridot.chatView",
-          "group": "navigation@4.8"
-        },
-        {
-          "command": "peridot.showArchivedSkills",
-          "when": "view == peridot.chatView",
-          "group": "navigation@4.85"
-        },
-        {
-          "command": "peridot.searchSkills",
-          "when": "view == peridot.chatView",
-          "group": "navigation@4.9"
-        },
-        {
-          "command": "peridot.searchArchivedSkills",
-          "when": "view == peridot.chatView",
-          "group": "navigation@4.95"
+          "group": "navigation@5"
         },
         {
           "command": "peridot.attachFile",
           "when": "view == peridot.chatView",
-          "group": "navigation@5"
-        },
-        {
-          "command": "peridot.showTodos",
-          "when": "view == peridot.chatView",
-          "group": "navigation@5.0005"
-        },
-        {
-          "command": "peridot.showContextTop",
-          "when": "view == peridot.chatView",
-          "group": "navigation@5.0006"
-        },
-        {
-          "command": "peridot.showWorkingTreeDiff",
-          "when": "view == peridot.chatView",
-          "group": "navigation@5.0007"
-        },
-        {
-          "command": "peridot.compactContext",
-          "when": "view == peridot.chatView",
-          "group": "navigation@5.000701"
-        },
-        {
-          "command": "peridot.rewindSession",
-          "when": "view == peridot.chatView",
-          "group": "navigation@5.000702"
-        },
-        {
-          "command": "peridot.undoLastChange",
-          "when": "view == peridot.chatView",
-          "group": "navigation@5.000703"
-        },
-        {
-          "command": "peridot.showBranchTurns",
-          "when": "view == peridot.chatView",
-          "group": "navigation@5.00071"
-        },
-        {
-          "command": "peridot.showBranchSnapshots",
-          "when": "view == peridot.chatView",
-          "group": "navigation@5.00072"
-        },
-        {
-          "command": "peridot.saveBranchSnapshot",
-          "when": "view == peridot.chatView",
-          "group": "navigation@5.00073"
-        },
-        {
-          "command": "peridot.restoreBranchSnapshot",
-          "when": "view == peridot.chatView",
-          "group": "navigation@5.00074"
-        },
-        {
-          "command": "peridot.forkBranchAtTurn",
-          "when": "view == peridot.chatView",
-          "group": "navigation@5.00075"
-        },
-        {
-          "command": "peridot.showBranchTree",
-          "when": "view == peridot.chatView",
-          "group": "navigation@5.00076"
-        },
-        {
-          "command": "peridot.switchBranchLimb",
-          "when": "view == peridot.chatView",
-          "group": "navigation@5.00077"
-        },
-        {
-          "command": "peridot.showMcpServers",
-          "when": "view == peridot.chatView",
-          "group": "navigation@5.0008"
-        },
-        {
-          "command": "peridot.addMcpServer",
-          "when": "view == peridot.chatView",
-          "group": "navigation@5.00085"
-        },
-        {
-          "command": "peridot.testMcpServer",
-          "when": "view == peridot.chatView",
-          "group": "navigation@5.0009"
-        },
-        {
-          "command": "peridot.removeMcpServer",
-          "when": "view == peridot.chatView",
-          "group": "navigation@5.0010"
-        },
-        {
-          "command": "peridot.addSessionNote",
-          "when": "view == peridot.chatView",
-          "group": "navigation@5.001"
-        },
-        {
-          "command": "peridot.showSessionNotes",
-          "when": "view == peridot.chatView",
-          "group": "navigation@5.002"
-        },
-        {
-          "command": "peridot.clearSessionNotes",
-          "when": "view == peridot.chatView",
-          "group": "navigation@5.003"
-        },
-        {
-          "command": "peridot.newPersistedSession",
-          "when": "view == peridot.chatView",
-          "group": "navigation@5.01"
-        },
-        {
-          "command": "peridot.switchPersistedSession",
-          "when": "view == peridot.chatView",
-          "group": "navigation@5.02"
-        },
-        {
-          "command": "peridot.closePersistedSession",
-          "when": "view == peridot.chatView",
-          "group": "navigation@5.03"
-        },
-        {
-          "command": "peridot.showSessionCount",
-          "when": "view == peridot.chatView",
-          "group": "navigation@5.05"
-        },
-        {
-          "command": "peridot.showPersistedSessionDetails",
-          "when": "view == peridot.chatView",
-          "group": "navigation@5.1"
-        },
-        {
-          "command": "peridot.locatePersistedSessionDirectory",
-          "when": "view == peridot.chatView",
-          "group": "navigation@5.15"
-        },
-        {
-          "command": "peridot.resumePersistedSession",
-          "when": "view == peridot.chatView",
-          "group": "navigation@5.18"
-        },
-        {
-          "command": "peridot.renamePersistedSession",
-          "when": "view == peridot.chatView",
-          "group": "navigation@5.19"
-        },
-        {
-          "command": "peridot.deletePersistedSession",
-          "when": "view == peridot.chatView",
-          "group": "navigation@5.195"
-        },
-        {
-          "command": "peridot.showSessions",
-          "when": "view == peridot.chatView",
-          "group": "navigation@5.2"
-        },
-        {
-          "command": "peridot.searchSessions",
-          "when": "view == peridot.chatView",
-          "group": "navigation@5.25"
-        },
-        {
-          "command": "peridot.pruneSessions",
-          "when": "view == peridot.chatView",
-          "group": "navigation@5.3"
-        },
-        {
-          "command": "peridot.replaySessionTimeline",
-          "when": "view == peridot.chatView",
-          "group": "navigation@5.4"
-        },
-        {
-          "command": "peridot.exportSessionArtifacts",
-          "when": "view == peridot.chatView",
-          "group": "navigation@5.5"
-        },
-        {
-          "command": "peridot.importSessionArtifacts",
-          "when": "view == peridot.chatView",
-          "group": "navigation@5.6"
+          "group": "navigation@6"
         },
         {
           "command": "peridot.prStatus",
           "when": "view == peridot.chatView",
-          "group": "navigation@5"
+          "group": "navigation@7"
         },
         {
           "command": "peridot.shipChanges",
           "when": "view == peridot.chatView",
-          "group": "navigation@6"
+          "group": "navigation@8"
+        },
+        {
+          "command": "peridot.showCodeMapStatus",
+          "when": "view == peridot.chatView",
+          "group": "1_codemap@1"
+        },
+        {
+          "command": "peridot.refreshCodeMap",
+          "when": "view == peridot.chatView",
+          "group": "1_codemap@2"
+        },
+        {
+          "command": "peridot.locateCodeMapSymbol",
+          "when": "view == peridot.chatView",
+          "group": "1_codemap@3"
+        },
+        {
+          "command": "peridot.outlineCurrentFile",
+          "when": "view == peridot.chatView",
+          "group": "1_codemap@4"
+        },
+        {
+          "command": "peridot.findSymbolReferences",
+          "when": "view == peridot.chatView",
+          "group": "1_codemap@5"
+        },
+        {
+          "command": "peridot.showSkills",
+          "when": "view == peridot.chatView",
+          "group": "2_skills@1"
+        },
+        {
+          "command": "peridot.showArchivedSkills",
+          "when": "view == peridot.chatView",
+          "group": "2_skills@2"
+        },
+        {
+          "command": "peridot.searchSkills",
+          "when": "view == peridot.chatView",
+          "group": "2_skills@3"
+        },
+        {
+          "command": "peridot.searchArchivedSkills",
+          "when": "view == peridot.chatView",
+          "group": "2_skills@4"
+        },
+        {
+          "command": "peridot.showContextTop",
+          "when": "view == peridot.chatView",
+          "group": "3_history@1"
+        },
+        {
+          "command": "peridot.compactContext",
+          "when": "view == peridot.chatView",
+          "group": "3_history@2"
+        },
+        {
+          "command": "peridot.rewindSession",
+          "when": "view == peridot.chatView",
+          "group": "3_history@3"
+        },
+        {
+          "command": "peridot.undoLastChange",
+          "when": "view == peridot.chatView",
+          "group": "3_history@4"
+        },
+        {
+          "command": "peridot.showBranchTurns",
+          "when": "view == peridot.chatView",
+          "group": "4_branch@1"
+        },
+        {
+          "command": "peridot.showBranchSnapshots",
+          "when": "view == peridot.chatView",
+          "group": "4_branch@2"
+        },
+        {
+          "command": "peridot.saveBranchSnapshot",
+          "when": "view == peridot.chatView",
+          "group": "4_branch@3"
+        },
+        {
+          "command": "peridot.restoreBranchSnapshot",
+          "when": "view == peridot.chatView",
+          "group": "4_branch@4"
+        },
+        {
+          "command": "peridot.forkBranchAtTurn",
+          "when": "view == peridot.chatView",
+          "group": "4_branch@5"
+        },
+        {
+          "command": "peridot.showBranchTree",
+          "when": "view == peridot.chatView",
+          "group": "4_branch@6"
+        },
+        {
+          "command": "peridot.switchBranchLimb",
+          "when": "view == peridot.chatView",
+          "group": "4_branch@7"
+        },
+        {
+          "command": "peridot.showMcpServers",
+          "when": "view == peridot.chatView",
+          "group": "5_mcp@1"
+        },
+        {
+          "command": "peridot.addMcpServer",
+          "when": "view == peridot.chatView",
+          "group": "5_mcp@2"
+        },
+        {
+          "command": "peridot.testMcpServer",
+          "when": "view == peridot.chatView",
+          "group": "5_mcp@3"
+        },
+        {
+          "command": "peridot.removeMcpServer",
+          "when": "view == peridot.chatView",
+          "group": "5_mcp@4"
+        },
+        {
+          "command": "peridot.addSessionNote",
+          "when": "view == peridot.chatView",
+          "group": "6_notes@1"
+        },
+        {
+          "command": "peridot.showSessionNotes",
+          "when": "view == peridot.chatView",
+          "group": "6_notes@2"
+        },
+        {
+          "command": "peridot.clearSessionNotes",
+          "when": "view == peridot.chatView",
+          "group": "6_notes@3"
+        },
+        {
+          "command": "peridot.newPersistedSession",
+          "when": "view == peridot.chatView",
+          "group": "7_session@1"
+        },
+        {
+          "command": "peridot.switchPersistedSession",
+          "when": "view == peridot.chatView",
+          "group": "7_session@2"
+        },
+        {
+          "command": "peridot.closePersistedSession",
+          "when": "view == peridot.chatView",
+          "group": "7_session@3"
+        },
+        {
+          "command": "peridot.showSessionCount",
+          "when": "view == peridot.chatView",
+          "group": "7_session@4"
+        },
+        {
+          "command": "peridot.showPersistedSessionDetails",
+          "when": "view == peridot.chatView",
+          "group": "7_session@5"
+        },
+        {
+          "command": "peridot.locatePersistedSessionDirectory",
+          "when": "view == peridot.chatView",
+          "group": "7_session@6"
+        },
+        {
+          "command": "peridot.resumePersistedSession",
+          "when": "view == peridot.chatView",
+          "group": "7_session@7"
+        },
+        {
+          "command": "peridot.renamePersistedSession",
+          "when": "view == peridot.chatView",
+          "group": "7_session@8"
+        },
+        {
+          "command": "peridot.deletePersistedSession",
+          "when": "view == peridot.chatView",
+          "group": "7_session@9"
+        },
+        {
+          "command": "peridot.showSessions",
+          "when": "view == peridot.chatView",
+          "group": "7_session@10"
+        },
+        {
+          "command": "peridot.searchSessions",
+          "when": "view == peridot.chatView",
+          "group": "7_session@11"
+        },
+        {
+          "command": "peridot.pruneSessions",
+          "when": "view == peridot.chatView",
+          "group": "7_session@12"
+        },
+        {
+          "command": "peridot.replaySessionTimeline",
+          "when": "view == peridot.chatView",
+          "group": "7_session@13"
+        },
+        {
+          "command": "peridot.exportSessionArtifacts",
+          "when": "view == peridot.chatView",
+          "group": "7_session@14"
+        },
+        {
+          "command": "peridot.importSessionArtifacts",
+          "when": "view == peridot.chatView",
+          "group": "7_session@15"
         },
         {
           "command": "peridot.mergePr",
           "when": "view == peridot.chatView",
-          "group": "navigation@7"
+          "group": "8_ship@1"
         }
       ]
     },

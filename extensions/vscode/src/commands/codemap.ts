@@ -9,6 +9,7 @@
 import * as vscode from 'vscode';
 
 import { openWorkspaceFile, runSlashCommand } from '../extension';
+import { ensureWorkspaceFolder } from './cli';
 import type { PeridotSidebarProvider } from '../sidebar';
 
 export async function showWorkspaceCodeMap(
@@ -17,13 +18,8 @@ export async function showWorkspaceCodeMap(
   refresh: boolean,
   query?: string,
 ): Promise<void> {
-  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  if (!folder) {
-    const message = 'Open a workspace folder before scanning the code map.';
-    sidebar.setWorkspaceProblem(message);
-    await vscode.window.showWarningMessage(message);
-    return;
-  }
+  const folder = await ensureWorkspaceFolder(sidebar, 'Open a workspace folder before scanning the code map.');
+  if (!folder) return;
   await vscode.commands.executeCommand('peridot.chatView.focus');
   try {
     const command = query ? `/codemap find ${query}` : refresh ? '/codemap refresh' : '/codemap';
@@ -57,13 +53,8 @@ export async function showWorkspaceCodeMapStatus(
   output: vscode.OutputChannel,
   sidebar: PeridotSidebarProvider,
 ): Promise<void> {
-  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  if (!folder) {
-    const message = 'Open a workspace folder before checking the code map.';
-    sidebar.setWorkspaceProblem(message);
-    await vscode.window.showWarningMessage(message);
-    return;
-  }
+  const folder = await ensureWorkspaceFolder(sidebar, 'Open a workspace folder before checking the code map.');
+  if (!folder) return;
   await vscode.commands.executeCommand('peridot.chatView.focus');
   try {
     const result = await runSlashCommand(
@@ -108,13 +99,8 @@ export async function locateWorkspaceCodeMapSymbol(
   });
   const trimmed = query?.trim();
   if (!trimmed) return;
-  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  if (!folder) {
-    const message = 'Open a workspace folder before locating a workspace symbol.';
-    sidebar.setWorkspaceProblem(message);
-    await vscode.window.showWarningMessage(message);
-    return;
-  }
+  const folder = await ensureWorkspaceFolder(sidebar, 'Open a workspace folder before locating a workspace symbol.');
+  if (!folder) return;
   await vscode.commands.executeCommand('peridot.chatView.focus');
   try {
     const result = await vscode.window.withProgress(
@@ -161,13 +147,8 @@ export async function outlineCurrentFile(
     await vscode.window.showWarningMessage(vscode.l10n.t('Open a source file before outlining it with Peridot.'));
     return;
   }
-  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  if (!folder) {
-    const message = 'Open a workspace folder before outlining a file.';
-    sidebar.setWorkspaceProblem(message);
-    await vscode.window.showWarningMessage(message);
-    return;
-  }
+  const folder = await ensureWorkspaceFolder(sidebar, 'Open a workspace folder before outlining a file.');
+  if (!folder) return;
   const relativePath = vscode.workspace.asRelativePath(editor.document.uri, false);
   await vscode.commands.executeCommand('peridot.chatView.focus');
   try {
@@ -205,13 +186,8 @@ export async function findWorkspaceSymbolReferences(
   });
   const trimmed = query?.trim();
   if (!trimmed) return;
-  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  if (!folder) {
-    const message = 'Open a workspace folder before finding symbol references.';
-    sidebar.setWorkspaceProblem(message);
-    await vscode.window.showWarningMessage(message);
-    return;
-  }
+  const folder = await ensureWorkspaceFolder(sidebar, 'Open a workspace folder before finding symbol references.');
+  if (!folder) return;
   await vscode.commands.executeCommand('peridot.chatView.focus');
   try {
     const result = await vscode.window.withProgress(

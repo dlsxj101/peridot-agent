@@ -14,6 +14,49 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 
 ## Unreleased
 
+### Fixed — VS Code webview UI/UX (audit follow-ups)
+
+- **Slash picker dismissal.** The composer slash/file-mention picker now hides
+  on blur, so clicking away no longer leaves it stranded over the input (rows
+  accept via mousedown+preventDefault, so a real blur means focus left the
+  composer).
+- **Inline-image paste.** Paste now inspects `clipboardData.items` in addition
+  to `.files`, so images pasted on Linux/Chromium (which surface only via
+  `items`) are attached instead of silently dropped; drop uses the same path.
+- **Duplicate approval/ask-user responses.** The approval and ask-user action
+  rows disable on first click, so a double-click or a click during the
+  postMessage round-trip can't submit two responses.
+- **Ask-user focus theft.** The free-text ask-user input auto-focuses once per
+  prompt instead of on every render, so background state pushes no longer pull
+  focus back into the field.
+- **Queue edit/remove race.** Removing a queued item no longer races its
+  contentEditable blur-save (a flag set on the Remove mousedown suppresses the
+  stray edit).
+- **Diff collapse toggle** keys off a dataset flag instead of a literal
+  `120px` max-height string comparison.
+
+### Changed — VS Code extension structure & dead code
+
+- **Shared `isRecord`.** Ten copy-pasted `isRecord` type guards collapse to a
+  single `src/util.ts` export.
+- **Shared workspace guard.** The "open a workspace folder" preamble inlined in
+  ~34 command handlers across nine modules moves to one
+  `ensureWorkspaceFolder` helper in `commands/cli.ts`.
+- **Shared positive-integer parse.** The prune/replay `--last`/`--older-than`
+  parsers delegate to a single `parsePositiveInteger` (the notes parser keeps
+  its stricter regex, so behavior is unchanged).
+- **Decluttered the panel header.** The view title kept ~45 always-inline
+  icons; only the high-frequency actions stay inline now and the rest move
+  into the `…` overflow menu, grouped by area (code map, skills, history,
+  branch, MCP, notes, sessions).
+- **Removed dead code.** The write-only `assistantTextByKey` map and the
+  unreachable `loginOpenAi` webview-message path (variant + handler) are gone.
+
+### Fixed — VS Code extension localization
+
+- The Approve / Deny / Send / Cancel action labels now use `t()` like the rest
+  of the UI instead of hardcoded English.
+
 ### Fixed — VS Code extension reliability (audit follow-ups)
 
 - **CLI subprocess timeout.** `execFile` / `execPeridotCli` (ship, merge,

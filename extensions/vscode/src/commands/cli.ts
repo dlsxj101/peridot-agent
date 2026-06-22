@@ -11,6 +11,23 @@ import * as vscode from 'vscode';
 
 import { resolvePeridotBinary } from '../peridotBin';
 import { peridotChildEnv } from '../processEnv';
+import type { PeridotSidebarProvider } from '../sidebar';
+
+// Shared "no workspace folder" guard used by the command handlers. Returns the
+// first workspace folder path, or surfaces the given message (sidebar problem +
+// warning notification) and returns undefined — matching the pattern every
+// command module previously inlined.
+export async function ensureWorkspaceFolder(
+  sidebar: PeridotSidebarProvider,
+  message: string,
+): Promise<string | undefined> {
+  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!folder) {
+    sidebar.setWorkspaceProblem(message);
+    await vscode.window.showWarningMessage(message);
+  }
+  return folder;
+}
 
 export function nonEmpty(value: string): string | undefined {
   const trimmed = value.trim();

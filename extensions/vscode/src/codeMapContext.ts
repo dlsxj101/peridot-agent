@@ -1,4 +1,5 @@
 import type { CodeMapSummary, CommandResultView } from './types';
+import { isRecord } from './util';
 
 export function codeMapFromCommandResult(
   result: CommandResultView,
@@ -62,6 +63,3 @@ function boolField(value: unknown): boolean | undefined {
   return typeof value === 'boolean' ? value : undefined;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}

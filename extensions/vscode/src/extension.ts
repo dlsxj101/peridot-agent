@@ -4,6 +4,7 @@
 // task execution over JSON-RPC.
 
 import * as childProcess from 'child_process';
+import { isRecord } from './util';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { addAttachmentPreviewUris } from './attachmentPreview';
@@ -2380,9 +2381,6 @@ function isPlanDocumentPath(path: string): boolean {
   );
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}
 
 function json(value: unknown): string {
   try {
