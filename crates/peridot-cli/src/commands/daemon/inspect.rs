@@ -28,7 +28,10 @@ pub(super) async fn handle_command_goal_control(
     let Some((goal, plan)) = ({
         let sessions = state.sessions.lock().await;
         sessions.get(session_id).map(|entry| {
-            let mut goal = entry.goal.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let mut goal = entry
+                .goal
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             if goal.objective.is_none() && entry.spec.mode == ExecutionMode::Goal {
                 *goal = initial_live_goal(&entry.spec);
             }
@@ -45,7 +48,10 @@ pub(super) async fn handle_command_goal_control(
                         status: Some(GoalStatus::Cleared),
                         started_at_unix: None,
                     };
-                    *entry.plan.lock().unwrap_or_else(std::sync::PoisonError::into_inner) =
+                    *entry
+                        .plan
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner) =
                         LiveSessionPlan::default();
                 }
                 _ => {}

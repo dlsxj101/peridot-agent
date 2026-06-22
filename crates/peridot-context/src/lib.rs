@@ -2113,14 +2113,13 @@ mod tests {
                 }],
             )
         };
-        let result = |id: &str| {
-            ContextEntry::trusted(ContextSource::Tool, "ok").with_tool_call_id(id)
-        };
+        let result =
+            |id: &str| ContextEntry::trusted(ContextSource::Tool, "ok").with_tool_call_id(id);
         let entries = vec![
-            call("call_2"),   // 0
-            call("call_1"),   // 1
-            result("call_2"), // 2 -> call at index 0
-            result("call_1"), // 3 -> call at index 1
+            call("call_2"),                                     // 0
+            call("call_1"),                                     // 1
+            result("call_2"),                                   // 2 -> call at index 0
+            result("call_1"),                                   // 3 -> call at index 1
             ContextEntry::trusted(ContextSource::User, "tail"), // 4
         ];
 
