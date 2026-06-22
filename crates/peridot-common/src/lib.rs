@@ -614,6 +614,7 @@ pub enum ReasoningEffort {
     /// Maximum reasoning budget; expensive but most thorough.
     High,
     /// Extra-high reasoning budget for models that expose a deeper tier.
+    #[serde(rename = "xhigh", alias = "x_high", alias = "x-high")]
     XHigh,
 }
 
@@ -1711,6 +1712,28 @@ mod tests {
             Some(32_768)
         );
         assert_eq!(ReasoningEffort::XHigh.to_string(), "xhigh");
+    }
+
+    #[test]
+    fn xhigh_reasoning_serde_round_trips_as_xhigh() {
+        // Serialises to the same spelling Display/parse use.
+        let serialized = serde_json::to_string(&ReasoningEffort::XHigh).unwrap();
+        assert_eq!(serialized, "\"xhigh\"");
+        assert_eq!(serialized.trim_matches('"'), ReasoningEffort::XHigh.to_string());
+
+        // Deserialises from the canonical spelling and the snake_case alias.
+        assert_eq!(
+            serde_json::from_str::<ReasoningEffort>("\"xhigh\"").unwrap(),
+            ReasoningEffort::XHigh
+        );
+        assert_eq!(
+            serde_json::from_str::<ReasoningEffort>("\"x_high\"").unwrap(),
+            ReasoningEffort::XHigh
+        );
+
+        // The serialised form is what parse/Display accept.
+        let display = ReasoningEffort::XHigh.to_string();
+        assert_eq!(ReasoningEffort::parse(&display), Some(ReasoningEffort::XHigh));
     }
 
     #[test]

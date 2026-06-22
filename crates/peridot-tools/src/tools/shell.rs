@@ -337,13 +337,46 @@ fn terminate_child_tree(child: &mut Child) {
     let _ = child.kill();
 }
 
+/// Per-pipe ceiling on captured bytes. A command that emits unbounded
+/// output (`yes`, `cat /dev/zero`) would otherwise OOM the agent via an
+/// unbounded `read_to_end`. Matches the web tools' `MAX_FETCH_BYTES`.
+const MAX_PIPE_CAPTURE_BYTES: usize = 5 * 1024 * 1024;
+
 fn read_pipe_in_background<R>(mut reader: R) -> thread::JoinHandle<io::Result<Vec<u8>>>
 where
     R: io::Read + Send + 'static,
 {
     thread::spawn(move || {
+        // Read up to the cap, then keep draining to EOF (discarding the
+        // overflow) so the child isn't blocked on a full pipe — we just
+        // stop appending. A truncation marker is added so the model knows
+        // the captured output is incomplete.
         let mut output = Vec::new();
-        reader.read_to_end(&mut output)?;
+        let mut buf = [0u8; 64 * 1024];
+        let mut truncated = false;
+        loop {
+            let n = reader.read(&mut buf)?;
+            if n == 0 {
+                break;
+            }
+            if output.len() < MAX_PIPE_CAPTURE_BYTES {
+                let take = n.min(MAX_PIPE_CAPTURE_BYTES - output.len());
+                output.extend_from_slice(&buf[..take]);
+                if take < n {
+                    truncated = true;
+                }
+            } else {
+                truncated = true;
+            }
+        }
+        if truncated {
+            output.extend_from_slice(
+                format!(
+                    "\n\n[output truncated at {MAX_PIPE_CAPTURE_BYTES} bytes]"
+                )
+                .as_bytes(),
+            );
+        }
         Ok(output)
     })
 }
@@ -527,7 +560,53 @@ fn is_allowed_readonly_segment(segment: &str) -> bool {
                 | "describe"
         );
     }
-    if basename == "sed" && tokens.iter().any(|token| clean_shell_token(token) == "-i") {
+    // `find` is allowlisted for traversal/printing only — its action
+    // primitives let it execute or delete arbitrary files, which is not
+    // read-only. Reject any command-execution / mutation actions.
+    if basename == "find" {
+        const FIND_EXEC_ACTIONS: [&str; 7] = [
+            "-exec",
+            "-execdir",
+            "-ok",
+            "-okdir",
+            "-delete",
+            "-fprintf",
+            "-fprint",
+        ];
+        if tokens
+            .iter()
+            .any(|token| FIND_EXEC_ACTIONS.contains(&clean_shell_token(token)))
+        {
+            return false;
+        }
+    }
+    // `sed` can execute shell commands (`e`), write files (`w`/`W`), and
+    // read files (`r`), in addition to in-place editing (`-i`). None of
+    // those are read-only, so reject the dangerous script commands and the
+    // in-place flags. Plain substitution / print scripts still pass.
+    if basename == "sed" {
+        if tokens.iter().any(|token| {
+            let cleaned = clean_shell_token(token);
+            cleaned == "-i"
+                || cleaned == "--in-place"
+                || cleaned.starts_with("-i")
+                || cleaned.starts_with("--in-place=")
+        }) {
+            return false;
+        }
+        if tokens
+            .iter()
+            .any(|token| sed_script_has_dangerous_command(clean_shell_token(token)))
+        {
+            return false;
+        }
+    }
+    // `awk` (and gawk/mawk) can shell out via `system(...)`, read commands
+    // through a pipe, and write to files via output redirection inside the
+    // program text. There's no safe-subset parse here, so drop them from
+    // the allowlist entirely — the model can use `rg`/`grep`/`cut` instead,
+    // or fall back to `shell_exec` for genuine awk needs.
+    if matches!(basename, "awk" | "gawk" | "mawk" | "nawk") {
         return false;
     }
     matches!(
@@ -541,12 +620,40 @@ fn is_allowed_readonly_segment(segment: &str) -> bool {
             | "head"
             | "tail"
             | "sed"
-            | "awk"
             | "wc"
             | "sort"
             | "uniq"
             | "cut"
     )
+}
+
+/// Detects sed script tokens that step outside read-only behaviour: the
+/// `e` (execute), `w`/`W` (write file), and `r`/`R` (read file) commands.
+/// Conservative scan over the script text — flags the command letters when
+/// they appear as standalone sed commands (optionally after an address /
+/// separator). Plain `s/a/b/`, `p`, `d`, `-n`, etc. are unaffected.
+fn sed_script_has_dangerous_command(script: &str) -> bool {
+    // Skip option flags — those are handled separately.
+    if script.starts_with('-') {
+        return false;
+    }
+    let bytes = script.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        let c = bytes[i] as char;
+        if matches!(c, 'e' | 'w' | 'W' | 'r' | 'R') {
+            // Only treat it as a command when it begins a command slot:
+            // start of string or immediately after a command separator
+            // (`;`, newline, `{`). This avoids flagging the letter when it
+            // appears inside a substitution pattern/replacement.
+            let prev = if i == 0 { None } else { Some(bytes[i - 1] as char) };
+            if matches!(prev, None | Some(';') | Some('\n') | Some('{') | Some(' ')) {
+                return true;
+            }
+        }
+        i += 1;
+    }
+    false
 }
 
 fn has_recursive_force_root_remove(command: &str) -> bool {
@@ -824,4 +931,95 @@ pub(crate) fn describe_shell_command(command: &std::process::Command) -> String 
         .map(|p| p.display().to_string())
         .unwrap_or_else(|| "<inherited>".to_string());
     format!("[dry-run] cwd={cwd} cmd={program} args={args:?}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+
+    #[test]
+    fn readonly_allows_plain_inspection_commands() {
+        assert!(enforce_readonly_shell_policy("find . -name x").is_ok());
+        assert!(enforce_readonly_shell_policy("sed 's/a/b/' f").is_ok());
+        assert!(enforce_readonly_shell_policy("sed -n '1,5p' f").is_ok());
+        assert!(enforce_readonly_shell_policy("rg pattern src").is_ok());
+        assert!(enforce_readonly_shell_policy("cat README.md").is_ok());
+        assert!(enforce_readonly_shell_policy("git log").is_ok());
+    }
+
+    #[test]
+    fn readonly_rejects_find_exec_family() {
+        // `+`-terminated forms avoid the `;` separator so the find-specific
+        // action allowlist (not the generic write-syntax check) is what
+        // rejects them.
+        for cmd in [
+            "find . -exec rm {} +",
+            "find . -execdir cat {} +",
+            "find . -delete",
+            "find . -fprintf /tmp/x %p",
+            "find . -fprint /tmp/x",
+        ] {
+            assert!(
+                enforce_readonly_shell_policy(cmd).is_err(),
+                "expected rejection: {cmd}"
+            );
+        }
+    }
+
+    #[test]
+    fn is_allowed_readonly_segment_rejects_find_actions_directly() {
+        // Exercises the find branch in isolation, independent of the
+        // generic shell-write-syntax pre-check.
+        assert!(!is_allowed_readonly_segment("find . -exec rm {} +"));
+        assert!(!is_allowed_readonly_segment("find . -ok rm {} +"));
+        assert!(!is_allowed_readonly_segment("find . -delete"));
+        assert!(is_allowed_readonly_segment("find . -name x"));
+    }
+
+    #[test]
+    fn readonly_rejects_sed_exec_write_read_and_inplace() {
+        for cmd in [
+            "sed -i s/a/b/ f",
+            "sed --in-place s/a/b/ f",
+            "sed 'e cat /etc/passwd' f",
+            "sed 'w /tmp/out' f",
+            "sed 'r /etc/passwd' f",
+        ] {
+            assert!(
+                enforce_readonly_shell_policy(cmd).is_err(),
+                "expected rejection: {cmd}"
+            );
+        }
+    }
+
+    #[test]
+    fn readonly_rejects_awk_family() {
+        // awk/gawk/mawk are removed from the allowlist entirely.
+        assert!(!is_allowed_readonly_segment("awk 'BEGIN{system(\"id\")}'"));
+        assert!(!is_allowed_readonly_segment("gawk '{print}'"));
+        assert!(!is_allowed_readonly_segment("mawk '{print}'"));
+        assert!(!is_allowed_readonly_segment("nawk '{print}'"));
+        // Even a benign-looking awk invocation is now rejected end-to-end.
+        assert!(enforce_readonly_shell_policy("awk '{print $1}' f").is_err());
+    }
+
+    #[test]
+    fn pipe_reader_caps_and_marks_truncation() {
+        let big = vec![b'a'; MAX_PIPE_CAPTURE_BYTES + 1024];
+        let handle = read_pipe_in_background(Cursor::new(big));
+        let out = handle.join().unwrap().unwrap();
+        // Captured bytes are capped (plus the appended truncation marker),
+        // never the full oversized input.
+        assert!(out.len() < MAX_PIPE_CAPTURE_BYTES + 1024);
+        let tail = String::from_utf8_lossy(&out);
+        assert!(tail.contains("[output truncated"));
+    }
+
+    #[test]
+    fn pipe_reader_passthrough_when_small() {
+        let handle = read_pipe_in_background(Cursor::new(b"hello".to_vec()));
+        let out = handle.join().unwrap().unwrap();
+        assert_eq!(out, b"hello");
+    }
 }

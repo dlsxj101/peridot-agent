@@ -8,8 +8,8 @@ use reqwest::{
 use serde_json::Value;
 
 use crate::protocol::{
-    MCP_PROTOCOL_VERSION, ensure_success, initialize_request, initialized_notification,
-    jsonrpc_request, parse_http_body,
+    INIT_REQUEST_ID, MCP_PROTOCOL_VERSION, check_protocol_version, ensure_success,
+    initialize_request, initialized_notification, jsonrpc_request, parse_http_body,
 };
 
 pub(crate) async fn http_request(
@@ -24,14 +24,25 @@ pub(crate) async fn http_request(
         .build()
         .map_err(|err| PeriError::Tool(format!("failed to build MCP HTTP client: {err}")))?;
     let mut session_id = None;
-    let (initialize, session) = http_exchange(config, &client, initialize_request(1), None).await?;
+    // Reserved internal id so the handshake can't collide with caller ids.
+    let (initialize, session) = http_exchange(
+        config,
+        &client,
+        initialize_request(INIT_REQUEST_ID),
+        None,
+        INIT_REQUEST_ID,
+    )
+    .await?;
     session_id = session_id.or(session);
-    ensure_success(&initialize)?;
+    check_protocol_version(ensure_success(&initialize)?)?;
     let _ = http_exchange(
         config,
         &client,
         initialized_notification(),
         session_id.as_deref(),
+        // Notifications have no id; the response is empty (HTTP 202), so the
+        // id is only consulted if the server unexpectedly returns a body.
+        INIT_REQUEST_ID,
     )
     .await?;
     let (response, _) = http_exchange(
@@ -39,6 +50,7 @@ pub(crate) async fn http_request(
         &client,
         jsonrpc_request(id, method, params),
         session_id.as_deref(),
+        id,
     )
     .await?;
     Ok(ensure_success(&response)?.clone())
@@ -49,6 +61,7 @@ async fn http_exchange(
     client: &Client,
     message: Value,
     session_id: Option<&str>,
+    expected_id: u64,
 ) -> PeriResult<(Value, Option<String>)> {
     let url = config.url.as_deref().ok_or_else(|| {
         PeriError::Config(format!("http MCP server {} is missing url", config.name))
@@ -79,7 +92,7 @@ async fn http_exchange(
     if body.trim().is_empty() {
         return Ok((serde_json::json!({}), session_id));
     }
-    Ok((parse_http_body(&body)?, session_id))
+    Ok((parse_http_body(&body, expected_id)?, session_id))
 }
 
 fn request_headers(config: &McpServerConfig, session_id: Option<&str>) -> PeriResult<HeaderMap> {

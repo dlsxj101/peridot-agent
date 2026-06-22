@@ -30,7 +30,7 @@ async fn lists_tools_from_stdio_server() {
         r#"while IFS= read -r line; do
   case "$line" in
     *'"method":"initialize"'*)
-      printf '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-11-25","capabilities":{"tools":{}},"serverInfo":{"name":"test","version":"0"}}}\n'
+      printf '{"jsonrpc":"2.0","id":18446744073709551615,"result":{"protocolVersion":"2025-11-25","capabilities":{"tools":{}},"serverInfo":{"name":"test","version":"0"}}}\n'
       ;;
     *'"method":"notifications/initialized"'*)
       ;;
@@ -76,7 +76,7 @@ async fn calls_stdio_tool() {
         r#"while IFS= read -r line; do
   case "$line" in
     *'"method":"initialize"'*)
-      printf '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-11-25","capabilities":{"tools":{}},"serverInfo":{"name":"test","version":"0"}}}\n'
+      printf '{"jsonrpc":"2.0","id":18446744073709551615,"result":{"protocolVersion":"2025-11-25","capabilities":{"tools":{}},"serverInfo":{"name":"test","version":"0"}}}\n'
       ;;
     *'"method":"notifications/initialized"'*)
       ;;
@@ -113,6 +113,150 @@ done
 }
 
 #[tokio::test]
+async fn stdio_tolerates_noise_and_string_ids() {
+    // The server prints a non-JSON banner line before any JSON-RPC, and uses a
+    // string `id` for the tools/list response. Both must be handled: noise is
+    // skipped, and the string id is matched against the numeric request id.
+    let root = std::env::temp_dir().join(format!("peridot-mcp-noise-{}", std::process::id()));
+    fs::create_dir_all(&root).unwrap();
+    let server = root.join("server.sh");
+    fs::write(
+        &server,
+        r#"echo "starting up, not json"
+while IFS= read -r line; do
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '{"jsonrpc":"2.0","id":18446744073709551615,"result":{"protocolVersion":"2025-11-25","capabilities":{"tools":{}},"serverInfo":{"name":"test","version":"0"}}}\n'
+      ;;
+    *'"method":"notifications/initialized"'*)
+      ;;
+    *'"method":"tools/list"'*)
+      printf 'log: handling tools/list\n'
+      printf '{"jsonrpc":"2.0","id":"2","result":{"tools":[{"name":"demo"}]}}\n'
+      ;;
+  esac
+done
+"#,
+    )
+    .unwrap();
+    let client = McpClient::with_timeout(
+        McpServerConfig {
+            name: "test".to_string(),
+            transport: McpTransport::Stdio,
+            command: Some("sh".to_string()),
+            args: vec![server.display().to_string()],
+            env: Default::default(),
+            url: None,
+            auth: None,
+            timeout_seconds: 30,
+            default_permission: "system".to_string(),
+            tool_permission_overrides: Default::default(),
+            schema_cache_seconds: 300,
+        },
+        Duration::from_secs(5),
+    );
+
+    let tools = client.list_tools().await.unwrap();
+
+    assert_eq!(tools.len(), 1);
+    assert_eq!(tools[0].name, "demo");
+    // inputSchema was omitted; it must default to an object schema.
+    assert_eq!(tools[0].input_schema, json!({ "type": "object" }));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn stdio_times_out_on_unmatched_noise() {
+    // The server never answers tools/list and instead emits a steady stream of
+    // unmatched lines faster than the timeout. With a single deadline (rather
+    // than a per-line timeout) the request must still time out.
+    let root = std::env::temp_dir().join(format!("peridot-mcp-stall-{}", std::process::id()));
+    fs::create_dir_all(&root).unwrap();
+    let server = root.join("server.sh");
+    fs::write(
+        &server,
+        r#"while IFS= read -r line; do
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '{"jsonrpc":"2.0","id":18446744073709551615,"result":{"protocolVersion":"2025-11-25","capabilities":{"tools":{}},"serverInfo":{"name":"test","version":"0"}}}\n'
+      ;;
+    *'"method":"notifications/initialized"'*)
+      ;;
+    *'"method":"tools/list"'*)
+      while true; do
+        printf '{"jsonrpc":"2.0","method":"notifications/keepalive","params":{}}\n'
+        sleep 0.05
+      done
+      ;;
+  esac
+done
+"#,
+    )
+    .unwrap();
+    let client = McpClient::with_timeout(
+        McpServerConfig {
+            name: "test".to_string(),
+            transport: McpTransport::Stdio,
+            command: Some("sh".to_string()),
+            args: vec![server.display().to_string()],
+            env: Default::default(),
+            url: None,
+            auth: None,
+            timeout_seconds: 30,
+            default_permission: "system".to_string(),
+            tool_permission_overrides: Default::default(),
+            schema_cache_seconds: 300,
+        },
+        Duration::from_millis(300),
+    );
+
+    let result = client.list_tools().await;
+
+    assert!(result.is_err(), "expected timeout, got {result:?}");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn stdio_rejects_protocol_version_mismatch() {
+    let root = std::env::temp_dir().join(format!("peridot-mcp-proto-{}", std::process::id()));
+    fs::create_dir_all(&root).unwrap();
+    let server = root.join("server.sh");
+    fs::write(
+        &server,
+        r#"while IFS= read -r line; do
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '{"jsonrpc":"2.0","id":18446744073709551615,"result":{"protocolVersion":"1999-01-01","capabilities":{"tools":{}},"serverInfo":{"name":"test","version":"0"}}}\n'
+      ;;
+  esac
+done
+"#,
+    )
+    .unwrap();
+    let client = McpClient::with_timeout(
+        McpServerConfig {
+            name: "test".to_string(),
+            transport: McpTransport::Stdio,
+            command: Some("sh".to_string()),
+            args: vec![server.display().to_string()],
+            env: Default::default(),
+            url: None,
+            auth: None,
+            timeout_seconds: 30,
+            default_permission: "system".to_string(),
+            tool_permission_overrides: Default::default(),
+            schema_cache_seconds: 300,
+        },
+        Duration::from_secs(5),
+    );
+
+    let result = client.list_tools().await;
+
+    assert!(result.is_err(), "expected protocol mismatch error");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
 async fn lists_tools_from_http_server() {
     let url = spawn_http_server();
     let client = McpClient::with_timeout(
@@ -141,10 +285,41 @@ async fn lists_tools_from_http_server() {
 fn parses_sse_jsonrpc_body() {
     let value = parse_http_body(
         "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"ok\":true}}\n\n",
+        2,
     )
     .unwrap();
 
     assert_eq!(value["result"]["ok"], true);
+}
+
+#[test]
+fn parses_multi_event_sse_body_selecting_matching_id() {
+    // A notification event precedes the actual result; only the object whose
+    // id matches the request must be returned.
+    let body = concat!(
+        "event: message\n",
+        "data: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\",\"params\":{}}\n",
+        "\n",
+        "event: message\n",
+        "data: {\"jsonrpc\":\"2.0\",\"id\":7,\"result\":{\"ok\":true}}\n",
+        "\n",
+    );
+
+    let value = parse_http_body(body, 7).unwrap();
+
+    assert_eq!(value["id"], 7);
+    assert_eq!(value["result"]["ok"], true);
+}
+
+#[test]
+fn multi_event_sse_body_without_matching_id_errors() {
+    let body = concat!(
+        "event: message\n",
+        "data: {\"jsonrpc\":\"2.0\",\"id\":99,\"result\":{\"ok\":true}}\n",
+        "\n",
+    );
+
+    assert!(parse_http_body(body, 7).is_err());
 }
 
 #[test]

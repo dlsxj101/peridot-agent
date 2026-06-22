@@ -186,7 +186,7 @@ fn push_pattern(
 fn is_function_value(kind: Option<&str>) -> bool {
     matches!(
         kind,
-        Some("arrow_function" | "function" | "function_expression")
+        Some("arrow_function" | "function" | "function_expression" | "generator_function")
     )
 }
 
@@ -202,6 +202,21 @@ fn collect(
             // Class methods inside a class body, with the class as container.
             "method_definition" => {
                 if let Some(name) = field_name(&child, source) {
+                    out.push(symbol_at(
+                        &child,
+                        SymbolKind::Method,
+                        name.to_string(),
+                        container.clone(),
+                    ));
+                }
+            }
+            // Class fields holding a function value (`handler = () => {}` /
+            // `run = function() {}`) are methods of the enclosing class.
+            "public_field_definition" | "field_definition" => {
+                let value_kind = child.child_by_field_name("value").map(|n| n.kind());
+                if is_function_value(value_kind)
+                    && let Some(name) = field_name(&child, source)
+                {
                     out.push(symbol_at(
                         &child,
                         SymbolKind::Method,
@@ -320,6 +335,25 @@ enum Color {
         let stop = find(&symbols, "stop").expect("stop method");
         assert_eq!(stop.container.as_deref(), Some("AppShell"));
         assert_eq!(start.outline_label(), "method AppShell::start");
+    }
+
+    #[test]
+    fn generator_function_expression_const_is_a_function() {
+        let symbols = ts().outline("const g = function*(){};");
+        assert_eq!(find(&symbols, "g").unwrap().kind, SymbolKind::Function);
+    }
+
+    #[test]
+    fn arrow_class_field_is_a_method() {
+        let source = "\
+class Server {
+    handler = () => {};
+}
+";
+        let symbols = ts().outline(source);
+        let handler = find(&symbols, "handler").expect("handler field");
+        assert_eq!(handler.kind, SymbolKind::Method);
+        assert_eq!(handler.container.as_deref(), Some("Server"));
     }
 
     #[test]

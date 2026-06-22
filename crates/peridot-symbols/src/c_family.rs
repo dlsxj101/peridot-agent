@@ -69,6 +69,21 @@ fn function_name<'a>(func: &tree_sitter::Node, source: &'a str) -> Option<&'a st
         .and_then(|d| declarator_name(d, source))
 }
 
+/// For an out-of-line definition (`int C::scan() {}`) the function declarator
+/// nests a `qualified_identifier` (`C::scan`); this returns the scope text
+/// (`C`) so the symbol can be recorded as a method of that class. Returns
+/// `None` for ordinary unqualified definitions.
+fn qualified_scope<'a>(node: tree_sitter::Node, source: &'a str) -> Option<&'a str> {
+    match node.kind() {
+        "qualified_identifier" => node
+            .child_by_field_name("scope")
+            .and_then(|s| s.utf8_text(source.as_bytes()).ok()),
+        _ => node
+            .child_by_field_name("declarator")
+            .and_then(|d| qualified_scope(d, source)),
+    }
+}
+
 impl LanguageSymbols for CFamilySymbols {
     fn outline(&self, source: &str) -> Vec<Symbol> {
         let Some(tree) = parse(&self.language(), source) else {
@@ -163,13 +178,21 @@ fn collect(
         match child.kind() {
             "function_definition" => {
                 if let Some(name) = function_name(&child, source) {
-                    // A method body inside a class is a Method; elsewhere a function.
-                    let kind = if container.is_some() {
-                        SymbolKind::Method
+                    // An out-of-line definition (`int C::scan() {}`) carries its
+                    // class in a qualified declarator and is a method of that
+                    // class. Otherwise: a method body inside a class is a Method
+                    // (container threaded down); elsewhere a free function.
+                    let qualified = child
+                        .child_by_field_name("declarator")
+                        .and_then(|d| qualified_scope(d, source));
+                    let (kind, method_container) = if let Some(scope) = qualified {
+                        (SymbolKind::Method, Some(scope.to_string()))
+                    } else if container.is_some() {
+                        (SymbolKind::Method, container.clone())
                     } else {
-                        SymbolKind::Function
+                        (SymbolKind::Function, container.clone())
                     };
-                    out.push(symbol_at(&child, kind, name.to_string(), container.clone()));
+                    out.push(symbol_at(&child, kind, name.to_string(), method_container));
                 }
             }
             "struct_specifier" | "union_specifier" => {
@@ -271,6 +294,24 @@ void freeFn() {}
         assert_eq!(scan.kind, SymbolKind::Method);
         assert_eq!(scan.container.as_deref(), Some("Scanner"));
         assert_eq!(find("freeFn").unwrap().kind, SymbolKind::Function);
+    }
+
+    #[test]
+    fn cpp_out_of_line_method_definition_is_a_method() {
+        let source = "\
+class C {
+    int scan();
+};
+int C::scan() { return 0; }
+";
+        let symbols = CFamilySymbols::cpp().outline(source);
+        // The out-of-line definition `int C::scan() {}` must be a method of C,
+        // not a free function with no container.
+        let def = symbols
+            .iter()
+            .find(|s| s.name == "scan" && s.kind == SymbolKind::Method)
+            .expect("out-of-line method definition");
+        assert_eq!(def.container.as_deref(), Some("C"));
     }
 
     #[test]
