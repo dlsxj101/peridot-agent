@@ -81,10 +81,10 @@ pub(crate) fn parse_http_body(body: &str, expected_id: u64) -> PeriResult<Value>
         for block in &blocks {
             match serde_json::from_str::<Value>(block) {
                 Ok(value) => {
-                    if let Some(id) = value.get("id") {
-                        if *id == numeric_id || *id == string_id {
-                            return Ok(value);
-                        }
+                    if let Some(id) = value.get("id")
+                        && (*id == numeric_id || *id == string_id)
+                    {
+                        return Ok(value);
                     }
                 }
                 Err(err) => last_error = Some(err.to_string()),

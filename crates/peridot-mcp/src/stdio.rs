@@ -104,10 +104,10 @@ async fn read_response(
             Ok(value) => value,
             Err(_) => continue,
         };
-        if let Some(response_id) = value.get("id") {
-            if *response_id == numeric_id || *response_id == string_id {
-                return Ok(value);
-            }
+        if let Some(response_id) = value.get("id")
+            && (*response_id == numeric_id || *response_id == string_id)
+        {
+            return Ok(value);
         }
     }
 }
