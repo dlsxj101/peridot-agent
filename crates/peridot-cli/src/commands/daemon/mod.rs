@@ -961,7 +961,17 @@ async fn handle_session_start(state: &DaemonState, id: Value, params: Option<Val
     let usage_for_task = usage.clone();
     let plan = Arc::new(StdMutex::new(LiveSessionPlan::default()));
     let plan_for_task = plan.clone();
-    let goal = Arc::new(StdMutex::new(initial_live_goal(&spec)));
+    // Seed the live goal from the spec, then overlay any persisted
+    // `goal_status` so a `/goal pause|resume|clear` survives a daemon
+    // restart / session resume. The persisted text is authoritative for
+    // the *status*; the objective/started-at still come from the spec.
+    let mut initial_goal = initial_live_goal(&spec);
+    if let Some(persisted) = persisted_goal_status(state, &session_id)
+        && initial_goal.objective.is_some()
+    {
+        initial_goal.status = Some(persisted);
+    }
+    let goal = Arc::new(StdMutex::new(initial_goal));
     let (start_tx, start_rx) = oneshot::channel::<()>();
 
     let handle = tokio::spawn(async move {
@@ -1096,6 +1106,21 @@ fn persisted_session_exists(state: &DaemonState, session_id: &str) -> bool {
     context_snapshot_path(state, session_id).exists()
 }
 
+/// Read the persisted `SessionRecord::goal_status` for `session_id` and parse
+/// it into a [`GoalStatus`]. Returns `None` when there is no record, no
+/// recorded status, or the text is unrecognised. Used on session start/resume
+/// so the live goal reflects a previously persisted `/goal pause|resume|clear`.
+fn persisted_goal_status(state: &DaemonState, session_id: &str) -> Option<GoalStatus> {
+    let store = MemoryStore::new(state.project_root.join(".peridot/memory.db"));
+    store
+        .get_session_record(session_id)
+        .ok()
+        .flatten()
+        .and_then(|record| record.goal_status)
+        .as_deref()
+        .and_then(goal_status_from_label)
+}
+
 async fn save_daemon_session_record(
     state: &DaemonState,
     session_id: &str,
@@ -1176,6 +1201,45 @@ async fn update_daemon_session_lifecycle(
 ) {
     let store = MemoryStore::new(state.project_root.join(".peridot/memory.db"));
     let _ = store.update_session_lifecycle(session_id, status, crate::run_state::unix_timestamp());
+}
+
+/// Map a [`GoalStatus`] to the textual label persisted in
+/// `SessionRecord::goal_status` and reported by the goal-control commands.
+/// Inverse of [`goal_status_from_label`].
+fn goal_status_text(status: &GoalStatus) -> &'static str {
+    match status {
+        GoalStatus::Running => "running",
+        GoalStatus::Paused => "paused",
+        GoalStatus::Done => "done",
+        GoalStatus::Cleared => "cleared",
+    }
+}
+
+/// Parse the persisted `SessionRecord::goal_status` text back into a
+/// [`GoalStatus`]. Unknown text yields `None` so a future/foreign value is
+/// treated as "no recorded status" rather than crashing.
+fn goal_status_from_label(label: &str) -> Option<GoalStatus> {
+    match label {
+        "running" => Some(GoalStatus::Running),
+        "paused" => Some(GoalStatus::Paused),
+        "done" => Some(GoalStatus::Done),
+        "cleared" => Some(GoalStatus::Cleared),
+        _ => None,
+    }
+}
+
+/// Read-modify-write the session's [`SessionRecord`] to record `goal_status`,
+/// leaving every other field intact. Used by `/goal pause|resume|clear` to make
+/// the goal control durable across daemon restarts. Best-effort: a missing
+/// record or a store error is silently ignored, matching the other
+/// persistence helpers here (the in-memory state still reflects the change).
+async fn persist_goal_status(state: &DaemonState, session_id: &str, status: &GoalStatus) {
+    let store = MemoryStore::new(state.project_root.join(".peridot/memory.db"));
+    if let Ok(Some(mut record)) = store.get_session_record(session_id) {
+        record.goal_status = Some(goal_status_text(status).to_string());
+        record.updated_at_unix = crate::run_state::unix_timestamp();
+        let _ = store.save_session_record(&record);
+    }
 }
 
 async fn emit_session_list_changed(state: &DaemonState) {
@@ -1569,6 +1633,36 @@ impl AskUserPort for DaemonAskUserPort {
     }
 }
 
+/// Gracefully stop a live session and mark it `Suspended`.
+///
+/// This is the single suspend path shared by `session.cancel` and
+/// `/goal pause`: it removes the in-memory [`SessionEntry`], cancels its
+/// [`CancelToken`] (so the agent loop halts at the next checkpoint), aborts the
+/// task handle, closes the router entry, clears any pending ask-user request,
+/// and persists `SessionLifecycle::Suspended`. Returns `true` when a live
+/// session was actually suspended, `false` when none was running.
+///
+/// Callers must NOT hold `state.sessions` when invoking this — it locks
+/// `state.sessions` itself.
+async fn suspend_live_session(state: &DaemonState, session_id: &str) -> bool {
+    if let Some(entry) = state.sessions.lock().await.remove(session_id) {
+        entry.cancel.cancel();
+        if let Some(task) = entry.task {
+            task.abort();
+        }
+        state
+            .router
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .close(session_id);
+        approval::clear_pending_ask_user_for_session(state, session_id);
+        update_daemon_session_lifecycle(state, session_id, SessionLifecycle::Suspended).await;
+        true
+    } else {
+        false
+    }
+}
+
 async fn handle_session_cancel(
     state: &DaemonState,
     id: Value,
@@ -1602,22 +1696,7 @@ async fn handle_session_cancel(
         return Ok(());
     }
 
-    let cancelled = if let Some(entry) = state.sessions.lock().await.remove(session_id) {
-        entry.cancel.cancel();
-        if let Some(task) = entry.task {
-            task.abort();
-        }
-        state
-            .router
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .close(session_id);
-        approval::clear_pending_ask_user_for_session(state, session_id);
-        update_daemon_session_lifecycle(state, session_id, SessionLifecycle::Suspended).await;
-        true
-    } else {
-        false
-    };
+    let cancelled = suspend_live_session(state, session_id).await;
     emit_response(
         state,
         id,

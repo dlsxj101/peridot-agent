@@ -2914,6 +2914,7 @@ fn persist_session_snapshot(
         total_tokens: state.header.total_tokens,
         total_cost_usd: state.header.cost_usd,
         turns_used: state.current_turn,
+        goal_status: None,
     };
     let memory = MemoryStore::new(project_root.join(".peridot/memory.db"));
     let _ = memory.save_session_record(&record);

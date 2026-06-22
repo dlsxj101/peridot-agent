@@ -118,6 +118,7 @@ impl SessionHandle {
             total_tokens: totals.total_tokens,
             total_cost_usd: totals.total_cost_usd,
             turns_used: totals.turns_used,
+            goal_status: None,
         }
     }
 }

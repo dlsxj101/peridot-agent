@@ -2069,6 +2069,48 @@ async fn session_command_save_persists_live_session_record() {
     let _ = std::fs::remove_dir_all(root);
 }
 
+// Build the standard live goal SessionEntry used by the goal-control tests:
+// a goal-mode session "finish migration" with a 2-step plan (1 done) and a
+// running goal. `task` is left `None` (no spawned agent) so the test stays
+// deterministic; `suspend_live_session` still removes/cancels the entry.
+fn live_goal_entry() -> SessionEntry {
+    SessionEntry {
+        cancel: CancelToken::new(),
+        compact_request: Arc::new(AtomicBool::new(false)),
+        task: None,
+        spec: SessionRunSpec {
+            task: "finish migration".to_string(),
+            mode: ExecutionMode::Goal,
+            permission: PermissionMode::Auto,
+            model: None,
+            reasoning_effort: None,
+            service_tier: None,
+            config: PeridotConfig::default(),
+        },
+        usage: Arc::new(StdMutex::new(LiveSessionUsage::default())),
+        plan: Arc::new(StdMutex::new(LiveSessionPlan {
+            steps: vec![
+                PlanStepUpdate {
+                    label: "scan".to_string(),
+                    done: true,
+                },
+                PlanStepUpdate {
+                    label: "patch".to_string(),
+                    done: false,
+                },
+            ],
+            current: Some(1),
+        })),
+        goal: Arc::new(StdMutex::new(LiveSessionGoal {
+            objective: Some("finish migration".to_string()),
+            status: Some(GoalStatus::Running),
+            started_at_unix: Some(123),
+        })),
+        approval_grants: Vec::new(),
+        waiting_approval: None,
+    }
+}
+
 #[tokio::test]
 async fn session_command_goal_controls_live_goal_state() {
     let root = test_project("session-command-goal-control");
@@ -2079,45 +2121,16 @@ async fn session_command_goal_controls_live_goal_state() {
         test_options(None),
         tx,
     );
-    let goal = Arc::new(StdMutex::new(LiveSessionGoal {
-        objective: Some("finish migration".to_string()),
-        status: Some(GoalStatus::Running),
-        started_at_unix: Some(123),
-    }));
-    state.sessions.lock().await.insert(
-        "session-goal".to_string(),
-        SessionEntry {
-            cancel: CancelToken::new(),
-            compact_request: Arc::new(AtomicBool::new(false)),
-            task: None,
-            spec: SessionRunSpec {
-                task: "finish migration".to_string(),
-                mode: ExecutionMode::Goal,
-                permission: PermissionMode::Auto,
-                model: None,
-                reasoning_effort: None,
-                service_tier: None,
-                config: PeridotConfig::default(),
-            },
-            usage: Arc::new(StdMutex::new(LiveSessionUsage::default())),
-            plan: Arc::new(StdMutex::new(LiveSessionPlan {
-                steps: vec![
-                    PlanStepUpdate {
-                        label: "scan".to_string(),
-                        done: true,
-                    },
-                    PlanStepUpdate {
-                        label: "patch".to_string(),
-                        done: false,
-                    },
-                ],
-                current: Some(1),
-            })),
-            goal,
-            approval_grants: Vec::new(),
-            waiting_approval: None,
-        },
-    );
+    // A persisted record so we can observe goal_status round-tripping to disk.
+    let store = MemoryStore::new(root.join(".peridot/memory.db"));
+    let record = SessionRecord::new("session-goal", &root);
+    store.save_session_record(&record).unwrap();
+
+    state
+        .sessions
+        .lock()
+        .await
+        .insert("session-goal".to_string(), live_goal_entry());
 
     let pause = execute_session_command(
         &state,
@@ -2132,7 +2145,27 @@ async fn session_command_goal_controls_live_goal_state() {
     assert_eq!(pause["objective"], "finish migration");
     assert_eq!(pause["done"], 1);
     assert_eq!(pause["total"], 2);
+    // Pause now reuses the suspend path: the live entry is gone (the agent was
+    // halted) and the message no longer claims to be advisory.
+    assert!(!state.sessions.lock().await.contains_key("session-goal"));
+    assert!(
+        pause["message"]
+            .as_str()
+            .unwrap()
+            .contains("suspended the running agent")
+    );
+    // ... and it persisted goal_status=paused into the SessionRecord.
+    let persisted = store.get_session_record("session-goal").unwrap().unwrap();
+    assert_eq!(persisted.goal_status.as_deref(), Some("paused"));
+    assert_eq!(persisted.status, SessionLifecycle::Suspended);
 
+    // Resume re-inserts a live entry (as `session.start { resume: true }` would)
+    // then persists running status. The persisted status is what a restart reads.
+    state
+        .sessions
+        .lock()
+        .await
+        .insert("session-goal".to_string(), live_goal_entry());
     let resume = execute_session_command(
         &state,
         Some("session-goal"),
@@ -2142,6 +2175,9 @@ async fn session_command_goal_controls_live_goal_state() {
     .await
     .unwrap();
     assert_eq!(resume["status"], "running");
+    assert!(state.sessions.lock().await.contains_key("session-goal"));
+    let persisted = store.get_session_record("session-goal").unwrap().unwrap();
+    assert_eq!(persisted.goal_status.as_deref(), Some("running"));
 
     let clear = execute_session_command(
         &state,
@@ -2154,7 +2190,36 @@ async fn session_command_goal_controls_live_goal_state() {
     assert_eq!(clear["status"], "cleared");
     assert!(clear["objective"].is_null());
     assert_eq!(clear["total"], 0);
+    let persisted = store.get_session_record("session-goal").unwrap().unwrap();
+    assert_eq!(persisted.goal_status.as_deref(), Some("cleared"));
     shutdown_sessions(&state).await;
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn session_start_resume_loads_persisted_goal_status() {
+    // A paused goal session persisted to disk should come back paused when the
+    // daemon resumes it, so the in-memory live goal reflects the durable state.
+    let root = test_project("session-goal-resume-status");
+    let (tx, _rx) = mpsc::unbounded_channel::<String>();
+    let state = DaemonState::new(
+        root.clone(),
+        PeridotConfig::default(),
+        test_options(None),
+        tx,
+    );
+    let store = MemoryStore::new(root.join(".peridot/memory.db"));
+    let mut record = SessionRecord::new("session-resume-goal", &root);
+    record.status = SessionLifecycle::Suspended;
+    record.goal_status = Some("paused".to_string());
+    store.save_session_record(&record).unwrap();
+
+    let goal = persisted_goal_status(&state, "session-resume-goal");
+    assert_eq!(goal, Some(GoalStatus::Paused));
+
+    // A session with no persisted status (or no record) yields None so the
+    // spec-derived default (Running for goal mode) is used unchanged.
+    assert_eq!(persisted_goal_status(&state, "no-such-session"), None);
     let _ = std::fs::remove_dir_all(root);
 }
 

@@ -80,6 +80,10 @@ pub struct SessionRecord {
     pub total_cost_usd: f64,
     /// Turns the agent has consumed.
     pub turns_used: u32,
+    /// Operator-facing goal status (e.g. "paused"). `None` means unset;
+    /// stored as NULL so older rows migrated in via `ensure_column` read
+    /// back as `None`.
+    pub goal_status: Option<String>,
 }
 
 impl SessionRecord {
@@ -97,6 +101,7 @@ impl SessionRecord {
             total_tokens: 0,
             total_cost_usd: 0.0,
             turns_used: 0,
+            goal_status: None,
         }
     }
 }
@@ -361,6 +366,9 @@ impl MemoryStore {
             "pinned_at_unix",
             "INTEGER NOT NULL DEFAULT 0",
         )?;
+        // 2-B: operator-facing goal status on session records. Nullable so
+        // pre-existing rows migrate in as NULL (read back as `None`).
+        ensure_column(&connection, "session_records", "goal_status", "TEXT")?;
         Ok(())
     }
 
@@ -375,8 +383,9 @@ impl MemoryStore {
                     id, summary, status,
                     created_at_unix, updated_at_unix,
                     workspace_root, worktree_branch, last_task,
-                    total_tokens, total_cost_usd, turns_used
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                    total_tokens, total_cost_usd, turns_used,
+                    goal_status
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
                 ON CONFLICT(id) DO UPDATE SET
                     summary = excluded.summary,
                     status = excluded.status,
@@ -386,7 +395,8 @@ impl MemoryStore {
                     last_task = excluded.last_task,
                     total_tokens = excluded.total_tokens,
                     total_cost_usd = excluded.total_cost_usd,
-                    turns_used = excluded.turns_used
+                    turns_used = excluded.turns_used,
+                    goal_status = excluded.goal_status
                 "#,
                 params![
                     record.id,
@@ -400,6 +410,7 @@ impl MemoryStore {
                     record.total_tokens as i64,
                     record.total_cost_usd,
                     record.turns_used as i64,
+                    record.goal_status,
                 ],
             )
             .map_err(sql_error)?;
@@ -433,7 +444,8 @@ impl MemoryStore {
                 r#"
                 SELECT id, summary, status, created_at_unix, updated_at_unix,
                        workspace_root, worktree_branch, last_task,
-                       total_tokens, total_cost_usd, turns_used
+                       total_tokens, total_cost_usd, turns_used,
+                       goal_status
                 FROM session_records WHERE id = ?1
                 "#,
             )
@@ -454,7 +466,8 @@ impl MemoryStore {
                 r#"
                 SELECT id, summary, status, created_at_unix, updated_at_unix,
                        workspace_root, worktree_branch, last_task,
-                       total_tokens, total_cost_usd, turns_used
+                       total_tokens, total_cost_usd, turns_used,
+                       goal_status
                 FROM session_records
                 ORDER BY updated_at_unix DESC, id ASC
                 "#,
@@ -864,11 +877,11 @@ impl MemoryStore {
         // then double-count those n-grams. The transaction makes the whole
         // method all-or-nothing.
         let transaction = connection.transaction().map_err(sql_error)?;
-        // Tool names are ASCII identifiers (`file_write`, `git_push`,
-        // …) so a pipe-delimited line is a fine on-disk format. Avoids
-        // pulling serde_json into the memory crate just for an audit
-        // trail blob.
-        let sequence_blob = tools.join("|");
+        // Store the ordered tool list as a JSON array string. JSON is
+        // lossless (a `|` inside a tool name no longer corrupts the
+        // sequence) and `decode_tool_list` reads it back, transparently
+        // falling back to the legacy `|`-joined form for old rows.
+        let sequence_blob = encode_tool_list(tools);
         transaction
             .execute(
                 "INSERT INTO tool_sequences (session_id, sequence_json, task_summary, created_at_unix) \
@@ -920,8 +933,11 @@ impl MemoryStore {
                 .collect();
         }
         for window in candidates {
+            // `ngram_hash` keys off the `Vec<String>` window itself, NOT
+            // the stored string, so switching `ngram_tools` to JSON leaves
+            // the primary key / dedup behavior untouched.
             let hash = ngram_hash(&window);
-            let ngram_tools = window.join("|");
+            let ngram_tools = encode_tool_list(&window);
             let ngram_length = window.len() as i64;
             transaction
                 .execute(
@@ -976,7 +992,7 @@ impl MemoryStore {
         let mut out = Vec::new();
         while let Some(row) = rows.next().map_err(sql_error)? {
             let tools_blob: String = row.get(1).map_err(sql_error)?;
-            let tools = tools_blob.split('|').map(str::to_string).collect();
+            let tools = decode_tool_list(&tools_blob);
             out.push(ToolNgram {
                 hash: row.get(0).map_err(sql_error)?,
                 tools,
@@ -1032,11 +1048,7 @@ impl MemoryStore {
         let mut out: Vec<Vec<String>> = Vec::new();
         while let Some(row) = rows.next().map_err(sql_error)? {
             let blob: String = row.get(0).map_err(sql_error)?;
-            let tools = blob
-                .split('|')
-                .filter(|tool| !tool.is_empty())
-                .map(str::to_string)
-                .collect();
+            let tools = decode_tool_list(&blob);
             out.push(tools);
         }
         Ok(out)
@@ -1132,6 +1144,31 @@ fn ngram_hash(tools: &[String]) -> String {
     format!("{:016x}", hasher.finish())
 }
 
+/// Encodes an ordered tool list as a JSON array string for storage in
+/// `tool_sequences.sequence_json` / `tool_ngrams.ngram_tools`. JSON is
+/// lossless where the previous `|`-join was not (tool names containing a
+/// pipe no longer corrupt the sequence). Falls back to the legacy
+/// `|`-join only if JSON serialization somehow fails, which it never
+/// should for a `Vec<String>`.
+fn encode_tool_list(tools: &[String]) -> String {
+    serde_json::to_string(tools).unwrap_or_else(|_| tools.join("|"))
+}
+
+/// Decodes a stored tool list. New rows are JSON arrays; for backward
+/// compatibility with existing `|`-joined rows on disk we fall back to
+/// splitting on `'|'` (dropping empty tokens, matching the historical
+/// reader) when the string is not valid JSON.
+fn decode_tool_list(stored: &str) -> Vec<String> {
+    if let Ok(parsed) = serde_json::from_str::<Vec<String>>(stored) {
+        return parsed;
+    }
+    stored
+        .split('|')
+        .filter(|tool| !tool.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
 fn session_record_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionRecord> {
     let status_db: String = row.get(2)?;
     let workspace_root: String = row.get(5)?;
@@ -1147,6 +1184,7 @@ fn session_record_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionR
         total_tokens: row.get::<_, i64>(8)? as u64,
         total_cost_usd: row.get(9)?,
         turns_used: row.get::<_, i64>(10)? as u32,
+        goal_status: row.get::<_, Option<String>>(11)?,
     })
 }
 
@@ -1355,6 +1393,7 @@ mod tests {
             total_tokens: 1500,
             total_cost_usd: 0.034,
             turns_used: 3,
+            goal_status: None,
         };
         store.save_session_record(&record).unwrap();
 
@@ -1381,6 +1420,47 @@ mod tests {
                 .is_none()
         );
         assert!(remove_session_dir(&root, "session-a").unwrap());
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn session_record_goal_status_round_trip_and_legacy_null() {
+        let root = std::env::temp_dir().join(format!(
+            "peridot-memory-goalstatus-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or_default()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let store = MemoryStore::new(root.join("memory.db"));
+
+        // A record carrying a goal_status round-trips through save+get.
+        let mut record = SessionRecord::new("sess-paused", "/tmp/work");
+        record.goal_status = Some("paused".into());
+        store.save_session_record(&record).unwrap();
+        let restored = store.get_session_record("sess-paused").unwrap().unwrap();
+        assert_eq!(restored.goal_status, Some("paused".to_string()));
+        assert_eq!(restored, record);
+
+        // Simulate an "older" row inserted without the goal_status column
+        // (the migration path adds it as nullable, so the value is NULL).
+        // We insert via the legacy column set explicitly to prove the read
+        // decodes the missing/NULL value as `None`.
+        {
+            let conn = store.connection().unwrap();
+            conn.execute(
+                "INSERT INTO session_records (id, summary, status, \
+                    created_at_unix, updated_at_unix, workspace_root) \
+                 VALUES (?1, '', 'idle', 0, 0, '/tmp/legacy')",
+                rusqlite::params!["sess-legacy"],
+            )
+            .unwrap();
+        }
+        let legacy = store.get_session_record("sess-legacy").unwrap().unwrap();
+        assert_eq!(legacy.goal_status, None);
 
         fs::remove_dir_all(root).unwrap();
     }
@@ -1456,6 +1536,7 @@ mod tests {
                 total_tokens: 0,
                 total_cost_usd: 0.0,
                 turns_used: 0,
+                goal_status: None,
             })
             .unwrap();
         assert_eq!(store.last_activity_unix().unwrap(), 9_999);
@@ -1696,9 +1777,65 @@ mod tests {
             .unwrap();
 
         let sequences = store.recent_tool_sequences(10, 0).unwrap();
-        assert_eq!(sequences, vec![seq]);
+        assert_eq!(sequences, vec![seq.clone()]);
         let candidates = store.list_promotion_candidates(1, 10).unwrap();
         assert_eq!(candidates.len(), 3);
+
+        // The sequence must actually be stored as a JSON array now (not the
+        // legacy `|`-join), and `decode_tool_list` must read it back exactly.
+        {
+            let conn = store.connection().unwrap();
+            let blob: String = conn
+                .query_row(
+                    "SELECT sequence_json FROM tool_sequences WHERE session_id = 'sess-atomic'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert!(blob.starts_with('['), "expected JSON array, got {blob:?}");
+            assert_eq!(decode_tool_list(&blob), seq);
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn tool_list_encodes_as_json_and_decodes_legacy_pipe_rows() {
+        // Forward path: JSON round-trips, including a tool name that
+        // contains a pipe — the legacy format would have corrupted this.
+        let original = tools(&["file_read", "weird|name", "git_commit"]);
+        let encoded = encode_tool_list(&original);
+        assert!(encoded.starts_with('['), "expected JSON, got {encoded:?}");
+        assert_eq!(decode_tool_list(&encoded), original);
+
+        // Backward path: a legacy `|`-joined row still decodes via fallback.
+        let legacy = "file_read|verify_build|git_commit";
+        assert_eq!(
+            decode_tool_list(legacy),
+            tools(&["file_read", "verify_build", "git_commit"])
+        );
+
+        // A legacy row written by the old `recent_tool_sequences` reader
+        // path that produced empties should drop them, matching the
+        // historical filter.
+        assert_eq!(decode_tool_list(""), Vec::<String>::new());
+
+        // End-to-end: inject a legacy `|`-joined sequence row directly, then
+        // confirm `recent_tool_sequences` decodes it through the fallback.
+        let (root, store) = fresh_store("legacy-decode");
+        {
+            let conn = store.connection().unwrap();
+            conn.execute(
+                "INSERT INTO tool_sequences (session_id, sequence_json, task_summary, created_at_unix) \
+                 VALUES ('sess-legacy', 'plan_create|shell_exec|git_push', 'legacy', 1700000000)",
+                [],
+            )
+            .unwrap();
+        }
+        let sequences = store.recent_tool_sequences(10, 0).unwrap();
+        assert_eq!(
+            sequences,
+            vec![tools(&["plan_create", "shell_exec", "git_push"])]
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
