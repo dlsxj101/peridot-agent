@@ -209,8 +209,8 @@ fn translations(id: &str) -> Option<Bilingual> {
             group: BilingualText::new("Security", "보안"),
             label: BilingualText::new("Sandbox mode", "샌드박스 모드"),
             help: Some(BilingualText::new(
-                "None = run tools directly; Docker / Firejail = isolate tool execution.",
-                "None = 도구를 직접 실행; Docker / Firejail = 격리 실행.",
+                "OS = native filesystem sandbox (Landlock/sandbox-exec), the default; None = run tools directly; Docker / Firejail = container isolation.",
+                "OS = 네이티브 파일시스템 샌드박스(Landlock/sandbox-exec), 기본값; None = 도구를 직접 실행; Docker / Firejail = 컨테이너 격리.",
             )),
         },
         "security.ask_before_install" => Bilingual {

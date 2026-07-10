@@ -22,6 +22,11 @@ serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 
+# The OS filesystem sandbox on Linux uses Landlock. Gated to Linux targets so
+# macOS (sandbox-exec) and other platforms don't pull in the Linux-only crate.
+[target.'cfg(target_os = "linux")'.dependencies]
+landlock.workspace = true
+
 [dependencies.notify]
 version = "8"
 default-features = false

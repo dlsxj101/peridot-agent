@@ -831,10 +831,11 @@ fn parse_bool_value(name: &str, value: &str) -> Result<bool> {
 
 fn parse_sandbox_mode(value: &str) -> Result<peridot_common::SandboxMode> {
     match value.trim().to_ascii_lowercase().as_str() {
+        "os" => Ok(peridot_common::SandboxMode::Os),
         "none" => Ok(peridot_common::SandboxMode::None),
         "docker" => Ok(peridot_common::SandboxMode::Docker),
         "firejail" => Ok(peridot_common::SandboxMode::Firejail),
-        _ => anyhow::bail!("security.sandbox must be one of none, docker, or firejail"),
+        _ => anyhow::bail!("security.sandbox must be one of os, none, docker, or firejail"),
     }
 }
 

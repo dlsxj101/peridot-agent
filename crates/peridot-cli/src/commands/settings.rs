@@ -272,11 +272,17 @@ pub(crate) fn settings_registry(config: &PeridotConfig) -> Vec<SettingItem> {
         "security.sandbox",
         surfaces_all(),
         SettingValue::Choice {
-            options: vec!["none".into(), "docker".into(), "firejail".into()],
+            options: vec![
+                "os".into(),
+                "none".into(),
+                "docker".into(),
+                "firejail".into(),
+            ],
             selected: match config.security.sandbox {
-                SandboxMode::None => 0,
-                SandboxMode::Docker => 1,
-                SandboxMode::Firejail => 2,
+                SandboxMode::Os => 0,
+                SandboxMode::None => 1,
+                SandboxMode::Docker => 2,
+                SandboxMode::Firejail => 3,
             },
         },
         locale,
@@ -436,6 +442,7 @@ fn apply_one(item: &SettingItem, config: &mut PeridotConfig) {
         ("security.sandbox", SettingValue::Choice { options, selected }) => {
             if let Some(label) = options.get(*selected) {
                 config.security.sandbox = match label.as_str() {
+                    "os" => SandboxMode::Os,
                     "docker" => SandboxMode::Docker,
                     "firejail" => SandboxMode::Firejail,
                     _ => SandboxMode::None,

@@ -28,6 +28,9 @@ rust-version = "1.95"
 [workspace.dependencies]
 anyhow = "1.0.100"
 async-trait = "0.1.89"
+# Linux Landlock LSM bindings for the OS filesystem sandbox (SandboxMode::Os).
+# Only pulled in on Linux targets (see per-crate target.'cfg(...)' tables).
+landlock = "0.4.5"
 clap = { version = "4.5.53", features = ["derive"] }
 futures-util = "0.3.31"
 reqwest = { version = "0.12.26", default-features = false, features = ["json", "rustls-tls", "stream"] }

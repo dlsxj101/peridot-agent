@@ -14,6 +14,39 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 
 ## Unreleased
 
+### Added — OS filesystem sandbox for model-generated commands (`SandboxMode::Os`)
+
+- **New default sandbox.** `security.sandbox` now defaults to `os`: a best-effort
+  native OS filesystem sandbox that confines **writes** by model-generated
+  commands to the workspace, the system temp dir, and toolchain caches
+  (`~/.cache`, `~/.cargo`, `~/.rustup`, `~/.npm`, `~/.config/gh` when present).
+  Reads are unrestricted. Network isolation is out of scope for this phase.
+  - **Linux** uses **Landlock** (ruleset built in the parent, `restrict_self`
+    applied from a `pre_exec` hook that only issues syscalls). Applied on both
+    the fast (`output()`) and slow (interruptible spawn) execution paths.
+  - **macOS** wraps commands with **`sandbox-exec`** and a generated
+    `(deny file-write*)` + per-root `(allow file-write* (subpath ...))` profile.
+  - **Unsupported platforms / kernels without Landlock** fall back to
+    unsandboxed execution with a single warning
+    (`os sandbox unavailable on this platform; running unsandboxed`).
+- **Threat-model boundary.** Only model-generated commands are sandboxed:
+  `shell_exec`, `shell_readonly`, `verify_*`, git reads via
+  `run_read_only_command`, and git writes / `gh` via `run_binary`.
+  Operator-authored hook runners, operator-configured MCP stdio servers, and
+  interactive CLI commands (`ship` / `auth` / `update`) are **out of scope**.
+- **Sandbox-escape approval.** `shell_exec` accepts `sandbox: "off"` for the
+  rare command that must write outside the workspace. Without a standing
+  approval it returns a permission error that routes through the existing
+  user-approval flow; on approval the command runs unsandboxed.
+- **Env scrubbing.** Provider API keys (`security.scrub_env_keys`, default
+  `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `OPENROUTER_API_KEY`) are removed
+  from model-generated shell child processes. Set it to `[]` to opt out. Not
+  applied to `run_binary`, which needs tokens like `GH_TOKEN`.
+- **New config.** `security.sandbox_allow_write` (extra writable roots, `~`
+  expanded) and `security.scrub_env_keys`; the `settings` UI and
+  `peridot config set security.sandbox os` accept the new mode.
+- **New dependency.** `landlock` 0.4.5 (MIT OR Apache-2.0), Linux targets only.
+
 ### Changed — auto-verify after mutation is now a reliable default
 
 - **Debounced verify.** A burst of `file_write` / `file_patch` edits no longer

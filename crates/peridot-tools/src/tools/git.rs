@@ -1,7 +1,7 @@
 use std::process::Command;
 
 use async_trait::async_trait;
-use peridot_common::{PeriError, PeriResult, PermissionLevel, ToolGroup, ToolResult};
+use peridot_common::{PeriError, PeriResult, PermissionLevel, SandboxMode, ToolGroup, ToolResult};
 use serde_json::Value;
 
 use crate::tools::command::run_read_only_command;
@@ -24,9 +24,25 @@ fn run_binary(
     ctx: &ToolContext,
     label: &str,
 ) -> PeriResult<ToolResult> {
-    let output = Command::new(program)
-        .args(args)
-        .current_dir(&ctx.project_root)
+    // Under `SandboxMode::Os`, wrap this host binary in the same OS filesystem
+    // sandbox as model-generated shell commands. git writes only touch `.git`
+    // inside the project (a writable root) and `gh` is read + network plus a
+    // token refresh under `~/.config/gh` (also a writable root), so the
+    // fs-only policy doesn't break them. Env is NOT scrubbed here — `gh` needs
+    // `GH_TOKEN`/`GITHUB_TOKEN`. Other sandbox modes leave `run_binary` on the
+    // bare host, matching prior behaviour (out of scope for this change).
+    let mut command = if ctx.security.sandbox == SandboxMode::Os {
+        let policy = crate::sandbox::SandboxPolicy::resolve(
+            &ctx.project_root,
+            &ctx.security.sandbox_allow_write,
+        );
+        crate::sandbox::sandboxed_command(program, args, &ctx.project_root, &policy)
+    } else {
+        let mut command = Command::new(program);
+        command.args(args).current_dir(&ctx.project_root);
+        command
+    };
+    let output = command
         .output()
         .map_err(|err| {
             if err.kind() == std::io::ErrorKind::NotFound {

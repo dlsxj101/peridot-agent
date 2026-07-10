@@ -986,11 +986,24 @@ fn default_auto_check_interval() -> String {
 }
 
 /// Command sandbox backend.
+///
+/// Only **model-generated commands** are in scope for sandboxing (`shell_exec`,
+/// `shell_readonly`, `verify_*`, git reads via `run_read_only_command`, and git
+/// writes / `gh` via `run_binary`). Operator-authored hook runners,
+/// operator-configured MCP stdio servers, and interactive CLI commands
+/// (`ship` / `auth` / `update`) are intentionally out of scope.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SandboxMode {
-    /// Run commands directly with blocklist and path sandbox only.
+    /// Best-effort native OS filesystem isolation (the default): Landlock on
+    /// Linux, `sandbox-exec` on macOS, and a warn-and-run-unsandboxed fallback
+    /// elsewhere. Writes are confined to the workspace and toolchain caches;
+    /// reads are unrestricted. Network isolation is out of scope for phase 1.
     #[default]
+    #[serde(alias = "os")]
+    Os,
+    /// Run commands directly with blocklist and path sandbox only (no OS-level
+    /// containment). Was the previous default.
     None,
     /// Run shell commands through Docker with the project mounted as /workspace.
     Docker,
@@ -1001,6 +1014,7 @@ pub enum SandboxMode {
 impl fmt::Display for SandboxMode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let value = match self {
+            Self::Os => "os",
             Self::None => "none",
             Self::Docker => "docker",
             Self::Firejail => "firejail",
@@ -1070,12 +1084,24 @@ pub struct SecurityConfig {
     /// Tool/path pairs approved by the operator for the current config scope.
     #[serde(default)]
     pub approved_tool_path_scopes: Vec<String>,
+    /// Extra filesystem paths the OS sandbox (`SandboxMode::Os`) may write to,
+    /// beyond the built-in defaults (project root, temp dir, toolchain caches).
+    /// Tilde (`~/`) is expanded. Empty by default.
+    #[serde(default)]
+    pub sandbox_allow_write: Vec<String>,
+    /// Environment variable names stripped from model-generated shell child
+    /// processes at the `shell_command` chokepoint, so the model cannot read
+    /// provider credentials out of the environment. Defaults to the known
+    /// provider API keys; set to an empty list to opt out. Not applied to
+    /// `run_binary` (git / `gh`), which need tokens like `GH_TOKEN`.
+    #[serde(default = "default_scrub_env_keys")]
+    pub scrub_env_keys: Vec<String>,
 }
 
 impl Default for SecurityConfig {
     fn default() -> Self {
         Self {
-            sandbox: SandboxMode::None,
+            sandbox: SandboxMode::Os,
             docker_image: default_docker_image(),
             docker_network: false,
             docker_read_only_rootfs: false,
@@ -1089,12 +1115,22 @@ impl Default for SecurityConfig {
             approved_tool_calls: Vec::new(),
             approved_session_tools: Vec::new(),
             approved_tool_path_scopes: Vec::new(),
+            sandbox_allow_write: Vec::new(),
+            scrub_env_keys: default_scrub_env_keys(),
         }
     }
 }
 
 fn default_docker_image() -> String {
     "rust:1-bookworm".to_string()
+}
+
+fn default_scrub_env_keys() -> Vec<String> {
+    vec![
+        "ANTHROPIC_API_KEY".to_string(),
+        "OPENAI_API_KEY".to_string(),
+        "OPENROUTER_API_KEY".to_string(),
+    ]
 }
 
 fn default_shell_command_timeout_seconds() -> u64 {
@@ -1802,6 +1838,8 @@ mod tests {
             docker_network = true
             ask_before_install = false
             ask_before_delete = false
+            sandbox_allow_write = ["/srv/cache", "~/.gradle"]
+            scrub_env_keys = ["ANTHROPIC_API_KEY"]
             "#,
         )
         .unwrap();
@@ -1811,6 +1849,33 @@ mod tests {
         assert!(config.security.docker_network);
         assert!(!config.security.ask_before_install);
         assert!(!config.security.ask_before_delete);
+        assert_eq!(
+            config.security.sandbox_allow_write,
+            vec!["/srv/cache".to_string(), "~/.gradle".to_string()]
+        );
+        assert_eq!(
+            config.security.scrub_env_keys,
+            vec!["ANTHROPIC_API_KEY".to_string()]
+        );
+    }
+
+    #[test]
+    fn security_config_defaults_to_os_sandbox_and_scrubs_provider_keys() {
+        // Empty [security] table must fall back to the OS sandbox default and
+        // the built-in provider-key scrub list.
+        let config = toml::from_str::<PeridotConfig>("[security]\n").unwrap();
+        assert_eq!(config.security.sandbox, SandboxMode::Os);
+        assert_eq!(SandboxMode::default(), SandboxMode::Os);
+        assert!(
+            config
+                .security
+                .scrub_env_keys
+                .contains(&"ANTHROPIC_API_KEY".to_string())
+        );
+        assert!(config.security.sandbox_allow_write.is_empty());
+        // The `os` string alias round-trips through serde.
+        let osc = toml::from_str::<PeridotConfig>("[security]\nsandbox = \"os\"\n").unwrap();
+        assert_eq!(osc.security.sandbox, SandboxMode::Os);
     }
 
     #[test]

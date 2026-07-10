@@ -8,6 +8,17 @@ Current version: **0.10.0**
 
 ### What's new in v0.10.0
 
+- **OS filesystem sandbox by default.** `security.sandbox` now defaults to
+  `os`: model-generated commands (`shell_exec` / `shell_readonly` / `verify_*`
+  / git + `gh`) run under a native OS sandbox — **Landlock** on Linux,
+  **`sandbox-exec`** on macOS — that confines writes to the workspace, temp
+  dir, and toolchain caches while leaving reads open. Unsupported platforms
+  warn once and run unsandboxed. Operator hooks, MCP servers, and interactive
+  CLI commands are intentionally out of scope. A command that must write
+  outside the workspace passes `sandbox: "off"` to request user approval.
+  Provider API keys are scrubbed from shell child environments
+  (`security.scrub_env_keys`); extra writable roots via
+  `security.sandbox_allow_write`.
 - **Decluttered user surfaces.** The VS Code chat header shrinks from 42
   always-visible icon buttons to session menu / find / `⋯` overflow /
   settings, the view-title menu drops from 51 items to 16, and the context

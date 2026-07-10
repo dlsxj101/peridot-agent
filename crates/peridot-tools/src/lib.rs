@@ -5,6 +5,7 @@ pub mod hooks;
 mod mcp_adapter;
 mod path;
 mod registry;
+mod sandbox;
 mod tools;
 
 pub use mcp_adapter::{McpToolAdapter, register_mcp_tools};

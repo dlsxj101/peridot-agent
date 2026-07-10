@@ -998,3 +998,239 @@ async fn evidence_read_returns_bounded_slice() {
     assert_eq!(result.output["truncated"], true);
     fs::remove_dir_all(&root).ok();
 }
+
+// ===================================================================
+// OS filesystem sandbox (SandboxMode::Os)
+// ===================================================================
+
+use crate::sandbox::{SandboxPolicy, default_writable_roots, macos_sandbox_profile};
+use peridot_common::SandboxMode;
+
+#[test]
+fn writable_roots_include_project_and_temp_dir() {
+    let project = std::env::temp_dir().join("peridot-sandbox-roots-proj");
+    let roots = default_writable_roots(&project, &[]);
+    assert!(roots.contains(&project), "project root must be writable");
+    assert!(
+        roots.contains(&std::env::temp_dir()),
+        "system temp dir must be writable"
+    );
+}
+
+#[test]
+fn writable_roots_fold_in_extra_allow_paths() {
+    let project = std::env::temp_dir().join("peridot-sandbox-roots-extra");
+    let roots = default_writable_roots(&project, &["/srv/build-cache".to_string()]);
+    assert!(roots.contains(&std::path::PathBuf::from("/srv/build-cache")));
+}
+
+#[test]
+fn macos_profile_denies_writes_and_allows_writable_roots() {
+    let policy = SandboxPolicy {
+        writable_roots: vec![
+            std::path::PathBuf::from("/work/project"),
+            std::path::PathBuf::from("/tmp"),
+        ],
+    };
+    let profile = macos_sandbox_profile(&policy);
+    assert!(profile.contains("(version 1)"));
+    assert!(profile.contains("(allow default)"));
+    assert!(profile.contains("(deny file-write*)"));
+    assert!(profile.contains("(allow file-write* (subpath \"/work/project\"))"));
+    assert!(profile.contains("(allow file-write* (subpath \"/tmp\"))"));
+}
+
+#[tokio::test]
+async fn sandbox_off_without_approval_requires_user_approval() {
+    let root = std::env::temp_dir().join(format!("peridot-tools-escape-{}", std::process::id()));
+    fs::create_dir_all(&root).unwrap();
+    let ctx = ToolContext::new(&root, PermissionMode::Auto);
+    let err = ShellExecTool
+        .execute(
+            serde_json::json!({"command": "echo hi", "sandbox": "off"}),
+            &ctx,
+        )
+        .await
+        .unwrap_err();
+    let PeriError::PermissionDenied(message) = err else {
+        panic!("expected PermissionDenied for un-approved sandbox escape");
+    };
+    assert!(
+        message.contains("requires explicit user approval"),
+        "escape denial must route through the approval flow, got: {message}"
+    );
+    fs::remove_dir_all(&root).ok();
+}
+
+#[tokio::test]
+async fn sandbox_off_with_preapproval_runs_unsandboxed() {
+    let root = std::env::temp_dir().join(format!("peridot-tools-escape-ok-{}", std::process::id()));
+    fs::create_dir_all(&root).unwrap();
+    let ctx = ToolContext::new(&root, PermissionMode::Auto).with_security(SecurityConfig {
+        approved_shell_commands: vec!["echo escaped".to_string()],
+        ..SecurityConfig::default()
+    });
+    let result = ShellExecTool
+        .execute(
+            serde_json::json!({"command": "echo escaped", "sandbox": "off"}),
+            &ctx,
+        )
+        .await
+        .unwrap();
+    assert!(result.success);
+    assert!(
+        result.output["stdout"]
+            .as_str()
+            .unwrap()
+            .contains("escaped"),
+        "approved escape should run the command unsandboxed"
+    );
+    fs::remove_dir_all(&root).ok();
+}
+
+#[tokio::test]
+async fn shell_chokepoint_scrubs_provider_env() {
+    // Use a dedicated scrub key so we don't perturb real provider env vars.
+    let root = std::env::temp_dir().join(format!("peridot-tools-scrub-{}", std::process::id()));
+    fs::create_dir_all(&root).unwrap();
+    let key = "PERIDOT_TEST_SCRUB_SECRET";
+    // SAFETY: single-threaded test setup; the value is read back only by the
+    // child we spawn below and removed immediately after.
+    unsafe {
+        std::env::set_var(key, "leaked");
+    }
+    let ctx = ToolContext::new(&root, PermissionMode::Auto).with_security(SecurityConfig {
+        // Keep SandboxMode::None so this exercises pure env scrubbing without
+        // depending on Landlock being enabled on the CI kernel.
+        sandbox: SandboxMode::None,
+        scrub_env_keys: vec![key.to_string()],
+        ..SecurityConfig::default()
+    });
+    let result = ShellExecTool
+        .execute(
+            serde_json::json!({"command": format!("echo \"${{{key}:-unset}}\"")}),
+            &ctx,
+        )
+        .await
+        .unwrap();
+    unsafe {
+        std::env::remove_var(key);
+    }
+    let stdout = result.output["stdout"].as_str().unwrap();
+    assert!(
+        stdout.contains("unset"),
+        "scrubbed provider key must be absent from the child env, got: {stdout}"
+    );
+    fs::remove_dir_all(&root).ok();
+}
+
+/// Landlock behaviour test. Skips when the running kernel does not enforce
+/// Landlock so it stays green on kernels without the LSM enabled.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn landlock_confines_writes_to_workspace_but_allows_reads() {
+    if !crate::sandbox::os_sandbox_enforces() {
+        eprintln!("skipping: Landlock not enforced on this kernel");
+        return;
+    }
+    // The negative case must target a location that is normally writable by the
+    // test user but is NOT one of the sandbox's writable roots. The system temp
+    // dir is a default writable root, so we anchor the fixtures under $HOME in a
+    // directory that is not one of the whitelisted cache subdirs (~/.cache,
+    // ~/.cargo, ...). Skip if we can't resolve a usable home.
+    let Some(home) = std::env::var_os("HOME").map(std::path::PathBuf::from) else {
+        eprintln!("skipping: HOME not set");
+        return;
+    };
+    let base = home.join(format!(".peridot-landlock-test-{}", std::process::id()));
+    let project = base.join("project");
+    let outside = base.join("outside");
+    fs::create_dir_all(&project).unwrap();
+    fs::create_dir_all(&outside).unwrap();
+    // A pre-existing file outside the workspace, used for the read check.
+    let outside_readme = outside.join("readme.txt");
+    fs::write(&outside_readme, "readable\n").unwrap();
+
+    let ctx = ToolContext::new(&project, PermissionMode::Yolo).with_security(SecurityConfig {
+        sandbox: SandboxMode::Os,
+        sandbox_allow_write: Vec::new(),
+        ..SecurityConfig::default()
+    });
+
+    // Note: `ShellExecTool` always returns a `success` ToolResult (the tool
+    // ran); the command's own exit code is in `output["status"]`.
+
+    // (a) Write inside the project root (a writable root) exits 0.
+    let inside = ShellExecTool
+        .execute(
+            serde_json::json!({"command": "printf ok > inside.txt"}),
+            &ctx,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        inside.output["status"], 0,
+        "write inside workspace must succeed"
+    );
+    assert!(project.join("inside.txt").exists());
+
+    // (b) Write to the sibling `outside` dir — user-writable but outside every
+    // sandbox writable root — must fail, proving Landlock (not ordinary file
+    // permissions) is what blocks it.
+    let target = outside.join("blocked.txt");
+    let blocked = ShellExecTool
+        .execute(
+            serde_json::json!({"command": format!("printf no > {}", target.display())}),
+            &ctx,
+        )
+        .await
+        .unwrap();
+    assert_ne!(
+        blocked.output["status"], 0,
+        "write outside the sandbox writable roots must fail, got: {}",
+        blocked.output
+    );
+    assert!(
+        !target.exists(),
+        "the blocked write must not create the file"
+    );
+
+    // (c) Reads outside the workspace still succeed.
+    let read = ShellExecTool
+        .execute(
+            serde_json::json!({"command": format!("cat {}", outside_readme.display())}),
+            &ctx,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        read.output["status"], 0,
+        "reads outside the workspace must be allowed"
+    );
+    assert!(read.output["stdout"].as_str().unwrap().contains("readable"));
+
+    // (d) Same block must hold on the interruptible *slow* path (spawn, not
+    // output()), which is taken when a timeout is configured. Guards against
+    // the pre_exec hook only being wired into the fast path.
+    let ctx_slow = ToolContext::new(&project, PermissionMode::Yolo).with_security(SecurityConfig {
+        sandbox: SandboxMode::Os,
+        shell_command_timeout_seconds: 30,
+        ..SecurityConfig::default()
+    });
+    let target_slow = outside.join("blocked-slow.txt");
+    let blocked_slow = ShellExecTool
+        .execute(
+            serde_json::json!({"command": format!("printf no > {}", target_slow.display())}),
+            &ctx_slow,
+        )
+        .await
+        .unwrap();
+    assert_ne!(
+        blocked_slow.output["status"], 0,
+        "slow-path write outside the sandbox must also fail, got: {}",
+        blocked_slow.output
+    );
+    assert!(!target_slow.exists());
+
+    fs::remove_dir_all(&base).ok();
+}

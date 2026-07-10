@@ -1828,14 +1828,46 @@ systemctl, kill, pkill, npm/cargo publish
 - 모든 file_write/patch: git이 있으면 git diff, 없으면 .peridot/backups/에 복사
 - Hook으로 외부 시스템 연동 가능 (Sentry, Slack 등)
 
-**Layer 6: 샌드박스 (선택적 강화)**
+**Layer 6: 샌드박스 (OS 파일시스템 격리, 기본 활성)**
 
 ```toml
 [security]
-sandbox = "none"              # 기본 (blocklist + path sandbox만)
-# sandbox = "docker"          # Docker 컨테이너 격리 (Phase 4+)
+sandbox = "os"                # 기본: OS 네이티브 파일시스템 샌드박스
+# sandbox = "none"            # OS 격리 없이 blocklist + path sandbox만
+# sandbox = "docker"          # Docker 컨테이너 격리
 # sandbox = "firejail"        # Linux firejail 샌드박스
+sandbox_allow_write = []      # os 모드에서 추가로 쓰기 허용할 경로 (~ 확장)
+scrub_env_keys = [            # 셸 자식에서 제거할 환경변수 (빈 배열 = 비활성)
+  "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY",
+]
 ```
+
+**`os` 모드 (기본값)** — 플랫폼 최선의 네이티브 격리로 모델 생성 명령의
+**쓰기**를 워크스페이스로 제한한다. 읽기는 전체 허용, 네트워크는 이번 단계
+스코프 밖(phase 1은 파일시스템만).
+
+- Linux: **Landlock** LSM. 부모 프로세스에서 ruleset을 만들고 `pre_exec`에서
+  `restrict_self`만 호출(fork 후 할당 회피). 커널 미지원 시 경고 후 비격리 실행.
+- macOS: **`sandbox-exec`** — `(deny file-write*)` + writable_roots 각각
+  `(allow file-write* (subpath ...))` 프로파일로 argv 래핑.
+- 그 외(Windows/미지원 커널): None과 동일 + 1회 경고
+  ("os sandbox unavailable on this platform; running unsandboxed").
+- 기본 writable 집합: 프로젝트 루트, 시스템 temp, 그리고 존재하는 경우
+  `~/.cache` `~/.cargo` `~/.rustup` `~/.npm` `~/.config/gh` (툴체인 캐시 /
+  gh 토큰 갱신). `sandbox_allow_write`로 확장.
+
+**위협 모델 경계** — 격리 대상은 **모델이 생성한 명령**뿐이다: `shell_exec` /
+`shell_readonly` / `verify_*` / git 읽기(`run_read_only_command`) / git 쓰기 ·
+`gh`(`run_binary`). 사용자가 작성한 훅 러너, 사용자가 설정한 MCP stdio 서버,
+대화형 CLI 명령(`ship`/`auth`/`update`)은 **스코프 밖**(신뢰된 입력).
+
+**샌드박스 이탈 승인** — 명령이 워크스페이스 밖에 써야 하면 모델이
+`shell_exec`에 `sandbox: "off"`를 넘긴다. 사전 승인이 없으면 사용자 승인
+플로우(ApprovalRequired)를 타며, 승인 후 재개 시 비격리로 실행된다.
+
+**환경변수 스크럽** — 셸 초크포인트에서 프로바이더 API 키를 자식 env에서 제거해
+모델이 자격증명을 읽지 못하게 한다. `run_binary`(git/`gh`)에는 적용하지 않음
+(`GH_TOKEN` 등 필요).
 
 Docker: 프로젝트 디렉토리만 마운트, 네트워크 제한 가능. 가장 안전하나 설정 복잡.
 firejail: 가볍고 빠르나 Linux 전용.

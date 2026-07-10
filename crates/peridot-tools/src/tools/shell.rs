@@ -38,6 +38,11 @@ impl Tool for ShellExecTool {
                 "command": {
                     "type": "string",
                     "description": "Shell command line executed from the project root"
+                },
+                "sandbox": {
+                    "type": "string",
+                    "enum": ["off"],
+                    "description": "Set to \"off\" only when the command must write outside the workspace/caches (e.g. a global install). Running outside the OS sandbox requires explicit user approval."
                 }
             },
             "required": ["command"],
@@ -49,7 +54,16 @@ impl Tool for ShellExecTool {
         let command = required_str(&params, "command")?;
         reject_hard_blocked_command(command)?;
         enforce_shell_approval_policy(command, ctx)?;
-        let prepared = shell_command(command, ctx)?;
+        let sandbox_off = params.get("sandbox").and_then(Value::as_str) == Some("off");
+        if sandbox_off {
+            // Escalation: leaving the sandbox needs explicit user approval.
+            // Reuse the standing shell pre-approval machinery (an approved
+            // command grant clears this on resume). The "requires explicit
+            // user approval" substring routes this through the existing
+            // ApprovalRequired flow.
+            enforce_sandbox_escape_approval(command, ctx)?;
+        }
+        let prepared = shell_command_with_options(command, ctx, sandbox_off)?;
         // Dry-run: surface the resolved invocation without spawning.
         // Useful for safety drills and CI smokes — the operator can
         // confirm the docker/firejail wrapping is applied as expected.
@@ -78,7 +92,7 @@ impl Tool for ShellExecTool {
         let mutation = workspace_mutation_snapshot(before_fingerprint, after_fingerprint);
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
-        let summary = if output.status.success() {
+        let mut summary = if output.status.success() {
             format!("command exited 0: {command}")
         } else {
             format!(
@@ -86,6 +100,18 @@ impl Tool for ShellExecTool {
                 output.status.code().unwrap_or(-1)
             )
         };
+        // If the OS sandbox likely blocked a write, nudge the model toward the
+        // escalation path instead of silently retrying the same failing write.
+        if !output.status.success()
+            && ctx.security.sandbox == SandboxMode::Os
+            && !sandbox_off
+            && output_suggests_sandbox_write_block(&stderr)
+        {
+            summary.push_str(
+                " — the OS sandbox blocks writes outside the workspace; re-run with \
+                 sandbox:\"off\" to request user approval if this write is intended",
+            );
+        }
         Ok(ToolResult::success(
             summary,
             serde_json::json!({
@@ -863,8 +889,35 @@ pub(crate) fn enforce_shell_approval_policy(command: &str, ctx: &ToolContext) ->
     Ok(())
 }
 
+/// Gate for the `shell_exec` `sandbox:"off"` escalation. Running outside the OS
+/// sandbox is treated like any other approval-gated action: unless the exact
+/// command was pre-approved by the operator, a `PermissionDenied` carrying the
+/// "requires explicit user approval" marker is returned, which the agent loop
+/// turns into an `ApprovalRequired` stop. On resume the granted command matches
+/// `shell_command_is_approved` and the run proceeds unsandboxed.
+pub(crate) fn enforce_sandbox_escape_approval(command: &str, ctx: &ToolContext) -> PeriResult<()> {
+    let normalized = normalize_shell_command(command);
+    if shell_command_is_approved(&normalized, ctx) {
+        return Ok(());
+    }
+    Err(PeriError::PermissionDenied(format!(
+        "running outside the sandbox requires explicit user approval: {command}"
+    )))
+}
+
 fn normalize_shell_command(command: &str) -> String {
     command.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Heuristic: does the command's stderr look like a sandbox write denial?
+/// Used only to append an advisory escalation hint, so false positives merely
+/// add a line of guidance to a command that already failed.
+fn output_suggests_sandbox_write_block(stderr: &str) -> bool {
+    let lower = stderr.to_ascii_lowercase();
+    lower.contains("permission denied")
+        || lower.contains("eacces")
+        || lower.contains("read-only file system")
+        || lower.contains("operation not permitted")
 }
 
 fn shell_command_is_approved(command: &str, ctx: &ToolContext) -> bool {
@@ -1030,7 +1083,69 @@ fn warn_unsandboxed_execution_once() {
 }
 
 pub(crate) fn shell_command(command: &str, ctx: &ToolContext) -> PeriResult<Command> {
+    shell_command_with_options(command, ctx, false)
+}
+
+/// Builds the sandbox-wrapped `Command` for `command`.
+///
+/// When `sandbox_off` is true the caller has been explicitly approved to run
+/// outside the sandbox (see the `shell_exec` escalation path), so we bypass
+/// the configured backend and run directly on the host — matching
+/// `SandboxMode::None` semantics minus the standing unsandboxed warning.
+///
+/// Regardless of the backend, provider-credential environment variables are
+/// scrubbed from the child (`security.scrub_env_keys`) so a model-generated
+/// command cannot read API keys out of the environment.
+pub(crate) fn shell_command_with_options(
+    command: &str,
+    ctx: &ToolContext,
+    sandbox_off: bool,
+) -> PeriResult<Command> {
+    let mut process = if sandbox_off {
+        let mut process = Command::new("sh");
+        process
+            .arg("-c")
+            .arg(command)
+            .current_dir(&ctx.project_root);
+        process
+    } else {
+        build_sandboxed_shell_command(command, ctx)?
+    };
+    scrub_provider_env(&mut process, &ctx.security.scrub_env_keys);
+    Ok(process)
+}
+
+/// Removes provider-credential environment variables from the child process.
+/// Applied only to the model-driven shell chokepoint — never to `run_binary`,
+/// which needs tokens like `GH_TOKEN`.
+fn scrub_provider_env(command: &mut Command, keys: &[String]) {
+    for key in keys {
+        let key = key.trim();
+        if !key.is_empty() {
+            command.env_remove(key);
+        }
+    }
+}
+
+fn build_sandboxed_shell_command(command: &str, ctx: &ToolContext) -> PeriResult<Command> {
     match ctx.security.sandbox {
+        SandboxMode::Os => {
+            // Linux: same argv as `None` (`sh -c`) plus a Landlock pre_exec
+            // hook. macOS: wrapped with `sandbox-exec`. Unsupported platforms
+            // fall back to unsandboxed `sh -c` with a one-time warning (handled
+            // inside `sandboxed_command`). Use `-c` (not `-lc`) to match the
+            // `None` arm exactly.
+            let policy = crate::sandbox::SandboxPolicy::resolve(
+                &ctx.project_root,
+                &ctx.security.sandbox_allow_write,
+            );
+            Ok(crate::sandbox::sandboxed_command(
+                "sh",
+                &["-c", command],
+                &ctx.project_root,
+                &policy,
+            ))
+        }
         SandboxMode::None => {
             warn_unsandboxed_execution_once();
             let mut process = Command::new("sh");
