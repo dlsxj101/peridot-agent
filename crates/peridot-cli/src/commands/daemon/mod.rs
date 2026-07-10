@@ -2043,17 +2043,19 @@ async fn execute_session_command(
         SlashCommand::Clear => {
             session_cmd::handle_command_clear(state, session_id, raw_command).await
         }
-        SlashCommand::SidepanelToggle | SlashCommand::Collapse => Ok(with_state_delta(
-            serde_json::json!({
-                "kind": "client_action",
-                "action": "local",
-                "title": "Handled by Extension",
-                "message": format!("{raw_command}: handled by the extension UI"),
-                "severity": "info",
-                "command": raw_command,
-            }),
-            &state_delta,
-        )),
+        SlashCommand::SidepanelToggle | SlashCommand::Collapse | SlashCommand::Debug => {
+            Ok(with_state_delta(
+                serde_json::json!({
+                    "kind": "client_action",
+                    "action": "local",
+                    "title": "Handled by Extension",
+                    "message": format!("{raw_command}: handled by the extension UI"),
+                    "severity": "info",
+                    "command": raw_command,
+                }),
+                &state_delta,
+            ))
+        }
         SlashCommand::SessionNew(task) => {
             session_cmd::handle_command_session_new(state, raw_command, task).await
         }

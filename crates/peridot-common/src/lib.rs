@@ -832,14 +832,17 @@ pub struct TuiConfig {
     /// Whether model thinking should be shown when available.
     #[serde(default = "default_true")]
     pub show_thinking: bool,
-    /// Whether token totals should be shown.
-    #[serde(default = "default_true")]
+    /// Whether token totals should be shown. Default OFF — opt-in via
+    /// `tui.show_token_count` / the settings screen to keep the footer clean.
+    #[serde(default = "default_false")]
     pub show_token_count: bool,
-    /// Whether estimated cost should be shown.
-    #[serde(default = "default_true")]
+    /// Whether estimated cost should be shown. Default OFF — opt-in via
+    /// `tui.show_cost` / the settings screen.
+    #[serde(default = "default_false")]
     pub show_cost: bool,
-    /// Whether prompt cache hit rate should be shown.
-    #[serde(default = "default_true")]
+    /// Whether prompt cache hit rate should be shown. Default OFF — opt-in via
+    /// `tui.show_cache_rate` / the settings screen.
+    #[serde(default = "default_false")]
     pub show_cache_rate: bool,
     /// Whether the right-side status panel should be shown. Default is
     /// OFF — the transcript runs full-width so drag-selection grabs only
@@ -867,9 +870,11 @@ impl Default for TuiConfig {
             theme: default_tui_theme(),
             language: Locale::default(),
             show_thinking: true,
-            show_token_count: true,
-            show_cost: true,
-            show_cache_rate: true,
+            // Optional run metrics default OFF for a clean footer; opt-in via
+            // the settings screen or `tui.show_*` in config.toml.
+            show_token_count: false,
+            show_cost: false,
+            show_cache_rate: false,
             show_subagent_panel: false,
             stream_speed: default_stream_speed(),
             // Default off for a clean, Claude-Code-style chat surface. The deer

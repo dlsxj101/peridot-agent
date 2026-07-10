@@ -1199,9 +1199,9 @@ max_sessions_stored = 100
 [tui]
 theme = "peridot-night"                # "peridot-night" (기본) / "light" / "auto"
 show_thinking = true
-show_token_count = true
-show_cost = true
-show_cache_rate = true
+show_token_count = false              # 기본 OFF — 옵트인 지표
+show_cost = false                     # 기본 OFF — 옵트인 지표
+show_cache_rate = false               # 기본 OFF — 옵트인 지표
 show_subagent_panel = false           # 기본 OFF — Ctrl+]로 토글
 stream_speed = "realtime"           # "realtime" / "fast" / "instant"
 

@@ -449,6 +449,35 @@ fn tui_config_hides_optional_metrics() {
     assert!(!snapshot.contains("tok"));
     assert!(!snapshot.contains("$"));
     assert!(!snapshot.contains("cache"));
+
+    // The optional metrics are now OFF by default (opt-in), so a fresh
+    // TuiConfig::default() must also suppress them even with usage recorded.
+    let mut default_header = HeaderState::new(ExecutionMode::Execute, PermissionMode::Auto, "mock");
+    default_header.record_usage(80, 20, 20, 0, 0.05);
+    assert!(!TuiConfig::default().show_token_count);
+    assert!(!TuiConfig::default().show_cost);
+    assert!(!TuiConfig::default().show_cache_rate);
+    let default_snapshot = render_text_snapshot(&TuiState::new(default_header));
+    assert!(!default_snapshot.contains("tok"));
+    assert!(!default_snapshot.contains("cache"));
+
+    // Even with the toggles ON, zero-valued metrics are suppressed: no
+    // `0 tok`, `$0.0000`, or `cache 0%` noise on a fresh session.
+    let zero_state = TuiState::new(HeaderState::new(
+        ExecutionMode::Execute,
+        PermissionMode::Auto,
+        "mock",
+    ))
+    .with_config(TuiConfig {
+        show_token_count: true,
+        show_cost: true,
+        show_cache_rate: true,
+        ..TuiConfig::default()
+    });
+    let zero_snapshot = render_text_snapshot(&zero_state);
+    assert!(!zero_snapshot.contains("0 tok"));
+    assert!(!zero_snapshot.contains("$0.0000"));
+    assert!(!zero_snapshot.contains("cache 0%"));
 }
 
 #[test]
@@ -502,7 +531,9 @@ fn borderless_transcript_keeps_status_panel_opt_in() {
     assert!(rendered.contains("session 1779011508"));
     assert!(rendered.contains("steps 12"));
     assert!(rendered.contains("8s"));
-    assert!(rendered.contains("subagents 0"));
+    // The idle `subagents 0` zero-state is no longer forced into the footer —
+    // subagents surface only while at least one is active.
+    assert!(!rendered.contains("subagents 0"));
     assert!(rendered.contains("borderless transcript body"));
     assert!(
         !rendered.contains("Status"),
@@ -880,14 +911,20 @@ fn utility_slash_commands_update_tui_surface() {
     });
 
     apply_slash_command(&mut state, SlashCommand::Help);
-    assert!(
-        state
-            .transcript
-            .last()
-            .unwrap()
-            .text
-            .contains("/model <name>")
-    );
+    {
+        let help = &state.transcript.last().unwrap().text;
+        // Condensed catalog: grouped by category, command names only, with a
+        // trailing pointer to the picker for full descriptions.
+        assert!(help.contains("commands (by category):"));
+        assert!(help.contains("session:"));
+        assert!(help.contains("/model"));
+        // No longer a full per-command dump with arg hints.
+        assert!(!help.contains("/model <name>"));
+        // Localized trailer (default locale is English).
+        assert!(help.contains("browse full command descriptions"));
+        // Stays compact — well under the old ~70-line dump.
+        assert!(help.lines().count() <= 15, "help too long: {help}");
+    }
 
     apply_slash_command(&mut state, SlashCommand::PlanShow);
     assert!(
@@ -3894,11 +3931,17 @@ fn status_metrics_show_turn_count_after_first_turn() {
 
 #[test]
 fn status_metrics_show_aggregate_usage_for_multi_session() {
+    // Token / cost metrics are opt-in; enable them so the aggregate line renders.
     let mut state = TuiState::new(HeaderState::new(
         ExecutionMode::Execute,
         PermissionMode::Auto,
         "mock",
-    ));
+    ))
+    .with_config(TuiConfig {
+        show_token_count: true,
+        show_cost: true,
+        ..TuiConfig::default()
+    });
     state.current_session_id = "s1".to_string();
     state.header.cost_usd = 0.10;
     state.header.total_tokens = 2_000;
@@ -3919,11 +3962,19 @@ fn status_metrics_show_aggregate_usage_for_multi_session() {
 
 #[test]
 fn status_metrics_drop_low_priority_parts_when_narrow() {
+    // Token / cost / cache metrics are opt-in; enable them so the width-based
+    // priority truncation has low-priority parts to drop.
     let mut state = TuiState::new(HeaderState::new(
         ExecutionMode::Execute,
         PermissionMode::Auto,
         "mock",
-    ));
+    ))
+    .with_config(TuiConfig {
+        show_token_count: true,
+        show_cost: true,
+        show_cache_rate: true,
+        ..TuiConfig::default()
+    });
     state.header.workspace_label = Some("peridot-agent".to_string());
     state.header.provider = Some("openrouter-api".to_string());
     state.header.cost_usd = 0.10;

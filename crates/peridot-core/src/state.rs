@@ -131,6 +131,7 @@ impl AgentState {
             | SlashCommand::BranchPicker
             | SlashCommand::SidepanelToggle
             | SlashCommand::Collapse
+            | SlashCommand::Debug
             | SlashCommand::AutoFix(_) => {}
         }
     }

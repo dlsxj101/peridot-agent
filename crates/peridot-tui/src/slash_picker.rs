@@ -25,7 +25,7 @@ pub struct SlashCommandSpec {
 /// clients use this additive metadata to avoid suggesting TUI-only controls.
 pub fn slash_command_surfaces(spec: &SlashCommandSpec) -> &'static [&'static str] {
     match spec.name {
-        "/collapse" | "/lang" | "/sidepanel" | "/copy" => &["tui"],
+        "/collapse" | "/lang" | "/sidepanel" | "/copy" | "/debug" => &["tui"],
         _ => &["tui", "vscode"],
     }
 }
@@ -178,6 +178,12 @@ pub fn slash_command_catalog() -> &'static [SlashCommandSpec] {
         SlashCommandSpec {
             name: "/collapse",
             description: "toggle collapse of tool/diff transcript blocks",
+            arg_hint: None,
+            category: "tui",
+        },
+        SlashCommandSpec {
+            name: "/debug",
+            description: "toggle the debug view (hidden meta / tool / thinking lines)",
             arg_hint: None,
             category: "tui",
         },

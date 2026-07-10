@@ -259,6 +259,10 @@ pub enum SlashCommand {
     SidepanelToggle,
     /// `/collapse` — toggle global collapse of tool/diff transcript blocks.
     Collapse,
+    /// `/debug` — toggle the TUI debug view (surfaces hidden meta / tool-start
+    /// / thinking transcript lines). TUI-only; the Ctrl+P menu no longer
+    /// carries a Debug entry, so this is the primary access path.
+    Debug,
     /// `/autofix` — toggle or configure the auto-fix loop.
     /// `on` / `off` enables or disables; a bare number sets max attempts.
     AutoFix(AutoFixAction),
@@ -481,6 +485,7 @@ pub fn parse_slash_command(input: &str) -> Option<SlashCommand> {
         "compact" if rest.is_empty() => Some(SlashCommand::Compact),
         "sidepanel" if rest.is_empty() => Some(SlashCommand::SidepanelToggle),
         "status" if rest.is_empty() => Some(SlashCommand::SidepanelToggle),
+        "debug" if rest.is_empty() => Some(SlashCommand::Debug),
         "diff" if rest.is_empty() => Some(SlashCommand::Diff),
         "undo" if rest.is_empty() => Some(SlashCommand::Undo),
         "model" if !rest.is_empty() => Some(SlashCommand::Model(rest.to_string())),

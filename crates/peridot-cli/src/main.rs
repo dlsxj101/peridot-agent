@@ -334,6 +334,11 @@ enum Command {
     /// 2.0 to drive sessions bidirectionally. v0.0.1 surface is
     /// `peridot.version` / `peridot.echo` / `shutdown` — real
     /// `session.start` arrives once the extension WebView is ready.
+    ///
+    /// Hidden from `--help`: this is an internal JSON-RPC server that editor
+    /// extensions spawn, not an operator-facing command. It still runs when
+    /// invoked explicitly.
+    #[command(hide = true)]
     Daemon,
     /// End-to-end health check: validates config, provider auth, MCP
     /// servers, AGENTS metadata, and permissions. Exit code 0 when

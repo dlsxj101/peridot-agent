@@ -277,7 +277,6 @@ impl Default for MenuState {
                 "History".to_string(),
                 "Settings".to_string(),
                 "Keybindings".to_string(),
-                "Debug".to_string(),
                 "Quit".to_string(),
             ],
             selected_index: 0,

@@ -1042,29 +1042,35 @@ pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
             state.push_pending_session_command(SessionCommandEvent::ClearAndRestart);
         }
         SlashCommand::Help => {
+            // Condensed catalog: one line per category listing just the command
+            // names, rather than dumping ~69 fully-described rows into the
+            // transcript. Operators drill into a specific command through the
+            // picker (type `/`).
             let mut lines: Vec<String> = Vec::new();
-            lines.push("commands:".to_string());
+            lines.push("commands (by category):".to_string());
+            let mut order: Vec<&'static str> = Vec::new();
+            let mut grouped: std::collections::HashMap<&'static str, Vec<&'static str>> =
+                std::collections::HashMap::new();
             for spec in crate::slash_command_catalog() {
-                let hint = spec
-                    .arg_hint
-                    .map(|hint| format!(" {hint}"))
-                    .unwrap_or_default();
-                lines.push(format!(
-                    "  {}{hint}  ·  {} [{}]",
-                    spec.name, spec.description, spec.category
-                ));
-            }
-            if !state.skill_suggestions.is_empty() {
-                lines.push("skills:".to_string());
-                for skill in &state.skill_suggestions {
-                    let description = if skill.description.trim().is_empty() {
-                        "stored auto-skill"
-                    } else {
-                        skill.description.trim()
-                    };
-                    lines.push(format!("  /{}  ·  {} [skill]", skill.name, description));
+                grouped.entry(spec.category).or_default().push(spec.name);
+                if !order.contains(&spec.category) {
+                    order.push(spec.category);
                 }
             }
+            for category in order {
+                if let Some(names) = grouped.get(category) {
+                    lines.push(format!("  {}: {}", category, names.join(" ")));
+                }
+            }
+            if !state.skill_suggestions.is_empty() {
+                let names: Vec<String> = state
+                    .skill_suggestions
+                    .iter()
+                    .map(|skill| format!("/{}", skill.name))
+                    .collect();
+                lines.push(format!("  skills: {}", names.join(" ")));
+            }
+            lines.push(crate::tr(PhraseKey::HelpPickerHint, state.config.language).to_string());
             state.push_transcript(lines.join("\n"));
         }
         SlashCommand::Cost => {
@@ -1193,6 +1199,11 @@ pub(super) fn apply_slash_command(state: &mut TuiState, command: SlashCommand) {
         }
         SlashCommand::SidepanelToggle => {
             toggle_sidepanel(state);
+        }
+        SlashCommand::Debug => {
+            state.debug_view = !state.debug_view;
+            let label = if state.debug_view { "on" } else { "off" };
+            state.push_transcript_entry(TranscriptKind::Notice, format!("debug: {label}"));
         }
         SlashCommand::Collapse => {
             state.collapse_all_tool_blocks = !state.collapse_all_tool_blocks;
@@ -1645,12 +1656,6 @@ pub(super) fn toggle_sidepanel(state: &mut TuiState) {
 fn apply_menu_selection(state: &mut TuiState, selected: &str) -> TuiEventOutcome {
     match selected {
         "Quit" => TuiEventOutcome::Quit,
-        "Debug" => {
-            state.debug_view = !state.debug_view;
-            let label = if state.debug_view { "on" } else { "off" };
-            state.push_transcript_entry(TranscriptKind::Notice, format!("debug: {label}"));
-            TuiEventOutcome::Continue
-        }
         "Mode" => {
             // Cycle Plan → Execute → Goal → Plan. Each step also records a
             // lifecycle event so the run-log keeps the transition trail.

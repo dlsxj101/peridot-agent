@@ -89,15 +89,18 @@ fn status_metric_parts(state: &TuiState) -> Vec<StatusMetricPart> {
             2,
         ));
     }
-    if state.config.show_token_count {
+    // Optional run metrics are opt-in and additionally zero-suppressed: even
+    // when the toggle is on we skip `0 tok`, `$0.0000` and `cache 0%` so the
+    // footer only carries meaningful figures.
+    if state.config.show_token_count && state.header.total_tokens > 0 {
         parts.push(StatusMetricPart::new(
             format!("{} tok", state.header.total_tokens),
             2,
         ));
     }
-    if state.config.show_cost {
+    if state.config.show_cost && state.header.cost_usd > 0.0 {
         let total_turns = state.current_turn;
-        if total_turns > 1 && state.header.cost_usd > 0.0 {
+        if total_turns > 1 {
             let avg = state.header.cost_usd / total_turns as f64;
             parts.push(StatusMetricPart::new(
                 format!("${:.4} (${avg:.4}/turn)", state.header.cost_usd),
@@ -113,7 +116,7 @@ fn status_metric_parts(state: &TuiState) -> Vec<StatusMetricPart> {
     if let Some(total) = aggregate_usage_status(state) {
         parts.push(StatusMetricPart::new(total, 2));
     }
-    if state.config.show_cache_rate {
+    if state.config.show_cache_rate && state.header.cache_hit_rate > 0.0 {
         parts.push(StatusMetricPart::new(
             format!("cache {:.0}%", state.header.cache_hit_rate * 100.0),
             3,
@@ -930,27 +933,32 @@ fn render_status_bar(state: &TuiState, width: u16) -> Line<'static> {
     // system prompt, messages, tool schemas and protocol overhead.
     let ctx_used = state.side_panel.context_tokens_used;
     let ctx_window = state.side_panel.context_tokens_window;
+    // Only surface the request-context gauge when it carries a signal: while
+    // the agent is busy, or — even at idle — once utilisation crosses the 75%
+    // warning threshold. An idle, comfortably-under-budget gauge is just noise.
     if ctx_used > 0 && ctx_window > 0 {
         let pct = (ctx_used as f32 / ctx_window as f32 * 100.0).clamp(0.0, 999.0);
-        let style = if pct >= 90.0 {
-            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
-        } else if pct >= 75.0 {
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default()
-                .fg(Color::DarkGray)
-                .add_modifier(Modifier::DIM)
-        };
-        spans.push(Span::styled(
-            format!(
-                "  · req {}/{} ({pct:.0}%)",
-                format_token_count(ctx_used),
-                format_token_count(ctx_window),
-            ),
-            style,
-        ));
+        if busy || pct >= 75.0 {
+            let style = if pct >= 90.0 {
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
+            } else if pct >= 75.0 {
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::DIM)
+            };
+            spans.push(Span::styled(
+                format!(
+                    "  · req {}/{} ({pct:.0}%)",
+                    format_token_count(ctx_used),
+                    format_token_count(ctx_window),
+                ),
+                style,
+            ));
+        }
     }
     // Run metrics (model / tokens / cost / session / steps …) moved to the
     // footer line beneath the input box; the activity line stays focused on
@@ -989,20 +997,9 @@ fn render_footer_line(state: &TuiState, width: u16) -> Line<'static> {
             2,
         ));
     }
-    // `status_metric_parts` only surfaces the subagent count while at least one
-    // is active. When the side panel is hidden (default) we still want a
-    // zero-state affordance here — matching what the old header showed — so add
-    // it explicitly when nothing is active to avoid double-counting.
-    if !state.config.show_subagent_panel {
-        let active = state
-            .subagents
-            .iter()
-            .filter(|item| matches!(item.status.as_str(), "running" | "starting"))
-            .count();
-        if active == 0 {
-            parts.push(StatusMetricPart::new("subagents 0".to_string(), 2));
-        }
-    }
+    // `status_metric_parts` surfaces the subagent count only while at least one
+    // is active (>0). We deliberately do NOT emit a `subagents 0` zero-state
+    // here — an idle count is noise, not information.
     if let Some(version) = state.header.update_available.as_ref() {
         parts.push(StatusMetricPart::new(
             format!("update {version} :update"),
