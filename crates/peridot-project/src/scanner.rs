@@ -29,6 +29,11 @@ impl ProjectScanner {
         profile.agents_md_overrides = agents.overrides;
         profile.preferences = agents.preferences;
         profile.boundaries = agents.boundaries;
+        // AGENTS.md `## commands` is the operator's explicit override.
+        // Seed the profile with it *before* detection so the
+        // "don't overwrite an already-filled slot" rule in
+        // `fill_commands` lets AGENTS.md win over scanner guesses.
+        profile.commands = agents.commands;
         detect_root_markers(root, &mut profile);
         detect_ci(root, &mut profile);
         detect_structure(root, &mut profile);

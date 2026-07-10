@@ -127,6 +127,13 @@ pub struct HarnessAgent {
     auto_verify_after_mutation: bool,
     auto_grade_on_done: bool,
     auto_fix_cap: u32,
+    /// Whether the auto-fix circuit breaker is active. When false the
+    /// `AutoFixLoopPolicy` is not registered and auto-verify records
+    /// failures without counting them toward an abort.
+    auto_fix_enabled: bool,
+    /// Explicit verify commands (`auto_fix.commands`). When non-empty
+    /// they override project detection in the auto-verify flush.
+    auto_fix_commands: Vec<String>,
     /// Optional override for the worktree diff fed to the auto-grade
     /// gate. Tests inject a closure here so the empty-diff fast path
     /// can be exercised without a real git repo; production leaves
@@ -262,9 +269,11 @@ impl HarnessAgent {
             ask_user_port: None,
             message_bus: None,
             session_id: None,
-            auto_verify_after_mutation: false,
+            auto_verify_after_mutation: true,
             auto_grade_on_done: false,
             auto_fix_cap: 3,
+            auto_fix_enabled: true,
+            auto_fix_commands: Vec::new(),
             grader_diff_provider: None,
             compact_request: None,
             pending_resume_path: None,
@@ -351,7 +360,8 @@ impl HarnessAgent {
     /// `verify_build` runs automatically after every successful
     /// `file_write` / `file_patch` and its result is
     /// injected into context as a `PlanReminder`, so the next model
-    /// turn sees compile errors immediately. Off by default.
+    /// turn sees compile errors immediately. On by default; the verify
+    /// is debounced to fire once per settled mutation burst.
     pub fn set_auto_verify_after_mutation(&mut self, enabled: bool) {
         self.auto_verify_after_mutation = enabled;
     }
@@ -378,6 +388,20 @@ impl HarnessAgent {
     /// circuit breaker fires. Sourced from `config.auto_fix.max_attempts`.
     pub fn set_auto_fix_cap(&mut self, cap: u32) {
         self.auto_fix_cap = cap;
+    }
+
+    /// Enables/disables the auto-fix circuit breaker. When false, the
+    /// `AutoFixLoopPolicy` is skipped and auto-verify records failures
+    /// without ever aborting (`auto_fix.enabled`). On by default.
+    pub fn set_auto_fix_enabled(&mut self, enabled: bool) {
+        self.auto_fix_enabled = enabled;
+    }
+
+    /// Sets explicit verify commands (`auto_fix.commands`). When
+    /// non-empty they override project detection in the auto-verify
+    /// flush, joined with ` && `.
+    pub fn set_auto_fix_commands(&mut self, commands: Vec<String>) {
+        self.auto_fix_commands = commands;
     }
 
     /// Assigns the committee role this agent plays. Defaults to
@@ -1242,44 +1266,52 @@ impl HarnessAgent {
             Box::new(crate::loop_policy::SubAgentReviewPolicy::new()),
             Box::new(crate::loop_policy::BudgetWarningPolicy::new()),
             Box::new(crate::loop_policy::StuckDetectorPolicy::new()),
-            // post_turn: run verify_build after every successful
-            // mutating tool when the harness opts in.
-            Box::new(crate::loop_policy::AutoVerifyAfterMutationPolicy::new(
-                self.auto_verify_after_mutation,
-            )),
-            // post_turn: track verify_* failures, inject a "fix this
-            // first" directive on retries, and abort with
-            // StopReason::Interrupted when the signature repeats
-            // beyond `fix_cap`.
-            Box::new(crate::loop_policy::AutoFixLoopPolicy::new(
-                self.auto_fix_cap,
-            )),
-            // on_done policies — ordered so cheaper / deterministic
-            // checks run first, then LLM gates last:
-            //   Preflight  → mechanical (file lists, todo state)
-            //   GoalChecker → LLM call, Goal-mode only
-            //   AutoGrade  → LLM call, when enabled, with diff
-            //
-            // Preflight stays OFF by default. The "verify after
-            // mutation" gate is context-aware (it accepts a successful
-            // `[auto-verify] verify_build passed` PlanReminder as
-            // satisfying the check), but auto-coupling it to
-            // `auto_verify_after_mutation` would block runs whose
-            // verify_build *failed* — the existing helper still appends
-            // a marker, just with FAILED, and that's a separate decision
-            // from "should the loop refuse to terminate."
-            //
-            // Operators opt into the gate explicitly via a future flag;
-            // the test suite uses `with_verify_after_mutation()` directly
-            // when it wants to exercise the path.
-            Box::new(crate::loop_policy::PreflightPolicy::new()),
-            Box::new(crate::loop_policy::GoalCheckerPolicy::new()),
-            Box::new(crate::loop_policy::AutoGradePolicy::new(
-                self.auto_grade_on_done,
-                grader_diff_fn,
-                initial_grade_diff.clone(),
-            )),
+            // post_turn: debounced auto-verify. Marks a mutation burst
+            // dirty and flushes one `verify_build` when the burst
+            // settles. On failure it feeds the shared verify-failure
+            // machinery so the circuit breaker trips just like a
+            // model-driven verify would (unless `auto_fix.enabled` is
+            // off, in which case it only records markers).
+            Box::new(
+                crate::loop_policy::AutoVerifyAfterMutationPolicy::new(
+                    self.auto_verify_after_mutation,
+                )
+                .with_fix_cap(self.auto_fix_cap)
+                .with_circuit_breaker(self.auto_fix_enabled)
+                .with_commands(self.auto_fix_commands.clone()),
+            ),
         ];
+        // post_turn: model-driven verify_* failure tracking. Skipped
+        // entirely when `auto_fix.enabled` is off so operators can
+        // enforce hard failures.
+        if self.auto_fix_enabled {
+            // Track verify_* failures, inject a "fix this first"
+            // directive on retries, and abort with
+            // StopReason::Interrupted when the signature repeats beyond
+            // `fix_cap`.
+            policies.push(Box::new(crate::loop_policy::AutoFixLoopPolicy::new(
+                self.auto_fix_cap,
+            )));
+        }
+        // on_done policies — ordered so cheaper / deterministic checks
+        // run first, then LLM gates last:
+        //   Preflight  → mechanical (verify-after-mutation gate)
+        //   GoalChecker → LLM call, Goal-mode only
+        //   AutoGrade  → LLM call, when enabled, with diff
+        //
+        // Preflight now defaults ON: it blocks `agent_done` when the
+        // last mutation is uncovered or its auto-verify FAILED, and
+        // lets a passing / skipped / infra-error auto-verify through.
+        // The circuit-breaker abort (above) takes precedence, so a
+        // repeatedly failing verify stops the run rather than looping
+        // on the done gate forever.
+        policies.push(Box::new(crate::loop_policy::PreflightPolicy::new()));
+        policies.push(Box::new(crate::loop_policy::GoalCheckerPolicy::new()));
+        policies.push(Box::new(crate::loop_policy::AutoGradePolicy::new(
+            self.auto_grade_on_done,
+            grader_diff_fn,
+            initial_grade_diff.clone(),
+        )));
         // Auto-fix loop state. Tracks the current failing verifier by
         // a compact signature so the model can tell "same failure,
         // same attempted fix" apart from a new failure uncovered by

@@ -89,6 +89,8 @@ pub(super) async fn run_task(
     agent.set_auto_verify_after_mutation(config.defaults.auto_verify_after_mutation);
     agent.set_auto_grade_on_done(config.defaults.auto_grade_on_done);
     agent.set_auto_fix_cap(config.auto_fix.max_attempts);
+    agent.set_auto_fix_enabled(config.auto_fix.enabled);
+    agent.set_auto_fix_commands(config.auto_fix.commands.clone());
     agent.set_vision_enabled(config.vision.enabled);
     agent.set_vision_model(config.vision.model.clone());
     if let Some(extractor) = crate::vision::ocr_extractor(config.vision.ocr) {
@@ -380,6 +382,8 @@ where
     agent.set_auto_verify_after_mutation(config.defaults.auto_verify_after_mutation);
     agent.set_auto_grade_on_done(config.defaults.auto_grade_on_done);
     agent.set_auto_fix_cap(config.auto_fix.max_attempts);
+    agent.set_auto_fix_enabled(config.auto_fix.enabled);
+    agent.set_auto_fix_commands(config.auto_fix.commands.clone());
     agent.set_vision_enabled(config.vision.enabled);
     agent.set_vision_model(config.vision.model.clone());
     if let Some(extractor) = crate::vision::ocr_extractor(config.vision.ocr) {

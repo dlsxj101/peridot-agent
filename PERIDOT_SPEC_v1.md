@@ -255,6 +255,29 @@ PLANNING → EXECUTING → VERIFYING → DONE
 - 3회 복구 실패 → 에스컬레이션 (최소 결과라도 내놓도록)
 - 과거 에러 패턴 검색 (SQLite errors 테이블)
 
+### 4.5 Auto-Verify 계약 (수정 후 자동 검증)
+
+`auto_verify_after_mutation`(기본 ON)의 계약:
+
+- **버스트 디바운스**: 성공한 `file_write` / `file_patch`는 "dirty" 플래그만
+  세우고 즉시 검증하지 않는다. dirty 상태에서 처음 만나는 비-mutation 턴
+  (`agent_done` 포함)에서 `verify_build`를 1회 실행하고 dirty를 클리어한다.
+  편집 5개 → 검증 1회. `shell_exec`는 트리거하지 않는다.
+- **모델 자발 검증 인정**: dirty 상태에서 모델이 스스로 `verify_*`를 호출하면
+  auto-verify는 중복 실행하지 않고 dirty만 클리어한다. 실패 카운팅은
+  `AutoFixLoopPolicy`(모델 주도)가 담당해 이중 카운트를 막는다.
+- **서킷 브레이커**: auto-verify가 실행한 검증 실패도 동일한
+  `VerifyFailureState` 시그니처 머신에 접히며, 동일 시그니처가
+  `auto_fix.max_attempts`회 연속이면 `Interrupted`로 중단한다. 실패마다
+  `path:line` 힌트를 포함한 auto-fix 지시문을 주입한다. `auto_fix.enabled=false`면
+  브레이커·지시문 없이 마커만 남긴다.
+- **명령 우선순위**: `auto_fix.commands`(` && ` 연결) > AGENTS.md `## commands`
+  > 스캐너 감지. 셋 다 없으면 하드코딩 폴백 없이 skip을 반환한다.
+- **Done 게이트 (Preflight, 기본 ON)**: 마지막 mutation의 검증이 FAILED거나
+  전혀 실행되지 않았으면 `agent_done`을 거부하고 재검증을 유도한다.
+  passed / skipped(명령 없음) / could-not-run(인프라 오류)은 통과시킨다.
+  서킷 브레이커 중단이 게이트보다 우선하므로 무한 루프가 생기지 않는다.
+
 ---
 
 ## 5. peridot-context — 2-Tier 컨텍스트 관리

@@ -3,13 +3,18 @@ use std::path::{Path, PathBuf};
 
 use peridot_common::{ExecutionMode, PeriError, PeriResult, PermissionMode};
 
-use crate::types::ProjectPreferences;
+use crate::types::{ProjectCommands, ProjectPreferences};
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct ParsedAgents {
     pub(crate) overrides: Vec<String>,
     pub(crate) preferences: ProjectPreferences,
     pub(crate) boundaries: Vec<String>,
+    /// Build / test / lint / format commands declared under the
+    /// AGENTS.md `## commands` section. These are the operator's
+    /// official override for the verify_* commands and take precedence
+    /// over scanner detection (see `ProjectScanner::scan`).
+    pub(crate) commands: ProjectCommands,
 }
 
 pub(crate) fn find_agents_file(root: &Path) -> Option<PathBuf> {
@@ -48,6 +53,9 @@ pub(crate) fn parse_agents_file(root: &Path) -> PeriResult<ParsedAgents> {
                 }
                 if section == "preferences" {
                     parse_preference_line(trimmed, &mut parsed.preferences)?;
+                }
+                if section == "commands" {
+                    parse_command_line(trimmed, &mut parsed.commands);
                 }
             }
         }
@@ -90,6 +98,31 @@ fn parse_preference_line(line: &str, preferences: &mut ProjectPreferences) -> Pe
         _ => {}
     }
     Ok(())
+}
+
+/// Parses one line from the AGENTS.md `## commands` section into the
+/// matching [`ProjectCommands`] slot. Accepts the `- build: <cmd>`
+/// list form (leading marker optional). Unknown keys and value-less
+/// lines are ignored so free-form prose under the heading is harmless.
+fn parse_command_line(line: &str, commands: &mut ProjectCommands) {
+    let line = strip_list_marker(line);
+    let Some((key, value)) = line.split_once(':') else {
+        return;
+    };
+    let key = key.trim().to_ascii_lowercase();
+    let value = value.trim().trim_matches(['"', '\'']).trim();
+    if value.is_empty() {
+        return;
+    }
+    let value = Some(value.to_string());
+    match key.as_str() {
+        "build" => commands.build = value,
+        "test" => commands.test = value,
+        "lint" => commands.lint = value,
+        "format" => commands.format = value,
+        "dev" => commands.dev = value,
+        _ => {}
+    }
 }
 
 fn strip_list_marker(line: &str) -> &str {

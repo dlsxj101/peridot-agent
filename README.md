@@ -168,7 +168,11 @@ Current version: **0.10.0**
   commands; `/reasoning`, `/think`, `/fast`, and `/goal` update real run state.
 - **Read-only shell inspection no longer triggers auto-build verification.**
   Auto-verify now follows direct file edits (`file_write` / `file_patch`) so
-  environment questions do not get polluted with cargo build output.
+  environment questions do not get polluted with cargo build output. The verify
+  is debounced to fire once per settled edit burst, gates `agent_done` until it
+  passes, and takes its command from AGENTS.md `## commands` (or `auto_fix.commands`)
+  when set instead of guessing. When no build command can be resolved it reports a
+  skip rather than falling back to `cargo build --workspace`.
 - **The chat UI is quieter and clearer.** `Run started` is hidden, token stats
   align to the right, and copied assistant answers show a check mark for 3
   seconds.
@@ -291,7 +295,7 @@ Repo layout cleanup before extension work:
 
 Operator no longer needs to study the config to get the "Manus-style: finish the task end-to-end" behaviour:
 
-- **Auto-verify-after-mutation default ON**: every `file_write` / `file_patch` / `shell_exec` is followed by `verify_build` so broken compiles surface immediately.
+- **Auto-verify-after-mutation default ON**: direct file edits (`file_write` / `file_patch`) trigger `verify_build` so broken compiles surface immediately. Read-only `shell_exec` inspection never triggers it. The verify is debounced — a burst of edits costs one verify on the settling turn, not one per edit — and `agent_done` is blocked until it passes.
 - **Auto-grade-on-done default ON**: every `agent_done` runs the LLM grader; failed verdicts inject recommendations and continue the loop instead of stopping. Manus-style "really finish" out of the box.
 - **Auto-skill-reflection default ON**: the 7-day idle pass now also promotes repeated tool-call patterns (5+ occurrences) into auto-skills, with `review_required: true`.
 - **Harness self-tuning**: the same idle trigger watches recent tool usage and auto-flips `git.auto_commit` / `git.auto_branch` when ≥ 50% of recent sessions used the corresponding tool manually. Each field is auto-adjusted at most once; the operator owns it after that. Every change writes an `AuditEvent` (`harness_learn` action) so the audit log explains why a default moved.

@@ -19,19 +19,43 @@ use crate::requests::AgentTurnOutcome;
 
 /// Configuration for which preflight checks are active.
 ///
-/// Both flags default to OFF. Existing test fixtures (and many real-world
-/// flows) call `agent_done` directly after a mutation without running
-/// `verify_*`; enabling preflight unconditionally would mass-break those.
-/// Once auto-verify is a policy itself (PR plan migration step 4) the
-/// loop will be guaranteed to verify before done, and these defaults can
-/// flip to true. `peridot run --no-preflight-foo` knobs can be wired later.
-#[derive(Clone, Copy, Debug, Default)]
+/// `require_verify_after_mutation` now defaults to ON: auto-verify is a
+/// policy that flushes a `verify_build` on the settling turn (including
+/// the `agent_done` turn itself), so by the time this gate runs the most
+/// recent mutation is either covered by a fresh `[auto-verify]` marker or
+/// the model's own `verify_*` outcome. A FAILED marker blocks done; a
+/// skip / infra-error marker (no build command, couldn't launch) only
+/// warns and lets done through.
+#[derive(Clone, Copy, Debug)]
 pub struct PreflightConfig {
-    /// If true, require a successful `verify_*` tool call after the
-    /// last mutating tool before accepting `agent_done`.
+    /// If true, require a successful `verify_*` tool call (or a passing
+    /// auto-verify) after the last mutating tool before accepting
+    /// `agent_done`.
     pub require_verify_after_mutation: bool,
     /// If true, require no `pending`-state tools to remain.
     pub require_no_pending_tools: bool,
+}
+
+impl Default for PreflightConfig {
+    fn default() -> Self {
+        Self {
+            require_verify_after_mutation: true,
+            require_no_pending_tools: false,
+        }
+    }
+}
+
+/// Classification of the most recent `[auto-verify]` marker in context.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum AutoVerifyStatus {
+    /// `verify_build passed`.
+    Passed,
+    /// `verify_build FAILED`.
+    Failed,
+    /// No build command could be resolved — neither pass nor fail.
+    Skipped,
+    /// The verify command could not even be launched (infra error).
+    CouldNotRun,
 }
 
 /// Runs deterministic checks each time the loop wants to accept
@@ -79,16 +103,14 @@ impl PreflightPolicy {
     /// Returns Some(reason) if the rule applies and the done state
     /// should be blocked, else None.
     ///
-    /// `auto_verify_marker` is true when any context entry contains a
-    /// successful `[auto-verify] verify_build passed` PlanReminder.
-    /// `auto_verify_after_mutation` (the helper inside `HarnessAgent`)
-    /// produces that marker as a side-effect rather than a turn
-    /// outcome, so the policy has to consult it alongside `outcomes`.
-    /// A future move of auto-verify into a real `LoopPolicy::post_turn`
-    /// impl will emit a synthetic outcome and obsolete this marker.
+    /// `auto_verify` is the classification of the most recent
+    /// `[auto-verify]` marker in context (auto-verify produces that
+    /// marker as a side-effect rather than a turn outcome, so the gate
+    /// consults it alongside `outcomes`). A passing model-driven
+    /// `verify_*` outcome after the last mutation also clears the gate.
     fn unverified_mutation_reason(
         outcomes: &[AgentTurnOutcome],
-        auto_verify_marker: bool,
+        auto_verify: Option<AutoVerifyStatus>,
     ) -> Option<String> {
         // Find the most recent successful mutation.
         let (mut_idx, mutation) = outcomes
@@ -101,24 +123,57 @@ impl PreflightPolicy {
             .iter()
             .skip(mut_idx + 1)
             .any(|o| Self::is_verify_tool(&o.tool_name) && o.tool_result.success);
-        if verified_by_outcome || auto_verify_marker {
-            None
-        } else {
-            Some(format!(
+        if verified_by_outcome {
+            return None;
+        }
+        match auto_verify {
+            // Green, or nothing to verify against, or infra hiccup — do
+            // not block. Skip / CouldNotRun only warn (the marker itself
+            // is already in context for the operator).
+            Some(AutoVerifyStatus::Passed)
+            | Some(AutoVerifyStatus::Skipped)
+            | Some(AutoVerifyStatus::CouldNotRun) => None,
+            Some(AutoVerifyStatus::Failed) => Some(format!(
+                "[preflight] Last mutation (`{}`) did not pass verification — see the \
+                 [auto-verify] FAILED note and auto-fix directive above. Fix it and let \
+                 verify pass before declaring done.",
+                mutation.tool_name
+            )),
+            None => Some(format!(
                 "[preflight] Last mutation (`{}`) is not yet covered by a successful verify_* run. \
                  Run verify_build / verify_test / verify_lint before declaring done.",
                 mutation.tool_name
-            ))
+            )),
         }
     }
 
-    /// Scans context entries for a successful auto-verify marker.
-    /// True when the helper-driven `auto_verify_after_mutation` left
-    /// a `[auto-verify] verify_build passed` PlanReminder in context.
-    fn has_auto_verify_marker(context: &peridot_context::ContextManager) -> bool {
-        context.entries().iter().any(|entry| {
-            entry.content.contains("[auto-verify]") && entry.content.contains("passed")
-        })
+    /// Classifies the most recent `[auto-verify]` PlanReminder in
+    /// context, newest first. `None` when no auto-verify note exists.
+    fn latest_auto_verify_status(
+        context: &peridot_context::ContextManager,
+    ) -> Option<AutoVerifyStatus> {
+        for entry in context.entries().iter().rev() {
+            let content = entry.content.trim();
+            let Some(rest) = content.strip_prefix("[auto-verify]") else {
+                continue;
+            };
+            // Classify on the marker head only (everything before the
+            // first colon). The tail carries the raw verify summary,
+            // which for a failing test command routinely contains words
+            // like "skipped" or "passed" — matching on the whole content
+            // would let a FAILED marker slip through the done gate.
+            let head = rest.trim_start();
+            let head = head.split(':').next().unwrap_or(head).trim_end();
+            match head {
+                "verify_build could not run" => return Some(AutoVerifyStatus::CouldNotRun),
+                "skipped" => return Some(AutoVerifyStatus::Skipped),
+                "verify_build FAILED" => return Some(AutoVerifyStatus::Failed),
+                "verify_build passed" => return Some(AutoVerifyStatus::Passed),
+                // Unrecognised [auto-verify] shape — keep scanning older ones.
+                _ => {}
+            }
+        }
+        None
     }
 }
 
@@ -140,8 +195,8 @@ impl LoopPolicy for PreflightPolicy {
         outcomes: &[AgentTurnOutcome],
     ) -> PeriResult<Decision> {
         if self.config.require_verify_after_mutation {
-            let auto_verify_marker = Self::has_auto_verify_marker(cx.context);
-            if let Some(reason) = Self::unverified_mutation_reason(outcomes, auto_verify_marker) {
+            let auto_verify = Self::latest_auto_verify_status(cx.context);
+            if let Some(reason) = Self::unverified_mutation_reason(outcomes, auto_verify) {
                 cx.context
                     .append(ContextEntry::trusted(ContextSource::PlanReminder, reason));
                 return Ok(Decision::SkipTurn);
@@ -176,7 +231,7 @@ mod tests {
             outcome("file_patch", true, false),
             outcome("agent_done", true, true),
         ];
-        let reason = PreflightPolicy::unverified_mutation_reason(&outcomes, false);
+        let reason = PreflightPolicy::unverified_mutation_reason(&outcomes, None);
         assert!(
             reason.is_some(),
             "expected preflight to flag the missing verify"
@@ -184,20 +239,58 @@ mod tests {
     }
 
     #[test]
-    fn auto_verify_marker_satisfies_check_without_outcome() {
-        // helper-driven auto-verify leaves a `[auto-verify] verify_build
-        // passed` PlanReminder in context but no verify_* turn outcome.
-        // The marker should still satisfy the preflight check so this
-        // path is usable while auto-verify is still a helper.
+    fn passed_auto_verify_marker_satisfies_check_without_outcome() {
+        // Auto-verify leaves a `[auto-verify] verify_build passed`
+        // PlanReminder but no verify_* turn outcome — the marker still
+        // clears the gate.
         let outcomes = vec![
             outcome("file_patch", true, false),
             outcome("agent_done", true, true),
         ];
-        let reason = PreflightPolicy::unverified_mutation_reason(&outcomes, true);
+        let reason =
+            PreflightPolicy::unverified_mutation_reason(&outcomes, Some(AutoVerifyStatus::Passed));
         assert!(
             reason.is_none(),
-            "expected the auto-verify marker to clear the preflight check"
+            "expected the passed auto-verify marker to clear the preflight check"
         );
+    }
+
+    #[test]
+    fn failed_auto_verify_marker_blocks_done() {
+        let outcomes = vec![
+            outcome("file_patch", true, false),
+            outcome("agent_done", true, true),
+        ];
+        let reason =
+            PreflightPolicy::unverified_mutation_reason(&outcomes, Some(AutoVerifyStatus::Failed));
+        let reason = reason.expect("FAILED auto-verify must block done");
+        assert!(reason.contains("did not pass verification"));
+    }
+
+    #[test]
+    fn skipped_auto_verify_marker_allows_done() {
+        // No build command detected → auto-verify skipped → the gate
+        // must not block (there is nothing to verify against).
+        let outcomes = vec![
+            outcome("file_patch", true, false),
+            outcome("agent_done", true, true),
+        ];
+        let reason =
+            PreflightPolicy::unverified_mutation_reason(&outcomes, Some(AutoVerifyStatus::Skipped));
+        assert!(reason.is_none(), "a skip must let done through");
+    }
+
+    #[test]
+    fn could_not_run_auto_verify_marker_allows_done() {
+        let outcomes = vec![
+            outcome("file_patch", true, false),
+            outcome("agent_done", true, true),
+        ];
+        let reason = PreflightPolicy::unverified_mutation_reason(
+            &outcomes,
+            Some(AutoVerifyStatus::CouldNotRun),
+        );
+        assert!(reason.is_none(), "an infra error must only warn, not block");
     }
 
     #[test]
@@ -207,7 +300,7 @@ mod tests {
             outcome("verify_build", true, false),
             outcome("agent_done", true, true),
         ];
-        let reason = PreflightPolicy::unverified_mutation_reason(&outcomes, false);
+        let reason = PreflightPolicy::unverified_mutation_reason(&outcomes, None);
         assert!(
             reason.is_none(),
             "expected preflight to clear after a successful verify_build"
@@ -220,7 +313,7 @@ mod tests {
             outcome("file_patch", true, false),
             outcome("verify_test", false, false),
         ];
-        let reason = PreflightPolicy::unverified_mutation_reason(&outcomes, false);
+        let reason = PreflightPolicy::unverified_mutation_reason(&outcomes, None);
         assert!(
             reason.is_some(),
             "expected a failed verify to leave the mutation uncovered"
@@ -230,7 +323,7 @@ mod tests {
     #[test]
     fn no_mutations_means_no_preflight_complaint() {
         let outcomes = vec![outcome("file_read", true, false)];
-        let reason = PreflightPolicy::unverified_mutation_reason(&outcomes, false);
+        let reason = PreflightPolicy::unverified_mutation_reason(&outcomes, None);
         assert!(reason.is_none());
     }
 
@@ -243,10 +336,59 @@ mod tests {
             outcome("verify_build", true, false),
             outcome("file_patch", true, false),
         ];
-        let reason = PreflightPolicy::unverified_mutation_reason(&outcomes, false);
+        let reason = PreflightPolicy::unverified_mutation_reason(&outcomes, None);
         assert!(
             reason.is_some(),
             "fresh mutation after verify must re-trigger preflight"
+        );
+    }
+
+    #[test]
+    fn latest_auto_verify_status_classifies_markers() {
+        use peridot_context::{ContextEntry, ContextManager, ContextSource};
+        let mut context = ContextManager::new();
+        context.append(ContextEntry::trusted(
+            ContextSource::PlanReminder,
+            "[auto-verify] verify_build passed: ok".to_string(),
+        ));
+        assert_eq!(
+            PreflightPolicy::latest_auto_verify_status(&context),
+            Some(AutoVerifyStatus::Passed)
+        );
+        context.append(ContextEntry::trusted(
+            ContextSource::PlanReminder,
+            "[auto-verify] verify_build FAILED: boom".to_string(),
+        ));
+        assert_eq!(
+            PreflightPolicy::latest_auto_verify_status(&context),
+            Some(AutoVerifyStatus::Failed),
+            "newest marker wins"
+        );
+        context.append(ContextEntry::trusted(
+            ContextSource::PlanReminder,
+            "[auto-verify] skipped: no build command detected".to_string(),
+        ));
+        assert_eq!(
+            PreflightPolicy::latest_auto_verify_status(&context),
+            Some(AutoVerifyStatus::Skipped)
+        );
+    }
+
+    #[test]
+    fn failed_marker_with_skipped_or_passed_in_summary_still_classifies_failed() {
+        use peridot_context::{ContextEntry, ContextManager, ContextSource};
+        let mut context = ContextManager::new();
+        // A failing test command's summary routinely contains "passed"
+        // and "skipped" — the classifier must key off the marker head,
+        // not the summary tail, or the done gate opens on a failure.
+        context.append(ContextEntry::trusted(
+            ContextSource::PlanReminder,
+            "[auto-verify] verify_build FAILED: 3 passed; 1 failed; 2 skipped\nFix this before declaring agent_done."
+                .to_string(),
+        ));
+        assert_eq!(
+            PreflightPolicy::latest_auto_verify_status(&context),
+            Some(AutoVerifyStatus::Failed)
         );
     }
 }

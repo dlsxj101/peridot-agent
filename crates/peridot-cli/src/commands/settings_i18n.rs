@@ -81,13 +81,26 @@ fn translations(id: &str) -> Option<Bilingual> {
         // ===== Autonomy =====
         "defaults.auto_verify_after_mutation" => Bilingual {
             group: BilingualText::new("Autonomy", "자동화"),
-            label: BilingualText::new(
-                "Auto-verify after every file change",
-                "파일 변경 후 자동 검증",
-            ),
+            label: BilingualText::new("Auto-verify after file changes", "파일 변경 후 자동 검증"),
             help: Some(BilingualText::new(
-                "After every file_write / file_patch, run verify_build automatically so compile errors surface immediately.",
-                "file_write / file_patch 직후마다 verify_build를 자동 실행해 컴파일 에러를 즉시 표면화합니다.",
+                "After a burst of file_write / file_patch edits settles, run verify_build once and block agent_done until it passes. The command comes from AGENTS.md `## commands` or project detection.",
+                "file_write / file_patch 편집 묶음이 끝나면 verify_build를 한 번 실행하고, 통과할 때까지 agent_done을 막습니다. 명령은 AGENTS.md `## commands` 또는 프로젝트 감지에서 가져옵니다.",
+            )),
+        },
+        "auto_fix.enabled" => Bilingual {
+            group: BilingualText::new("Autonomy", "자동화"),
+            label: BilingualText::new("Auto-fix circuit breaker", "자동 수정 서킷 브레이커"),
+            help: Some(BilingualText::new(
+                "Inject a fix directive on verify failures and abort after the same failure repeats max_attempts times. Turn off to fail hard instead.",
+                "검증 실패 시 수정 지시를 주입하고, 동일 실패가 max_attempts회 반복되면 실행을 중단합니다. 끄면 즉시 하드 실패합니다.",
+            )),
+        },
+        "auto_fix.commands" => Bilingual {
+            group: BilingualText::new("Autonomy", "자동화"),
+            label: BilingualText::new("Auto-fix verify commands", "자동 수정 검증 명령"),
+            help: Some(BilingualText::new(
+                "Explicit verification commands run by auto-verify, joined with ` && `. Overrides AGENTS.md and project detection. Empty = auto-detect.",
+                "auto-verify가 실행할 명시적 검증 명령으로, ` && `로 연결됩니다. AGENTS.md와 프로젝트 감지를 무시합니다. 비우면 자동 감지합니다.",
             )),
         },
         "defaults.auto_grade_on_done" => Bilingual {
@@ -333,7 +346,7 @@ mod tests {
         let en = lookup("defaults.auto_verify_after_mutation", Locale::En).unwrap();
         let ko = lookup("defaults.auto_verify_after_mutation", Locale::Ko).unwrap();
         assert_ne!(en.label, ko.label);
-        assert_eq!(en.label, "Auto-verify after every file change");
+        assert_eq!(en.label, "Auto-verify after file changes");
         assert!(ko.label.contains("자동 검증"));
     }
 

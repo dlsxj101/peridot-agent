@@ -60,13 +60,10 @@ impl Tool for VerifyBuildTool {
 
     async fn execute(&self, params: Value, ctx: &ToolContext) -> PeriResult<ToolResult> {
         let detected = detect_command(ctx, VerifyKind::Build);
-        let command_owned: String = params
-            .get("command")
-            .and_then(Value::as_str)
-            .map(str::to_string)
-            .or(detected)
-            .unwrap_or_else(|| "cargo build --workspace".to_string());
-        run_verification_command(&command_owned, ctx, "verify build", "build").await
+        match resolve_command(&params, detected) {
+            Some(command) => run_verification_command(&command, ctx, "verify build", "build").await,
+            None => Ok(no_command_skip("build")),
+        }
     }
 
     fn permission_level(&self) -> PermissionLevel {
@@ -102,13 +99,10 @@ impl Tool for VerifyTestTool {
 
     async fn execute(&self, params: Value, ctx: &ToolContext) -> PeriResult<ToolResult> {
         let detected = detect_command(ctx, VerifyKind::Test);
-        let command_owned: String = params
-            .get("command")
-            .and_then(Value::as_str)
-            .map(str::to_string)
-            .or(detected)
-            .unwrap_or_else(|| "cargo test --workspace".to_string());
-        run_verification_command(&command_owned, ctx, "verify test", "test").await
+        match resolve_command(&params, detected) {
+            Some(command) => run_verification_command(&command, ctx, "verify test", "test").await,
+            None => Ok(no_command_skip("test")),
+        }
     }
 
     fn permission_level(&self) -> PermissionLevel {
@@ -144,13 +138,10 @@ impl Tool for VerifyLintTool {
 
     async fn execute(&self, params: Value, ctx: &ToolContext) -> PeriResult<ToolResult> {
         let detected = detect_command(ctx, VerifyKind::Lint);
-        let command_owned: String = params
-            .get("command")
-            .and_then(Value::as_str)
-            .map(str::to_string)
-            .or(detected)
-            .unwrap_or_else(|| "cargo clippy --workspace -- -D warnings".to_string());
-        run_verification_command(&command_owned, ctx, "verify lint", "lint").await
+        match resolve_command(&params, detected) {
+            Some(command) => run_verification_command(&command, ctx, "verify lint", "lint").await,
+            None => Ok(no_command_skip("lint")),
+        }
     }
 
     fn permission_level(&self) -> PermissionLevel {
@@ -159,6 +150,37 @@ impl Tool for VerifyLintTool {
 
     fn risk_class(&self) -> peridot_common::RiskClass {
         peridot_common::RiskClass::BuildOrTest
+    }
+}
+
+/// Resolves the command to run: an explicit `command` parameter wins,
+/// then the project-detected command. `None` means neither is available
+/// and the caller should surface a skip rather than guessing.
+fn resolve_command(params: &Value, detected: Option<String>) -> Option<String> {
+    params
+        .get("command")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .map(str::to_string)
+        .or(detected)
+}
+
+/// Result returned when no verification command could be resolved for
+/// this project. It is neither a pass nor a failure — the workspace
+/// simply has no `kind` command configured. `success` is `true` so the
+/// auto-fix circuit breaker never counts it, and the `skipped` marker in
+/// `output` lets callers (auto-verify, preflight) tell it apart from a
+/// real green run.
+fn no_command_skip(kind: &str) -> ToolResult {
+    ToolResult {
+        success: true,
+        summary: format!(
+            "no {kind} command detected for this project; configure AGENTS.md `## commands` or pass `command`"
+        ),
+        output: serde_json::json!({
+            "skipped": true,
+            "reason": format!("no {kind} command detected"),
+        }),
     }
 }
 

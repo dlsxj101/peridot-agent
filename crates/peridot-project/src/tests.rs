@@ -187,6 +187,33 @@ fn parses_agents_boundaries() {
 }
 
 #[test]
+fn agents_commands_override_scanner_detection() {
+    // A Cargo project would normally detect `cargo build --workspace`,
+    // but an explicit AGENTS.md `## commands` build entry must win.
+    let root = std::env::temp_dir().join(format!(
+        "peridot-project-agents-commands-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("Cargo.toml"), "[workspace]\n").unwrap();
+    fs::write(
+        root.join("AGENTS.md"),
+        "## commands\n\
+         - build: just build\n\
+         - test: just test\n\
+         - lint: just clippy\n",
+    )
+    .unwrap();
+
+    let profile = ProjectScanner::new().scan(&root).unwrap();
+
+    assert_eq!(profile.commands.build.as_deref(), Some("just build"));
+    assert_eq!(profile.commands.test.as_deref(), Some("just test"));
+    assert_eq!(profile.commands.lint.as_deref(), Some("just clippy"));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn parses_agents_preferences() {
     let root = std::env::temp_dir().join(format!(
         "peridot-project-agents-preferences-{}",

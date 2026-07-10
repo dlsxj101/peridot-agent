@@ -14,6 +14,39 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 
 ## Unreleased
 
+### Changed — auto-verify after mutation is now a reliable default
+
+- **Debounced verify.** A burst of `file_write` / `file_patch` edits no longer
+  runs `verify_build` after every edit. Auto-verify marks the run dirty and
+  flushes a single verify when the burst settles (the first following
+  non-mutation turn, including `agent_done`). Five edits cost one verify.
+- **Model self-verify is respected.** When the model runs a `verify_*` tool
+  itself, auto-verify stands aside and does not re-run — no duplicate work and
+  no double-counting against the circuit breaker.
+- **Auto-verify failures feed the circuit breaker.** An auto-verify failure now
+  folds into the same verify-failure signature machinery as model-driven
+  verifies; `auto_fix.max_attempts` consecutive identical failures abort the run
+  with `Interrupted`, injecting the auto-fix directive (with `path:line` culprit
+  hints) on each retry. Disabling `auto_fix.enabled` skips the breaker entirely.
+- **`agent_done` gate on by default.** The preflight `require_verify_after_mutation`
+  check now defaults ON. A mutation whose verify FAILED (or was never run) blocks
+  `agent_done`; a passing, skipped, or infra-errored verify lets it through. The
+  circuit-breaker abort takes precedence so the gate never loops forever.
+- **No more `cargo build --workspace` fallback.** When neither an explicit
+  `command` nor a detected project command is available, `verify_build` /
+  `verify_test` / `verify_lint` return a clear skip
+  (`no build command detected …; configure AGENTS.md \`## commands\` or pass
+  \`command\``) instead of guessing cargo. Auto-verify records this as a neutral
+  `[auto-verify] skipped` note that never blocks done.
+- **AGENTS.md `## commands` wired through.** `- build: … / - test: … / - lint: …
+  / - format: …` under `## commands` now populate `ProjectProfile.commands` and
+  take precedence over scanner detection, giving operators an official override
+  for the verify commands. `auto_fix.commands` (joined with ` && `) overrides
+  even AGENTS.md.
+- **Config no longer dead.** `auto_fix.enabled` and `auto_fix.commands` are now
+  consumed at runtime, and the `HarnessAgent` struct default for
+  `auto_verify_after_mutation` matches the config default (`true`).
+
 ## [0.10.0 / extension 0.7.0] — 2026-07-10
 
 ### Changed — decluttered user surfaces (extension, TUI, CLI)
