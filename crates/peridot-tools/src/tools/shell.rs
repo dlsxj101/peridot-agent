@@ -486,14 +486,13 @@ fn has_hard_blocked_program_invocation(normalized: &str) -> bool {
         match basename {
             // `dd` writing over a device, or zeroing/randomizing from a
             // pseudo-device source — argument order doesn't matter.
-            "dd" => {
-                if args.iter().any(|a| {
-                    a.strip_prefix("of=")
-                        .is_some_and(|target| target.starts_with("/dev/"))
-                        || matches!(*a, "if=/dev/zero" | "if=/dev/random" | "if=/dev/urandom")
-                }) {
-                    return true;
-                }
+            "dd" if args.iter().any(|a| {
+                a.strip_prefix("of=")
+                    .is_some_and(|target| target.starts_with("/dev/"))
+                    || matches!(*a, "if=/dev/zero" | "if=/dev/random" | "if=/dev/urandom")
+            }) =>
+            {
+                return true;
             }
             // `mkfs` and `mkfs.<fstype>` always format a filesystem.
             "mkfs" => return true,
