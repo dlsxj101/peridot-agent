@@ -118,8 +118,9 @@ test('markCodeMapStale preserves counts and records the reason', () => {
   );
 });
 
-test('codeMapContextPill summarizes freshness and counts', () => {
-  assert.deepEqual(
+test('codeMapContextPill only warns when the index is missing', () => {
+  // Fresh index: no pill.
+  assert.equal(
     codeMapContextPill({
       indexExists: true,
       stale: false,
@@ -128,15 +129,25 @@ test('codeMapContextPill summarizes freshness and counts', () => {
       walkedFiles: 9,
       generatedAtUnix: 201,
     }),
-    {
-      label: 'Code map fresh · 5 sym · 2 todos',
-      tone: 'good',
-      title: 'indexed at 201\n9 indexed file(s)',
-    },
+    undefined,
   );
 
-  const stale = codeMapContextPill({ stale: true, todoCount: 2, reason: 'file changed' });
-  assert.equal(stale?.label, 'Code map stale · 2 todos');
-  assert.equal(stale?.tone, 'warn');
-  assert.match(stale?.title ?? '', /file changed/);
+  // Stale index (still exists): no pill.
+  assert.equal(
+    codeMapContextPill({ stale: true, todoCount: 2, reason: 'file changed' }),
+    undefined,
+  );
+
+  // Missing index: warn pill.
+  const missing = codeMapContextPill({ indexExists: false, stale: false, reason: 'no index yet' });
+  assert.equal(missing?.label, 'Code map missing');
+  assert.equal(missing?.tone, 'warn');
+  assert.match(missing?.title ?? '', /no index yet/);
+
+  // Missing index without a reason falls back to the label.
+  const missingNoReason = codeMapContextPill({ indexExists: false, stale: false });
+  assert.equal(missingNoReason?.title, 'Code map missing');
+
+  // No summary at all: no pill.
+  assert.equal(codeMapContextPill(undefined), undefined);
 });

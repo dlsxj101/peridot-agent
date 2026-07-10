@@ -98,6 +98,7 @@ let editingSessionDraft: string | undefined;
 let editingSessionSelectOnFocus: string | undefined;
 let deletingSessionId: string | undefined;
 let sessionMenuOpen = false;
+let overflowMenuOpen = false;
 // Tracks the ask-user prompt we've already auto-focused so a background state
 // push (which rebuilds the prompt dock) doesn't keep yanking focus back into
 // the free-text input while the user is interacting elsewhere.
@@ -154,17 +155,29 @@ vscode.postMessage({ type: 'ready' });
 
 // Close session menu when clicking outside it
 document.addEventListener('click', (event) => {
-  if (!sessionMenuOpen) return;
-  const menu = document.querySelector('.session-menu');
-  if (menu && !menu.contains(event.target as Node)) {
-    editingSessionId = undefined;
-    editingSessionDraft = undefined;
-    editingSessionSelectOnFocus = undefined;
-    deletingSessionId = undefined;
-    sessionMenuOpen = false;
-    if (menu instanceof HTMLDetailsElement) menu.open = false;
-    if (state) render(state);
+  if (!sessionMenuOpen && !overflowMenuOpen) return;
+  let needsRender = false;
+  if (sessionMenuOpen) {
+    const menu = document.querySelector('.session-menu');
+    if (menu && !menu.contains(event.target as Node)) {
+      editingSessionId = undefined;
+      editingSessionDraft = undefined;
+      editingSessionSelectOnFocus = undefined;
+      deletingSessionId = undefined;
+      sessionMenuOpen = false;
+      if (menu instanceof HTMLDetailsElement) menu.open = false;
+      needsRender = true;
+    }
   }
+  if (overflowMenuOpen) {
+    const overflow = document.querySelector('.overflow-menu');
+    if (overflow && !overflow.contains(event.target as Node)) {
+      overflowMenuOpen = false;
+      if (overflow instanceof HTMLDetailsElement) overflow.open = false;
+      needsRender = true;
+    }
+  }
+  if (needsRender && state) render(state);
 });
 
 function render(s: SidebarState): void {
@@ -852,9 +865,6 @@ function renderHeader(s: SidebarState): HTMLElement {
 
   const right = el('div', 'header-actions');
   right.append(renderSessionMenu(s));
-  right.append(iconButton('codemap', t('Workspace Code Map', '워크스페이스 코드 맵'), () => vscode.postMessage({ type: 'showCodeMap' })));
-  right.append(iconButton('info', t('Workspace Code Map Status', '워크스페이스 코드 맵 상태'), () => vscode.postMessage({ type: 'showCodeMapStatus' })));
-  right.append(iconButton('search', t('Search Workspace Code Map', '워크스페이스 코드 맵 검색'), () => vscode.postMessage({ type: 'searchCodeMap' })));
   right.append(
     iconButton('find', t('Find in conversation', '대화 기록에서 찾기'), () => {
       transcriptSearchActive = !transcriptSearchActive;
@@ -862,50 +872,68 @@ function renderHeader(s: SidebarState): HTMLElement {
       if (state) render(state);
     }),
   );
-  right.append(iconButton('list-tree', t('Outline Current File', '현재 파일 개요'), () => vscode.postMessage({ type: 'outlineCurrentFile' })));
-  right.append(iconButton('references', t('Find Symbol References', '심볼 참조 찾기'), () => vscode.postMessage({ type: 'findSymbolReferences' })));
-  right.append(iconButton('skills', t('Show Skills', '스킬 보기'), () => vscode.postMessage({ type: 'showSkills' })));
-  right.append(iconButton('archive', t('Show Archived Skills', '보관된 스킬 보기'), () => vscode.postMessage({ type: 'showArchivedSkills' })));
-  right.append(iconButton('search', t('Search Skills', '스킬 검색'), () => vscode.postMessage({ type: 'searchSkills' })));
-  right.append(iconButton('search-archive', t('Search Archived Skills', '보관된 스킬 검색'), () => vscode.postMessage({ type: 'searchArchivedSkills' })));
-  right.append(iconButton('attach', t('Attach File', '파일 첨부'), () => vscode.postMessage({ type: 'attachFile' })));
-  right.append(iconButton('todos', t('Show Workspace TODOs', '워크스페이스 TODO 보기'), () => vscode.postMessage({ type: 'showTodos' })));
-  right.append(iconButton('context-top', t('Show Context Top', '컨텍스트 상단 보기'), () => vscode.postMessage({ type: 'showContextTop' })));
-  right.append(iconButton('working-diff', t('Show Working Tree Diff', '작업 트리 diff 보기'), () => vscode.postMessage({ type: 'showWorkingTreeDiff' })));
-  right.append(iconButton('mcp', t('Show MCP Servers', 'MCP 서버 보기'), () => vscode.postMessage({ type: 'showMcpServers' })));
-  right.append(iconButton('mcp-add', t('Add MCP Server', 'MCP 서버 추가'), () => vscode.postMessage({ type: 'addMcpServer' })));
-  right.append(iconButton('mcp-test', t('Test MCP Server', 'MCP 서버 테스트'), () => vscode.postMessage({ type: 'testMcpServer' })));
-  right.append(iconButton('mcp-remove', t('Remove MCP Server', 'MCP 서버 제거'), () => vscode.postMessage({ type: 'removeMcpServer' })));
-  right.append(iconButton('note-add', t('Add Session Note', '세션 노트 추가'), () => vscode.postMessage({ type: 'addSessionNote' })));
-  right.append(iconButton('note-list', t('Show Session Notes', '세션 노트 보기'), () => vscode.postMessage({ type: 'showSessionNotes' })));
-  right.append(iconButton('note-clear', t('Clear Session Notes', '세션 노트 지우기'), () => vscode.postMessage({ type: 'clearSessionNotes' })));
-  right.append(iconButton('session-new', t('New Session', '새 세션'), () => vscode.postMessage({ type: 'newPersistedSession' })));
-  right.append(iconButton('session-switch', t('Switch Session', '세션 전환'), () => vscode.postMessage({ type: 'switchPersistedSession' })));
-  right.append(iconButton('session-close', t('Close Session', '세션 닫기'), () => vscode.postMessage({ type: 'closePersistedSession' })));
-  right.append(iconButton('session-count', t('Show Session Count', '세션 수 보기'), () => vscode.postMessage({ type: 'showSessionCount' })));
-  right.append(iconButton('session-detail', t('Show Session Details', '세션 상세 보기'), () => vscode.postMessage({ type: 'showPersistedSessionDetails' })));
-  right.append(iconButton('session-locate', t('Locate Session Directory', '세션 디렉터리 위치'), () => vscode.postMessage({ type: 'locatePersistedSessionDirectory' })));
-  right.append(iconButton('session-resume', t('Resume Session', '세션 재개'), () => vscode.postMessage({ type: 'resumePersistedSession' })));
-  right.append(iconButton('session-rename', t('Rename Session', '세션 이름 변경'), () => vscode.postMessage({ type: 'renamePersistedSession' })));
-  right.append(iconButton('session-delete', t('Delete Session', '세션 삭제'), () => vscode.postMessage({ type: 'deletePersistedSession' })));
-  right.append(iconButton('sessions', t('Show Sessions', '세션 목록 보기'), () => vscode.postMessage({ type: 'showSessions' })));
-  right.append(iconButton('session-search', t('Search Sessions', '세션 검색'), () => vscode.postMessage({ type: 'searchSessions' })));
-  right.append(iconButton('trash', t('Prune Sessions', '세션 정리'), () => vscode.postMessage({ type: 'pruneSessions' })));
-  right.append(iconButton('history', t('Replay Session Timeline', '세션 타임라인 재생'), () => vscode.postMessage({ type: 'replaySessionTimeline' })));
-  right.append(iconButton('export', t('Export Session Artifacts', '세션 아티팩트 내보내기'), () => vscode.postMessage({ type: 'exportSessionArtifacts' })));
-  right.append(iconButton('import', t('Import Session Artifacts', '세션 아티팩트 가져오기'), () => vscode.postMessage({ type: 'importSessionArtifacts' })));
-  right.append(iconButton('pr', t('GitHub PR Status', 'GitHub PR 상태'), () => vscode.postMessage({ type: 'showPrStatus' })));
-  right.append(iconButton('ship', t('Ship Changes to PR', '변경사항 PR로 보내기'), () => vscode.postMessage({ type: 'shipChanges' })));
-  right.append(iconButton('merge', t('Merge GitHub PR', 'GitHub PR merge'), () => vscode.postMessage({ type: 'mergePr' })));
-  right.append(iconButton('refresh', t('Refresh', '새로고침'), () => vscode.postMessage({ type: 'refreshStatus' })));
-  right.append(
-    iconButton('switch', t('Switch provider', '제공자 전환'), () =>
-      vscode.postMessage({ type: 'showLanding', screen: 'home' }),
-    ),
-  );
+  right.append(renderOverflowMenu());
   right.append(iconButton('gear', t('Settings', '설정'), () => vscode.postMessage({ type: 'openSettings' })));
   header.append(left, right);
   return header;
+}
+
+interface OverflowItem {
+  icon: string;
+  label: string;
+  onClick: () => void;
+}
+
+function renderOverflowMenu(): HTMLElement {
+  const items: OverflowItem[] = [
+    { icon: 'attach', label: t('Attach File', '파일 첨부'), onClick: () => vscode.postMessage({ type: 'attachFile' }) },
+    {
+      icon: 'working-diff',
+      label: t('Show Working Tree Diff', '작업 트리 diff 보기'),
+      onClick: () => vscode.postMessage({ type: 'showWorkingTreeDiff' }),
+    },
+    { icon: 'codemap', label: t('Workspace Code Map', '워크스페이스 코드 맵'), onClick: () => vscode.postMessage({ type: 'showCodeMap' }) },
+    { icon: 'skills', label: t('Show Skills', '스킬 보기'), onClick: () => vscode.postMessage({ type: 'showSkills' }) },
+    { icon: 'mcp', label: t('Show MCP Servers', 'MCP 서버 보기'), onClick: () => vscode.postMessage({ type: 'showMcpServers' }) },
+    { icon: 'note-list', label: t('Show Session Notes', '세션 노트 보기'), onClick: () => vscode.postMessage({ type: 'showSessionNotes' }) },
+    { icon: 'pr', label: t('GitHub PR Status', 'GitHub PR 상태'), onClick: () => vscode.postMessage({ type: 'showPrStatus' }) },
+    { icon: 'ship', label: t('Ship Changes to PR', '변경사항 PR로 보내기'), onClick: () => vscode.postMessage({ type: 'shipChanges' }) },
+    { icon: 'refresh', label: t('Refresh', '새로고침'), onClick: () => vscode.postMessage({ type: 'refreshStatus' }) },
+    {
+      icon: 'switch',
+      label: t('Switch provider', '제공자 전환'),
+      onClick: () => vscode.postMessage({ type: 'showLanding', screen: 'home' }),
+    },
+  ];
+
+  const details = el('details', 'overflow-menu') as HTMLDetailsElement;
+  const summary = el('summary', 'overflow-menu-trigger');
+  summary.title = t('More actions', '추가 작업');
+  summary.setAttribute('aria-label', t('More actions', '추가 작업'));
+  summary.innerHTML = iconSvg('more');
+  details.append(summary);
+  details.open = overflowMenuOpen;
+  details.addEventListener('toggle', () => {
+    overflowMenuOpen = details.open;
+  });
+
+  const menu = el('div', 'overflow-menu-list');
+  for (const item of items) {
+    const button = el('button', 'overflow-menu-item');
+    button.type = 'button';
+    const icon = el('span', 'overflow-menu-icon');
+    icon.innerHTML = iconSvg(item.icon);
+    button.append(icon);
+    button.append(el('span', 'overflow-menu-label', item.label));
+    button.addEventListener('click', () => {
+      overflowMenuOpen = false;
+      details.open = false;
+      item.onClick();
+    });
+    menu.append(button);
+  }
+  details.append(menu);
+  return details;
 }
 
 function renderSessionMenu(s: SidebarState): HTMLElement {
@@ -1185,6 +1213,8 @@ function iconSvg(kind: string): string {
       return `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2.5v8"/><path d="M4.8 6.1L8 2.8l3.2 3.3"/><path d="M3 10.5v2.8h10v-2.8"/></svg>`;
     case 'merge':
       return `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="4" cy="4" r="1.5"/><circle cx="4" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><path d="M4 5.5v5"/><path d="M5.5 12H10"/><path d="M7 4a5 5 0 0 0 5 5v1"/></svg>`;
+    case 'more':
+      return `<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor"><circle cx="3.5" cy="8" r="1.3"/><circle cx="8" cy="8" r="1.3"/><circle cx="12.5" cy="8" r="1.3"/></svg>`;
     default:
       return '';
   }
@@ -1202,19 +1232,17 @@ function phaseColor(phase: string): string {
 function renderContextStrip(context: SidebarContext): HTMLElement {
   const strip = el('div', 'context-strip');
   const workspace = context.workspace || t('No workspace', '워크스페이스 없음');
-  strip.append(el('span', 'workspace-text', workspace));
+  const workspaceText = el('span', 'workspace-text', workspace);
+  if (context.daemonVersion || context.extensionVersion) {
+    workspaceText.title = `daemon ${context.daemonVersion ?? '?'} · ext ${context.extensionVersion ?? '?'}`;
+  }
+  strip.append(workspaceText);
 
   const pills = el('div', 'pill-row');
   if (context.provider) pills.append(pill(context.provider, 'provider'));
-  if (context.model) pills.append(pill(context.model, 'model'));
-  if (context.authConfigured) {
-    pills.append(pill(t('auth ok', '인증 정상'), 'good'));
-  } else {
+  if (!context.authConfigured) {
     pills.append(pill(t('auth missing', '인증 없음'), 'warn'));
   }
-  if (context.mode) pills.append(pill(context.mode, 'mode'));
-  if (context.permission) pills.append(pill(context.permission, 'mode'));
-  if (context.reasoningEffort) pills.append(pill(`reasoning ${context.reasoningEffort}`, 'mode'));
   if (context.committeeMode && context.committeeMode !== 'off') {
     pills.append(pill(`committee ${context.committeeMode}`, 'mode'));
   }
@@ -1251,14 +1279,6 @@ function renderContextStrip(context: SidebarContext): HTMLElement {
   }
   if (context.serviceTier && context.serviceTier !== 'standard') {
     pills.append(pill(context.serviceTier, 'mode'));
-  }
-  if (context.daemonVersion || context.extensionVersion) {
-    pills.append(
-      pill(
-        `daemon ${context.daemonVersion ?? '?'} · ext ${context.extensionVersion ?? '?'}`,
-        'mute',
-      ),
-    );
   }
   strip.append(pills);
 
