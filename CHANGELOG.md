@@ -14,6 +14,42 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 
 ## Unreleased
 
+## [0.10.0 / extension 0.7.0] — 2026-07-10
+
+### Changed — decluttered user surfaces (extension, TUI, CLI)
+
+- **VS Code webview header.** The chat header stacked 42 always-visible icon
+  buttons in one row, breaking the layout; it now keeps the session menu,
+  find-in-conversation, a `⋯` overflow menu (attach, working-tree diff, code
+  map, skills, MCP, notes, PR status/ship, refresh, switch provider), and
+  settings. All 64 commands stay registered for the Command Palette.
+- **VS Code view-title menu.** Trimmed from 51 contributed items to 16: two
+  navigation icons (new session, settings) plus a curated `…` overflow.
+- **VS Code context pills.** The strip no longer duplicates the composer
+  selects (model / mode / permission) and no longer shows "auth ok",
+  reasoning, or the daemon/ext version pill (now a tooltip on the workspace
+  path). The code-map pill only appears when the index is missing.
+- **TUI footer metrics are opt-in.** `tui.show_token_count` / `show_cost` /
+  `show_cache_rate` now default OFF, enabled metrics suppress zero values,
+  and the forced `subagents 0` zero-state is gone — no more
+  `0 tok · $0.0000 · cache 0%` on a fresh session.
+- **TUI request-context gauge.** The activity-bar `req X/Y (%)` gauge only
+  renders while the agent is busy or utilisation crosses 75%.
+- **Condensed `/help`.** One line per category with command names (localized
+  pointer to the slash picker for full descriptions) instead of a ~69-row
+  dump; the Ctrl+P menu drops its Debug entry in favour of a new `/debug`
+  slash command.
+- **`peridot daemon` hidden from `--help`.** The editor-spawned JSON-RPC
+  server still runs when invoked explicitly but no longer appears in the
+  operator-facing command list.
+
+### Fixed — dependencies
+
+- **anyhow 1.0.102 → 1.0.103** clears the RUSTSEC-2026-0190 unsound advisory
+  that was failing the CI security-audit job.
+- **quick-xml dropped from the tree** (RUSTSEC-2026-0194/0195 DoS advisories):
+  tauri-winrt-notification 0.7.2 → 0.7.3 no longer depends on it.
+
 ### Fixed — Rust core robustness & DoS hardening (audit follow-ups)
 
 - **`web_fetch` / `web_search` body size cap.** `response.text()` buffered the

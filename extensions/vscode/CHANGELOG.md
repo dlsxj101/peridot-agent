@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+## [0.7.0] — 2026-07-10
+
+### Changed — decluttered chat surface
+
+- **Webview header reduced to four elements.** The 42 always-inline icon
+  buttons are gone; the header keeps the session menu, find-in-conversation,
+  a new `⋯` overflow menu (attach file, working-tree diff, code map, skills,
+  MCP servers, session notes, PR status, ship changes, refresh, switch
+  provider), and settings. Every command remains reachable from the Command
+  Palette.
+- **View-title menu trimmed from 51 items to 16.** Navigation keeps just new
+  session + settings; the `…` overflow carries a curated subset (code map,
+  skills, history, branch tree, MCP, notes, sessions, PR/ship/merge).
+- **Context pills only carry signal.** Model / mode / permission pills were
+  duplicates of the composer selects and are removed, "auth ok" is silent
+  (only the auth-missing warning renders), the reasoning pill is gone, the
+  daemon/ext version moved into the workspace-path tooltip, and the code-map
+  pill only appears when the index is missing instead of warning "stale" on
+  every session.
+
 ### Fixed — webview UI/UX
 
 - Slash/file-mention picker dismisses on composer blur instead of staying

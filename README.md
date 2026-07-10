@@ -4,7 +4,23 @@ Peridot Agent is a Rust CLI/TUI autonomous coding agent with multi-session orche
 
 ## Status
 
-Current version: **0.9.0**
+Current version: **0.10.0**
+
+### What's new in v0.10.0
+
+- **Decluttered user surfaces.** The VS Code chat header shrinks from 42
+  always-visible icon buttons to session menu / find / `⋯` overflow /
+  settings, the view-title menu drops from 51 items to 16, and the context
+  strip only shows pills that carry signal (everything stays reachable via
+  the Command Palette).
+- **Quieter TUI by default.** Token / cost / cache-rate footer metrics are
+  now opt-in and zero-suppressed, the `subagents 0` zero-state is gone, and
+  the request-context gauge only renders while busy or past 75% utilisation.
+- **Condensed `/help` and cleaner CLI.** `/help` prints a per-category
+  command summary instead of a ~69-row dump (full descriptions live in the
+  slash picker), the Ctrl+P Debug entry became a `/debug` slash command, and
+  the internal `peridot daemon` subcommand is hidden from `--help`.
+- **Security audit unblocked.** anyhow 1.0.103 clears RUSTSEC-2026-0190.
 
 ### What's new in v0.9.0
 
