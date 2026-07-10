@@ -1919,7 +1919,7 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
 name = "peridot-agents"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "async-trait",
  "peridot-common",
@@ -1930,7 +1930,7 @@ dependencies = [
 
 [[package]]
 name = "peridot-cli"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1961,7 +1961,7 @@ dependencies = [
 
 [[package]]
 name = "peridot-common"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -1972,7 +1972,7 @@ dependencies = [
 
 [[package]]
 name = "peridot-context"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "async-trait",
  "peridot-common",
@@ -1984,7 +1984,7 @@ dependencies = [
 
 [[package]]
 name = "peridot-core"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "async-trait",
  "peridot-agents",
@@ -2000,7 +2000,7 @@ dependencies = [
 
 [[package]]
 name = "peridot-git"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "peridot-common",
  "serde",
@@ -2008,7 +2008,7 @@ dependencies = [
 
 [[package]]
 name = "peridot-grader"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "peridot-common",
  "peridot-llm",
@@ -2018,7 +2018,7 @@ dependencies = [
 
 [[package]]
 name = "peridot-llm"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -2031,7 +2031,7 @@ dependencies = [
 
 [[package]]
 name = "peridot-mcp"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "peridot-common",
  "reqwest",
@@ -2042,7 +2042,7 @@ dependencies = [
 
 [[package]]
 name = "peridot-memory"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "peridot-common",
  "rusqlite",
@@ -2052,7 +2052,7 @@ dependencies = [
 
 [[package]]
 name = "peridot-project"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "peridot-common",
  "serde",
@@ -2061,7 +2061,7 @@ dependencies = [
 
 [[package]]
 name = "peridot-symbols"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -2092,7 +2092,7 @@ dependencies = [
 
 [[package]]
 name = "peridot-tools"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "async-trait",
  "notify",
@@ -2110,7 +2110,7 @@ dependencies = [
 
 [[package]]
 name = "peridot-tui"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "crossterm",
  "peridot-common",
@@ -2123,7 +2123,7 @@ dependencies = [
 
 [[package]]
 name = "peridot-verify"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "async-trait",
  "peridot-common",
@@ -2348,15 +2348,6 @@ name = "quick-error"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a993555f31e5a609f617c12db6250dedcac1b0a85076912c436e6fc9b2c8e6a3"
-
-[[package]]
-name = "quick-xml"
-version = "0.37.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "331e97a1af0bf59823e6eadffe373d7b27f485be8748f71471c662c1f269b7fb"
-dependencies = [
- "memchr",
-]
 
 [[package]]
 name = "quinn"
@@ -3066,11 +3057,10 @@ dependencies = [
 
 [[package]]
 name = "tauri-winrt-notification"
-version = "0.7.2"
+version = "0.7.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0b1e66e07de489fe43a46678dd0b8df65e0c973909df1b60ba33874e297ba9b9"
+checksum = "9ed071c670382e85fc2f48ae706492d8c338f4f89bf72520d32f8abfe880aade"
 dependencies = [
- "quick-xml",
  "thiserror 2.0.18",
  "windows",
  "windows-version",
