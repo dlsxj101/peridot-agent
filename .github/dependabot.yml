@@ -19,6 +19,11 @@ updates:
     groups:
       npm-minor-patch:
         update-types: ["minor", "patch"]
+    ignore:
+      # @types/vscode must not exceed engines.vscode (vsce fails the
+      # package step otherwise). Bump it manually together with
+      # engines.vscode when raising the minimum supported VS Code.
+      - dependency-name: "@types/vscode"
 
   # GitHub Actions used by the workflows.
   - package-ecosystem: github-actions
