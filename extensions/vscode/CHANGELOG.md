@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## [0.7.1] — 2026-07-10
+
+### Changed — dependency refresh
+
+- `diff` 5.2.2 → 9.0.0 (webview diff rendering; no behaviour change surfaced
+  by the test suite).
+- Dev toolchain: TypeScript 5.9 → 6.0.3 (with a `*.css` ambient declaration
+  for TS6's side-effect-import check), eslint 9 → 10.6 (+ `@eslint/js` as a
+  direct devDependency, typescript-eslint 8.63), `@types/node` 26, and the
+  npm minor/patch group.
+- `@types/vscode` is now excluded from automated dependency updates — it must
+  track `engines.vscode` (^1.85.0) and is bumped manually alongside it.
+
 ## [0.7.0] — 2026-07-10
 
 ### Changed — decluttered chat surface

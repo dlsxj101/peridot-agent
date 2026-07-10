@@ -14,6 +14,8 @@ were documented inline in [PERIDOT_SPEC_v1.md](PERIDOT_SPEC_v1.md) and on
 
 ## Unreleased
 
+## [0.11.0 / extension 0.7.1] — 2026-07-10
+
 ### Added — OS filesystem sandbox for model-generated commands (`SandboxMode::Os`)
 
 - **New default sandbox.** `security.sandbox` now defaults to `os`: a best-effort

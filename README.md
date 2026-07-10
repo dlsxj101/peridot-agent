@@ -4,9 +4,9 @@ Peridot Agent is a Rust CLI/TUI autonomous coding agent with multi-session orche
 
 ## Status
 
-Current version: **0.10.0**
+Current version: **0.11.0**
 
-### What's new in v0.10.0
+### What's new in v0.11.0
 
 - **OS filesystem sandbox by default.** `security.sandbox` now defaults to
   `os`: model-generated commands (`shell_exec` / `shell_readonly` / `verify_*`
@@ -19,6 +19,16 @@ Current version: **0.10.0**
   Provider API keys are scrubbed from shell child environments
   (`security.scrub_env_keys`); extra writable roots via
   `security.sandbox_allow_write`.
+- **Auto-verify you can trust.** Edit bursts are debounced into a single
+  `verify_build`, auto-verify failures feed the auto-fix circuit breaker
+  (abort after `auto_fix.max_attempts` identical failures), and `agent_done`
+  is refused while a mutation is unverified or the last verify failed.
+  AGENTS.md `## commands` and `auto_fix.commands` now actually override
+  command detection, and projects with no detectable build command get an
+  explicit skip instead of a blind `cargo build`.
+
+### What's new in v0.10.0
+
 - **Decluttered user surfaces.** The VS Code chat header shrinks from 42
   always-visible icon buttons to session menu / find / `⋯` overflow /
   settings, the view-title menu drops from 51 items to 16, and the context

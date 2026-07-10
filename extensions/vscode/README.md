@@ -4,7 +4,9 @@ VS Code panel for [Peridot Agent](https://github.com/dlsxj101/peridot-agent) —
 a Rust CLI/TUI autonomous coding agent with multi-LLM committee mode,
 native tool calling, and 2-Tier context management.
 
-> **Status**: v0.7.0 declutters the chat surface — the header keeps just
+> **Status**: v0.7.1 refreshes dependencies (diff 9, TypeScript 6 /
+> eslint 10 toolchain) on top of v0.7.0's decluttered chat surface —
+> the header keeps just
 > the session menu, find, a `⋯` overflow menu, and settings (down from 42
 > inline icons), the view-title menu is curated down to 16 items, and the
 > context strip only shows pills that carry signal. The sidebar still
@@ -154,14 +156,14 @@ Install the decoded VSIX directly on the remote host:
 
 ```bash
 cd extensions/vscode
-bash scripts/install-cursor-remote.sh 0.7.0
+bash scripts/install-cursor-remote.sh 0.7.1
 ```
 
 Or run the same workaround without a checkout:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/dlsxj101/peridot-agent/main/extensions/vscode/scripts/install-cursor-remote.sh \
-  | bash -s -- 0.7.0
+  | bash -s -- 0.7.1
 ```
 
 The script downloads the Marketplace VSIX with `curl --compressed`,
@@ -211,8 +213,8 @@ Rust CLI `v*` releases. Before publishing, update
 `extensions/vscode/package.json`, then push a matching tag:
 
 ```bash
-git tag vsce/v0.7.0
-git push origin vsce/v0.7.0
+git tag vsce/v0.7.1
+git push origin vsce/v0.7.1
 ```
 
 The release workflow verifies that the tag matches the extension package
