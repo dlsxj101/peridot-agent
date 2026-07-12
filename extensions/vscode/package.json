@@ -645,7 +645,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@types/diff": "^5.2.3",
+    "@types/diff": "^8.0.0",
     "@types/markdown-it": "^14.1.2",
     "@types/node": "^26.1.1",
     "@types/vscode": "^1.85.0",
