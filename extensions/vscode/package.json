@@ -639,7 +639,7 @@
     "vscode:prepublish": "npm run build:prod"
   },
   "dependencies": {
-    "@formkit/auto-animate": "^0.9.0",
+    "@formkit/auto-animate": "^0.10.0",
     "diff": "^9.0.0",
     "markdown-it": "^14.1.1"
   },
@@ -651,9 +651,9 @@
     "@types/vscode": "^1.85.0",
     "@vscode/vsce": "^3.9.2",
     "esbuild": "^0.28.1",
-    "eslint": "^10.5.0",
+    "eslint": "^10.7.0",
     "globals": "^17.7.0",
     "typescript": "^6.0.3",
-    "typescript-eslint": "^8.63.0"
+    "typescript-eslint": "^8.64.0"
   }
 }
